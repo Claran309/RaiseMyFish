@@ -10,6 +10,7 @@ env:
 
 jobs:
   lint:
+    if: ${{ hashFiles('go.mod') != '' }}
     name: 格式与静态检查
     runs-on: ubuntu-latest
     steps:
@@ -29,6 +30,7 @@ jobs:
           args: --timeout=5m
 
   test:
+    if: ${{ hashFiles('go.mod') != '' }}
     name: 单元测试
     runs-on: ubuntu-latest
     steps:
@@ -43,6 +45,7 @@ jobs:
         run: go test -race -cover ./...
 
   build:
+    if: ${{ hashFiles('go.mod') != '' }}
     name: 构建
     runs-on: ubuntu-latest
     steps:

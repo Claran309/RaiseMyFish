@@ -53,7 +53,8 @@ internal/
   gateway/           QQ 协议端网关（OneBot 11/12）
   infra/             基础设施统一管理（PG、协议端连接，Setup/Close）
   model/             数据模型
-  database/          GORM 初始化与迁移
+  store/             repository 接口
+  database/          GORM 初始化与迁移（repository 实现）
   config/            配置加载
 pkg/                 可复用包（如 OneBot 客户端）
 docs/                设计文档

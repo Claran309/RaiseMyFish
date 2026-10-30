@@ -12,14 +12,14 @@
 ### 0.1 仓库骨架与基础设施
 - [ ] Go module 初始化，目录结构按 `README.md`
 - [ ] 配置加载（TOML + 环境变量覆盖 + 校验）
-- [ ] 结构化日志（slog，JSON，落文件 + stderr）
+- [ ] 结构化日志（zap，JSON，落文件 + stderr）
 - [ ] `cmd/fishd` 入口：装配依赖、优雅退出
 - [ ] `cmd/fishctl` 入口：至少 `status` / `tail`
 - [ ] `migrations/0001_init.sql` 建表（events/tasks/memory_sources/llm_usage/send_log/dlq）
 
 ### 0.2 store 层
 - [ ] repository 接口（EventRepo / TaskRepo / MemoryRepo / UsageRepo）
-- [ ] PG 实现（pgx）
+- [ ] PG 实现（GORM + pgx 驱动；幂等/状态机用 Raw SQL）
 - [ ] 幂等插入测试
 - [ ] 状态迁移测试
 

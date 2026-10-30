@@ -47,7 +47,9 @@
 | `brain` | 组装上下文 → 调 LLM/外部 agent → 返回 Reply | 不做发送、不做调度 | memory、persona、llm client |
 | `sender` | 发送 → 核验 → 记账 → 回写事件 | 不做决策 | channel client、event、store |
 | `persona` | 人设包加载、注入、回归测试 | 不做别的事 | 文件 |
-| `store` | repository 接口 + PG 实现 | 不写业务逻辑 | GORM/pgx |
+| `store` | repository 接口（事件/任务/记忆/用量） | 不写业务逻辑 | `database` |
+| `database` | GORM 连接、迁移、repository 实现 | 不写业务逻辑 | pgx/GORM |
+| `infra` | 外部连接统一管理（PG、协议端），Setup/Close | 不写业务逻辑 | — |
 | `config` | 配置加载与校验 | 不热加载业务 | — |
 
 ## 3. 进程模型（单机多进程 / 单进程内多 goroutine）

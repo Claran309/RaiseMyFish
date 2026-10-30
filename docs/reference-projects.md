@@ -16,7 +16,7 @@
 
 ## 1. lanmei-dream（最接近，优先参考）
 
-路径：`D:\CodeStudy\GoProjects\src\lanmei-dream-main`
+本地路径：`<既有项目目录>/lanmei-dream-main`
 
 - 跨平台聊天机器人，反向 WS 网关接入 OneBot v12/v11，支持 NapCat 直连
 - 技术栈：Go、PostgreSQL 17 + pgvector（GORM + pgx）、Redis StateStore、`lxzan/gws`、Conduit（行为树+管线）、eino、zap
@@ -31,7 +31,7 @@
 
 ## 2. ClaranAIM（AI 编排参考）
 
-路径：`D:\CodeStudy\GoProjects\src\ClaranAIM`
+本地路径：`<既有项目目录>/ClaranAIM`
 
 - Agent-Native IM 系统，微服务架构（Kitex RPC + Hertz 网关 + DTM + Kafka/Outbox）
 - 技术栈：eino / eino-ext、Hertz、Kitex、zap、OpenTelemetry / Prometheus / Jaeger / ELK
@@ -44,7 +44,7 @@
 
 ## 3. ClaranCloudDisk（经典分层参考）
 
-路径：`D:\CodeStudy\GoProjects\src\ClaranCloudDisk`
+本地路径：`<既有项目目录>/ClaranCloudDisk`
 
 - 云盘后端，gin + gorm/mysql + redis + minio
 - 目录：`handler/`、`service/`、`dao/`、`model/`、`middleware/`、`util/`、`config/`、`docs/`
