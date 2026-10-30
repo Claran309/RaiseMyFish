@@ -1,0 +1,50 @@
+# ── Go ──────────────────────────────────────────────
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+
+# ── 配置与凭据（绝不入仓）─────────────────────────────
+.env
+.env.*
+!.env.example
+config.local.*
+*.cookie
+*.session
+*.pem
+*.key
+credentials.json
+
+# ── 数据与日志 ──────────────────────────────────────
+data/
+logs/
+*.log
+data/**/*.jsonl
+logs/**/*.jsonl
+*.db
+*.sqlite
+*.sqlite3
+
+# ── 部署数据 ────────────────────────────────────────
+deployment/.env
+deployment/data/
+deploy/.env
+deploy/data/
+
+# ── IDE / 系统 ──────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ── 临时 ────────────────────────────────────────────
+tmp/
+*.tmp
+.dev-fishd.pid

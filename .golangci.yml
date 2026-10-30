@@ -1,0 +1,59 @@
+# golangci-lint 配置 · RaiseMyFish
+# 安装：https://golangci-lint.run/welcome/install/
+# 本地：golangci-lint run ./...
+# CI：见 .github/workflows/ci.yml
+
+run:
+  timeout: 5m
+  tests: true
+  skip-dirs:
+    - vendor
+    - deploy
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - ineffassign
+    - misspell
+    - gocritic
+    - revive
+    - bodyclose
+    - contextcheck
+    - nilerr
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+    - unparam
+    - wastedassign
+    - gosec
+
+linters-settings:
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment   # 结构体对齐不是本项目关注点
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+      - name: var-naming
+        severity: warning
+      - name: indent-error-flow
+        severity: warning
+  gosec:
+    excludes:
+      - G404  # 允许 math/rand 用于非安全场景（如抖动）
+
+issues:
+  exclude-dirs:
+    - deploy
+  max-issues-per-linter: 0
+  max-same-issues: 0
