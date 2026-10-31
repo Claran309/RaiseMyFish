@@ -30,6 +30,7 @@ type Usage struct {
 type Response struct {
 	Text  string
 	Usage Usage
+	Model string
 }
 
 // Provider 每次Chat最多执行一次HTTP请求。

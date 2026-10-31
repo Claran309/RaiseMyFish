@@ -41,8 +41,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		return errors.New("命令参数无效")
 	}
 	action := fs.Args()
+	if len(action) >= 2 && action[0] == "persona" && action[1] == "eval" {
+		return runPersonaEval(ctx, *path, *envPath, action[2:], stdout, stderr)
+	}
 	if len(action) != 1 || (action[0] != "status" && action[0] != "tail") {
-		return errors.New("用法：fishctl [--config 路径] [--env-file 路径] status|tail")
+		return errors.New("用法：fishctl [--config 路径] [--env-file 路径] status|tail|persona eval")
 	}
 	cfg, err := config.Load(*path, *envPath)
 	if err != nil {

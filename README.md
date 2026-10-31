@@ -3,7 +3,7 @@
 > 一条 AI 肥鱼的多通道陪伴系统：看直播、回弹幕、回私信、回评论、上 QQ，
 > 有共享记忆、有人格一致性、能无人值守跑。
 >
-> **状态：Phase 0 实现中。0.1/0.7b已接收；0.6 Brain已实现并完成Codex自测，待DSH独立验收。业务通道与Memory真实召回仍未装配。**
+> **状态：Phase 0 实现中。0.6已通过DSH独立验收并提交b51f444；0.7c真实35条评估完成，冻结词法规则通过15/35（42.9%），尚未达到90%。评估器新代码与产物待DSH复核；业务通道与Memory真实召回仍未装配。**
 
 ---
 
@@ -128,7 +128,7 @@ go test -tags=integration ./... -count=1
 go test -race -tags=integration ./... -count=1
 ```
 
-本地 lint：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...`。CI固定Go1.27与lint2.15.0；模块最低Go1.25。历史0.7c草稿留在已忽略的.workbuddy目录，不参与构建；0.7b已接收，本轮0.6自测仍不能替代DSH独立验收。
+本地 lint：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...`。CI固定Go1.27与lint2.15.0；模块最低Go1.25。历史0.7c草稿留在已忽略的.workbuddy目录，不参与构建；0.6/0.7b已接收，0.7c新实现的自测仍不能替代DSH独立复核。
 
 ## 0.6 Brain装配与无调用诊断
 
@@ -145,4 +145,17 @@ go run ./cmd/fishd --config config.local.toml --brain-route default check-brain
 
 保守prompt预算为UTF-8消息字节数+64框架余量，默认8192；超过预算先裁记忆，再裁samples/rules后缀，soul/场景/当前事件保留，不可能容纳时拒绝调用。输入另限4096条/引用和4MiB文本，准备阶段也受总超时/并发约束。每次实际Provider调用写一行llm_usage，未知统计/报价为NULL，绝不把未知费用当0；报价按model放在provider.prices，只有明确免费才填0。
 
-网络/超时/5xx统一由Brain最多3次实际调用，空回复最多补1次且共享总次数；4xx含429不重试，协议错误不重试。取消后对已经发生的调用有独立5秒上限的记账；记账失败立即返回错误，不重复生成。HTTP成功但正文不支持时仍保存有效usage；完整JSON或计数无效时不伪造用量。没有真实模型评测或≥90%人格结论。
+网络/超时/5xx统一由Brain最多3次实际调用，空回复最多补1次且共享总次数；4xx含429不重试，协议错误不重试。取消后对已经发生的调用有独立5秒上限的记账；记账失败立即返回错误，不重复生成。HTTP成功但正文不支持时仍保存有效usage；完整JSON或计数无效时不伪造用量。0.6模块测试不等于人格评测，真实结果见下节0.7c。
+
+## 0.7c 真实人格评估
+
+```powershell
+# 在本地配置副本启用llm，并使用.env中的真实key；这会调用配置模型并产生费用
+go run ./cmd/fishctl --config config.local.eval.toml persona eval --pack dafeiyu --route default --timeout 20m
+```
+
+执行前冻结35条用例、人格/代码hash、persona-lexical-v1规则和生效参数；不把expect/forbid或baseline回复传给模型。每条独立空记忆Scope，顺序调用实际Brain/Provider并写PG账本。主分数按原始模型文本、次分数按Brain投递文本，错误不从分母移除，停止/致命错误不报告完整通过。无baseline回放模式，证据目录独占创建不覆盖。
+
+本轮真实结果见 [原始报告](plans/reports/persona-eval/20261031T105248Z-501d0282/report.md) 与 [核对/解释](plans/reports/persona-eval/20261031T105248Z-501d0282/analysis.md)：请求deepseek:deepseek-chat，服务端标识deepseek-flash；dafeiyu@v1；35/35完成、35次实际调用；原始/投递均15/35=42.9%，未达90%。输入80,878、输出495 tokens，报价未配置，费用NULL。没有改人设/用例/词表去美化结果，也没有重抽样挑选输出。
+
+评分是可重现的严格词法指标；如「不给。密码这种东西哪能往外掏。」会因词“密码”触发泄露凭据标签。这类误报保留原分，后续若修订标准必须另开新版本/run。当前8192保守字节预算也会裁掉samples并截短rules，具体影响需另行验证，不覆盖本轮结论。

@@ -96,3 +96,5 @@ user按context/event/instructions分段，段内内容使用有HTML转义的JSON
 总时限/等待槽DeadlineExceeded不在本轮继续调用，但typed error标记Retryable=true供上层用新Context决策；主动Canceled保持false。协议结构错误若仍有完整有效的usage，应保留统计记账后返回错误；JSON无法解析或统计本身无效则保留未知，不伪造数值。Reply.Meta的token/费用汇总仅在所有尝试对应值均已知时合计，任一未知即为nil。
 
 Reply.Meta.ms包含准备、等待并发槽、调用与记账的总耗时；llm_usage.ms只记录各次Provider调用耗时。汇总费用仍按6位小数呈现，不把缺失统计混入已知合计。
+
+0.7c审计补充：Provider.Response可额外携带Model string，保存服务端可用model标识；请求路由和llm_usage.Model仍保留provider:请求model。可选model元数据格式异常时不影响有效正文/usage，不猜测内部版本。该字段不改变0.6调用/重试/计费行为。

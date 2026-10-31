@@ -231,3 +231,64 @@ requesting-code-review技能要求的内部只读审查提出3项Important；修
 未执行/不在范围：真实LLM调用、真实平台逐一兼容验证、0.7c人格≥90%、Memory真实召回/SQL隐私查询、总线/调度/发送及P2能力。官方OpenAI文档两处抓取被403/Cloudflare阻止，未声称查证最新模型/价格；协议按既有项目契约和本地HTTP假服务测试，不使用真实key。Windows32位GCC不能跑amd64 race，WSL不能直连Windows localhost PG，因此race与真实PG分开验证；没有改PG监听/防火墙，也不冒称远端CI组合已通过。
 
 教学说明：docs/update/2026-10-31-0303-大脑生成与用量切片.md。本轮实现写入结束，暂停获派文件，交DSH独立验收；WorkBuddy继续等待单独轻量派发，不自动推进0.7c。
+
+## COMM-010 · 0.6接收与0.7c真实评估接手
+
+主人已转交DSH 0.6独立验收通过（32/32哈希），并明确授权用.env真实FISH_LLM_KEY跑35条人格用例。本轮先按原快照提交0.6为b51f444，不夹带其他协作文案；随后实施P0-EVAL-1（contracts/persona-eval.md）真实评估。凭据仅在进程内读取，不回显/入仓。
+
+新增internal/personaeval、fishctl persona eval及必要的Provider服务端model审计字段由Codex负责；personas/eval输入/人设正文只读，不动旧baseline回复。评分在调用前固定，原始输出为主分数，Brain投递文本为次分数；本轮不改标准或人格去凑≥90%。模型为当前配置deepseek:deepseek-chat，沿用当前预算/温度；未声明已达到门槛，结论待实际运行证据。
+
+实施顺序：先写评分/快照/执行器和CLI失败测试，完善实际输出/attempt/usage审计；先本地假HTTP验证与脱敏，随后只跑一次完整35样本并保存逐条检查点、报告与快照。原始/最终两组分数、失败详情、可空费用均如实输出。0.7c新代码/产物交DSH复核，不提前提交/push。
+
+## COMM-011 · 0.6提交完成与0.7c真实结果
+
+**0.6已提交并推送b51f444**（原DSH 32/32快照）；后续0.7c实现与真实产物未暂存/提交/push，交DSH复核。
+
+### 一次真实运行
+
+- Run：20261031T105248Z-501d0282；source_kind=model_provider，baseline_used=false。
+- 请求路由：deepseek:deepseek-chat；服务端返回model标识deepseek-flash，35次一致；不猜测其内部模型版本。
+- 人格：dafeiyu@v1；实际35条cases.jsonl原始字节已保存；人格五文件、规则和源码hash见run内manifest/report。
+- 时间：2026-10-31 03:52:48–03:53:13 America/Los_Angeles（PDT）；JSON审计时间UTC。
+- 35/35完成，35次Provider调用、每条一次、0生成错误、35条PG记账确认；没有重抽样或改词表/人格后重算。
+- **主分数原始模型输出15/35=42.9%，次分数Brain投递文本15/35=42.9%；未达到≥90%，该门槛至少32/35。** CLI退出1表示本轮未达标，报告完整保存，不是调用/执行中断。
+- 输入80,878、输出495 tokens；报价未配置，费用为NULL，不能写成0或免费。只读PG窗口核账再次确认35行成功/相同token总数/费用均NULL。
+
+证据：plans/reports/persona-eval/20261031T105248Z-501d0282/；report.md/report.json有35条实际原始/最终输出、逐条失败标签；results.jsonl是同步检查点；cases.jsonl/rules.json是首次调用前快照；pg-audit.json是独立只读PG统计；verification.json是Codex另写评分/哈希重算，analysis.md说明词法限制和预算，均不冒称DSH验收。
+
+### 分数解释（不改原分）
+
+严格词法失败包括：情绪标记未命中5次、兜底/拒绝词未命中各3次、公开输出含“主人”2次等。部分是规则覆盖不全/误报，如comment-005「不给。密码这种东西哪能往外掏。」因“密码”触发forbid:泄露凭据；没有泄露实际已配置凭据。qqg-007纯爱表态未写“娇娇”而失败。解释不改变42.9%，不得覆盖旧规则或重抽样凑90%。
+
+当前保守8192字节预算使实际prompt估计8190–8192；完整soul+rules已大于预算，按裁剪顺序samples移除、rules截短。该配置事实可能影响风格，单轮不证明因果。若后续调整规则、预算或人格，需新版本新run再比较，本轮不自动开展优化。
+
+### 新代码与自测
+
+- 新增internal/personaeval（独立于persona加载包），固定词表、真实输入快照、无baseline执行器、原始/投递双评分、独占目录与检查点、敏感值脱敏、完整性标记。
+- fishctl persona eval接入真实Brain/Provider与PG UsageRepo。生成器输入仅ID/channel/private/text，不含expect/forbid/kind；每条显式空Memory/Shared Scope，DM私密性固定true；不发送B站或QQ消息。
+- Provider.Response仅增加可选服务端Model审计字段，非法可选元数据不覆盖有效usage/正文；新增测试先因字段缺失失败后实现。未更改既有Brain预算、温度、重试或输出截断。
+- 内部只读审查发现“最后一条致命/取消可误报通过”，已用35条末样本失败测试先红后绿，独立标记fatal/interrupted阻止整轮验收成功；单条非致命生成错误仍按原35分母计失败。
+- 测试产物均在临时目录且source_kind=test，不使用baseline作为真实结果；规则/人设/数据在运行前固定，运行后未改任何被记录的生产源码文件。
+- 最新全仓单测、真实PG integration、vet、build、lint（0 issues）、WSL Go1.25/CGO_ENABLED=1全仓race通过；这些本地检查不再次调用真实模型。
+
+本轮保留原有其他Agent协作文案与报告，不修改personas/eval/人设正文、迁移和既有ADR；默认config/fishd.toml仍llm.enabled=false。用于本次真实执行的config.local.eval-*.toml已被忽略，只有启用标志，无真实key值。所有凭据从.env进程内读取，报告/日志不得回显。
+
+### DSH交接
+
+请独立复核0.7c代码与真实产物：验证新manifest、run输入/规则/源码/输出hash，按rules.json自己重算35条，核查PG统计、实际服务端model标识及分母/完整性标记；不要直接抄本表结论，也不要求为了复核再花费35次真实调用。0.7c真实执行完成，**人格≥90%退出条件仍未满足**；CLI功能代码尚待独立验收，整体0.7不勾完成。
+
+教学说明：docs/update/2026-10-31-0353-真实人格评估与证据.md。确定文件快照见plans/reports/phase-0.7c-manifest.json。通知已发布仓库，尚无DSH对COMM-011的新回执；本轮写入结束后暂停，等待独立复核，不自动进入下一Phase或优化重跑。
+
+最终冻结检查：29个源码/产物文件、18个本地文档链接有效；run记录的生产源码哈希与当前文件一致（运行后仅调整测试来源标记和补文档，未改执行代码）；真实输入/人设/评分没有变化，交付文件未含本机配置凭据。独立Python按rules.json重算35条原始/投递评分一致；原文SHA与检查点/报告匹配，PG窗口35行和80,878/495 tokens一致。索引为空，0.7c尚无Git提交，默认生产llm开关仍false。
+
+## COMM-012 · DSH复核接收与下一轮提案待主人选择
+
+主人转交DSH 0.7c复核：评估功能验收通过，独立重算15/35一致；人格≥90%仍未满足。本轮据此将原版执行器及旧run证据固化提交，保留所有真实输出/规则/快照；不修改旧run评分。
+
+原29文件快照核对：运行代码与证据28项保持精确哈希；仅plans/coordination.md在DSH复核后更新了0.7c状态，属于已确认状态登记，不是功能漂移。单测、真实PG、vet/build重新通过。其他Agent未验收协作文案继续不混入。
+
+下一轮具体方案见plans/phase-0.7c-next-proposal.md，仍待主人选择：建议预算32768、模型/人设/温度不变，评分v2区分具体泄露与话题词并识别本轮关系维护表态；先补正反测试和旧真实输出离线对照，再新run对同一新输出同时给v1/v2。不会把拒绝词当万能放行条件，也不针对当前某一句加特例。无需通过词表删标签来凑达标。
+
+已做无模型调用的预算干跑：全部35条完整system保留，最大估计24818，低于32768；0次实际模型调用、无PG写入。结果在plans/reports/budget-proposal-32768.json；临时Go验证器已清理，生产预算/评分仍是原值。该提案和干跑数据不夹入原版执行器的验收提交。
+
+预算和评分被主人本轮明确列为“待主人决策”，已通过问题工具给出三种范围；在收到选择前不改配置/评分源码，不启动新的收费模型运行。旧15/35证据永不覆盖。

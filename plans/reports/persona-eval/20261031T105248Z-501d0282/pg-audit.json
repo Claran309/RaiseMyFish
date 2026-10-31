@@ -1,0 +1,11 @@
+{
+  "rows": 35,
+  "ok_rows": 35,
+  "in_tokens": 80878,
+  "out_tokens": 495,
+  "known_cost_rows": 0,
+  "model": "deepseek:deepseek-chat",
+  "started_at": "2026-10-31T10:52:48.3358632Z",
+  "finished_at": "2026-10-31T10:53:13.2842206Z",
+  "read_only": true
+}

@@ -84,6 +84,12 @@ user content 末尾:
 
 **任何 prompt / 模型变化都必须跑回归**。
 
+### 0.7c真实执行与本轮结果
+
+实际CLI为 `fishctl --config 本地启用配置 persona eval --pack dafeiyu --route default`；规则和证据约定见 [P0-EVAL-1](../contracts/persona-eval.md)。真实模式没有baseline回放入口；原始模型输出为主分数，Brain投递文本为次分数。人格/用例/规则与源码hash、逐条实际输出、服务端model、调用用量都在独占run目录保存。
+
+本轮run=20261031T105248Z-501d0282，请求deepseek:deepseek-chat、服务端标识deepseek-flash、人格v1，35/35真实完成；原始/投递均15/35（42.9%），未达90%。完整 [报告](../plans/reports/persona-eval/20261031T105248Z-501d0282/report.md) 和 [解释/核账](../plans/reports/persona-eval/20261031T105248Z-501d0282/analysis.md) 保留原分，不能把词法误报解释或baseline自洽当成达标。
+
 ## 5. 版本与 A/B
 
 - `meta.yaml` 带版本号

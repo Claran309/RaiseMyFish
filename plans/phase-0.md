@@ -60,20 +60,24 @@
 ### 0.6 Brain（OpenAI 兼容）
 
 已按主人授权放行开发；Memory最小类型P0-MEMORY-1、范围校验与允许文件见contracts/memory.md和plans/phase-0.6-dispatch.md。0.6可补自身UsageRepo最小依赖切片并真实PG验证，不把0.2其余repository或0.9召回标为完成。
-- [ ] `Brain` 接口实现
-- [ ] 上下文组装：system(persona) + user(context/event/instructions)
-- [ ] 预算截断（先裁记忆、后裁 persona，soul 保留）
-- [ ] 超时/重试/失败分类
-- [ ] `llm_usage` 记账
+- [x] `Brain` 接口实现
+- [x] 上下文组装：system(persona) + user(context/event/instructions)
+- [x] 预算截断（先裁记忆、后裁 persona，soul 保留）
+- [x] 超时/重试/失败分类
+- [x] `llm_usage` 记账
+
+0.6结果：DSH独立验收32/32文件与真实PG/关键行为通过；已提交并推送b51f444。
 
 ### 0.7 人格包与回归
 - [x] `personas/dafeiyu/` 包结构（meta/soul/rules/samples/context）
 - [x] 从 `~/.bili-ai/persona.md` + `persona-shared.md` + `persona-live.md` 迁移
 - [x] `eval/cases.jsonl` ≥ 30 条（直播场景为主）
-- [ ] `fishctl persona eval` 命令
-- [ ] 回归通过率 ≥ 90%
+- [ ] `fishctl persona eval` 命令（已实现并真实实测，评估器代码待DSH复核）
+- [ ] 回归通过率 ≥ 90%（本轮真实35条15/35=42.9%，未满足）
 
-0.7a素材/35条用例已接收32651ba；0.7b静态加载器已提交5ece97f（DSH原交付验收，Codex三项裁决/增量见COMM-006）。0.7c真实模型与CLI仍未完成，不以baseline回放替代。
+0.7a素材/35条用例已接收32651ba；0.7b静态加载器已提交5ece97f（DSH原交付验收，Codex三项裁决/增量见COMM-006）。0.7c真实运行见下文，CLI新实现仍待DSH复核，不以baseline回放替代。
+
+0.7c本轮真实运行已完成：run 20261031T105248Z-501d0282，dafeiyu@v1，请求deepseek:deepseek-chat、服务端标识deepseek-flash；原始/投递文本均42.9%，35次调用全部成功并有PG核账。不修改旧结论凑门槛，整体0.7/人格退出标准保持未完成，证据见plans/reports/persona-eval对应目录。
 
 ### 0.8 弹幕发送器
 - [ ] 发送（复用 bili-cli 或自写）
@@ -135,4 +139,6 @@
 > 每完成一项，勾选并写一句结果。格式：`[x] 任务 — 结果（验证方式）`
 
 - [x] 0.1 — 已实现基础设施并推送364dcb3（DSH COMM-004独立验收；单测、真实PG、迁移幂等和运行检查）。
-- [x] 0.7a/0.7b — 素材与用例32651ba、静态加载器5ece97f；DSH独立验收原交付，Codex补正文保留回归并验证通过，0.7c仍待0.6。
+- [x] 0.7a/0.7b — 素材与用例32651ba、静态加载器5ece97f；DSH独立验收与正文边界增量复核均通过。
+- [x] 0.6 — 已验收并推送b51f444（DSH 32/32快照与关键路径独立验收）。
+- [ ] 0.7c退出门槛 — 真实运行35/35完成，但本轮词法通过率42.9%未达到90%；评估器新代码/产物待DSH复核。

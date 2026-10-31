@@ -63,6 +63,7 @@ type chatChoice struct {
 	} `json:"message"`
 }
 type chatResponse struct {
+	Model json.RawMessage `json:"model"`
 	// 先解析账本统计，再验证正文结构，避免格式错误把已知费用变成未知。
 	Choices json.RawMessage `json:"choices"`
 	Usage   struct {
@@ -134,6 +135,13 @@ func (p *OpenAI) Chat(ctx context.Context, in Request) (response Response, resul
 		}
 	}
 	response.Usage = Usage{InputTokens: decoded.Usage.Input, OutputTokens: decoded.Usage.Output}
+	// model是可选审计元数据；字段异常不影响已解析正文和用量。
+	if len(decoded.Model) > 0 {
+		var model string
+		if json.Unmarshal(decoded.Model, &model) == nil && len(model) <= 256 && !strings.ContainsAny(model, "\r\n") {
+			response.Model = model
+		}
+	}
 	var choices []chatChoice
 	if err := json.Unmarshal(decoded.Choices, &choices); err != nil {
 		return response, &Error{Kind: KindProtocol}

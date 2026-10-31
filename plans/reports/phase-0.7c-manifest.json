@@ -1,0 +1,161 @@
+{
+  "task": "0.7c",
+  "base_commit": "b51f4447f82edff94591c6f4cc98edad247825eb",
+  "state": "真实35条完成/主通过率42.9%未达90%；新代码与产物待DSH复核，未提交",
+  "run_id": "20261031T105248Z-501d0282",
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 10484,
+      "sha256": "9f6c5dc03a1c4ce1cc26be3e6ba934bbc2d5a5ef5acd366fd9502c537ed20e9b"
+    },
+    {
+      "path": "cmd/fishctl/main.go",
+      "bytes": 3959,
+      "sha256": "dc3ccdfccc73d3f4e9b35acea9c460eb8b0ca488fa096e12775dd64f9cce9c40"
+    },
+    {
+      "path": "cmd/fishctl/persona_eval.go",
+      "bytes": 11658,
+      "sha256": "dfbca0137b7fc51f8f149053aab61194b78b018c03b6b442c2cef1f934866c40"
+    },
+    {
+      "path": "cmd/fishctl/persona_eval_test.go",
+      "bytes": 2359,
+      "sha256": "0124e1a40b735b3a17babf9693c9bb3f113b4442c83ee6b36235874d74a8d4aa"
+    },
+    {
+      "path": "contracts/brain.md",
+      "bytes": 7253,
+      "sha256": "81704a5035f3aa0b05dabce9e3c246c8675bd875cc2922d495f8fab9c39a18fb"
+    },
+    {
+      "path": "contracts/persona-eval.md",
+      "bytes": 3685,
+      "sha256": "2e30f6b59103c8d33a61ffe07c6d0a11176ee87d25cbe0e80591ab7ff2c298f9"
+    },
+    {
+      "path": "docs/08-persona.md",
+      "bytes": 4821,
+      "sha256": "d2690ddf3c88e8bb9ec9b639a26a830e8a4ef2cf563bd19d0b2128ae5b87cb9d"
+    },
+    {
+      "path": "docs/update/2026-10-31-0353-真实人格评估与证据.md",
+      "bytes": 4696,
+      "sha256": "af185b1f7ce6c7c171d89a51b0b4edb78e223ace4a069c9779efc61c61fa92b6"
+    },
+    {
+      "path": "internal/brain/provider/openai.go",
+      "bytes": 5411,
+      "sha256": "416e1cf071e36de4645689b46615ea103f5d174c91c0d70cffa46b76560bab82"
+    },
+    {
+      "path": "internal/brain/provider/openai_test.go",
+      "bytes": 7083,
+      "sha256": "a34187e6b7a48572d5bae62137cdbbd906192e256709ecbe538ca743a9df22b0"
+    },
+    {
+      "path": "internal/brain/provider/types.go",
+      "bytes": 1431,
+      "sha256": "26a7e1994a3ec316114c1a27ecf1891130db5d32ee975baad6863186c3d1d3af"
+    },
+    {
+      "path": "internal/personaeval/fixture.go",
+      "bytes": 3507,
+      "sha256": "6fdf59a9e65eb24a87fe15a8bbd1e631a28e3e9d97ac4434d5e1ca632dfd2e23"
+    },
+    {
+      "path": "internal/personaeval/fixture_test.go",
+      "bytes": 1155,
+      "sha256": "8a7fafc2ca24680a7e719ef1757c5bba99c1e4197d382658adf75d0a651ae8b4"
+    },
+    {
+      "path": "internal/personaeval/run.go",
+      "bytes": 13411,
+      "sha256": "f913e3551e5bb2b29bb31f1dfa602da44b8fba416804ab25019407bfaf7df0e5"
+    },
+    {
+      "path": "internal/personaeval/run_test.go",
+      "bytes": 4897,
+      "sha256": "9a29ed3c88f910c2f4f58c72fe621d7d2480d1d11411f0748a35b69137d78d36"
+    },
+    {
+      "path": "internal/personaeval/score.go",
+      "bytes": 8446,
+      "sha256": "5f7d9057074602f379691d356870cfd5b6f44000be17d8ada4d976bb2bd59d71"
+    },
+    {
+      "path": "internal/personaeval/score_test.go",
+      "bytes": 1880,
+      "sha256": "e60994f3ebc6fcf0259a1792f185b3e16042fce60965181646a44ebd0cb5a1d9"
+    },
+    {
+      "path": "plans/README.md",
+      "bytes": 1953,
+      "sha256": "7e04c51307eb848bb6b9d3dd7fe71c291ce6876fa18d07c6efa2d44476c6cd4f"
+    },
+    {
+      "path": "plans/coordination.md",
+      "bytes": 12354,
+      "sha256": "5841390cff828fecb8804fed7f4293a97cb01858190a16361fefdcc771225121"
+    },
+    {
+      "path": "plans/phase-0.md",
+      "bytes": 8675,
+      "sha256": "d0775415d46cdc68fa7ff9e4c381ed1b15966c3282ffd8e5fd55d1819fcf61e9"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T105248Z-501d0282/analysis.md",
+      "bytes": 2892,
+      "sha256": "9c75cc6c4b0ab895e6ecbc3f53933116325105d863fff01cf0a2f5a466f8f832"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T105248Z-501d0282/cases.jsonl",
+      "bytes": 6051,
+      "sha256": "963a61334b106ef549ebd5289304aca2ad0b71ab5fdf0c089d3ff0720f6bcbae"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T105248Z-501d0282/manifest.json",
+      "bytes": 4250,
+      "sha256": "8eeac861ce6afec7df114a6708ece43b04840a26325d5268dbf8466f78a74cfb"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T105248Z-501d0282/pg-audit.json",
+      "bytes": 256,
+      "sha256": "2e3c24835b4ba031e7bd1a8d3db5b18fb4338130875ab187430fa9296f1e8a2d"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T105248Z-501d0282/report.json",
+      "bytes": 68503,
+      "sha256": "4ab52d7eb76e363aa864e4db58664531767844ded31d481bd3f31c24965a4c39"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T105248Z-501d0282/report.md",
+      "bytes": 12616,
+      "sha256": "35f65bfe41f512f3b5e15f1aa218e53d15bf6c3e477c34ac035c5f3229a36092"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T105248Z-501d0282/results.jsonl",
+      "bytes": 45368,
+      "sha256": "379a69459b9272c310a4b47f7509bfc40f23af36cd8bda2623082b4eb13f800e"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T105248Z-501d0282/rules.json",
+      "bytes": 5288,
+      "sha256": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T105248Z-501d0282/verification.json",
+      "bytes": 1097,
+      "sha256": "17bdc76935626371f989755be8c5e52be6151645c46b07b80add3abcfd8471a7"
+    }
+  ],
+  "excluded": [
+    ".env",
+    "config.local.eval-*.toml",
+    ".workbuddy/",
+    "logs/",
+    "其他Agent未验收协作文案",
+    "本manifest自身与Codex报告避免循环哈希"
+  ]
+}

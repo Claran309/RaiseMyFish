@@ -187,3 +187,21 @@ func TestProtocolErrorKeepsKnownUsage(t *testing.T) {
 		}
 	}
 }
+
+func TestServedModelIsAuditedWithoutChangingText(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"model":"served-version","choices":[{"message":{"content":"鱼"}}]}`)
+	}))
+	defer s.Close()
+	p, err := NewOpenAI("test", s.URL, "", s.Client(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := p.Chat(context.Background(), request())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Model != "served-version" || response.Text != "鱼" {
+		t.Fatal("缺少服务端模型信息")
+	}
+}

@@ -66,9 +66,9 @@ Codex 负责模块的核心逻辑与技术集成；DSH 对每个交付独立验�
 | 协作规则审查 | Codex | 待验收 | 本文件、报告模板、必要入口和提示词修订；等 DSH 独立复核 |
 | 0.1 基础设施 | Codex | ✅ 已提交并推送364dcb3 | DSH COMM-004独立验收，manifest31/31；强杀观察采用默认20秒心跳边界，0.11增强见COMM-005 |
 | 0.7a 人格素材与用例 | WorkBuddy | ✅ 已提交 32651ba（master） | 六件套 + 35 条用例；DSH 独立复现 go test PASS；5 通道 × 5 场景；越界 Go 草稿未提交（V-01） |
-| 0.7b 加载器 | WorkBuddy / Codex集成 | ✅ 已提交5ece97f | DSH验收原交付；依赖tidy、混合标题、正文保留裁决见COMM-006；Codex增量测试已通过，交DSH复核 |
-| 0.6 Brain | Codex | 已放行开发，待会话接手 | P0-MEMORY-1 + P0-PACK-1；按phase-0.6-dispatch补自身必需UsageRepo切片，不标0.2其余任务完成；尚无Brain实现 |
-| 0.7c 完整人格回归 | Codex 集成、DSH 验收 | 阻塞 | 加载器、0.6、真实模型就绪 |
+| 0.7b 加载器 | WorkBuddy / Codex集成 | ✅ 复核通过（5ece97f） | DSH 已复核正文边界补丁：全仓测试通过、PreservesBody/MixedHeading 用例 PASS；契约澄清与实现一致 |
+| 0.6 Brain | Codex | ✅ 已验收并推送b51f444 | DSH 32/32快照和关键行为/真实PG验收通过；0.7c真实调用另有新证据 |
+| 0.7c 完整人格回归 | Codex 集成、DSH 验收 | ⚠️ 评估功能验收通过；人格 42.9% 未达 90% | DSH 独立重算 15/35 一致（0 差异）；根因：预算 8192 裁掉 samples、服务端 deepseek-flash、部分规则误报 |
 | 其他 0.x 子任务 | 按上述拆分 | 待派发 | 依赖验收、接口基线、精确可写范围确认后再派 |
 
 每次派发 DSH 补：接手会话、基线、可写路径、依赖、交付、测试、写入者确认；每位开发者同时一个子任务。本轮未实施任何 0.x 功能。

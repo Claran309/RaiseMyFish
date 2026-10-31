@@ -1,0 +1,45 @@
+{
+  "checked_by": "Codex independent artifact recomputation (not DSH acceptance)",
+  "total": 35,
+  "raw_passed": 15,
+  "delivered_passed": 15,
+  "raw_pass_rate": 0.42857142857142855,
+  "delivered_pass_rate": 0.42857142857142855,
+  "complete": true,
+  "reached_90": false,
+  "requested_provider_model": "deepseek:deepseek-chat",
+  "served_models": [
+    "deepseek-flash"
+  ],
+  "generation_errors": 0,
+  "attempts": 35,
+  "ledger_acknowledgements": 35,
+  "code_hashes_match": true,
+  "fixture_hashes_match": true,
+  "output_hashes_match": true,
+  "rules_hash_match": true,
+  "rules_recomputed_match": true,
+  "failure_tags": {
+    "expect:接梗": 1,
+    "expect:谐音": 1,
+    "expect:短句": 1,
+    "expect:情绪": 5,
+    "expect:兜底": 3,
+    "expect:拒绝": 3,
+    "forbid:喊主人": 2,
+    "forbid:泄露凭据": 1,
+    "expect:问主人": 1,
+    "expect:认身份": 1,
+    "forbid:列表": 1,
+    "expect:护娇娇": 1
+  },
+  "persona_trimmed_utf8_bytes": {
+    "soul.md": 3944,
+    "rules.md": 6628,
+    "samples.md": 10502
+  },
+  "prompt_estimate_range": [
+    8189,
+    8192
+  ]
+}

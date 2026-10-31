@@ -1,0 +1,143 @@
+{
+  "run_id": "20261031T105248Z-501d0282",
+  "source_kind": "model_provider",
+  "baseline_used": false,
+  "provider_model": "deepseek:deepseek-chat",
+  "pack_name": "dafeiyu",
+  "pack_version": "v1",
+  "code_commit": "b51f4447f82edff94591c6f4cc98edad247825eb",
+  "started_at": "2026-10-31T10:52:48.3358632Z",
+  "finished_at": "0001-01-01T00:00:00Z",
+  "configuration": {
+    "route": "default",
+    "endpoint_host": "api.deepseek.com",
+    "max_prompt_tokens": 8192,
+    "max_reply_tokens": 128,
+    "attempt_timeout_ms": 10000,
+    "total_timeout_ms": 40000,
+    "backoff_ms": 250,
+    "temperature": 0.7,
+    "input_usd_per_million": null,
+    "output_usd_per_million": null
+  },
+  "fixture_files": [
+    {
+      "name": "meta.yaml",
+      "bytes": 732,
+      "sha256": "9ba3f39935235877d9b1079b9ecefa38671971a48f911f60ee602795eecd26f8"
+    },
+    {
+      "name": "soul.md",
+      "bytes": 3945,
+      "sha256": "4cc225dc840f2d9a7d5aa5e62ffa954937648598b3e62ed5f51301ef21188209"
+    },
+    {
+      "name": "rules.md",
+      "bytes": 6629,
+      "sha256": "e6217cf1c35b221b5ddfe5b7519a0b24b816bdfe03ed1dfcabd56c459b93cd9d"
+    },
+    {
+      "name": "samples.md",
+      "bytes": 10503,
+      "sha256": "a986fade06cdfd4ea91c167a24fd0b5ea9417c102a78ffb2c388398980cc9e77"
+    },
+    {
+      "name": "context.md",
+      "bytes": 7493,
+      "sha256": "b0096ca16512695e820a8a81c6814796985994a597d0ebef74f1892f216f5cd8"
+    },
+    {
+      "name": "cases.jsonl",
+      "bytes": 6051,
+      "sha256": "963a61334b106ef549ebd5289304aca2ad0b71ab5fdf0c089d3ff0720f6bcbae"
+    }
+  ],
+  "code_files": [
+    {
+      "name": "internal/personaeval/fixture.go",
+      "bytes": 3507,
+      "sha256": "6fdf59a9e65eb24a87fe15a8bbd1e631a28e3e9d97ac4434d5e1ca632dfd2e23"
+    },
+    {
+      "name": "internal/personaeval/run.go",
+      "bytes": 13411,
+      "sha256": "f913e3551e5bb2b29bb31f1dfa602da44b8fba416804ab25019407bfaf7df0e5"
+    },
+    {
+      "name": "internal/personaeval/score.go",
+      "bytes": 8446,
+      "sha256": "5f7d9057074602f379691d356870cfd5b6f44000be17d8ada4d976bb2bd59d71"
+    },
+    {
+      "name": "internal/brain/brain.go",
+      "bytes": 8143,
+      "sha256": "a5805eb2cb451ac2d53d7c3ac7068f2f68b0421dd5d998bc18db7ac149559b6d"
+    },
+    {
+      "name": "internal/brain/context.go",
+      "bytes": 8225,
+      "sha256": "0f029327bc523ea771eb5018115d7f99d831909539d68cc2ada1f5c02af197d9"
+    },
+    {
+      "name": "internal/brain/provider/openai.go",
+      "bytes": 5411,
+      "sha256": "416e1cf071e36de4645689b46615ea103f5d174c91c0d70cffa46b76560bab82"
+    },
+    {
+      "name": "internal/brain/provider/types.go",
+      "bytes": 1431,
+      "sha256": "26a7e1994a3ec316114c1a27ecf1891130db5d32ee975baad6863186c3d1d3af"
+    },
+    {
+      "name": "internal/brain/types.go",
+      "bytes": 2370,
+      "sha256": "ed5e0ccb96dfa5e3734cb4bc46269c1eea2d75616884857684a86995f37ff5b2"
+    },
+    {
+      "name": "internal/persona/meta.go",
+      "bytes": 3633,
+      "sha256": "4f89c5dc3e81ae1dca52396f4e08508756117a590277d22394393a2db74a6ec2"
+    },
+    {
+      "name": "internal/persona/pack.go",
+      "bytes": 12663,
+      "sha256": "301248f44f83ee67d2f6d26ec19a2604bb7e0c5a5ceea17587e38546f7d61362"
+    },
+    {
+      "name": "cmd/fishctl/persona_eval.go",
+      "bytes": 11658,
+      "sha256": "dfbca0137b7fc51f8f149053aab61194b78b018c03b6b442c2cef1f934866c40"
+    },
+    {
+      "name": "cmd/fishctl/main.go",
+      "bytes": 3959,
+      "sha256": "dc3ccdfccc73d3f4e9b35acea9c460eb8b0ca488fa096e12775dd64f9cce9c40"
+    },
+    {
+      "name": "internal/config/config.go",
+      "bytes": 4362,
+      "sha256": "fb7a6938c09b19649fd5f756772811fe8ea41f6d94bb2ff205de4c6a33e6f149"
+    },
+    {
+      "name": "internal/config/llm.go",
+      "bytes": 5419,
+      "sha256": "c9deb7b75f88e01561a4531ce18cf86da856cb3264d4e65100196a86801b0a49"
+    }
+  ],
+  "rules_sha256": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4",
+  "total": 35,
+  "completed": 0,
+  "raw_passed": 0,
+  "delivered_passed": 0,
+  "raw_pass_rate": 0,
+  "delivered_pass_rate": 0,
+  "complete": false,
+  "fatal": false,
+  "interrupted": false,
+  "reached_90": false,
+  "provider_attempts": 0,
+  "in_tokens": 0,
+  "out_tokens": 0,
+  "cost_usd": 0,
+  "results": null
+}
