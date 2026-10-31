@@ -78,19 +78,20 @@
 ```
 第 1 轮（串行，Codex 独占）
   0.1 ──► 0.2 ──► 0.3
-  0.3 完成后冻结事件契约，通知 WorkBuddy / flash 可以开工
+  0.3 完成后冻结事件契约，通知 WorkBuddy 可以开工
+  （WorkBuddy 可提前并行做 0.7 人格包；flash 只做补测试/文档等零散活）
 
 第 2 轮（并行）
-  Codex: 0.4 ∥ WorkBuddy: 0.5 + 0.7 ∥ flash: 0.10
+  Codex: 0.4 ∥ WorkBuddy: 0.5 + 0.7 + 0.10
 
 第 3 轮（并行）
-  Codex: 0.6 ∥ WorkBuddy: 0.8 ∥ flash: 0.9
+  Codex: 0.6 ∥ WorkBuddy: 0.8 + 0.9
 
 第 4 轮（串行，本鱼）
   0.11 联调 + 全量测试 + 更新 plans/phase-0.md 状态
 ```
 
-**注意**：0.7（人格包）不依赖代码，WorkBuddy 可以在第 1 轮期间就开始。
+**原则**：Codex 只留架构重活（0.1–0.4、0.6）；耗 token 不重的实现类（0.5、0.7–0.10）全部给 WorkBuddy；flash 只做零散辅助。
 
 ## 五、接口冻结与变更
 
