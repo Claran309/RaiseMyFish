@@ -29,7 +29,10 @@ user content 末尾:
 
 ## 2. 与现有资产的关系
 
-现有三份人设（`~/.bili-ai/persona.md` / `persona-live.md` / `persona-shared.md`）是宝贵的 prompt 工程资产：
+现有四份人设是宝贵的 prompt 工程资产：
+
+- `~/.bili-ai/persona.md` / `persona-live.md` / `persona-shared.md`
+- `~/.dsh/persona-qq.md`（2026-10-31 新写，**在 `.dsh/` 而不是 `.bili-ai/`**）
 
 | 现有 | 迁移到 |
 |---|---|
@@ -37,7 +40,7 @@ user content 末尾:
 | persona.md 的人味铁律/AI 味清单 | `rules.md` |
 | persona-live.md 的直播规则 | `context.md`（live 段） |
 | persona-shared.md 的娇娇/纯爱/兜底 | `soul.md` + `context.md` |
-| persona-qq.md（2026-10-31 新写） | `context.md`（qq 段） |
+| persona-qq.md（`~/.dsh/persona-qq.md`） | `context.md`（qq_private / qq_group 段） |
 
 **迁移原则**：先原样搬，再按回归测试调，不要重写。
 
