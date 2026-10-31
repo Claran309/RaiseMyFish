@@ -53,6 +53,7 @@
 | `contracts/` | 模块接口契约（event/collector/sender/brain） |
 | `plans/` | Phase 0–8 开发计划与任务清单 |
 | `plans/assignment.md` | **分工与文件所有权**（给开发 agent 读） |
+| `prompts/` | 给 Codex / WorkBuddy / DSH-flash 的开工提示词（主人复制粘贴用） |
 
 ## 目标目录结构（实现期）
 
