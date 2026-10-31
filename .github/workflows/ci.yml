@@ -3,7 +3,7 @@ name: CI
 # 个人项目：直接 push，不走 PR 流程。
 on:
   push:
-    branches: [main, dev]
+    branches: [main, master, dev]
 
 env:
   GO_VERSION: "1.25"

@@ -34,7 +34,8 @@ event_id, ch, session, action, result, cost_ms, detail
 日期 | 通道 | 收/发条数 | 跳过原因分布 | 失败数 | LLM 调用次数 | token | 估算费用 | 活跃会话数
 ```
 
-落库 `daily_stats`，同时输出 `logs/daily-YYYY-MM-DD.md`。
+P0：输出 `logs/daily-YYYY-MM-DD.md`（文件，先不落库）。
+P1 起：落库 `daily_stats`，同时保留文件。
 
 ## 4. 运维命令（`fishctl`）
 

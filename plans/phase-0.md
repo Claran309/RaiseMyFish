@@ -7,6 +7,15 @@
 
 无（从零开始）。
 
+## 开工前置（环境检查）
+
+- [ ] Go 1.25+（本机 1.27 可用）
+- [ ] PostgreSQL 17+ 已安装并运行在 5432（**当前未检测到，需先装/启动**）
+- [ ] `golangci-lint` 已安装（CI 用；本地可先用 `go vet` 代替）
+- [ ] B站凭据可用：`bili` 在 `~/.dsh/bili-cli/.venv/Scripts/bili.exe`（配置路径，不必进 PATH）；弹幕监听用 `node <dsh-bili-whale>/tools/commands/danmaku.mjs`
+- [ ] `.env` 从 `.env.example` 复制，填 `FISH_DB_DSN` / `FISH_LLM_KEY`
+- [ ] 分支：远端默认是 `master`，CI 已监听 `main` / `master` / `dev` 任一
+
 ## 任务清单
 
 ### 0.1 仓库骨架与基础设施
@@ -15,7 +24,7 @@
 - [ ] 结构化日志（zap，JSON，落文件 + stderr）
 - [ ] `cmd/fishd` 入口：装配依赖、优雅退出
 - [ ] `cmd/fishctl` 入口：至少 `status` / `tail`
-- [ ] `migrations/0001_init.sql` 建表（events/tasks/memory_sources/llm_usage/send_log/dlq）
+- [ ] `migrations/0001_init.sql` 建表（events/tasks/memory_sources/memory_records/llm_usage/send_log/dlq）
 
 ### 0.2 store 层
 - [ ] repository 接口（EventRepo / TaskRepo / MemoryRepo / UsageRepo）

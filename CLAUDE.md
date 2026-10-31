@@ -13,7 +13,7 @@
 ## 工具特定说明
 
 - 项目使用 Go 1.25+；命令见 `Makefile`。
-- 提交直接 push 到 `main`（或 `dev`），**不走 PR 流程**。
+- 提交直接 push 到 `main`（或 `master` / `dev`），**不走 PR 流程**。
 - 改接口/数据模型时同步更新 `contracts/` 或 `docs/`。
 - 没有测试的改动不要 push。
 - 不确定的设计点写入对应 Phase 的「待定」区，不自行发明。

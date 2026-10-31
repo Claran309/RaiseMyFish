@@ -98,8 +98,9 @@ WS 库到 P3 再选型（可参考 lanmei 的 `internal/gateway/` 与 `lxzan/gws
 ```go
 type Collector interface {
     Name() string
-    Start(ctx context.Context, out chan<- Event) error
-    Health() HealthStatus
+    // Start 启动采集循环，阻塞直到 ctx 取消；错误经 errc 上报后继续重连。
+    Start(ctx context.Context, out chan<- event.Event, errc chan<- error) error
+    Health() Health
 }
 ```
 

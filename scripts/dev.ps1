@@ -49,9 +49,9 @@ function Start-Dev {
 
 function Stop-Dev {
     if (Test-Path $PidFile) {
-        $pid = Get-Content $PidFile
-        try { Stop-Process -Id $pid -Force; Write-Host "[✓] 已停止 fishd ($pid)" -ForegroundColor Green }
-        catch { Write-Host "[!] 进程已不存在 ($pid)" -ForegroundColor Yellow }
+        $fishdPid = Get-Content $PidFile
+        try { Stop-Process -Id $fishdPid -Force; Write-Host "[✓] 已停止 fishd ($fishdPid)" -ForegroundColor Green }
+        catch { Write-Host "[!] 进程已不存在 ($fishdPid)" -ForegroundColor Yellow }
         Remove-Item $PidFile -Force
     } else {
         Write-Host "[*] 没有记录中的 fishd 进程" -ForegroundColor Yellow
@@ -62,9 +62,9 @@ function Show-Status {
     Write-Host "=== RaiseMyFish 开发状态 ===" -ForegroundColor Cyan
     Write-Host ("PostgreSQL : " + $(if (Check-PG) { "运行中" } else { "未运行" }))
     if (Test-Path $PidFile) {
-        $pid = Get-Content $PidFile
-        $alive = Get-Process -Id $pid -ErrorAction SilentlyContinue
-        Write-Host ("fishd      : " + $(if ($alive) { "运行中 (PID $pid)" } else { "已退出（PID 文件残留）" }))
+        $fishdPid = Get-Content $PidFile
+        $alive = Get-Process -Id $fishdPid -ErrorAction SilentlyContinue
+        Write-Host ("fishd      : " + $(if ($alive) { "运行中 (PID $fishdPid)" } else { "已退出（PID 文件残留）" }))
     } else {
         Write-Host "fishd      : 未启动"
     }

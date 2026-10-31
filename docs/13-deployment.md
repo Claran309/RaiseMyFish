@@ -45,9 +45,9 @@ make docker-logs  # 跟随日志
 ## 2. 交付期（Docker Compose）
 
 ```yaml
-# deploy/docker-compose.yml（实现期编写）
+# deployment/docker-compose.yml（实现期编写）
 services:
-  postgres:   # 15+，数据卷挂载
+  postgres:   # 17+，数据卷挂载
   fishd:      # 构建自本仓库
   # 协议端按需（用户自备 cookie/账号）
 ```
@@ -67,10 +67,16 @@ addr = "127.0.0.1:8080"
 [db]
 dsn_env = "FISH_DB_DSN"
 
-[brain.openai]
-base_url = "https://api.deepseek.com/v1"
+[llm.providers.deepseek]
+type        = "openai"
+base_url    = "https://api.deepseek.com/v1"
 api_key_env = "FISH_LLM_KEY"
-model = "deepseek-chat"
+models      = ["deepseek-chat"]
+
+[llm.routing]
+default = "deepseek:deepseek-chat"
+live    = "deepseek:deepseek-chat"
+dm      = "deepseek:deepseek-chat"
 
 [channels.live]
 enabled = true

@@ -34,8 +34,6 @@ logs/**/*.jsonl
 # ── 部署数据 ────────────────────────────────────────
 deployment/.env
 deployment/data/
-deploy/.env
-deploy/data/
 
 # ── IDE / 系统 ──────────────────────────────────────
 .idea/

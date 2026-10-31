@@ -60,7 +60,9 @@ type Event struct {
 | qq | `qq:{bot_id}:{msg_id}` |
 
 - 入库：`INSERT ... ON CONFLICT (id) DO NOTHING`
-- 消费前：查 status，非 `pending` 跳过
+- 入队去重：`Publish` 返回 `inserted=false` 即重复
+- 抢占语义：`ClaimPending` 原子地把 `pending → queued`，返回的事件归本消费者所有
+- 消费者持有 `queued` 事件后**直接处理**，不再按 `pending` 判断；禁止两个消费者处理同一事件
 - 禁止用自增 ID、时间+内容哈希做键
 
 ## 3. 总线接口
@@ -85,12 +87,20 @@ type Bus interface {
 ## 4. 状态机（合法迁移）
 
 ```
-pending  → skipped | queued
+pending  → skipped | queued          (ClaimPending)
 queued   → replying | retry | dead
 replying → sent | retry | dead
-sent     → done | retry
+replying → queued                    (崩溃恢复：超时重置)
+sent     → done | retry              (done = 核验通过/补偿记账)
 retry    → queued | dead
 ```
+
+崩溃恢复策略：
+
+- `replying` 超时（默认 5 分钟）→ 重置为 `queued`，由 Claim 重新取走
+- `sent` 超时 → 进入 `retry` 做核验/记账补偿，**不重发**（已发出的消息不重复发）
+- `queued` 长时间未处理 → 说明 worker 崩溃 → 重新入队
+- 进程重启后：从 `pending/queued/replying/retry` 恢复，`pending` 重新进调度
 
 非法迁移必须返回错误（防状态错乱）。
 

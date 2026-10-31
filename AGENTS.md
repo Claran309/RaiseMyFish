@@ -92,7 +92,7 @@ deployment/          docker-compose 等交付物
 
 - 每次只做一个 Phase 内的任务；跨 Phase 需用户明确授权
 - 开始前读当前 Phase 计划，完成后勾掉任务、写一句结果
-- **提交直接 push 到 `main`（或 `dev`），个人项目不走 PR 流程**
+- **提交直接 push 到 `main`（或 `master` / `dev`），个人项目不走 PR 流程**
 - commit message：`phaseN: 做了什么（验证方式）`
 - 实现与文档冲突：以文档为准，或先改文档并说明原因
 - 设计缺口：记在计划文档「待定」区，不自行发明方向

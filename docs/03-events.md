@@ -14,7 +14,7 @@ type Event struct {
     Channel   string    // live | comment | dm | qq
     Dir       string    // in（收到）| out（发出）
     Session   string    // 会话标识：房间号 / BV号 / 用户uid / QQ群号
-    From      string    // 发送者标识（uid 或昵称）
+    FromID    string    // 发送者标识（uid）
     FromName  string    // 展示名
     Text      string    // 内容（已剥离平台格式）
     Private   bool      // 是否私密（dm/qq 私聊 = true）
