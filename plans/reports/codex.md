@@ -168,3 +168,66 @@ DSH请用新基线/放行单协助下一次Codex开发会话，收到后写本�
 契约与派发中的权限/文件范围按主人的本轮授权发布；加载器补丁和后续Brain功能仍分别保留实际验证与DSH复核记录。未修改任何既有ADR，不宣称当前已具备召回、实际模型人格通过率或事件消费能力。
 
 基线发布自检：17个本地链接有效，Memory六种数据类型/Reader/纯校验声明与Brain字段一致，未使用any或不透明JSON；0.7b集成哈希保持不变、四份延后草稿留存，尚无internal/memory或internal/brain实现；单测/vet/build/依赖校验再次通过，格式和diff检查无输出。
+
+## COMM-008 · 0.6接手与实施计划
+
+已依据主人本轮派发接手0.6，基线05a0ee9/P0-MEMORY-1，已读放行单与Brain/Persona/Memory/Event契约。只写brain/provider、memory DTO/纯校验、event types、Usage切片、config/cmd接缝及对应技术文档/本报告；不修改DSH/WorkBuddy报告，不恢复0.7c，不改迁移或既有ADR。其他未提交协作文案保持原样。
+
+编码前补contracts/brain.md的P0-BRAIN-1：固定单次Provider接口、统一最多3次调用、空回复最多补1次、未知用量/价格NULL、取消后的有界记账、保守UTF-8预算与字段/诊断边界。调用模型仅使用httptest/mock；本轮不使用真实LLM key或产生平台调用费用。
+
+- [x] Event枚举与Memory DTO/范围校验：先写测试，未实现时编译红，再实现并通过。
+- [x] store.UsageRepo/GORM切片：先写校验/真实PG测试，再实现；NULL统计、并发写入和取消路径通过。
+- [x] 单次OpenAI兼容Provider：先写httptest，再实现；成功/失败/超时/取消/重定向/大小限制及有效usage保留通过。
+- [x] Brain上下文/预算/隐私/重试/记账：先写测试再实现；审查新增行为红→绿证据见COMM-009，并发/取消路径有界。
+- [x] config/路由与cmd诊断：先写测试再实现，保持通道关闭，真实CLI/PG无模型调用诊断通过。
+- [x] 全仓单测/真实PG/vet/build/lint/Linux race通过，冻结快照与教学说明已交付；这是Codex实施进度，DSH未独立验收，不提交/push。
+
+## COMM-009 · 0.6实现交付，待DSH独立验收
+
+基线：05a0ee9/P0-MEMORY-1，P0-BRAIN-1按本轮授权细化。本人已完成实现、自测与内部只读代码审查，**尚未获得DSH对本轮的独立验收；未暂存、提交或push**。请DSH收到后写本人回执、更新看板为待验收/实际结论，勿直接转抄自测。
+
+### 实际变更
+
+- brain/provider：单次非流式HTTP、HTTPS/loopback端点、禁重定向、2MiB响应限制、安全typed error、usage/正文分层解码。
+- brain：Task/ContextInput/Reply、Scope检查、只读排序/预算、统一3次尝试/空回复最多补1次、并发/总时间约束、逐次Usage记录、中文rune长度、可空汇总Meta；不做发送或查询SQL。
+- memory/event：仅契约DTO、枚举与纯校验；dm误标公开/跨私密会话/未知Scope拒绝。没有Memory Reader真实实现、总线或状态迁移。
+- store/database：仅UsageRepo，写既有llm_usage；没有改schema/迁移或完成0.2其余repository。
+- config/cmd：可选启用、Provider/models/routing与按model报价、环境覆盖、重复路由复用Brain；fishd装配与check-brain无调用诊断。默认llm和所有通道仍关闭，版本摘要phase0.6-dev。
+- README/对应技术文档与教学说明同步；不改personas/eval、DSH/WorkBuddy报告、既有ADR和迁移，不恢复.workbuddy的回归草稿。其他Agent已有未提交协作文案保留，不认领。
+
+### 测试顺序与内部审查
+
+各新模块先写测试文件到工作区，再运行并观察未实现符号的编译红，随后实现通过；这些属于新API引入的编译失败，不冒称全部都是运行期断言失败。可运行的行为红→绿单独记录：
+
+1. 总/等槽DeadlineExceeded被误标不可重试，新增测试实际失败；已改为上层可用新Context重试，Canceled仍不可重试。
+2. 正文结构错/unsupported tool_calls/content对象时会丢掉已返回的usage，新增测试实际失败；已先独立保留有效统计再拒绝正文。
+3. 总时限在准备之后才开始且裁剪O(N²)，2000条记录用1ns总时限仍耗时约2.14秒并返回成功，新增测试实际失败；已将准备置于总Context/并发槽、限制4096条/引用和4MiB处理文本，使用可取消的按类别二分裁剪。
+
+requesting-code-review技能要求的内部只读审查提出3项Important；修复后审查者确认代码层闭环，**它未运行测试、没有代替DSH验收**。测试由Codex独立执行结果如下。
+
+### 可复验结果
+
+| 命令/路径 | Codex结果 |
+|---|---|
+| go test ./... -count=1 | 通过 |
+| go test -tags=integration ./... -count=1 | 真实PG通过，随机独立schema；含UsageRepo和假HTTP→现有人格→Brain→PG账本组合路径 |
+| go vet ./...；go build ./...；fishd -trimpath构建 | 通过 |
+| go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run --build-tags integration ./... | 0 issues |
+| go mod verify；gofmt -l .；git diff --check | 依赖通过；格式/差异无输出 |
+| WSL Ubuntu22.04/Go1.25，CGO_ENABLED=1 go test -race ./... -count=1 | 全仓通过；现有WSL配置警告与应用无关，未修改WSL配置 |
+| 真实CLI/PG：使用临时loopback假端点配置运行fishd check-brain | 通过；装配dafeiyu和路由，provider_called=false、memory_reader=not_implemented，模型/用量调用为0 |
+| go test -cover：brain / provider / memory / event / store | 80.5% / 90.9% / 91.7% / 100% / 90% |
+
+价格只在input/output usage与两项报价都已知时估算；缺失为SQL NULL。失败正文仍可产生已知费用，不能因为生成失败就漏账。每次调用写一行，记账失败停止且不重新生成；取消后最多额外5秒清理记账。
+
+### 交付快照与边界
+
+确定路径/字节数/SHA256见 **plans/reports/phase-0.6-manifest.json**；manifest不含.env、日志、凭据或他人报告。本报告与manifest自身不放入自己的循环哈希。请DSH先逐条核对，再独立执行契约验收；如果文件变化就重新确认快照，不能用旧结果盖新代码。
+
+最终冻结检查：32份文件哈希/字节数逐项一致，较基线新增26个顶层测试；4个本地Markdown链接有效，交付与运行日志未发现本机凭据值，Brain生产依赖不含database/GORM；迁移、既有ADR、人设/用例和4份延后草稿均未改。索引为空，尚无本轮Git提交。
+
+正式验收建议重点重跑：Scope错配Provider零调用；公开数据拒绝DM/私密记录；预算先裁记忆、soul不丢且不切坏中文；HTTP4xx含429不重试/3次总上限/空回复1次；取消后仍记账且无虚假排队账本；正文错误保留usage；NULL与已知0不同；真实PG逐次记录与配置/诊断无密钥回显。完整规则以contracts/brain.md与contracts/memory.md为准，不以本表代替断言。
+
+未执行/不在范围：真实LLM调用、真实平台逐一兼容验证、0.7c人格≥90%、Memory真实召回/SQL隐私查询、总线/调度/发送及P2能力。官方OpenAI文档两处抓取被403/Cloudflare阻止，未声称查证最新模型/价格；协议按既有项目契约和本地HTTP假服务测试，不使用真实key。Windows32位GCC不能跑amd64 race，WSL不能直连Windows localhost PG，因此race与真实PG分开验证；没有改PG监听/防火墙，也不冒称远端CI组合已通过。
+
+教学说明：docs/update/2026-10-31-0303-大脑生成与用量切片.md。本轮实现写入结束，暂停获派文件，交DSH独立验收；WorkBuddy继续等待单独轻量派发，不自动推进0.7c。

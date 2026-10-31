@@ -1,0 +1,177 @@
+{
+  "task": "0.6",
+  "base_commit": "05a0ee9",
+  "state": "Codex实现/自测完成，待DSH独立验收；未暂存/提交/push",
+  "new_top_level_tests": 26,
+  "exclusions": [
+    ".env",
+    "logs/",
+    ".workbuddy/",
+    "personas/",
+    "migrations/",
+    "其他agent报告/协作文案",
+    "本报告与manifest自身"
+  ],
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 8846,
+      "sha256": "72989e7e5904a6a5cebe77cbd80871ab904db9d6873dbaf5e2e8647ff266d437"
+    },
+    {
+      "path": "cmd/fishd/brain.go",
+      "bytes": 2965,
+      "sha256": "c309ca24fd29371fbff5f4204019bc86b8b18e8f438c6edb0b4531ad11c6260b"
+    },
+    {
+      "path": "cmd/fishd/main.go",
+      "bytes": 4534,
+      "sha256": "77becd7990b5a9db1e2402c8752ee8a80d911890c990c7490809e157c88804b7"
+    },
+    {
+      "path": "cmd/fishd/main_test.go",
+      "bytes": 3277,
+      "sha256": "53213202ac9c20e8289e34ae86359c3f2c4eb6fd1afc069d7bc3163525faa7bf"
+    },
+    {
+      "path": "config/fishd.toml",
+      "bytes": 1226,
+      "sha256": "39cb5ac7dff931b931934d2abd5ff7f419818ff6f8df88df33a955a39567497c"
+    },
+    {
+      "path": "contracts/brain.md",
+      "bytes": 6949,
+      "sha256": "30bdee1c1f67fc1d3fd1e96ef70622b97c7eff8e6d656e0dc5e3f1c032bdafe8"
+    },
+    {
+      "path": "contracts/event.md",
+      "bytes": 3698,
+      "sha256": "299abdb6d89846a182e9adc840462644606be35f87ebc4fb21c3f8164ea66b8c"
+    },
+    {
+      "path": "contracts/memory.md",
+      "bytes": 6845,
+      "sha256": "5854f205a796cc28abdd9ddf6d91d2b6d5220e41bae658c3746251e1f732ef77"
+    },
+    {
+      "path": "docs/05-brain.md",
+      "bytes": 6078,
+      "sha256": "bcf0f40115bacb8ee78f8d1ed48554a922b9cc5dd2b062530f03b728c2989020"
+    },
+    {
+      "path": "docs/13-deployment.md",
+      "bytes": 4128,
+      "sha256": "b30cf6f5e1f2e4e6bd339198acf22d1e2153f4239d412cba0e6c6431291c6c3f"
+    },
+    {
+      "path": "docs/testing.md",
+      "bytes": 2848,
+      "sha256": "023969e7111d1110b7596233a4644d9faf05ccfbf0adee904b4cc8ea67ee8d5c"
+    },
+    {
+      "path": "docs/update/2026-10-31-0303-大脑生成与用量切片.md",
+      "bytes": 5485,
+      "sha256": "1fa990ce835fdcce49546ad74d499b7ac07264a968f373792eb86a6d12897af2"
+    },
+    {
+      "path": "go.mod",
+      "bytes": 693,
+      "sha256": "cb70573763aaa64507549530d41146faa2e81a17b13047d2eee5136dbeb2093a"
+    },
+    {
+      "path": "go.sum",
+      "bytes": 4072,
+      "sha256": "e7945a320d9856b498becdd65f4f8799af3870e450085db95adcf542ececf954"
+    },
+    {
+      "path": "internal/brain/brain.go",
+      "bytes": 8143,
+      "sha256": "a5805eb2cb451ac2d53d7c3ac7068f2f68b0421dd5d998bc18db7ac149559b6d"
+    },
+    {
+      "path": "internal/brain/brain_test.go",
+      "bytes": 13279,
+      "sha256": "c2806d865d32485caf4ddf8e5196a88262e4fd5c7f723acebd7fd5119d72c43b"
+    },
+    {
+      "path": "internal/brain/context.go",
+      "bytes": 8225,
+      "sha256": "0f029327bc523ea771eb5018115d7f99d831909539d68cc2ada1f5c02af197d9"
+    },
+    {
+      "path": "internal/brain/provider/openai.go",
+      "bytes": 5095,
+      "sha256": "0c2be134a65b0e1fb15d7963fa900e1c3419a2288c868f3cbd13ac4bf7db7df3"
+    },
+    {
+      "path": "internal/brain/provider/openai_test.go",
+      "bytes": 6501,
+      "sha256": "3c81ca33560c07e20b31940a29b474532abfe253b04868bee85eb2874927ecbe"
+    },
+    {
+      "path": "internal/brain/provider/types.go",
+      "bytes": 1417,
+      "sha256": "5a56ff0d25aa3f94aad25cd282f993cee6536406276a1fe63b20bc609cddf3b6"
+    },
+    {
+      "path": "internal/brain/types.go",
+      "bytes": 2370,
+      "sha256": "ed5e0ccb96dfa5e3734cb4bc46269c1eea2d75616884857684a86995f37ff5b2"
+    },
+    {
+      "path": "internal/config/config.go",
+      "bytes": 4362,
+      "sha256": "fb7a6938c09b19649fd5f756772811fe8ea41f6d94bb2ff205de4c6a33e6f149"
+    },
+    {
+      "path": "internal/config/llm.go",
+      "bytes": 5419,
+      "sha256": "c9deb7b75f88e01561a4531ce18cf86da856cb3264d4e65100196a86801b0a49"
+    },
+    {
+      "path": "internal/config/llm_test.go",
+      "bytes": 2655,
+      "sha256": "21655f80d16ce29103a70556c73954c3c42e81deed75fbca6aee93f49915a055"
+    },
+    {
+      "path": "internal/database/usage.go",
+      "bytes": 1514,
+      "sha256": "cf2b3ac4c98b88d515fb68dd34f18b434da7c04f2066ff54444e6e1d43d506e5"
+    },
+    {
+      "path": "internal/database/usage_integration_test.go",
+      "bytes": 4384,
+      "sha256": "a44eabff48274053d8a7fc60d1b7753e60138cab2fca2315edb8420da6de563c"
+    },
+    {
+      "path": "internal/event/types.go",
+      "bytes": 1576,
+      "sha256": "363604ba318f8fdf7b93ce49bc0d5894292eae338a8246f31294b145677c1182"
+    },
+    {
+      "path": "internal/event/types_test.go",
+      "bytes": 624,
+      "sha256": "e51c5fe14be61096223d995269243ac073ff9673a25a83a970e4112f27566de3"
+    },
+    {
+      "path": "internal/memory/context.go",
+      "bytes": 4279,
+      "sha256": "bed9e49de208766470e6882ad6d330469481081250bdf087ed3d251cba05d685"
+    },
+    {
+      "path": "internal/memory/context_test.go",
+      "bytes": 4332,
+      "sha256": "7d97813ea863c52bc3f185b303aa0258b0dc6525ca49a1299e99f669d09f65cf"
+    },
+    {
+      "path": "internal/store/usage.go",
+      "bytes": 1294,
+      "sha256": "741d3b477639ca61b2443739d95e212f8f5b0975da0e885cbd4c18a12faf289c"
+    },
+    {
+      "path": "internal/store/usage_test.go",
+      "bytes": 887,
+      "sha256": "306a5ae86ab58e44c3085a623ddc450ce98c1a2504b326f49256c2c84ce9a06d"
+    }
+  ]
+}

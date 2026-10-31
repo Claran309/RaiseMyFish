@@ -33,6 +33,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	fs.SetOutput(stderr)
 	path := fs.String("config", "config/fishd.toml", "TOML配置文件")
 	envPath := fs.String("env-file", ".env", "本地环境文件")
+	brainRoute := fs.String("brain-route", "default", "仅check-brain使用的具名路由")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -40,8 +41,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		return errors.New("命令参数无效")
 	}
 	action := fs.Args()
-	if len(action) > 0 && (len(action) != 2 || action[0] != "migrate" || action[1] != "up") {
-		return errors.New("用法：fishd [--config 路径] [--env-file 路径] [migrate up]；不支持破坏性回滚")
+	migrate := len(action) == 2 && action[0] == "migrate" && action[1] == "up"
+	checkBrain := len(action) == 1 && action[0] == "check-brain"
+	if len(action) > 0 && !migrate && !checkBrain {
+		return errors.New("用法：fishd [--config 路径] [--env-file 路径] [migrate up|check-brain]；不支持破坏性回滚")
 	}
 	cfg, err := config.Load(*path, *envPath)
 	if err != nil {
@@ -59,7 +62,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	}
 	defer func() { result = errors.Join(result, resources.Close(ctx)) }()
 	timeout := time.Duration(cfg.Database.TimeoutSeconds) * time.Second
-	if len(action) > 0 {
+	if migrate {
 		migrateCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 		if err := database.Migrate(migrateCtx, resources.DB); err != nil {
@@ -72,13 +75,25 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	err = database.Ready(checkCtx, resources.DB)
-	if err == nil {
+	if err == nil && !checkBrain {
 		err = resources.Acquire(checkCtx)
 	}
 	cancel()
 	if err != nil {
 		return err
 	}
+	usage, err := database.NewUsageRepo(resources.DB)
+	if err != nil {
+		return err
+	}
+	routes, pack, err := buildBrains(ctx, cfg, usage, logger)
+	if err != nil {
+		return err
+	}
+	if checkBrain {
+		return printBrainDiagnostic(*brainRoute, routes, pack, stdout)
+	}
+	logger.Info("Brain装配检查完成，未消费事件", zap.String("action", "brain_setup"), zap.Int("routes", len(routes)))
 	check := func(parent context.Context) error {
 		probe, stop := context.WithTimeout(parent, timeout)
 		defer stop()
@@ -95,7 +110,7 @@ func serve(ctx context.Context, path string, interval time.Duration, logger *zap
 	if err := check(ctx); err != nil {
 		return err
 	}
-	state := infra.Status{PID: os.Getpid(), State: "running", Database: "ready", Version: "phase0.1-dev", UpdatedAt: time.Now().UTC()}
+	state := infra.Status{PID: os.Getpid(), State: "running", Database: "ready", Version: "phase0.6-dev", UpdatedAt: time.Now().UTC()}
 	if err := infra.WriteStatus(path, state); err != nil {
 		return err
 	}

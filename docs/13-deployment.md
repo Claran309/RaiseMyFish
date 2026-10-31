@@ -59,7 +59,7 @@ services:
 
 ## 3. 配置
 
-当前0.1实际支持的配置以仓库 `config/fishd.toml` 为准：db、log、runtime、全部关闭的channels开关；下面是后续Brain/通道装配后的配置目标，**不能作为0.1配置直接使用**。0.1不监听8080，不提供HTTP接口；fishctl status通过PG探测与本机心跳文件判断运行状态。
+当前0.6实际支持的配置以仓库 `config/fishd.toml` 为准：db、log、runtime、全部关闭的channels开关，以及默认禁用的llm/Provider/routing。下面仍包含后续server/通道目标，不能整段直接使用；当前不监听8080。fishctl status检查PG与心跳，fishd check-brain只验证Brain装配，不调用模型。
 
 ```toml
 # config/fishd.toml（示例）

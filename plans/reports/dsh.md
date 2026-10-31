@@ -131,3 +131,35 @@
   3. `ContextFor` 返回正文做了 TrimSpace；契约 §2「保留其他文本内容」与 §4 SystemPrompt TrimSpace 的边界需明确
   4. 流程偏差：WorkBuddy 如实记录未严格走「先红后绿」，测试随后抓到 1 个重复场景缺陷并已修
 - 未验证项：Linux race（未复现）、真实模型人格通过率（属 0.7c）
+
+## COMM-006 / COMM-007 回执（2026-10-31 17:20）
+
+- 提交核实：`5ece97f`（0.7b 接收 + 正文边界修复）、`05a0ee9`（P0-MEMORY-1 + 0.6 放行）均在 master；`origin/master` = `05a0ee9`。
+- 0.7b 增量复核（不抄自测）：
+  - 全仓 `go test ./...` 通过（6 包）
+  - 新增正文边界用例 PASS：`TestSplitContextsPreservesBody`、`TestSplitContextsMixedHeadingIsBody`、`TestContextForPreservesNormalizedBody`
+  - 契约澄清核对：`contracts/persona.md` 补充裁决（混合标题=正文、正文空白/缩进/换行保留、TrimSpace 仅判空）与实现一致
+- Memory 基线 P0-MEMORY-1 核对：
+  - `Scope/Message/Record/Fact/Context/SharedState/Reader` 与 `contracts/brain.md` 的 `ContextInput.Memory` 字段对齐
+  - 范围校验规则（Recent 同会话、CrossChannel 仅公开、私密限同通道）与 docs/06 一致
+- 0.6 放行单核对：范围（brain/provider、memory DTO、event types、Usage 切片、config/cmd 接缝）明确；0.2 切片处理合理；不越 Phase
+- 结论：0.7b 复核通过；0.6 放行确认，DSH 将按 `plans/phase-0.6-dispatch.md` 独立验收。
+- 看板：0.7b → 「✅ 复核通过（5ece97f）」；0.6 → 已放行（待 Codex 接手）。
+
+## 0.6 Brain 独立验收（2026-10-31 18:20）
+
+- 快照：`plans/reports/phase-0.6-manifest.json` **32/32** 文件哈希与字节数匹配。
+- 独立执行（不抄自测）：
+  - `go build ./...` 通过；`go vet ./...` 通过；`gofmt -l .` 无输出
+  - `go test ./... -count=1` 全仓 10 个包通过
+  - `go test -tags=integration ./... -count=1` 真实 PG 全通过
+  - 关键行为用例全 PASS：`TestInputPrivacyRejectsBeforeProvider`、`TestRetryBoundariesAndUnknownCost`、
+    `TestBudgetMemoryBeforePersonaAndNoMutation`、`TestBudgetPersonaSuffixAndImpossibleSoul`、
+    `TestCancellationStillAccountsAndUsageFailureStops`、`TestConcurrencyWaitHonorsCancellation`、
+    `TestTotalDeadlineIsRetryableButCancelIsNot`、`TestReplyAssemblyLengthAndKnownCost`
+  - `check-brain` 假端点诊断：`provider_called=false`、`memory_reader=not_implemented`、人格 `dafeiyu v1`（本鱼用临时 loopback 配置复现）
+  - 凭据回显：代码/toml/md 无明文密码；`logs/*.log` 无凭据
+- 契约核对（P0-BRAIN-1）：重试边界（4xx 含 429 不重试、最多 3 次、空回复补 1 次）、预算顺序（先记忆后 persona、soul 保留）、
+  中文 rune 截断、usage 未知为 NULL 与已知 0 区分、取消后仍记账、Provider 不自行重试——均有测试覆盖且通过
+- 结论：**0.6 独立验收通过**（待 Codex 提交）。
+- 未验证项：Linux `-race`（本机未复现）、真实模型调用与人格通过率（属 0.7c）

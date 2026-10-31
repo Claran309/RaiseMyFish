@@ -102,6 +102,7 @@ DTO校验是额外防线，不能替代查询层过滤或证明SQL实现已通�
 ## 4. 数据校验与展示顺序
 
 - Message的EventID、Channel、Session、Text非空，Dir为in/out，At非零；Recent只含目标会话，CrossChannel只含其他通道的公开消息。FromID/FromName可空。
+- dm来源的消息必须Private=true，不能通过误标private=false进入公开Context。Record/Fact的dm来源同样不能主动降为公开；未建立脱敏/解密授权流程前一律拒绝这种输入。
 - Record的ID/Summary非空；Importance/Confidence为有限且位于[0,1]的数，不能是NaN/Inf；私密Record必须有可核对的Channel/Session，且满足Scope。EventIDs是可追溯来源；不把旧状态历史当成当前事实。有效期筛选由repository负责，DTO不增加版本化功能。
 - Fact的Key/Value/SourceID非空、At非零、Channel合法、Session非空；来源缺失、余额未知、事实未观测时不伪造0或旧值，而是省略该事实。SourceID可引用事件ID或可信探测器名称，不含凭据或正文。
 - Fact仍须满足公开/私密范围；例如旧「存粮约90」没有当前来源/时效就不作为事实注入。事实新鲜度策略由其来源/0.9配置决定，本契约不自行发明状态更新机制。

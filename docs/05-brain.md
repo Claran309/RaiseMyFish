@@ -3,6 +3,8 @@
 > 大脑 = 把「一个事件 + 记忆 + 人格」变成「一条回复」的执行器。
 > 它是可插拔的：DSH、AstrBot、OpenAI 兼容 API、外部 agent 都是实现之一。
 
+0.6实际Go边界、重试/预算/计费与配置以 [P0-BRAIN-1](../contracts/brain.md) 实现基线为准；Memory DTO/范围按 [P0-MEMORY-1](../contracts/memory.md)。当前实现待DSH独立验收，默认不启用模型、不消费事件；`fishd check-brain`只是无模型调用的装配诊断。
+
 ## 1. 接口契约
 
 ```go
@@ -120,6 +122,8 @@ dm      = "deepseek:deepseek-chat"   # 可换更强模型
 每次请求记录：输入 token、输出 token、估算费用、耗时。写入 `llm_usage` 表。
 
 硬预算：单次请求 prompt 超过 `max_prompt_tokens`（如 3000）则截断记忆部分。
+
+0.6采用保守UTF-8字节计数+64框架余量，默认8192而非模型精确tokenizer；现有人格较大，配置3000可能连soul+场景都放不下，此时明确拒绝。真实费用只依赖服务端usage与用户配置报价，未知字段NULL；HTTP正文不合协议但有可用usage也要记账。完整实现规则见Brain契约，不以估算prompt字节数冒充实际token账单。
 
 ## 5. 失败处理
 

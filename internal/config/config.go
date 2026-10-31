@@ -1,4 +1,4 @@
-// Package config 加载基础设施配置，不修改进程环境或回显敏感值。
+// Package config 加载基础设施与可选Brain配置，不修改进程环境或回显敏感值。
 package config
 
 import (
@@ -19,6 +19,7 @@ type Config struct {
 	Log      Log      `toml:"log"`
 	Runtime  Runtime  `toml:"runtime"`
 	Channels Channels `toml:"channels"`
+	LLM      LLM      `toml:"llm"`
 }
 
 // Database 的连接串只从环境/本地dotenv读取，不能序列化输出。
@@ -41,7 +42,7 @@ type Runtime struct {
 	StaleSeconds     int    `toml:"stale_seconds"`
 }
 
-// Channel 是通道开关；0.1尚未装配业务通道，开启会明确报错。
+// Channel 是通道开关；当前尚未装配业务通道，开启会明确报错。
 type Channel struct {
 	Enabled bool `toml:"enabled"`
 }
@@ -68,6 +69,7 @@ func Load(path, envPath string) (Config, error) {
 		Database: Database{DSNEnv: "FISH_DB_DSN", TimeoutSeconds: 5},
 		Log:      Log{Level: "info", Dir: "logs"},
 		Runtime:  Runtime{StateFile: "data/fishd-status.json", HeartbeatSeconds: 5, StaleSeconds: 20},
+		LLM:      defaultLLM(),
 	}
 	if path != "" {
 		data, err := os.ReadFile(path)
@@ -101,6 +103,7 @@ func Load(path, envPath string) (Config, error) {
 			*dst = value
 		}
 	}
+	cfg.LLM.resolveEnvironment(lookup)
 	if err := cfg.Validate(); err != nil {
 		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
 	}
@@ -126,7 +129,7 @@ func (c Config) Validate() error {
 		return errors.New("心跳周期需为1至300秒，过期阈值需大于两倍周期且不超过3600秒")
 	}
 	if c.Channels.Live.Enabled || c.Channels.Comment.Enabled || c.Channels.DM.Enabled || c.Channels.QQ.Enabled {
-		return errors.New("0.1尚未装配业务通道，请关闭通道开关")
+		return errors.New("当前尚未装配业务通道，请关闭通道开关")
 	}
-	return nil
+	return c.LLM.Validate()
 }

@@ -3,7 +3,7 @@
 > 一条 AI 肥鱼的多通道陪伴系统：看直播、回弹幕、回私信、回评论、上 QQ，
 > 有共享记忆、有人格一致性、能无人值守跑。
 >
-> **状态：Phase 0 实现中。0.1基础设施已接收（364dcb3）；0.7b人格加载器已提交（5ece97f）。Memory基线P0-MEMORY-1已确认，0.6 Brain已放行开发，业务通道仍未装配。**
+> **状态：Phase 0 实现中。0.1/0.7b已接收；0.6 Brain已实现并完成Codex自测，待DSH独立验收。业务通道与Memory真实召回仍未装配。**
 
 ---
 
@@ -128,4 +128,21 @@ go test -tags=integration ./... -count=1
 go test -race -tags=integration ./... -count=1
 ```
 
-本地 lint：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...`。CI固定Go1.27与lint2.15.0；模块最低Go1.25。未接入的人格Go草稿仍在工作区，不能据全仓本地测试把0.7b判为验收完成。
+本地 lint：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...`。CI固定Go1.27与lint2.15.0；模块最低Go1.25。历史0.7c草稿留在已忽略的.workbuddy目录，不参与构建；0.7b已接收，本轮0.6自测仍不能替代DSH独立验收。
+
+## 0.6 Brain装配与无调用诊断
+
+`config/fishd.toml` 默认 `llm.enabled=false`，不要求模型密钥。启用后配置 `[llm.providers.<name>]` 的 type=openai、base_url、api_key_env、models与 `[llm.routing]` 的 default/live等路由；密钥仍只从环境/dotenv读。配置换Provider/model，代码不变。未实现的通道仍必须关闭。
+
+```powershell
+# 在本机配置副本启用llm并填写可信端点/模型清单后：
+go run ./cmd/fishd --config config.local.toml --brain-route default check-brain
+```
+
+诊断只校验PG/迁移、人格和路由装配，输出provider_called=false，不调用模型、不写虚假的LLM账本，也不声称验证了远端服务或Memory Reader。正式生成由Brain接口接受显式Task/ContextInput；本轮不提供会话消费、发送器或人格eval CLI。
+
+`FISH_LLM_BASE_URL` 只覆盖default路由对应Provider端点；`FISH_LLM_MODEL` 只覆盖default路由的模型且必须在models清单内，显式live等路由不改。每个唯一provider:model共享一个Brain并发上限，别名路由复用实例；这不是后续scheduler的全局并发控制。
+
+保守prompt预算为UTF-8消息字节数+64框架余量，默认8192；超过预算先裁记忆，再裁samples/rules后缀，soul/场景/当前事件保留，不可能容纳时拒绝调用。输入另限4096条/引用和4MiB文本，准备阶段也受总超时/并发约束。每次实际Provider调用写一行llm_usage，未知统计/报价为NULL，绝不把未知费用当0；报价按model放在provider.prices，只有明确免费才填0。
+
+网络/超时/5xx统一由Brain最多3次实际调用，空回复最多补1次且共享总次数；4xx含429不重试，协议错误不重试。取消后对已经发生的调用有独立5秒上限的记账；记账失败立即返回错误，不重复生成。HTTP成功但正文不支持时仍保存有效usage；完整JSON或计数无效时不伪造用量。没有真实模型评测或≥90%人格结论。

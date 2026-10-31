@@ -52,6 +52,8 @@ type Event struct {
 
 ## 2. 幂等键规则（必须遵守）
 
+0.6仅落地本节前的Go类型/枚举，并提供Channel/Dir/Status.Valid纯枚举检查；不因类型已存在就宣称幂等总线或合法状态迁移已经实现。
+
 | 通道 | 键 |
 |---|---|
 | live | `live:{room_id}:{msg_id}` |
