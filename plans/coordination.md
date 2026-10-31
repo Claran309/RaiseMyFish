@@ -43,7 +43,7 @@ Codex 负责模块的核心逻辑与技术集成；DSH 对每个交付独立验�
 
 ## 4. 共享工作区与 Git
 
-1. 默认共享工作区按精确路径协作；**仅 Codex 执行 Git 写操作**（包括 add/commit/pull/checkout/merge/push）。其他 Agent 可只读查状态和差异。保留个人项目直接 push master/main/dev、不走 PR 的约定。
+1. 默认共享工作区按精确路径协作。**Codex 与 DSH 均可执行 commit**（2026-11-01 主人授权 DSH 提交本鱼维护的文档与已验收内容）；**push 仍由 Codex 执行**（Codex 持有远端凭据；DSH 不代推，除非主人当面临时授权）。pull/checkout/merge 由 Codex 执行。保留个人项目直接 push master/main/dev、不走 PR 的约定。
 2. 不并行 go mod tidy、全仓 gofmt -w .、切分支或修改共用测试库。开发者只格式化获派文件，依赖变更提交 Codex。
 3. 集成窗口由 DSH 协助确认相关写入者已暂停，记录验收快照；没有回执不能当作已暂停。Codex 仅暂存本次验收覆盖的明确路径，禁止 git add . 混入别人的工作。
 4. 开发自测 → DSH 对确定快照独立验收 → Codex 核对差异并提交 → DSH 确认提交对应验收快照 → Codex 直接 push。快照后有变化就重核/重验；远端更新先保全本地工作，再整合验证，不强推。
