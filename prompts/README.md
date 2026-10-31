@@ -8,9 +8,9 @@
 
 | 文件 | 给谁 | 内容 |
 |---|---|---|
-| `codex-phase0.md` | Codex（首席，最终裁决） | 0.1 / 0.2 / 0.3 / 0.4 / 0.6 |
-| `workbuddy-phase0.md` | WorkBuddy（副手） | 0.7 / 0.5 / 0.8 |
-| `dsh-flash-phase0.md` | DSH + flash（执行） | 0.9 / 0.10 |
+| `codex-phase0.md` | Codex（首席，最终裁决） | 0.1 / 0.2 / 0.3 / 0.4 / 0.6（只做架构重活） |
+| `workbuddy-phase0.md` | WorkBuddy（副手） | 0.7 / 0.5 / 0.8 / 0.9 / 0.10（耗 token 的实现类） |
+| `dsh-flash-phase0.md` | DSH + flash（零散辅助） | 补测试 / 同步文档 / 小修 / 脚本 |
 
 ## 使用节奏
 
