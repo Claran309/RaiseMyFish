@@ -1,0 +1,207 @@
+{
+  "task": "0.7c v2评分/32768预算真实对照",
+  "base_commit": "745725293df3a70dde7a2988b2f7ccd24b21ede0",
+  "state": "新真实35条完成；v2主分57.1%未达90%；待DSH独立复核，未暂存/提交",
+  "owner_approval": "按推荐方案执行",
+  "run_id": "20261031T121041Z-bcd11c0e",
+  "old_evidence_git_bytes_preserved": 9,
+  "configured_secrets_absent": true,
+  "baseline_used": false,
+  "new_model_calls": 35,
+  "score_matrix": {
+    "old_v1": 15,
+    "old_v2_offline": 17,
+    "new_v1_same_outputs": 19,
+    "new_v2_primary": 20,
+    "denominator": 35
+  },
+  "checks_passed": [
+    "go test ./... -count=1",
+    "go test -tags=integration ./... -count=1 (真实PG)",
+    "go vet ./...",
+    "go build ./...",
+    "gofmt -l . (空)",
+    "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run (0 issues)",
+    "WSL CGO_ENABLED=1 /usr/local/go/bin/go test -race ./... -count=1",
+    "独立Python四格重算及hash/完整system核对",
+    "只读PG model+时间窗35行成功/token一致",
+    "git diff --check"
+  ],
+  "files": [
+    {
+      "path": "cmd/fishctl/main.go",
+      "bytes": 4097,
+      "sha256": "417158038b1d2e33629c77da4f26a1a7cf5e43e6ea46798748b6ba3ec19c3884"
+    },
+    {
+      "path": "cmd/fishctl/persona_eval.go",
+      "bytes": 12856,
+      "sha256": "bfc4c67ae20906b945ca97a051445eafc82f15035f8f61b54bf79a41b9f0db20"
+    },
+    {
+      "path": "cmd/fishctl/persona_rescore.go",
+      "bytes": 1406,
+      "sha256": "de7b08fc1815b54d473a59c946a7d68c2e872e86148c6b7b50879612011d1a32"
+    },
+    {
+      "path": "contracts/persona-eval.md",
+      "bytes": 5214,
+      "sha256": "c327742d0dcde3de0bae3dc50b8f4296c5c999fe47dc5c95c4c0f272e705b4e6"
+    },
+    {
+      "path": "docs/update/2026-10-31-0511-人格评分版本与预算对照.md",
+      "bytes": 5116,
+      "sha256": "bc8ba276cee3ae7bdc8f5ae51e0e847435c4ffadc851f566a06315864815c831"
+    },
+    {
+      "path": "internal/personaeval/rescore.go",
+      "bytes": 7074,
+      "sha256": "4cb0206e2e6da3a706273b06d88f7ab7b00870c36df15c04f9e918fa103a3e5f"
+    },
+    {
+      "path": "internal/personaeval/rescore_test.go",
+      "bytes": 1480,
+      "sha256": "99f78f771cfd5127eca3d841b24d31341259d0d3089253fff64025a8d1ed0452"
+    },
+    {
+      "path": "internal/personaeval/run.go",
+      "bytes": 14627,
+      "sha256": "25ea9fb1bcd19bb48343d64567bdbb576506753b88fc608aa9376986db2281af"
+    },
+    {
+      "path": "internal/personaeval/run_test.go",
+      "bytes": 5613,
+      "sha256": "d165a047d42368cf4bda1a713f9ab7ecbcea1701ed15484c6199f1f8604b82b4"
+    },
+    {
+      "path": "internal/personaeval/score.go",
+      "bytes": 10391,
+      "sha256": "ecdf92dbf54e508b9df5555ba8740e17905b4e5ce4a85e8536aaba9f0fb25975"
+    },
+    {
+      "path": "internal/personaeval/score_v2.go",
+      "bytes": 2365,
+      "sha256": "fca6d3b67c1ec961ac5d0c737797c6dd77be8dac957957b3f7362cbda4476c2d"
+    },
+    {
+      "path": "internal/personaeval/score_v2_test.go",
+      "bytes": 2771,
+      "sha256": "a43a0fdb50987124648e584f4717f6deb17a84746283060e0cfc3e5046221223"
+    },
+    {
+      "path": "plans/phase-0.7c-next-proposal.md",
+      "bytes": 5008,
+      "sha256": "7139b59aef15fe9ee6f3c8969548765a1e3bcfb136fc0be841ab52e517809589"
+    },
+    {
+      "path": "plans/reports/budget-proposal-32768.json",
+      "bytes": 4051,
+      "sha256": "54c02cbd803b6f31a97e02c2f522c23f93cf4a8b9988f648f8cc0ba628a1948e"
+    },
+    {
+      "path": "plans/reports/codex.md",
+      "bytes": 41646,
+      "sha256": "35314d438f6721103c8e714c291f68b4da07669eff5085c6580ad60cf029ff8c"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v2-final/report.json",
+      "bytes": 13564,
+      "sha256": "826e25d3a32c69bed1706c48f290fd5d9f442f0f3732fc24c5817cd52186235b"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v2-final/report.md",
+      "bytes": 266,
+      "sha256": "b8aa4a4d2734490d0b6f9991255a0e9c39e61f0a59d930e04ee06fb2f2b48d6b"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v2-final/rules.json",
+      "bytes": 6760,
+      "sha256": "4e8264b1b07d0d98deb849d1a1f1badbfa99a12e53b845538ec20db4cb9ad854"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v2/report.json",
+      "bytes": 13520,
+      "sha256": "f46310d780304a58628f58c3be0663e7052d6fe4ff31a986c389ab7cdd255887"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v2/report.md",
+      "bytes": 228,
+      "sha256": "3698710fba5904e37ebdedf58dba1a957c8ceefa63628c7d493b6426416003a4"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v2/rules.json",
+      "bytes": 6614,
+      "sha256": "cd05b1ddcb8d262def902fac63847a452b568649923d3b61adaf62b83f4d84e2"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e-compare-persona-lexical-v1/report.json",
+      "bytes": 13450,
+      "sha256": "50b694e13b4bbf3f64b01aa45311f12c220ce774157db2e5eef3bdd9fb299ab8"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e-compare-persona-lexical-v1/report.md",
+      "bytes": 266,
+      "sha256": "45415bb0e00c3936d5e1a9c592d277d7c1edaa3f8a493c944cf24e038a5d4c24"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e-compare-persona-lexical-v1/rules.json",
+      "bytes": 5288,
+      "sha256": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e/analysis.md",
+      "bytes": 4016,
+      "sha256": "2720964179cbed783e0eafe4886fd153584aacc492e3e1cf7110cc03bd0efa36"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e/cases.jsonl",
+      "bytes": 6051,
+      "sha256": "963a61334b106ef549ebd5289304aca2ad0b71ab5fdf0c089d3ff0720f6bcbae"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e/comparison-rules.json",
+      "bytes": 5288,
+      "sha256": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e/manifest.json",
+      "bytes": 4769,
+      "sha256": "92df4ff063586e5661793b7012f391a622f8ea624feae369000b6221ff7f9dd8"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e/pg-audit.json",
+      "bytes": 336,
+      "sha256": "2d33c1c827ea765c1b2af0e0f083cb8974a9e61a9d8708c9ceb8ff89e32b38a7"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e/report.json",
+      "bytes": 67592,
+      "sha256": "05607a30bf73933f2493384016f5fe8767b93647e8319f088898bf195660e3d5"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e/report.md",
+      "bytes": 11869,
+      "sha256": "c17a085ae73fc551d4608a77e53fcf3d8ff470ed6947702e3e65c92ee8f4d308"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e/results.jsonl",
+      "bytes": 44099,
+      "sha256": "e154f77a17c3f5fefa0a28aaa3042a7c86c8cbcdacfb9a55e6a09e7f1e480a74"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e/rules.json",
+      "bytes": 6760,
+      "sha256": "4e8264b1b07d0d98deb849d1a1f1badbfa99a12e53b845538ec20db4cb9ad854"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e/verification.json",
+      "bytes": 2339,
+      "sha256": "7066d23ae4a08e314e4c90166ee6e9a4321fbdd1426e73eb21a26ff280bb55e4"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T121041Z-bcd11c0e/verify.py",
+      "bytes": 7685,
+      "sha256": "8960dc1afc7f30a496eb0827bbeb9b6401a293d1a762bd0f06c77ae09f254d51"
+    }
+  ]
+}

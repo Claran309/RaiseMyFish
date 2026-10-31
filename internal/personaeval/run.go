@@ -71,14 +71,16 @@ type Configuration struct {
 
 // RunOptions 不将Secrets序列化到任何产物。
 type RunOptions struct {
-	RunID         string
-	OutputDir     string
-	SourceKind    string
-	CodeCommit    string
-	CodeFiles     []FileSnapshot
-	Configuration Configuration
-	Secrets       []string
-	Progress      io.Writer
+	RunID             string
+	OutputDir         string
+	SourceKind        string
+	CodeCommit        string
+	CodeFiles         []FileSnapshot
+	Configuration     Configuration
+	Secrets           []string
+	Progress          io.Writer
+	ComparisonVersion string
+	ComparisonRules   []byte
 }
 
 // CaseResult 保留原始和投递两组独立评分。
@@ -102,35 +104,38 @@ type CaseResult struct {
 
 // Report 不把失败或未完成用例从分母删除。
 type Report struct {
-	RunID             string         `json:"run_id"`
-	SourceKind        string         `json:"source_kind"`
-	BaselineUsed      bool           `json:"baseline_used"`
-	ProviderModel     string         `json:"provider_model"`
-	PackName          string         `json:"pack_name"`
-	PackVersion       string         `json:"pack_version"`
-	CodeCommit        string         `json:"code_commit"`
-	StartedAt         time.Time      `json:"started_at"`
-	FinishedAt        time.Time      `json:"finished_at"`
-	Configuration     Configuration  `json:"configuration"`
-	Files             []FileSnapshot `json:"fixture_files"`
-	CodeFiles         []FileSnapshot `json:"code_files"`
-	RulesSHA256       string         `json:"rules_sha256"`
-	Total             int            `json:"total"`
-	Completed         int            `json:"completed"`
-	RawPassed         int            `json:"raw_passed"`
-	DeliveredPassed   int            `json:"delivered_passed"`
-	RawPassRate       float64        `json:"raw_pass_rate"`
-	DeliveredPassRate float64        `json:"delivered_pass_rate"`
-	Complete          bool           `json:"complete"`
-	Fatal             bool           `json:"fatal"`
-	Interrupted       bool           `json:"interrupted"`
-	Reached90         bool           `json:"reached_90"`
-	StopReason        string         `json:"stop_reason,omitempty"`
-	HTTPAttempts      int            `json:"provider_attempts"`
-	InputTokens       *int           `json:"in_tokens"`
-	OutputTokens      *int           `json:"out_tokens"`
-	CostUSD           *float64       `json:"cost_usd"`
-	Results           []CaseResult   `json:"results"`
+	RunID                 string         `json:"run_id"`
+	SourceKind            string         `json:"source_kind"`
+	BaselineUsed          bool           `json:"baseline_used"`
+	ProviderModel         string         `json:"provider_model"`
+	PackName              string         `json:"pack_name"`
+	PackVersion           string         `json:"pack_version"`
+	CodeCommit            string         `json:"code_commit"`
+	StartedAt             time.Time      `json:"started_at"`
+	FinishedAt            time.Time      `json:"finished_at"`
+	Configuration         Configuration  `json:"configuration"`
+	Files                 []FileSnapshot `json:"fixture_files"`
+	CodeFiles             []FileSnapshot `json:"code_files"`
+	RulesSHA256           string         `json:"rules_sha256"`
+	RulesVersion          string         `json:"rules_version"`
+	ComparisonVersion     string         `json:"comparison_version,omitempty"`
+	ComparisonRulesSHA256 string         `json:"comparison_rules_sha256,omitempty"`
+	Total                 int            `json:"total"`
+	Completed             int            `json:"completed"`
+	RawPassed             int            `json:"raw_passed"`
+	DeliveredPassed       int            `json:"delivered_passed"`
+	RawPassRate           float64        `json:"raw_pass_rate"`
+	DeliveredPassRate     float64        `json:"delivered_pass_rate"`
+	Complete              bool           `json:"complete"`
+	Fatal                 bool           `json:"fatal"`
+	Interrupted           bool           `json:"interrupted"`
+	Reached90             bool           `json:"reached_90"`
+	StopReason            string         `json:"stop_reason,omitempty"`
+	HTTPAttempts          int            `json:"provider_attempts"`
+	InputTokens           *int           `json:"in_tokens"`
+	OutputTokens          *int           `json:"out_tokens"`
+	CostUSD               *float64       `json:"cost_usd"`
+	Results               []CaseResult   `json:"results"`
 }
 
 // Redactor 只保存非空实际敏感值，永不输出它们。
@@ -197,6 +202,12 @@ func Run(ctx context.Context, fixture Fixture, scorer *Scorer, generator Generat
 	if Digest(fixture.Rules) != Digest(scorer.Snapshot()) {
 		return report, errors.New("评分规则与冻结快照不符")
 	}
+	if o.ComparisonVersion != "" || len(o.ComparisonRules) > 0 {
+		comparison, err := NewScorerVersion(o.ComparisonVersion)
+		if err != nil || Digest(comparison.Snapshot()) != Digest(o.ComparisonRules) {
+			return report, errors.New("对照评分版本与冻结快照不符")
+		}
+	}
 	if err := fixture.VerifySources(); err != nil {
 		return report, err
 	}
@@ -220,8 +231,18 @@ func Run(ctx context.Context, fixture Fixture, scorer *Scorer, generator Generat
 	if err := os.WriteFile(filepath.Join(o.OutputDir, "rules.json"), fixture.Rules, 0600); err != nil {
 		return report, err
 	}
+	if len(o.ComparisonRules) > 0 {
+		if err := os.WriteFile(filepath.Join(o.OutputDir, "comparison-rules.json"), o.ComparisonRules, 0600); err != nil {
+			return report, err
+		}
+	}
 	in, out, cost := 0, 0, 0.
 	report = Report{RunID: o.RunID, SourceKind: o.SourceKind, ProviderModel: generator.Name(), PackName: fixture.Pack.Meta.Name, PackVersion: fixture.Pack.Meta.Version, CodeCommit: o.CodeCommit, StartedAt: time.Now().UTC(), Configuration: o.Configuration, Files: fixture.Files, CodeFiles: o.CodeFiles, RulesSHA256: Digest(fixture.Rules), Total: len(fixture.Cases), InputTokens: &in, OutputTokens: &out, CostUSD: &cost}
+	report.RulesVersion = scorer.Version()
+	report.ComparisonVersion = o.ComparisonVersion
+	if len(o.ComparisonRules) > 0 {
+		report.ComparisonRulesSHA256 = Digest(o.ComparisonRules)
+	}
 	if err := writeJSON(filepath.Join(o.OutputDir, "manifest.json"), report); err != nil {
 		return report, err
 	}
@@ -335,6 +356,7 @@ func markdown(r Report) string {
 	if r.StopReason != "" {
 		fmt.Fprintf(&b, "停止原因：%s\n\n", r.StopReason)
 	}
+	fmt.Fprintf(&b, "主规则：%s；规则hash：%s；对照规则：%s（新调用前冻结）。\n\n", r.RulesVersion, r.RulesSHA256, r.ComparisonVersion)
 	for _, row := range r.Results {
 		fmt.Fprintf(&b, "## %s · raw=%t delivered=%t\n\n输入：\n\n%s\n原始模型输出：\n\n%s\nBrain投递文本：\n\n%s\n失败标签：raw=%v；delivered=%v；error=%s\n\n", row.Case.ID, row.RawPass, row.DeliveredPass, fenced(row.Case.Input), fenced(row.RawOutput), fenced(row.DeliveredOutput), row.RawFailures, row.DeliveredFailures, row.Error)
 	}

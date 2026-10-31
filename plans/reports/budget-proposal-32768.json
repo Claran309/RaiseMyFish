@@ -1,0 +1,185 @@
+{
+  "source": "local fake Provider and no-op ledger, not a model evaluation",
+  "actual_model_calls": 0,
+  "budget": 32768,
+  "full_system_bytes": 21078,
+  "cases": 35,
+  "max_prompt_estimate": 24818,
+  "rows": [
+    {
+      "case_id": "live-001",
+      "prompt_estimate": 24776,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "live-002",
+      "prompt_estimate": 24761,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "live-003",
+      "prompt_estimate": 24773,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "live-004",
+      "prompt_estimate": 24773,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "live-005",
+      "prompt_estimate": 24782,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "live-006",
+      "prompt_estimate": 24794,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "live-007",
+      "prompt_estimate": 24818,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "live-008",
+      "prompt_estimate": 24767,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "comment-001",
+      "prompt_estimate": 23350,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "comment-002",
+      "prompt_estimate": 23338,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "comment-003",
+      "prompt_estimate": 23341,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "comment-004",
+      "prompt_estimate": 23338,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "comment-005",
+      "prompt_estimate": 23356,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "comment-006",
+      "prompt_estimate": 23344,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "dm-001",
+      "prompt_estimate": 22451,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "dm-002",
+      "prompt_estimate": 22451,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "dm-003",
+      "prompt_estimate": 22460,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "dm-004",
+      "prompt_estimate": 22475,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "dm-005",
+      "prompt_estimate": 22469,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "dm-006",
+      "prompt_estimate": 22508,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "dm-007",
+      "prompt_estimate": 22493,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qq-001",
+      "prompt_estimate": 22466,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qq-002",
+      "prompt_estimate": 22460,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qq-003",
+      "prompt_estimate": 22472,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qq-004",
+      "prompt_estimate": 22475,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qq-005",
+      "prompt_estimate": 22481,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qq-006",
+      "prompt_estimate": 22480,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qq-007",
+      "prompt_estimate": 22496,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qqg-001",
+      "prompt_estimate": 22032,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qqg-002",
+      "prompt_estimate": 22038,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qqg-003",
+      "prompt_estimate": 22038,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qqg-004",
+      "prompt_estimate": 22053,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qqg-005",
+      "prompt_estimate": 22053,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qqg-006",
+      "prompt_estimate": 22062,
+      "full_system_preserved": true
+    },
+    {
+      "case_id": "qqg-007",
+      "prompt_estimate": 22049,
+      "full_system_preserved": true
+    }
+  ]
+}

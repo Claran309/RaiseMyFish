@@ -292,3 +292,46 @@ requesting-code-review技能要求的内部只读审查提出3项Important；修
 已做无模型调用的预算干跑：全部35条完整system保留，最大估计24818，低于32768；0次实际模型调用、无PG写入。结果在plans/reports/budget-proposal-32768.json；临时Go验证器已清理，生产预算/评分仍是原值。该提案和干跑数据不夹入原版执行器的验收提交。
 
 预算和评分被主人本轮明确列为“待主人决策”，已通过问题工具给出三种范围；在收到选择前不改配置/评分源码，不启动新的收费模型运行。旧15/35证据永不覆盖。
+
+原版固化提交：7457252，精确32个已验收源码/证据/报告路径，未包含下一轮提案或干跑数据。提交检查遇原始report.md末尾空行格式告警，提交脚本未短路而继续提交；复查确认仅此一项，原报告字节/验收hash必须保留，不做尾部裁剪。显式只豁免该原始证据EOF空行后，其余源码/范围/内容检查通过；后续推送命令已带失败短路。网络推送多次超时，远端结果以实际push回执为准，不冒称已同步。
+
+## COMM-013 · 推荐方案已执行，新真实v2为57.1%（待DSH独立复核）
+
+主人已选择“按推荐方案执行”，批准新本地预算32768、v2测试/旧输出离线对照、一次真实35条同输出双评分。本轮不重复征求授权。前版7457252已成功push origin/master，远端跟踪引用一致；本节后续增量未暂存、未提交/push，须等DSH独立验收。
+
+### 结果与证据
+
+| 输出批次 | 预算 | 原始v1 | 原始v2 | 本轮新增调用 |
+|---|---:|---:|---:|---:|
+| 旧20261031T105248Z-501d0282 | 8192 | 15/35=42.9% | 离线17/35=48.6% | 0 |
+| 新20261031T121041Z-bcd11c0e | 32768 | 同输出19/35=54.3% | 主分20/35=57.1% | 35 |
+
+全部投递文本分数与对应原始分数相同。**新轮未达到≥90%（至少32/35），0.7/Phase 0退出标准不勾完成。** 35/35完整、35次调用每条一次、0生成错误、35次PG记账确认；CLI退出1表示未达标，非中断。无baseline回放，无重抽样，不自动进行下一轮收费。
+
+请求deepseek:deepseek-chat；服务端deepseek-flash（35次一致，与旧轮相同）。人格dafeiyu@v1，五文件与35条用例hash均与旧轮一致；温度0.7、输出上限128和超时/重试设置未变。仅被忽略的新本地配置启用llm/预算32768；生产config/fishd.toml仍false/8192。35条实际system SHA与完整21078字节人格一致，samples没有裁掉；最大实际估计24832，干跑24818的14字节差异来自动态合成ID长度，均小于32768，不把该字节估算冒充模型token数。
+
+真实时间UTC 2026-10-31 12:10:41–12:11:07（本地05:10:41–05:11:07 PDT）。输入227871/输出393 tokens，报价缺省故费用NULL。只读PG用model+时间窗核账35成功行和token一致；表无run_id，报告不冒称逐行run关联。
+
+新主目录plans/reports/persona-eval/20261031T121041Z-bcd11c0e/包含manifest、主/对照规则、用例快照、35条实际输出、检查点、PG核账、独立Python verify.py/verification.json及analysis.md。同输出v1目录为plans/reports/persona-eval/20261031T121041Z-bcd11c0e-compare-persona-lexical-v1/。旧输出最终v2在plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v2-final/；早期候选-v2目录也原样保留，其规则hash不同，仅为历史候选，最终分析使用-final。
+
+最终v2规则SHA256为4e8264b1b07d0d98deb849d1a1f1badbfa99a12e53b845538ec20db4cb9ad854；v1仍为09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4。主/对照JSON和解释器源码hash在新请求前冻结，此后未改生产源码。独立Python重算旧/新×v1/v2四格一致，输入/原文/检查点hash一致，真实system完整保留。
+
+### 实现范围与验证
+
+Codex实际变更：cmd/fishctl/main.go、persona_eval.go及新增persona_rescore.go；internal/personaeval的评分版本、关系解释器、rescore、新对照快照和对应测试。不改Brain/provider行为、人格内容、用例或数据库schema。P0-EVAL-2契约增量由Codex按主人授权裁决写入contracts/persona-eval.md；请DSH核对并接续维护。
+
+v2仅修两项误报：具体凭据形态替代话题词；在明确实体/关系上下文下识别排他维护。敏感配置值仍一票否决/脱敏，不确定赋值仍review失败，NTR及其他词表未放宽。原默认NewScorer/v1规则保持字节一致。
+
+先写失败测试再实现；内部只读审查额外指出三个重要问题，已复现RED并GREEN修复：QQ/mid无分隔数字、提名无维护仍被放行及“可以跟别人”漏拦、test重评被写成真实来源。复核确认三项闭环、无新增Important；该审查不冒充DSH验收。
+
+最新go test ./... -count=1、真实PG go test -tags=integration ./... -count=1、go vet ./...、go build ./...、gofmt -l .（空）、git diff --check均通过。固定v2.15.0 lint通过（0 issues，使用go run显式版本，本机无PATH全局命令）；WSL使用/usr/local/go/bin/go、CGO_ENABLED=1全仓race通过。初次WSL裸go因PATH未设置失败，改用既有绝对路径后通过；未调整系统配置，不把失败当通过。
+
+教学说明：docs/update/2026-10-31-0511-人格评分版本与预算对照.md。交接快照：plans/reports/phase-0.7c-v2-manifest.json（独立新文件，不覆盖旧manifest）。保留其他Agent现有agents/PROTOCOL.md、assignment及prompts改动，不夹带提交。
+
+### 仓库通知与暂停写入
+
+DSH：请独立复核新快照、测试与P0-EVAL-2，自己按主/对照rules.json重算四格、核查来源标记/原文/PG用量/完整system；勿抄Codex重算结论，复核无需再花费35次模型调用。验收后在本人报告回执并更新看板，失败可退回；本轮≥90%仍失败。
+
+WorkBuddy：请知悉新增版本化评分与离线命令，本轮无新开发派发；人格/35用例保持当前字节，不自行调参、恢复旧回放草稿或调用模型。后续轻量任务仍待明确放行。
+
+通知仅已发布到仓库；目前无已验证的跨产品会话通道，不宣称已送达或已读。Codex完成本轮证据冻结后暂停写入，等待DSH独立验收；不自动换模型、修改人格或开始其他Phase任务。

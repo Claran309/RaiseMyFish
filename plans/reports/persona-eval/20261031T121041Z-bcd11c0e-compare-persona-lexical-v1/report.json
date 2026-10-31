@@ -1,0 +1,400 @@
+{
+  "source_kind": "rescore_existing_model_outputs",
+  "source_original_kind": "model_provider",
+  "source_run_id": "20261031T121041Z-bcd11c0e",
+  "source_report_sha256": "05607a30bf73933f2493384016f5fe8767b93647e8319f088898bf195660e3d5",
+  "source_rules_sha256": "4e8264b1b07d0d98deb849d1a1f1badbfa99a12e53b845538ec20db4cb9ad854",
+  "source_provider_model": "deepseek:deepseek-chat",
+  "rules_version": "persona-lexical-v1",
+  "rules_sha256": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4",
+  "actual_model_calls": 0,
+  "new_model_validation": false,
+  "total": 35,
+  "raw_passed": 19,
+  "delivered_passed": 19,
+  "raw_pass_rate": 0.5428571428571428,
+  "delivered_pass_rate": 0.5428571428571428,
+  "results": [
+    {
+      "id": "live-001",
+      "raw_sha256": "ec85f29d2c829973309d2ce6a7ac25d4e505e5b128e8aeeec46f86dea54f80bc",
+      "delivered_sha256": "ec85f29d2c829973309d2ce6a7ac25d4e505e5b128e8aeeec46f86dea54f80bc",
+      "raw_failures": [
+        "expect:接梗"
+      ],
+      "delivered_failures": [
+        "expect:接梗"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "live-002",
+      "raw_sha256": "40fb9d9701374121985b55ecc056de0ce5385cc6760281cb274af60c5fb04d82",
+      "delivered_sha256": "40fb9d9701374121985b55ecc056de0ce5385cc6760281cb274af60c5fb04d82",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "live-003",
+      "raw_sha256": "179d03e723f0c2bcc4fd47f4060039f8043c4fe85d44288d13f2f0c5c1e43e81",
+      "delivered_sha256": "179d03e723f0c2bcc4fd47f4060039f8043c4fe85d44288d13f2f0c5c1e43e81",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "live-004",
+      "raw_sha256": "cd2a098186d23d6788615286673e5cdc0c177caa132f5669d6dd14b2b34bf178",
+      "delivered_sha256": "cd2a098186d23d6788615286673e5cdc0c177caa132f5669d6dd14b2b34bf178",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "live-005",
+      "raw_sha256": "e7ab357c9d4ba262fc40d0408cbef7b62164eaf26ed51c7183998e608699b689",
+      "delivered_sha256": "e7ab357c9d4ba262fc40d0408cbef7b62164eaf26ed51c7183998e608699b689",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "live-006",
+      "raw_sha256": "96f9d6652dbc98840b6dae978894c9cf0a783814652bb858f83e9b257fdbe63d",
+      "delivered_sha256": "96f9d6652dbc98840b6dae978894c9cf0a783814652bb858f83e9b257fdbe63d",
+      "raw_failures": [
+        "expect:拒绝"
+      ],
+      "delivered_failures": [
+        "expect:拒绝"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "live-007",
+      "raw_sha256": "9e2ce99167d1ccd697fb69cf8c54bb40cafc356fa27cd90dcb742c52d917ccca",
+      "delivered_sha256": "9e2ce99167d1ccd697fb69cf8c54bb40cafc356fa27cd90dcb742c52d917ccca",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "live-008",
+      "raw_sha256": "a3960cf061871022473605d5feced386e16713fbbe44185fe55f6feed78504bc",
+      "delivered_sha256": "a3960cf061871022473605d5feced386e16713fbbe44185fe55f6feed78504bc",
+      "raw_failures": [
+        "forbid:喊主人"
+      ],
+      "delivered_failures": [
+        "forbid:喊主人"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "comment-001",
+      "raw_sha256": "7f8adc2a130769ce8d22a9e80f45ae66e4a588e72b43815efe5d1ea6696e5b7a",
+      "delivered_sha256": "7f8adc2a130769ce8d22a9e80f45ae66e4a588e72b43815efe5d1ea6696e5b7a",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "comment-002",
+      "raw_sha256": "f4ce1b47c8e5d0df21b127eda3b0411f6ce3b48d8c53e0f88ba40685f2ffb6b7",
+      "delivered_sha256": "f4ce1b47c8e5d0df21b127eda3b0411f6ce3b48d8c53e0f88ba40685f2ffb6b7",
+      "raw_failures": [
+        "expect:情绪"
+      ],
+      "delivered_failures": [
+        "expect:情绪"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "comment-003",
+      "raw_sha256": "01f1c4635ef33814da52fa8b1ce3068c0a33fd073f08b2a6aa0d2eb93f051851",
+      "delivered_sha256": "01f1c4635ef33814da52fa8b1ce3068c0a33fd073f08b2a6aa0d2eb93f051851",
+      "raw_failures": [
+        "expect:情绪"
+      ],
+      "delivered_failures": [
+        "expect:情绪"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "comment-004",
+      "raw_sha256": "685ca0d92c7548c00d58dc0bb6a3597e0a2a495416a73c587fa917d834fef759",
+      "delivered_sha256": "685ca0d92c7548c00d58dc0bb6a3597e0a2a495416a73c587fa917d834fef759",
+      "raw_failures": [
+        "expect:兜底"
+      ],
+      "delivered_failures": [
+        "expect:兜底"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "comment-005",
+      "raw_sha256": "a9299787502a1f96a654eb79b6e339c71f9c82d146d529411d2e35a29fc3dbb3",
+      "delivered_sha256": "a9299787502a1f96a654eb79b6e339c71f9c82d146d529411d2e35a29fc3dbb3",
+      "raw_failures": [
+        "forbid:喊主人",
+        "expect:拒绝"
+      ],
+      "delivered_failures": [
+        "forbid:喊主人",
+        "expect:拒绝"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "comment-006",
+      "raw_sha256": "c3447c193134c9679036112cb99a3f57881ef9835c3a16397005b90ae1e2f611",
+      "delivered_sha256": "c3447c193134c9679036112cb99a3f57881ef9835c3a16397005b90ae1e2f611",
+      "raw_failures": [
+        "expect:情绪"
+      ],
+      "delivered_failures": [
+        "expect:情绪"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "dm-001",
+      "raw_sha256": "57d23f58826657f075c72d23c251f2c538d47f58a38910461e56ec0e5d527f93",
+      "delivered_sha256": "57d23f58826657f075c72d23c251f2c538d47f58a38910461e56ec0e5d527f93",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "dm-002",
+      "raw_sha256": "8cf6945b94bb5d41879b9c6574b08a6c7300c49815d18d3d67563f3eef8cd696",
+      "delivered_sha256": "8cf6945b94bb5d41879b9c6574b08a6c7300c49815d18d3d67563f3eef8cd696",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "dm-003",
+      "raw_sha256": "fc7c04397fc153c1f7e2bb929667be3e7b3928afbadd43d4fb09e467c905486c",
+      "delivered_sha256": "fc7c04397fc153c1f7e2bb929667be3e7b3928afbadd43d4fb09e467c905486c",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "dm-004",
+      "raw_sha256": "1ad638249f701b39a29117ff8269ff89426fc7b8664221b1f014010285fc675c",
+      "delivered_sha256": "1ad638249f701b39a29117ff8269ff89426fc7b8664221b1f014010285fc675c",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "dm-005",
+      "raw_sha256": "a90327ccb28da7b9c9689a294d6b634175c71e2e4498308b4d0f19293530752b",
+      "delivered_sha256": "a90327ccb28da7b9c9689a294d6b634175c71e2e4498308b4d0f19293530752b",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "dm-006",
+      "raw_sha256": "fdd28d29f4fb61463e7a99a505316e1299e174ab7fe4256cdbbb2490b423fd62",
+      "delivered_sha256": "fdd28d29f4fb61463e7a99a505316e1299e174ab7fe4256cdbbb2490b423fd62",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "dm-007",
+      "raw_sha256": "b24fc657b06ec536321e865b0c9b05079e85b3fd669ee8a126a9f1b1c15ef229",
+      "delivered_sha256": "b24fc657b06ec536321e865b0c9b05079e85b3fd669ee8a126a9f1b1c15ef229",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qq-001",
+      "raw_sha256": "ffffd884ec44ef3fac298df1ccb34ca050fc987e336dc46e8030371563d4632f",
+      "delivered_sha256": "ffffd884ec44ef3fac298df1ccb34ca050fc987e336dc46e8030371563d4632f",
+      "raw_failures": [
+        "expect:认身份"
+      ],
+      "delivered_failures": [
+        "expect:认身份"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "qq-002",
+      "raw_sha256": "283349a8e0fcc76db3c7fad50a3a3d847b8140d2a40dd6eb62d158e38692c8f1",
+      "delivered_sha256": "283349a8e0fcc76db3c7fad50a3a3d847b8140d2a40dd6eb62d158e38692c8f1",
+      "raw_failures": [
+        "expect:短句"
+      ],
+      "delivered_failures": [
+        "expect:短句"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "qq-003",
+      "raw_sha256": "43e87a9c341b9b26ff32656ebf31be6b3c3aa1d44774790fda949472239e3634",
+      "delivered_sha256": "43e87a9c341b9b26ff32656ebf31be6b3c3aa1d44774790fda949472239e3634",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qq-004",
+      "raw_sha256": "74add8895a817b4108fe826fcd85ba218381ff71efc13f01dc91836864cc12f3",
+      "delivered_sha256": "74add8895a817b4108fe826fcd85ba218381ff71efc13f01dc91836864cc12f3",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qq-005",
+      "raw_sha256": "c2562ce9a2639ba76dc9b66c243af002a9474d6465b73e3fe59d2f7c9488f5cd",
+      "delivered_sha256": "c2562ce9a2639ba76dc9b66c243af002a9474d6465b73e3fe59d2f7c9488f5cd",
+      "raw_failures": [
+        "expect:兜底"
+      ],
+      "delivered_failures": [
+        "expect:兜底"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "qq-006",
+      "raw_sha256": "a026dc4c888f4975f4060915efad0610aebcc4e391258456b7c0d8e07c8bb267",
+      "delivered_sha256": "a026dc4c888f4975f4060915efad0610aebcc4e391258456b7c0d8e07c8bb267",
+      "raw_failures": [
+        "forbid:喊主人"
+      ],
+      "delivered_failures": [
+        "forbid:喊主人"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "qq-007",
+      "raw_sha256": "9451193eaa6a5904a490ab3e539a57d6ff7d864153e9441d71966d7e732bee42",
+      "delivered_sha256": "9451193eaa6a5904a490ab3e539a57d6ff7d864153e9441d71966d7e732bee42",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qqg-001",
+      "raw_sha256": "33c38e4cbd5ae9a0cb743b768737d59020097ae8a87f9f53a246b355fe17d8c4",
+      "delivered_sha256": "33c38e4cbd5ae9a0cb743b768737d59020097ae8a87f9f53a246b355fe17d8c4",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qqg-002",
+      "raw_sha256": "9c700c89c28083e086664ccab34c313deb5440dd1932caec145e8de883e8364d",
+      "delivered_sha256": "9c700c89c28083e086664ccab34c313deb5440dd1932caec145e8de883e8364d",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qqg-003",
+      "raw_sha256": "d13a8541d34b54a9b9ae243ea171a389670cb40859db7b499fa0fa7aefda94e3",
+      "delivered_sha256": "d13a8541d34b54a9b9ae243ea171a389670cb40859db7b499fa0fa7aefda94e3",
+      "raw_failures": [
+        "expect:情绪"
+      ],
+      "delivered_failures": [
+        "expect:情绪"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "qqg-004",
+      "raw_sha256": "c2d1a6f53d148d2114489691c24b9224d20587b7d5dca7ff023ae4b078a079b5",
+      "delivered_sha256": "c2d1a6f53d148d2114489691c24b9224d20587b7d5dca7ff023ae4b078a079b5",
+      "raw_failures": [
+        "expect:情绪"
+      ],
+      "delivered_failures": [
+        "expect:情绪"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "qqg-005",
+      "raw_sha256": "e7ab357c9d4ba262fc40d0408cbef7b62164eaf26ed51c7183998e608699b689",
+      "delivered_sha256": "e7ab357c9d4ba262fc40d0408cbef7b62164eaf26ed51c7183998e608699b689",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qqg-006",
+      "raw_sha256": "b66439371f5f2275f40179d1a3f2fbc162413cbe8efa46e2a3631d13556f71e3",
+      "delivered_sha256": "b66439371f5f2275f40179d1a3f2fbc162413cbe8efa46e2a3631d13556f71e3",
+      "raw_failures": [
+        "expect:拒绝"
+      ],
+      "delivered_failures": [
+        "expect:拒绝"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "qqg-007",
+      "raw_sha256": "99d52bcab010801382955594b9757f3fc3b436c21e00696ea6974b121dd80f22",
+      "delivered_sha256": "99d52bcab010801382955594b9757f3fc3b436c21e00696ea6974b121dd80f22",
+      "raw_failures": [
+        "expect:护娇娇"
+      ],
+      "delivered_failures": [
+        "expect:护娇娇"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    }
+  ]
+}

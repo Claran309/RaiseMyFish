@@ -138,3 +138,23 @@ func TestCancellationInLastCaseIsIncomplete(t *testing.T) {
 		t.Fatal("末条取消被当作完整运行")
 	}
 }
+
+func TestComparisonRulesMustMatchBeforeGeneration(t *testing.T) {
+	v1, err := NewScorerVersion("persona-lexical-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2, err := NewScorerVersion("persona-lexical-v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := Prepare(context.Background(), "../../personas/dafeiyu", "../../personas/dafeiyu/eval/cases.jsonl", v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &fakeGenerator{}
+	_, err = Run(context.Background(), f, v1, g, RunOptions{RunID: "bad-comparison", OutputDir: filepath.Join(t.TempDir(), "run"), SourceKind: "test", ComparisonVersion: v1.Version(), ComparisonRules: v2.Snapshot()})
+	if err == nil || g.calls != 0 {
+		t.Fatal("错误对照版本在生成前未拒绝")
+	}
+}

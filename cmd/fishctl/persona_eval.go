@@ -139,6 +139,8 @@ func personaEval(ctx context.Context, configPath, envPath string, args []string,
 	backend := fs.String("brain", "openai", "仅支持真实openai兼容Provider；无baseline模式")
 	output := fs.String("output", "", "新建证据目录，不能覆盖")
 	timeout := fs.Duration("timeout", 20*time.Minute, "整轮时间上限")
+	rulesVersion := fs.String("rules-version", "persona-lexical-v1", "主评分规则版本")
+	compareVersion := fs.String("compare-rules", "", "同一新输出的离线对照规则版本")
 	if err := fs.Parse(args); err != nil {
 		return errors.New("人格评估参数无效；不支持baseline回放")
 	}
@@ -162,7 +164,7 @@ func personaEval(ctx context.Context, configPath, envPath string, args []string,
 	if casesPath == "" {
 		casesPath = filepath.Join(cfg.LLM.PersonaDir, "eval", "cases.jsonl")
 	}
-	scorer, err := personaeval.NewScorer()
+	scorer, err := personaeval.NewScorerVersion(*rulesVersion)
 	if err != nil {
 		return err
 	}
@@ -172,6 +174,16 @@ func personaEval(ctx context.Context, configPath, envPath string, args []string,
 	}
 	if len(fixture.Cases) != 35 {
 		return errors.New("本轮真实评估要求既有35条用例，拒绝子集美化")
+	}
+	var comparison *personaeval.Scorer
+	if *compareVersion != "" {
+		comparison, err = personaeval.NewScorerVersion(*compareVersion)
+		if err != nil {
+			return err
+		}
+		if err := comparison.ValidateCases(fixture.Cases); err != nil {
+			return err
+		}
 	}
 	name, p, model, err := cfg.LLM.Resolve(*route)
 	if err != nil {
@@ -253,9 +265,24 @@ func personaEval(ctx context.Context, configPath, envPath string, args []string,
 	gen := &evalGenerator{runtime: runtime, pack: fixture.Pack, provider: audit, usage: usage, runID: runID}
 	runCtx, stop := context.WithTimeout(ctx, *timeout)
 	defer stop()
-	report, err := personaeval.Run(runCtx, fixture, scorer, gen, personaeval.RunOptions{RunID: runID, OutputDir: outputDir, SourceKind: sourceKind, CodeCommit: baseCommit, CodeFiles: codeFiles, Configuration: settings, Secrets: []string{p.APIKey, cfg.Database.DSN}, Progress: stderr})
+	runOptions := personaeval.RunOptions{RunID: runID, OutputDir: outputDir, SourceKind: sourceKind, CodeCommit: baseCommit, CodeFiles: codeFiles, Configuration: settings, Secrets: []string{p.APIKey, cfg.Database.DSN}, Progress: stderr}
+	if comparison != nil {
+		runOptions.ComparisonVersion = comparison.Version()
+		runOptions.ComparisonRules = comparison.Snapshot()
+	}
+	report, err := personaeval.Run(runCtx, fixture, scorer, gen, runOptions)
 	if err != nil {
 		return err
+	}
+	if comparison != nil && report.Complete {
+		comparisonDir := outputDir + "-compare-" + comparison.Version()
+		other, err := personaeval.RescoreExisting(outputDir, comparisonDir, comparison)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "comparison_rules=%s raw=%d/%d (%.1f%%) delivered=%d/%d (%.1f%%) actual_model_calls=0 report=%s\n", other.RulesVersion, other.RawPassed, other.Total, other.RawPassRate*100, other.DeliveredPassed, other.Total, other.DeliveredPassRate*100, filepath.Join(comparisonDir, "report.md")); err != nil {
+			return err
+		}
 	}
 	if _, err := fmt.Fprintf(stdout, "run=%s model=%s persona=%s@%s raw=%d/%d (%.1f%%) delivered=%d/%d (%.1f%%) complete=%t reached90=%t report=%s\n", report.RunID, report.ProviderModel, report.PackName, report.PackVersion, report.RawPassed, report.Total, report.RawPassRate*100, report.DeliveredPassed, report.Total, report.DeliveredPassRate*100, report.Complete, report.Reached90, filepath.Join(outputDir, "report.md")); err != nil {
 		return err

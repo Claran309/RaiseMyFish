@@ -1,0 +1,12 @@
+{
+  "rows": 35,
+  "ok_rows": 35,
+  "in_tokens": 227871,
+  "out_tokens": 393,
+  "known_cost_rows": 0,
+  "model": "deepseek:deepseek-chat",
+  "started_at": "2026-10-31T12:10:41.7786321Z",
+  "finished_at": "2026-10-31T12:11:07.4615736Z",
+  "read_only": true,
+  "scope": "model + closed timestamp window; table has no run_id"
+}

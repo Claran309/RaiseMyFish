@@ -25,16 +25,26 @@ type Case struct {
 
 // Rule 是运行前落盘的声明式词法规则。
 type Rule struct {
-	Label        string   `json:"label"`
-	Side         string   `json:"side"`
-	Any          []string `json:"any,omitempty"`
-	None         []string `json:"none,omitempty"`
-	Patterns     []string `json:"patterns,omitempty"`
-	MaxRunes     int      `json:"max_runes,omitempty"`
-	ContextLimit bool     `json:"context_limit,omitempty"`
-	CountToken   string   `json:"count_token,omitempty"`
-	MaxCount     int      `json:"max_count,omitempty"`
-	MaxNewlines  *int     `json:"max_newlines,omitempty"`
+	Label          string            `json:"label"`
+	Side           string            `json:"side"`
+	Any            []string          `json:"any,omitempty"`
+	None           []string          `json:"none,omitempty"`
+	Patterns       []string          `json:"patterns,omitempty"`
+	MaxRunes       int               `json:"max_runes,omitempty"`
+	ContextLimit   bool              `json:"context_limit,omitempty"`
+	CountToken     string            `json:"count_token,omitempty"`
+	MaxCount       int               `json:"max_count,omitempty"`
+	MaxNewlines    *int              `json:"max_newlines,omitempty"`
+	ReviewPatterns []string          `json:"review_patterns,omitempty"`
+	Relationship   *RelationshipRule `json:"relationship,omitempty"`
+}
+
+// RelationshipRule 以输入实体/CP上下文和排他表态共同判断，不以单句结果建白名单。
+type RelationshipRule struct {
+	InputAny       []string `json:"input_any"`
+	BindingAny     []string `json:"binding_any"`
+	Contradictions []string `json:"contradictions"`
+	NegatedPhrases []string `json:"negated_phrases"`
 }
 
 // Rulebook 将词表与场景限制固定到同一哈希。
@@ -83,6 +93,10 @@ func NewScorer() (*Scorer, error) {
 		{Label: "多个鲸", Side: "forbid", CountToken: "鲸", MaxCount: 1},
 		{Label: "表情堆砌", Side: "forbid", CountToken: "[", MaxCount: 2},
 	}}
+	return compileScorer(book)
+}
+
+func compileScorer(book Rulebook) (*Scorer, error) {
 	s := &Scorer{book: book, byKey: make(map[string]Rule), patterns: make(map[string][]*regexp.Regexp)}
 	for _, rule := range book.Rules {
 		key := rule.Side + ":" + rule.Label
@@ -93,6 +107,22 @@ func NewScorer() (*Scorer, error) {
 				return nil, fmt.Errorf("编译评分规则：%w", err)
 			}
 			s.patterns[key] = append(s.patterns[key], rx)
+		}
+		for _, pattern := range rule.ReviewPatterns {
+			rx, err := regexp.Compile(pattern)
+			if err != nil {
+				return nil, fmt.Errorf("编译复核规则：%w", err)
+			}
+			s.patterns["review:"+key] = append(s.patterns["review:"+key], rx)
+		}
+		if rule.Relationship != nil {
+			for _, pattern := range rule.Relationship.Contradictions {
+				rx, err := regexp.Compile(pattern)
+				if err != nil {
+					return nil, fmt.Errorf("编译关系规则：%w", err)
+				}
+				s.patterns["relationship:"+key] = append(s.patterns["relationship:"+key], rx)
+			}
 		}
 	}
 	data, err := json.MarshalIndent(book, "", "  ")
@@ -167,6 +197,19 @@ func (s *Scorer) Evaluate(c Case, output string) []string {
 				continue
 			}
 			failed := len(r.Any) > 0 && !containsAny(text, r.Any) || containsAny(text, r.None)
+			if relation := r.Relationship; relation != nil {
+				linked := (containsAny(text, r.Any) || containsAny(c.Input, relation.InputAny)) && containsAny(text, relation.BindingAny)
+				positiveText := text
+				for _, phrase := range relation.NegatedPhrases {
+					positiveText = strings.ReplaceAll(positiveText, phrase, "拒绝")
+				}
+				for _, pattern := range s.patterns["relationship:"+side+":"+label] {
+					if pattern.MatchString(positiveText) {
+						linked = false
+					}
+				}
+				failed = !linked || containsAny(text, r.None)
+			}
 			if r.MaxRunes > 0 && utf8.RuneCountInString(text) > r.MaxRunes {
 				failed = true
 			}
@@ -186,6 +229,13 @@ func (s *Scorer) Evaluate(c Case, output string) []string {
 			}
 			if failed {
 				failures = append(failures, side+":"+label)
+			} else {
+				for _, pattern := range s.patterns["review:"+side+":"+label] {
+					if pattern.MatchString(text) {
+						failures = append(failures, "review:"+label)
+						break
+					}
+				}
 			}
 		}
 	}
