@@ -1,0 +1,54 @@
+{
+  "base_commit": "42a823f",
+  "dsh_review": "原始WorkBuddy六文件快照已独立验收；Codex正文边界增量按本轮裁决补丁记录，不冒称DSH复验",
+  "files": [
+    {
+      "path": "internal/persona/meta.go",
+      "workbuddy_sha256": "4f89c5dc3e81ae1dca52396f4e08508756117a590277d22394393a2db74a6ec2",
+      "workbuddy_bytes": 3633,
+      "integrated_sha256": "4f89c5dc3e81ae1dca52396f4e08508756117a590277d22394393a2db74a6ec2",
+      "integrated_bytes": 3633,
+      "codex_increment": false
+    },
+    {
+      "path": "internal/persona/pack.go",
+      "workbuddy_sha256": "4b4625f5583a307d3ecabc4976c5be5cda0ff23a4f872ea0cb3778d4f36efdd8",
+      "workbuddy_bytes": 12630,
+      "integrated_sha256": "301248f44f83ee67d2f6d26ec19a2604bb7e0c5a5ceea17587e38546f7d61362",
+      "integrated_bytes": 12663,
+      "codex_increment": true
+    },
+    {
+      "path": "internal/persona/pack_test.go",
+      "workbuddy_sha256": "b24a6dbfea8e42c03e91b08d3903f032353d3123dc666b43c029455b84b7393d",
+      "workbuddy_bytes": 10449,
+      "integrated_sha256": "1fbd1c94c2deac266be1d09a2ca973916af26e9f1a533d8aa6a868e927ab841f",
+      "integrated_bytes": 11032,
+      "codex_increment": true
+    },
+    {
+      "path": "internal/persona/meta_test.go",
+      "workbuddy_sha256": "ddcae8691b5af2445b12f29de36338e2bf1116fb3a6a2e26afcb3e38270fdcf1",
+      "workbuddy_bytes": 5906,
+      "integrated_sha256": "ddcae8691b5af2445b12f29de36338e2bf1116fb3a6a2e26afcb3e38270fdcf1",
+      "integrated_bytes": 5906,
+      "codex_increment": false
+    },
+    {
+      "path": "internal/persona/context_test.go",
+      "workbuddy_sha256": "1bd7d33c5993bf5e7de7c352a28f66c969bc4b1eb489d79b67d4a62d277bc5cb",
+      "workbuddy_bytes": 5250,
+      "integrated_sha256": "d73eff1909db0344df565eb5bf8311b2df60048e9ae3e58ff7d31d7873a3bc0d",
+      "integrated_bytes": 6157,
+      "codex_increment": true
+    },
+    {
+      "path": "personas/dafeiyu/meta.yaml",
+      "workbuddy_sha256": "9ba3f39935235877d9b1079b9ecefa38671971a48f911f60ee602795eecd26f8",
+      "workbuddy_bytes": 732,
+      "integrated_sha256": "9ba3f39935235877d9b1079b9ecefa38671971a48f911f60ee602795eecd26f8",
+      "integrated_bytes": 732,
+      "codex_increment": false
+    }
+  ]
+}

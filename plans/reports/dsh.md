@@ -96,3 +96,38 @@
   优雅退出路径（Codex 报告的 Ctrl+C）未在本次复现；强杀残留是否需要在 status 中加存活校验，由 Codex 定。
 - 未验证项：Linux `-race`（本机未复现）、GitHub CI 远端未跑、本机 `golangci-lint` 未安装。
 - 看板：0.1 → 「✅ 验收通过（待 Codex 提交）」。
+
+## COMM-005 回执 · 0.1 提交与 0.7b 放行（2026-10-31 16:45）
+
+- 提交核实：
+  - 0.1 = `364dcb3`（master），`origin/master` 已同步。
+  - Pack 基线 = `42a823f`，含 `contracts/persona.md`（P0-PACK-1）与 `plans/phase-0.7b-dispatch.md`。
+- 看板已由 Codex 更新：0.1「已提交并推送 364dcb3」、0.7b「已放行，待本人接手回执」。
+- 放行单范围确认（DSH 依 `contracts/persona.md` 验收）：
+  - 唯一开发范围：`internal/persona/{meta.go,pack.go,pack_test.go}` + 可新增 `meta_test.go/context_test.go`
+  - `personas/dafeiyu/meta.yaml` 仅移除过时注释
+  - 旧 4 个草稿（check/evalcase/runner/eval_test）移入 `.workbuddy/persona-eval-draft-comm-005/`，保留哈希
+  - 不改 go.mod/go.sum、cmd、database、迁移、契约、看板、他人报告
+- 待转达 WorkBuddy：读 `plans/phase-0.7b-dispatch.md` + `contracts/persona.md`，写 COMM-005 回执；不执行 Git 写操作。
+- 0.7b 交付后由 DSH 独立验收（按契约核对类型/方法/错误语义），不抄开发者自测。
+
+## 0.7b 独立验收（2026-10-31 17:00）
+
+- 快照：工作区未提交；`internal/persona/` 仅 5 个文件（meta/pack/pack_test/meta_test/context_test）。
+- 契约逐条核对（`contracts/persona.md` P0-PACK-1）：
+  - 五个 Context 常量、`Meta` 六字段 + yaml tag、`Pack` 六字段：一致
+  - `Load(ctx, dir) (Pack, error)` 签名一致；`ContextKeys` 每次新 slice（已抽验）
+  - `ContextKey`：live/comment/dm 忽略 private，qq 按 private 二选一（switch 实现，无全局可变 slice）
+  - `SystemPrompt`：`TrimSpace(Soul)+"\n\n"+TrimSpace(Rules)+"\n\n"+TrimSpace(Samples)`，顺序正确
+  - 禁导出符号 `Assemble/Generator/RunEvalCLI/KnownChannels`：grep 无
+  - `meta.yaml` diff：只删解析器限制注释，字段与内容未变
+  - 旧 4 草稿已移入 `.workbuddy/persona-eval-draft-comm-005/`，未混入交付
+- 独立执行：`go build ./...` 通过；`go vet ./...` 通过；`gofmt -l internal/persona` 无输出；
+  `go test ./internal/persona/` 20 顶层 + 40 子测试 PASS；覆盖率 **93.8%**；`go test ./...` 全仓通过
+- 结论：**0.7b 独立验收通过**（待 Codex 提交）。
+- 待 Codex 裁决：
+  1. `go.mod` 中 `go.yaml.in/yaml/v3` 仍标 `// indirect`，集成时需 tidy
+  2. 混合标题（`## live 补` 这类 ASCII 词 + 中文）当前作为正文静默并入——契约只规定中文说明标题不成为场景，是否接受该边界
+  3. `ContextFor` 返回正文做了 TrimSpace；契约 §2「保留其他文本内容」与 §4 SystemPrompt TrimSpace 的边界需明确
+  4. 流程偏差：WorkBuddy 如实记录未严格走「先红后绿」，测试随后抓到 1 个重复场景缺陷并已修
+- 未验证项：Linux race（未复现）、真实模型人格通过率（属 0.7c）

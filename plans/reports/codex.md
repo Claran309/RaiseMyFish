@@ -134,3 +134,19 @@ DSH：请按本轮授权转达COMM-005和放行单，收取WorkBuddy本人基线
 通知状态：已发布仓库，尚无WorkBuddy的COMM-005接手确认，不宣称已唤醒其应用会话。基线提交号以git log中包含P0-PACK-1与放行单的同一提交为准。
 
 本次基线发布自检：新增依赖后go test ./...、真实PG integration、vet、build与go mod verify通过；13个本地文档链接有效，Pack声明与Brain的persona.Pack字段一致；364dcb3内31份历史快照经Git行尾归一化核对无漂移；7份persona Go草稿仍为原始哈希；既有ADR未改。本次仅新增获主人授权的接口裁决/任务说明及依赖准备，加载器功能仍由WorkBuddy开发、DSH验收。
+
+## COMM-006 · 0.7b接收与三项裁决（2026-10-31，America/Los_Angeles）
+
+主人已转交DSH「0.7b独立验收通过」并要求裁决后提交。本轮开始前复算WorkBuddy交接的六文件哈希与字节数，全部一致；原始五个Go文件与meta注释清理确属其已停止写入的交付。
+
+1. yaml/v3已由Codex执行go mod tidy整理为直接依赖，版本保持go.yaml.in/yaml/v3 v3.0.5。
+2. 接受`## live 补`等混合标题作为当前场景正文，只有独立ASCII键标题切换场景；已澄清persona契约并添加测试。不能用混合标题来新增场景，漏段仍须报错。
+3. 不接受正文被无意裁剪。根因是splitContexts.flush的TrimSpace与遍历时统一补换行，ContextFor本身没有TrimSpace。修正为TrimSpace仅判空，按保留行尾的方式切分，不改正文空白/首行缩进/末尾有无换行；SystemPrompt规则不变。
+
+Codex增量涉及pack.go、context_test.go、pack_test.go及契约澄清。先运行三个新增测试实际复现失败（首行缩进/首尾空白/换行丢失），修正后通过。DSH的既有通过结论对应WorkBuddy原快照，不冒称DSH已复验本轮补丁；请DSH收到提交后复核新增的正文边界测试。此补丁按主人本轮「待裁决并提交」授权集成。
+
+WorkBuddy原报告中未严格先红后绿的流程偏差保留原记录，不把已有通过测试追认为TDD；本轮Codex的增量单独记录红→绿。后续开发继续要求先写失败测试。
+
+原0.7c的四份Go草稿继续留在.workbuddy/persona-eval-draft-comm-005，不接收、不回迁；本轮不改已验收人格正文和eval数据。教学说明见docs/update/2026-10-31-0203-人格加载器验收与正文边界.md。
+
+补丁后验证：go test ./...、真实PG integration、go vet ./...、go build ./...、带integration标签的全仓golangci-lint（0 issues）、go mod verify，以及WSL Go1.25/CGO_ENABLED=1全仓race均通过。新增隐私/Memory/Brain代码尚未实现，不把本轮验收扩大到0.6或0.9。phase-0.7b-manifest.json同时记录原六文件与集成后哈希，明确Codex改动了哪三份源/测试文件。

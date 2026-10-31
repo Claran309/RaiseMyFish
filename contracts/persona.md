@@ -56,6 +56,7 @@ Pack是一次加载得到的快照，调用方将其视为只读；修改人格�
 - meta用 `go.yaml.in/yaml/v3` v3.0.5结构化解码（KnownFields），拒绝未知/重复字段、类型错误和多个YAML文档；支持正常YAML引号、行内或块状数组，不维护自写YAML子集。
 - Meta.Name与Version非空；既有version: v1有效，不额外强制SemVer。Channels至少一个、无重复、只允许五个场景键；DisplayName/TTSVoice/Description可选。TTSVoice只是元数据，不实现语音能力。
 - context.md以围栏代码块外的独立二级ASCII标题 `## <key>` 切分；头部说明不作为场景。场景键须属于五种允许值，重复标题、未知ASCII键、空段报错；声明Channels与有效段集合必须相等，允许只包含live的最小包。中文说明标题不成为新场景，已有场景中的段落/子标题原样保留。
+- 补充裁决（COMM-006，不改导出API）：`## live 补`等含空格/中文的混合标题是普通正文，不是场景分隔符；只精确匹配独立ASCII键。新增场景须使用独立 `## live` 等标题，否则仍由声明/段集合校验发现缺失。分隔标题行移除后，Contexts保存规范化后的正文原文，首尾空白、缩进、末尾有无换行均保留；TrimSpace只用于判空，不用于改写正文。
 - 不读取/强制要求eval/cases.jsonl或baseline.md；回归文件属于0.7a/0.7c，加载器不能要求Brain或回归执行器就绪。
 - 开始及文件读取之间检查ctx取消/超时；取消错误保留errors.Is(context.Canceled/DeadlineExceeded)。包装I/O错误用%w；错误展示仅含阶段、文件名、字段名，不回显文件正文、完整prompt或敏感值。无失败重试、后台goroutine、文件监听或全局缓存。
 
@@ -82,6 +83,8 @@ TrimSpace(Soul) + "\n\n" + TrimSpace(Rules) + "\n\n" + TrimSpace(Samples)
 ```
 
 不添加动态状态、口径、当前消息、时间、记忆或额外标题。ContextFor只返回选中的静态场景正文；Brain在0.6自行按brain契约组织user的context/event/instructions并做预算裁剪。
+
+ContextFor不再裁剪Contexts中的文本；不要把SystemPrompt对三段的TrimSpace规则套到场景正文上。编码/BOM/换行归一由Load处理，场景结构与空白保留由切分器处理，动态拼装和预算属于Brain。
 
 本基线不导出Assemble、Assembled、Generator、RunEvalCLI、评分标签注册表等回归/LLM接口，也不实现CLI、真实模型评测、热更新、版本切换或A/B执行。
 
