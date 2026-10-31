@@ -150,3 +150,21 @@ WorkBuddy原报告中未严格先红后绿的流程偏差保留原记录，不�
 原0.7c的四份Go草稿继续留在.workbuddy/persona-eval-draft-comm-005，不接收、不回迁；本轮不改已验收人格正文和eval数据。教学说明见docs/update/2026-10-31-0203-人格加载器验收与正文边界.md。
 
 补丁后验证：go test ./...、真实PG integration、go vet ./...、go build ./...、带integration标签的全仓golangci-lint（0 issues）、go mod verify，以及WSL Go1.25/CGO_ENABLED=1全仓race均通过。新增隐私/Memory/Brain代码尚未实现，不把本轮验收扩大到0.6或0.9。phase-0.7b-manifest.json同时记录原六文件与集成后哈希，明确Codex改动了哪三份源/测试文件。
+
+提交结果：**5ece97f已推送master**，未包含.workbuddy草稿、.env及其他待验收协作文案。GitHub默认地址连接失败，临时指定github.com已验证TLS的可用官方地址后完成fetch/快进核对/正常push；未修改系统DNS、Git全局配置或跳过证书校验。
+
+## COMM-007 · P0-MEMORY-1与0.6 Brain放行（2026-10-31，America/Los_Angeles）
+
+0.7b已接收提交5ece97f。按主人明确指令，确认contracts/memory.md为 **P0-MEMORY-1**，并发布plans/phase-0.6-dispatch.md；基线以同时包含这两份文件的Git提交定位。
+
+最小类型为Scope、Message、Record、Fact、Context、SharedState及Reader；导出纯范围校验，依赖event.md既有枚举，不引入实体、向量或事实版本化。ContextInput继续使用memory.Context/SharedState，与Brain契约一致，不用任意map/JSON承载未定义上下文。
+
+Scope必须来自可信目标Event，和Task、Event、两份上下文一致；Recent限定同会话，CrossChannel只含其他通道公开消息，私密Record/Fact只限同通道同会话。公开查询强制NOT private，实际SQL/有效记录过滤仍须repository真实PG验收；Brain的额外校验不替代查询隔离。空记忆必须带有效Scope，查询失败返回error，不能悄悄换成空记忆。
+
+**放行0.6开发，负责人Codex，DSH独立验收。** 主人授权P0内调整顺序：0.6可补自身必需UsageRepo最小接口/GORM写入与真实PG测试，不等待全部0.2完成，不勾选其余repository。允许只定义Memory DTO/纯校验和Event既有类型供编译；Memory Reader真实召回/提炼仍留0.9。本轮发布契约和任务，不实施Brain、不放行0.7c真实模型评测。
+
+DSH请用新基线/放行单协助下一次Codex开发会话，收到后写本人COMM-007回执；WorkBuddy此次任务交付后暂停，等待下一项轻量任务，不自行恢复回归草稿。0.6仍须先补齐Provider/Usage的必要类型和配置契约、按失败测试推进，再完成HTTP/预算/重试/记账；不得把预留工具字段变成P6执行器。
+
+契约与派发中的权限/文件范围按主人的本轮授权发布；加载器补丁和后续Brain功能仍分别保留实际验证与DSH复核记录。未修改任何既有ADR，不宣称当前已具备召回、实际模型人格通过率或事件消费能力。
+
+基线发布自检：17个本地链接有效，Memory六种数据类型/Reader/纯校验声明与Brain字段一致，未使用any或不透明JSON；0.7b集成哈希保持不变、四份延后草稿留存，尚无internal/memory或internal/brain实现；单测/vet/build/依赖校验再次通过，格式和diff检查无输出。

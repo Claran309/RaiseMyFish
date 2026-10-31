@@ -3,7 +3,7 @@
 > 一条 AI 肥鱼的多通道陪伴系统：看直播、回弹幕、回私信、回评论、上 QQ，
 > 有共享记忆、有人格一致性、能无人值守跑。
 >
-> **状态：Phase 0 实现中。0.7a 人格素材已接收；0.1 基础设施已通过DSH独立验收并提交（364dcb3）。Pack基线P0-PACK-1已确认，0.7b加载器已放行待接手。业务通道尚未装配。**
+> **状态：Phase 0 实现中。0.1基础设施已接收（364dcb3）；0.7b人格加载器已提交（5ece97f）。Memory基线P0-MEMORY-1已确认，0.6 Brain已放行开发，业务通道仍未装配。**
 
 ---
 
@@ -55,6 +55,7 @@
 | `plans/assignment.md` | **分工与文件所有权**（给开发 agent 读） |
 | `plans/coordination.md` | **协作裁决、任务看板、通知与验收交接入口** |
 | `contracts/persona.md` / `plans/phase-0.7b-dispatch.md` | **Pack接口基线与WorkBuddy加载器任务范围** |
+| `contracts/memory.md` / `plans/phase-0.6-dispatch.md` | **Memory最小上下文基线与Codex Brain任务范围** |
 | `prompts/` | 给 Codex / WorkBuddy / DSH-flash 的开工提示词（主人复制粘贴用） |
 
 ## 目标目录结构（实现期）

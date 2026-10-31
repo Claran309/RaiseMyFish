@@ -19,6 +19,7 @@
 | [sender.md](sender.md) | 发送器接口 | 通道实现 |
 | [brain.md](brain.md) | 大脑接口 | P0 核心 |
 | [persona.md](persona.md) | Persona Pack静态数据、加载与场景映射（P0-PACK-1） | 0.7b、0.6 |
+| [memory.md](memory.md) | Memory最小上下文、Scope与读取边界（P0-MEMORY-1） | 0.6、0.9 |
 
 ## 变更流程
 

@@ -66,7 +66,8 @@ Codex 负责模块的核心逻辑与技术集成；DSH 对每个交付独立验�
 | 协作规则审查 | Codex | 待验收 | 本文件、报告模板、必要入口和提示词修订；等 DSH 独立复核 |
 | 0.1 基础设施 | Codex | ✅ 已提交并推送364dcb3 | DSH COMM-004独立验收，manifest31/31；强杀观察采用默认20秒心跳边界，0.11增强见COMM-005 |
 | 0.7a 人格素材与用例 | WorkBuddy | ✅ 已提交 32651ba（master） | 六件套 + 35 条用例；DSH 独立复现 go test PASS；5 通道 × 5 场景；越界 Go 草稿未提交（V-01） |
-| 0.7b 加载器 | WorkBuddy | 已放行，待本人接手回执 | P0-PACK-1（contracts/persona.md）；范围和测试见phase-0.7b-dispatch.md；基线为包含两文件的提交；仅静态加载，不接CLI/回归 |
+| 0.7b 加载器 | WorkBuddy / Codex集成 | ✅ 已提交5ece97f | DSH验收原交付；依赖tidy、混合标题、正文保留裁决见COMM-006；Codex增量测试已通过，交DSH复核 |
+| 0.6 Brain | Codex | 已放行开发，待会话接手 | P0-MEMORY-1 + P0-PACK-1；按phase-0.6-dispatch补自身必需UsageRepo切片，不标0.2其余任务完成；尚无Brain实现 |
 | 0.7c 完整人格回归 | Codex 集成、DSH 验收 | 阻塞 | 加载器、0.6、真实模型就绪 |
 | 其他 0.x 子任务 | 按上述拆分 | 待派发 | 依赖验收、接口基线、精确可写范围确认后再派 |
 
@@ -103,3 +104,13 @@ DSH：请将放行单带入WorkBuddy会话，记录其本人接手/写入路径�
 WorkBuddy：请读本人报告入口、COMM-005及放行单；只修改获派加载器文件和元数据过时注释，未放行回归草稿按单中指定点目录原样留存，记录哈希，不操作Git、不扩到0.7c。
 
 通知状态：已发布到仓库；尚无WorkBuddy对COMM-005的已读/接手回执，不宣称已唤醒应用会话。提交0.1与本次发布任务不代表0.7b已实现或验收通过。
+
+## 10. COMM-007 · Memory最小基线与0.6放行
+
+2026-10-31（America/Los_Angeles），依据主人本轮授权：0.7b已提交5ece97f，三项裁决与Codex正文补丁在COMM-006；Memory最小类型冻结为 [P0-MEMORY-1](../contracts/memory.md)，[0.6放行单](phase-0.6-dispatch.md)与契约同提交定位基线。
+
+0.6开发归Codex，DSH负责独立验收/会话辅助；本轮不把Brain交给WorkBuddy，也不立即实现。按主人授权调整P0内顺序：0.6可补自身必需的UsageRepo接口及GORM实现/真实PG测试，不要求先完成全部0.2；其他0.2勾选保持未完成。Memory实际Reader与提炼仍归0.9，不能靠mock或DTO校验宣称SQL隐私隔离已经完成。
+
+DSH请核对0.7b集成增量：场景首尾空白/末尾换行测试；将新基线和放行单用于下一次Codex Brain会话。WorkBuddy本轮任务已交付，等待后续轻量派发；不要恢复0.7c草稿或自行推进模型评测。
+
+通知已发布仓库，尚无COMM-007接手回执；不宣称应用会话已自动启动。GitHub连接出现失败时，提交和远端同步状态以Codex实际推送结果/报告为准。

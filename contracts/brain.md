@@ -2,6 +2,8 @@
 
 ## 1. 接口
 
+Persona类型遵守 [P0-PACK-1](persona.md)，Memory/SharedState最小类型和范围遵守 [P0-MEMORY-1](memory.md)。0.6首先验证Task/Event/两份Scope一致及数据范围，错配或含越界私密数据时返回错误、不得调用Provider；这不替代repository的查询层过滤。
+
 ```go
 type Brain interface {
     Name() string

@@ -58,6 +58,8 @@
 - [ ] Health 上报
 
 ### 0.6 Brain（OpenAI 兼容）
+
+已按主人授权放行开发；Memory最小类型P0-MEMORY-1、范围校验与允许文件见contracts/memory.md和plans/phase-0.6-dispatch.md。0.6可补自身UsageRepo最小依赖切片并真实PG验证，不把0.2其余repository或0.9召回标为完成。
 - [ ] `Brain` 接口实现
 - [ ] 上下文组装：system(persona) + user(context/event/instructions)
 - [ ] 预算截断（先裁记忆、后裁 persona，soul 保留）
@@ -65,11 +67,13 @@
 - [ ] `llm_usage` 记账
 
 ### 0.7 人格包与回归
-- [ ] `personas/dafeiyu/` 包结构（meta/soul/rules/samples/context）
-- [ ] 从 `~/.bili-ai/persona.md` + `persona-shared.md` + `persona-live.md` 迁移
-- [ ] `eval/cases.jsonl` ≥ 30 条（直播场景为主）
+- [x] `personas/dafeiyu/` 包结构（meta/soul/rules/samples/context）
+- [x] 从 `~/.bili-ai/persona.md` + `persona-shared.md` + `persona-live.md` 迁移
+- [x] `eval/cases.jsonl` ≥ 30 条（直播场景为主）
 - [ ] `fishctl persona eval` 命令
 - [ ] 回归通过率 ≥ 90%
+
+0.7a素材/35条用例已接收32651ba；0.7b静态加载器已提交5ece97f（DSH原交付验收，Codex三项裁决/增量见COMM-006）。0.7c真实模型与CLI仍未完成，不以baseline回放替代。
 
 ### 0.8 弹幕发送器
 - [ ] 发送（复用 bili-cli 或自写）
@@ -119,7 +123,7 @@
 - P0-G01（0.2/0.3/0.4 前，Codex 裁决）：`ClaimPending` 已把事件改为 queued，但调度文档仍要求 pending 上过滤/延期，且合法迁移无 queued→skipped；需统一抢占、过滤、retry_at 和任务原子创建的语义后再冻结接口。
 - P0-G02（0.2/0.3 前，Codex 裁决）：恢复要求重新领取 queued/retry，而 Bus 只有 ClaimPending；超时恢复也缺少明确的状态起始时间/持有权依据。需确定领取、超时字段与补偿阶段标识，不得仅按事件平台时间判断 worker 已失效。
 - P0-G03（0.5/0.8 前，Codex 设计，WorkBuddy 验证平台）：稳定平台消息 ID、失败 out 事件幂等键、发送回执/核验信息的持久化，以及「平台已收但本地尚未标 sent」的崩溃窗口仍未定义；只补 sent 超时规则不足以证明重启不重发。out 唯一写入责任按 coordination，memory 不重复写。
-- P0-G04（部分已裁决）：Persona静态Pack接口已冻结为contracts/persona.md的P0-PACK-1，0.7b已放行；Memory最小类型与回归执行接口仍须0.6/0.9前确认。0.6不等待完整回归，真实人格≥90%仍等0.6，mock仅测试执行器。
+- P0-G04（类型已裁决）：P0-PACK-1加载器已接收，Memory最小上下文冻结为contracts/memory.md的P0-MEMORY-1；回归执行接口仍须0.7c前确认。0.6不等待完整回归，真实人格≥90%仍等0.6，mock仅测试执行器；Reader实际查询/隐私SQL仍待0.9。
 - P0-G05（0.1 验收前，Codex 负责，DSH 验证）：CI 的 job 级 hashFiles 检查在 checkout 前执行，需核实表达式支持与空仓保护位置；lint action/latest 与现有配置版本需对齐；真实 PG 集成 job 仍被注释，功能验收前启用并实际执行。
 - P0-G06（0.11 前，Codex 拆任务、WorkBuddy 修脚本、DSH 验收）：dev.ps1 已修 PID 命名，但仍需创建日志目录、避免 go run 父子进程生命周期遗漏、落实优雅退出/重复启动检查；补充验证命令并记录未通过项。
 - P0-G07（0.11增强，Codex裁决，DSH复验）：0.1暂不追加单独PID存活校验，强杀后在线判断按默认20秒心跳时效；service.state是最后记录。0.11增强需同时考虑PID复用/进程创建身份与心跳/PG锁信息，设计方案另行明确，不能仅用os.FindProcess成功认定为同一实例。
@@ -131,3 +135,4 @@
 > 每完成一项，勾选并写一句结果。格式：`[x] 任务 — 结果（验证方式）`
 
 - [x] 0.1 — 已实现基础设施并推送364dcb3（DSH COMM-004独立验收；单测、真实PG、迁移幂等和运行检查）。
+- [x] 0.7a/0.7b — 素材与用例32651ba、静态加载器5ece97f；DSH独立验收原交付，Codex补正文保留回归并验证通过，0.7c仍待0.6。
