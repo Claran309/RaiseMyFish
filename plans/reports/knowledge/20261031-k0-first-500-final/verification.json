@@ -1,0 +1,14 @@
+{
+  "schema": "fish-meme-verification/v1",
+  "actual_model_calls": 0,
+  "raw_rows": 6832,
+  "unique_titles": 6817,
+  "reviewed_count": 775,
+  "rejected_count": 265,
+  "published_count": 500,
+  "original_title_usage_equal": true,
+  "hashes_match": true,
+  "max_entry_payload_bytes": 747,
+  "relevance_100_query_eval": "deferred_K0-7",
+  "brain_injection": "deferred_K0-5"
+}

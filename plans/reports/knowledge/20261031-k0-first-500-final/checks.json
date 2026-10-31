@@ -1,0 +1,54 @@
+{
+  "scope": "K0-1独立模块/K0-2/K0-3/K0-4",
+  "real_model_calls": 0,
+  "checks": [
+    {
+      "name": "unit",
+      "command": "go test ./... -count=1",
+      "exit_code": 0,
+      "output": "ok  \tRaiseMyFish/cmd/fishctl\t0.660s\nok  \tRaiseMyFish/cmd/fishd\t0.680s\nok  \tRaiseMyFish/internal/brain\t2.163s\nok  \tRaiseMyFish/internal/brain/provider\t4.681s\nok  \tRaiseMyFish/internal/config\t1.827s\nok  \tRaiseMyFish/internal/database\t0.462s\nok  \tRaiseMyFish/internal/event\t1.213s\nok  \tRaiseMyFish/internal/infra\t2.820s\nok  \tRaiseMyFish/internal/knowledge\t3.950s\nok  \tRaiseMyFish/internal/memory\t1.243s\nok  \tRaiseMyFish/internal/persona\t1.982s\nok  \tRaiseMyFish/internal/personaeval\t1.966s\nok  \tRaiseMyFish/internal/store\t1.304s\n?   \tRaiseMyFish/migrations\t[no test files]\n"
+    },
+    {
+      "name": "pg",
+      "command": "go test -tags=integration ./... -count=1",
+      "exit_code": 0,
+      "output": "ok  \tRaiseMyFish/cmd/fishctl\t0.693s\nok  \tRaiseMyFish/cmd/fishd\t2.439s\nok  \tRaiseMyFish/internal/brain\t1.987s\nok  \tRaiseMyFish/internal/brain/provider\t4.451s\nok  \tRaiseMyFish/internal/config\t1.370s\nok  \tRaiseMyFish/internal/database\t3.937s\nok  \tRaiseMyFish/internal/event\t0.853s\nok  \tRaiseMyFish/internal/infra\t1.942s\nok  \tRaiseMyFish/internal/knowledge\t3.750s\nok  \tRaiseMyFish/internal/memory\t0.855s\nok  \tRaiseMyFish/internal/persona\t1.543s\nok  \tRaiseMyFish/internal/personaeval\t1.528s\nok  \tRaiseMyFish/internal/store\t0.850s\n?   \tRaiseMyFish/migrations\t[no test files]\n"
+    },
+    {
+      "name": "vet",
+      "command": "go vet ./...",
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "name": "build",
+      "command": "go build ./...",
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "name": "lint",
+      "command": "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...",
+      "exit_code": 0,
+      "output": "0 issues.\n"
+    },
+    {
+      "name": "race",
+      "command": "wsl --cd /mnt/d/CodeStudy/RaiseMyFish --exec env CGO_ENABLED=1 /usr/local/go/bin/go test -race ./... -count=1",
+      "exit_code": 0,
+      "output": "w\u0000s\u0000l\u0000:\u0000 \u0000w\u0000s\u0000l\u00002\u0000.\u0000s\u0000h\u0000u\u0000t\u0000d\u0000o\u0000w\u0000n\u0000O\u0000n\u0000E\u0000x\u0000i\u0000t\u0000:\u0000C\u0000:\u0000\\\u0000U\u0000s\u0000e\u0000r\u0000s\u0000\\\u0000C\u0000l\u0000a\u0000r\u0000a\u0000n\u0000\\\u0000.\u0000w\u0000s\u0000l\u0000c\u0000o\u0000n\u0000f\u0000i\u0000g\u0000 \u0000-N�v.�\u001c 3\u0000\u001d *g�w\r\u0000\n\u0000w\u0000s\u0000l\u0000:\u0000 \u0000a\u0000u\u0000t\u0000o\u0000m\u0000o\u0000u\u0000n\u0000t\u0000.\u0000e\u0000n\u0000a\u0000b\u0000l\u0000e\u0000d\u0000:\u0000C\u0000:\u0000\\\u0000U\u0000s\u0000e\u0000r\u0000s\u0000\\\u0000C\u0000l\u0000a\u0000r\u0000a\u0000n\u0000\\\u0000.\u0000w\u0000s\u0000l\u0000c\u0000o\u0000n\u0000f\u0000i\u0000g\u0000 \u0000-N�v.�\u001c 7\u0000\u001d *g�w\r\u0000\n\u0000ok  \tRaiseMyFish/cmd/fishctl\t1.303s\nok  \tRaiseMyFish/cmd/fishd\t1.070s\nok  \tRaiseMyFish/internal/brain\t1.078s\nok  \tRaiseMyFish/internal/brain/provider\t1.246s\nok  \tRaiseMyFish/internal/config\t1.089s\nok  \tRaiseMyFish/internal/database\t1.086s\nok  \tRaiseMyFish/internal/event\t1.016s\nok  \tRaiseMyFish/internal/infra\t1.035s\nok  \tRaiseMyFish/internal/knowledge\t6.748s\nok  \tRaiseMyFish/internal/memory\t1.072s\nok  \tRaiseMyFish/internal/persona\t1.150s\nok  \tRaiseMyFish/internal/personaeval\t1.981s\nok  \tRaiseMyFish/internal/store\t1.069s\n?   \tRaiseMyFish/migrations\t[no test files]\n"
+    },
+    {
+      "name": "format",
+      "command": "gofmt -l .",
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "name": "python",
+      "command": "python -B -m unittest discover -s scripts -p test_export_memes.py",
+      "exit_code": 0,
+      "output": "......\r\n----------------------------------------------------------------------\r\nRan 6 tests in 0.421s\r\n\r\nOK\r\n"
+    }
+  ]
+}

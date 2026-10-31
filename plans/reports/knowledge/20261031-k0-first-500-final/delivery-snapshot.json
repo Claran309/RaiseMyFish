@@ -1,0 +1,142 @@
+{
+  "task": "K0-1独立类型/K0-2/K0-3/K0-4",
+  "base_commit": "008beb6",
+  "state": "开发自测完成，待DSH独立验收；未暂存/提交/push",
+  "g2_authorized": true,
+  "brain_injection_deferred": true,
+  "p0h_input_read": false,
+  "actual_model_calls": 0,
+  "protected_files_unchanged": 65,
+  "files": [
+    {
+      "path": "docs/update/2026-10-31-0648-K0知识快照与只读迁移.md",
+      "bytes": 6709,
+      "sha256": "315de5236f64dc23463e26fd7a9ed83005e6f2a9633888a5075b6f18ba5d8503"
+    },
+    {
+      "path": "internal/knowledge/corpus_test.go",
+      "bytes": 606,
+      "sha256": "8a98e0e6f4183eaf4c51bdd1b209518ee917139bc02feb4e7afaf41f30711a64"
+    },
+    {
+      "path": "internal/knowledge/file.go",
+      "bytes": 11268,
+      "sha256": "2661abdaf03f2785984517b5085a87c6fa40822e1716da9aea0f2c720e477a77"
+    },
+    {
+      "path": "internal/knowledge/file_test.go",
+      "bytes": 9480,
+      "sha256": "ce017eae62dad7aa116f01773626f8917f3317da7f5dde7786e3b226e7aa2f66"
+    },
+    {
+      "path": "internal/knowledge/recall.go",
+      "bytes": 4381,
+      "sha256": "a4a665d82eb5d06577052d244b46ef15a19eb2ac323e3cd9f57223fa641ca4af"
+    },
+    {
+      "path": "internal/knowledge/recall_test.go",
+      "bytes": 6693,
+      "sha256": "ef7c9c6b988ceb800be66f9dec85f39e1c00d9facdbf7d3964a310f44bbba7cb"
+    },
+    {
+      "path": "internal/knowledge/types.go",
+      "bytes": 1071,
+      "sha256": "85faef13a44289c6210db2c97a0536e4902be51c3b965d2f63e6f95f2584e140"
+    },
+    {
+      "path": "internal/knowledge/validate.go",
+      "bytes": 3465,
+      "sha256": "77050d62fe43bc4f5e660a9c10089bc50e6f1765c24e50927922b1ea4161bd32"
+    },
+    {
+      "path": "internal/knowledge/validate_test.go",
+      "bytes": 4077,
+      "sha256": "8abefc7527940f1b5b223f7bceee5816f7a5c98dfc6d13dc9faa20abea81890f"
+    },
+    {
+      "path": "personas/dafeiyu/knowledge/games.md",
+      "bytes": 125,
+      "sha256": "647b1c098247517d8da46e5a6f88b57032d7128f7980e2f930ac370a2b64e636"
+    },
+    {
+      "path": "personas/dafeiyu/knowledge/lore.md",
+      "bytes": 140,
+      "sha256": "fd9e3671d0e0ebdb217a75b97d51e81860fe1c4c4ace6bcd216f24667b2b5a73"
+    },
+    {
+      "path": "personas/dafeiyu/knowledge/memes.md",
+      "bytes": 340205,
+      "sha256": "2c9810991169978d8b189d2cf9f5405a119b096f7c6cf8ebcb2d8afbcbf49f1b"
+    },
+    {
+      "path": "personas/dafeiyu/knowledge/viewers.md",
+      "bytes": 179,
+      "sha256": "8e994f05b6b97a7077249227914b0d294ffc4132aecbb7abb82cc4b5f9f67aeb"
+    },
+    {
+      "path": "plans/reports/knowledge/20261031-k0-first-500/manifest.json",
+      "bytes": 22112,
+      "sha256": "51f475c8e9d6a0da2abcb9c84c0c48e74e5ca688503369ac7506e357cd1c1065"
+    },
+    {
+      "path": "plans/reports/knowledge/20261031-k0-first-500/README.md",
+      "bytes": 395,
+      "sha256": "9195b282360696af51e563bef8b4a96eee54cca542b8945c7d197b4575cdad4e"
+    },
+    {
+      "path": "plans/reports/knowledge/20261031-k0-first-500/selection.json",
+      "bytes": 66949,
+      "sha256": "8f2711357667a5ada9b8f3db332482936dd289ab744de699f2bac55b62a662e3"
+    },
+    {
+      "path": "plans/reports/knowledge/20261031-k0-first-500-final/checks.json",
+      "bytes": 4010,
+      "sha256": "554cd69425b35698e5033ff42412e4431fd40b8c0e3d9e076bbd05eebb184a09"
+    },
+    {
+      "path": "plans/reports/knowledge/20261031-k0-first-500-final/handoff.md",
+      "bytes": 8019,
+      "sha256": "3d24f00839399f9aff77f811bf44fb10dc482dac254fafd93d0bb8efeb812878"
+    },
+    {
+      "path": "plans/reports/knowledge/20261031-k0-first-500-final/manifest.json",
+      "bytes": 22112,
+      "sha256": "dd423bfb581627080a3cf81355235958b0a50c200be66f23e7fe25c74705adf7"
+    },
+    {
+      "path": "plans/reports/knowledge/20261031-k0-first-500-final/protected-files.json",
+      "bytes": 8748,
+      "sha256": "2d93bba6b629772b2216f83c8e8a577d93600d40d46ad0fd86bebca102e0d22d"
+    },
+    {
+      "path": "plans/reports/knowledge/20261031-k0-first-500-final/review-decisions.json",
+      "bytes": 52755,
+      "sha256": "638cae7d1eda2c38d3e7e87b91467a850edffa2429d5aa6423e26e4f7024f8bd"
+    },
+    {
+      "path": "plans/reports/knowledge/20261031-k0-first-500-final/selection.json",
+      "bytes": 66949,
+      "sha256": "8f2711357667a5ada9b8f3db332482936dd289ab744de699f2bac55b62a662e3"
+    },
+    {
+      "path": "plans/reports/knowledge/20261031-k0-first-500-final/verification.json",
+      "bytes": 373,
+      "sha256": "c9bc987c9346f6cfdc0a2343032897fdb0ea128d813d36fa5cbd750e251878b7"
+    },
+    {
+      "path": "plans/reports/knowledge/20261031-k0-first-500-final/verify_migration.py",
+      "bytes": 4520,
+      "sha256": "023d9188e2cbbb3730d5f06db1774f715665b36b9bf7e5cb2efd60449fa45d0d"
+    },
+    {
+      "path": "scripts/export_memes.py",
+      "bytes": 13337,
+      "sha256": "fe51ed49b3350ed3ecb28096b6c78f1c84cfd3cc712c0d10cfb1dc53398b7223"
+    },
+    {
+      "path": "scripts/test_export_memes.py",
+      "bytes": 6678,
+      "sha256": "5a891ad42a097c457ea1945ea093df4a0de8d05cf85f27fbad84349b59e555ae"
+    }
+  ]
+}
