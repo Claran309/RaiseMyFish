@@ -1,5 +1,7 @@
 # 给 Codex 的 Phase 0 提示词
 
+> 通用要求和任务正文都必须附带 `plans/coordination.md` 的约束；DSH 负责独立验收和会话辅助，以下任务只按看板派发执行。
+
 > 复制时只复制对应任务那一节（含「通用要求」）。
 > 你是本项目（RaiseMyFish）的**首席开发 agent，拥有最终裁决权**。
 
@@ -12,7 +14,7 @@
 - 不要碰：`internal/collector`、`internal/sender`、`internal/persona`、`personas/`
 - 不直接改 `contracts/` 与 `plans/`（需要改就告诉主人，由本鱼执行）
 - 技术争议你自己裁决；遇到账号/环境问题告诉主人
-- 完成后：`go test ./...` + `go vet ./...`，commit `phase0: <任务>（验证方式）`，直接 push，汇报给主人
+- 完成后按 docs/testing.md 自测并写 plans/reports/codex.md；DSH 对快照独立验收后，由 Codex 统一集成提交/push。
 
 ---
 
@@ -147,7 +149,7 @@
 你是 RaiseMyFish 的首席开发 agent。任务：Phase 0.6 Brain。
 
 必读：contracts/brain.md、docs/05-brain.md、personas/（WorkBuddy 产出）、AGENTS.md。
-前置：0.2 完成；0.7 人格包就绪（没有就用最小占位包）。
+前置：0.2 验收；0.7a/b 人格素材与加载器、Persona/Memory 最小类型就绪；不等待 0.7c 完整人格回归。测试可用 fixture，实际人格不得以占位包冒充验收。
 
 范围：
 - internal/brain：Brain 实现（上下文组装 + 预算截断 + 失败分类）

@@ -9,6 +9,7 @@
 2. `docs/02-architecture.md`
 3. `contracts/`
 4. `plans/phase-0.md`（当前唯一可开工阶段）
+5. `plans/assignment.md` + `plans/coordination.md`（最新协作裁决、派发、验收和回执）
 
 ## 工具特定说明
 

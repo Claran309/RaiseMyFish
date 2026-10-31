@@ -1,5 +1,7 @@
 # 分工与协作契约（Agent Assignment）
 
+> **2026-10-31 补充裁决**：开工同时阅读 [coordination.md](coordination.md)。主人已明确 Codex 首席开发、DSH 独立验收与会话辅助、WorkBuddy 轻量开发；本文件下列分工、接口冻结、各自提交/push 等旧表述与补充裁决不一致时，以补充裁决为准，由 DSH 持续同步旧文案。
+
 > 本文件是**给开发 agent 的分工说明书**。当前阶段：Phase 0。
 > 阅读顺序：本文件 → `AGENTS.md` → `contracts/` → `plans/phase-0.md`。
 > 规则冲突时：契约 > 本文件 > 计划细节。**技术/架构/契约争议由 Codex 最终裁决**；

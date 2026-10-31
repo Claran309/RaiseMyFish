@@ -90,6 +90,7 @@ deployment/          docker-compose 等交付物
 
 ## 六、工作方式
 
+- 三方协作：Codex 首席开发与技术裁决；DSH 独立验收并协助主人调度会话；WorkBuddy 轻量开发。开工先读 `plans/assignment.md` 与 `plans/coordination.md`；共享工作区的 Git 写操作统一由 Codex 集成，DSH 验收后再直接 push。
 - 每次只做一个 Phase 内的任务；跨 Phase 需用户明确授权
 - 开始前读当前 Phase 计划，完成后勾掉任务、写一句结果
 - **提交直接 push 到 `main`（或 `master` / `dev`），个人项目不走 PR 流程**

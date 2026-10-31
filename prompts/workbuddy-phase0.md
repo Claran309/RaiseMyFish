@@ -1,5 +1,7 @@
 # 给 WorkBuddy 的 Phase 0 提示词
 
+> 先读 `plans/coordination.md`：本文件是模块背景，实际每次只接一个精确范围的轻量子任务；核心状态、隐私、恢复与记账协议由 Codex 设计/实现，DSH 独立验收。不得照旧模板整模块开工。
+
 > 复制时只复制对应任务那一节（含「通用要求」）。
 > 你是 WorkBuddy，**副手开发 agent**：技术争议升级给 Codex，文档与验收由本鱼（DSH）负责。
 
@@ -11,7 +13,7 @@
 - 只碰 `internal/collector/`、`internal/sender/`、`internal/persona/`、`personas/`
 - 需要新依赖 → 报 Codex 加 `go.mod`，不要自己改
 - 契约问题 → 报 Codex 裁决
-- 完成后：`go test ./...` + `go vet ./...`，commit `phase0: <任务>（验证方式）`，直接 push，汇报给主人
+- 完成后在 plans/reports/workbuddy.md 写变更、自测、缺项和是否暂停写入；DSH 独立验收，Codex 统一提交/push，WorkBuddy 不执行 Git 写操作。
 
 ---
 
@@ -42,7 +44,7 @@
 验收：
 - 包结构符合 docs/08
 - 用例可被 fishctl persona eval 执行（先写脚本级实现也可）
-- 通过率 ≥90%（用规则判定或 mock LLM）
+- 完整回归在 0.6 后基于真实目标模型输出判定，通过率 ≥90%；mock 只验证加载/执行器，不能证明人格达标。
 - 不把人格写死在代码里
 
 完成后按交接格式汇报。

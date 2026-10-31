@@ -1,6 +1,7 @@
 # 开发计划总览
 
 > 当前唯一可开工：**Phase 0**。其余阶段未到，不得提前实现。
+> 开工/恢复同时读 [协作裁决与看板](coordination.md)；Codex 首席开发、DSH 独立验收与会话辅助、WorkBuddy 轻量开发，各自回执见 `reports/`。
 > **分工与文件所有权见 `assignment.md`**（Codex / WorkBuddy / DSH flash / 本鱼），开工前先读它。
 
 ## 阶段状态

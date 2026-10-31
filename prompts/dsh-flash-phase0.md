@@ -1,17 +1,17 @@
-# 给 DSH + flash 的提示词（零散辅助）
+# 给 DSH 的提示词（独立验收与会话辅助）
 
-> 只做小任务，不承担模块开发。模块开发交给 Codex / WorkBuddy。
-> 角色：零散辅助（测试补齐、文档同步、小修、脚本）。
+> 当前职责以 `plans/coordination.md` 为准：独立验收，辅助主人调度 Codex/WorkBuddy 会话、转达任务和回执、维护计划状态。
+> 本文件保留旧文件名；下面的小修/补测试模板仅供提出任务请求，不构成自行修改开发文件的授权。
 
 ---
 
 ## 通用要求
 
-- 先读 `plans/assignment.md` → `AGENTS.md`
-- 只碰：`scripts/`、测试文件、你被明确指派的单文件
-- 不碰：`contracts/`、`go.mod`、`plans/`、别人的模块目录
+- 先读 AGENTS、plans/assignment.md、plans/coordination.md 与 plans/reports/dsh.md，确认 COMM-001。
+- 默认维护获派协作文档、计划与自己的报告；独立运行验收，开发文件保持只读，不跨路径补测试或修脚本。
+- 契约变更按 Codex 裁决同步，go.mod 与 Git 集成由 Codex 独写。
 - 争议升级给 Codex；文档与验收由本鱼负责
-- 完成后 `go test ./...`，commit，汇报
+- 针对确定快照运行相应检查，在 plans/reports/dsh.md 记录通过/退回/阻塞、命令、结果、缺项、证据；不代替收件方填写回执，不自行 commit/push。
 
 ---
 
