@@ -162,6 +162,14 @@ CREATE TABLE dlq (
 - 不手工改库结构，一律迁移
 - 种子：`migrations/seed.sql` 写初始 `memory_sources`
 
+### Phase 0.1 迁移落地
+
+`fishd migrate up` 将 `0001_init.sql` 与 `seed.sql` 嵌入二进制，在单事务和当前数据库/schema的事务advisory lock内执行。额外的基础设施表 `schema_migrations(version BIGINT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ)` 记录版本1及两份SQL的SHA256；重复调用校验后返回，发现checksum/版本变化或无账本的同名表冲突即报错，不覆盖既有表。
+
+seed来源ID为 owner_direct / owner_interaction / persona / expression / content / reading，对应既有六档100/80/60/50/30/20权重。它们是来源字典，不是历史状态或用户记忆导入。业务7表字段保持本节定义；恢复字段等待P0-G01/G02裁决后通过新增迁移补充，不修改已应用0001。
+
+普通启动只检查迁移/必需表并连接PG，不执行AutoMigrate。初始版本不开放自动down，以避免误删事实数据；真实PG集成测试在随机隔离schema内验证冲突回滚并清理自己的schema。
+
 ## 4.1 GORM 使用红线（事件/状态机场景）
 
 | 场景 | 写法 |

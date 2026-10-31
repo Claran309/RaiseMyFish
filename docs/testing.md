@@ -29,6 +29,10 @@
 - 时间：可注入 clock（避免 sleep 测试）
 - 数据库：集成测试用真实 PG，不用 sqlite 替代
 
+0.1：`go test -tags=integration ./... -count=1` 使用 `FISH_TEST_DSN`，本机未设置时仅从根目录 `.env` 取DB连接串。数据库迁移与服务启动测试创建独立随机schema，不清空业务public表；测试结束只清理自己的schema。缺PG配置/连接失败将失败，不静默skip。CI的PG17服务已启用。
+
+Windows运行race需要可用的64位C编译器；PATH中32位MinGW会报「64-bit mode not compiled in」，不能把这个结果当通过或以普通test替代race。可显式将CC设为可信64位clang/gcc路径，避免修改全局PATH。CI使用Go1.27，模块最低Go1.25；golangci-lint固定v2.15.0及v2配置。
+
 ## 4. 覆盖率
 
 - 核心包（event/scheduler/brain/memory）行覆盖 ≥ 70%

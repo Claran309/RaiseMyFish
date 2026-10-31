@@ -1,0 +1,169 @@
+{
+  "task": "0.1",
+  "base_commit": "32651bac9f73302394ee6c8f60ec3bf9ddd191b9",
+  "state": "Codex自测完成，待DSH独立验收；未提交",
+  "excluded": [
+    ".env",
+    "internal/persona/",
+    "agents/",
+    "prompts/",
+    "DSH与WorkBuddy报告及其他并行改动"
+  ],
+  "files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "bytes": 2210,
+      "sha256": "f1ab0b3d0e79e1d6220ba42de2f10cd6db66f3abbfbf039861b51aa78b7bd972"
+    },
+    {
+      "path": ".golangci.yml",
+      "bytes": 748,
+      "sha256": "45103d376bad148eace3dbf2d86f9f737e46b67f9beea1d887cfaa6134156c45"
+    },
+    {
+      "path": "README.md",
+      "bytes": 6237,
+      "sha256": "df6999505a282d010b16d6196b1c92f4b03b91f9d8cd3fb60d5102dd8e4f15e1"
+    },
+    {
+      "path": "cmd/fishctl/main.go",
+      "bytes": 3797,
+      "sha256": "91b5edcf4f9bd94a5fe26db12ef627cd9c74f29a4553d14b56045e18c72b62d5"
+    },
+    {
+      "path": "cmd/fishctl/main_test.go",
+      "bytes": 4727,
+      "sha256": "fe4a772b77537c46b491c222e9e581e8890c01fa793202ede3cbb70dd7905c0a"
+    },
+    {
+      "path": "cmd/fishd/main.go",
+      "bytes": 3941,
+      "sha256": "1bb4d10dc14daa9900889019fa834720250d79b20f20f0cb120b5f7cf6b7ab4f"
+    },
+    {
+      "path": "cmd/fishd/main_test.go",
+      "bytes": 1576,
+      "sha256": "1b73d147110624af8f4834f7b7db861da63f587eae36159ac2cc4fa4a6c99668"
+    },
+    {
+      "path": "cmd/fishd/runtime_integration_test.go",
+      "bytes": 3184,
+      "sha256": "644680347e744ea3cbfc9afb7e5f5a6bdc090fda8ce18de6bd727e042b87921c"
+    },
+    {
+      "path": "config/fishd.toml",
+      "bytes": 428,
+      "sha256": "bb21f5636ce8a40d82e5d376b2b80ee97a116f0b1d1d3d1891958fd3dc6c75ff"
+    },
+    {
+      "path": "docs/09-data-model.md",
+      "bytes": 7024,
+      "sha256": "dbc043f1f9cff0c892b9b61a4fd8b72e02d874c19e3fef03c7205db6b9dc5e6e"
+    },
+    {
+      "path": "docs/13-deployment.md",
+      "bytes": 4105,
+      "sha256": "25eadf5a45c9d7a589aa95102ad0dfb5d3f9e48c8d5df8c8d4ea84838fbaede3"
+    },
+    {
+      "path": "docs/testing.md",
+      "bytes": 2470,
+      "sha256": "7f540b9cc6af62ff4025a7e840128cddb3233fb9e5e94ba64e9f21ae24b4ca28"
+    },
+    {
+      "path": "docs/update/2026-10-31-0116-基础设施配置日志与迁移.md",
+      "bytes": 5653,
+      "sha256": "da3bcc50061a45d8de2b794ac124041baa721ca6aa8e7cc91b8ede7089d6dc09"
+    },
+    {
+      "path": "go.mod",
+      "bytes": 666,
+      "sha256": "4a80d369a0e71fe08929137742b0235022385ae0bd54783dc1898c7fabcb73e3"
+    },
+    {
+      "path": "go.sum",
+      "bytes": 3917,
+      "sha256": "cb61f4fd56f4ffc0a5449ae4f1cc264cb2206e5c3a64814c8a0809af5a9a8b01"
+    },
+    {
+      "path": "internal/config/config.go",
+      "bytes": 4235,
+      "sha256": "50a5dd5111433b60965e40324285177b8f432c59236d58071a141d29c36f5dca"
+    },
+    {
+      "path": "internal/config/config_test.go",
+      "bytes": 3164,
+      "sha256": "e062d64776241f3a823342f50142a8be38bcf411eb9698a8d1e6923abde26475"
+    },
+    {
+      "path": "internal/database/database.go",
+      "bytes": 2218,
+      "sha256": "046e51f9f0504b9022fa12e572ee32cb52045fdec10b4143858f51d16968801c"
+    },
+    {
+      "path": "internal/database/database_test.go",
+      "bytes": 436,
+      "sha256": "e3181c966333ca6c908445fb83365785f69ce9b9549643f88f3a040224e95d11"
+    },
+    {
+      "path": "internal/database/migration.go",
+      "bytes": 2990,
+      "sha256": "b5559fd70e861ba27712c7732857767f2ea2d4d3ec12b047cdc20b43add981df"
+    },
+    {
+      "path": "internal/database/migration_integration_test.go",
+      "bytes": 4009,
+      "sha256": "3a8c0e6c7ea8a0b8d11444886487637b2bb3ae17e69e24d17ed33d45662bca5e"
+    },
+    {
+      "path": "internal/infra/errors.go",
+      "bytes": 432,
+      "sha256": "6f45c854bfb0e31589abfbf08add17278cc2c5708eea4fbaf03e479dd0ee7e94"
+    },
+    {
+      "path": "internal/infra/infra.go",
+      "bytes": 2987,
+      "sha256": "df8556aa7568537920443d781657c9708b14af7a75572f0c39e30e4de9df6575"
+    },
+    {
+      "path": "internal/infra/infra_test.go",
+      "bytes": 3154,
+      "sha256": "98d67f6ed87559a6f109bd6fe12e238073951ab9d94cc4b359b1248d9c7b82c7"
+    },
+    {
+      "path": "internal/infra/lifecycle_integration_test.go",
+      "bytes": 2409,
+      "sha256": "dc090a82f6157cf7af517920f3deeed0db6a48f288f5e013441ba4418501fdd9"
+    },
+    {
+      "path": "internal/infra/logger.go",
+      "bytes": 2921,
+      "sha256": "65b3f1a13c77f8ea643e3ab02f41f096e93d35a67a89436a72c4e9b49ff7080c"
+    },
+    {
+      "path": "internal/infra/status.go",
+      "bytes": 2030,
+      "sha256": "d523093d200aa0e8cc96b505eb8a1e2b2625cdef6aa7401c8427254e325361fd"
+    },
+    {
+      "path": "migrations/0001_init.sql",
+      "bytes": 2813,
+      "sha256": "0a60002251a155ed5d5137e4df65936b394ff4b198b4ae6893090cc34d68fb0a"
+    },
+    {
+      "path": "migrations/assets.go",
+      "bytes": 239,
+      "sha256": "d924df2cffd754612d73e6fb9b3ee476066ae41f0c7f6ef8a566f29f5bff46a9"
+    },
+    {
+      "path": "migrations/seed.sql",
+      "bytes": 383,
+      "sha256": "f451f634dca551fab36f875caa35b1050df1886ed58ef6d984021d2cf0dded36"
+    },
+    {
+      "path": "plans/phase-0.1-implementation.md",
+      "bytes": 3319,
+      "sha256": "866fe75f7565857bc5b6fd467ee8b15be0335266255016c4a65ba70689232b80"
+    }
+  ]
+}

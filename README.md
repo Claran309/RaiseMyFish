@@ -3,7 +3,7 @@
 > 一条 AI 肥鱼的多通道陪伴系统：看直播、回弹幕、回私信、回评论、上 QQ，
 > 有共享记忆、有人格一致性、能无人值守跑。
 >
-> **状态：设计阶段。本仓库当前只放设计与计划文档，实现由后续开发 agent 按 `plans/` 执行。**
+> **状态：Phase 0 实现中。0.7a 人格素材已接收；0.1 提供配置、日志、PG迁移和服务/运维入口，待 DSH 独立验收。业务通道尚未装配。**
 
 ---
 
@@ -69,11 +69,13 @@ RaiseMyFish/
 │  ├─ collector/       # 采集器（bili-live / bili-comment / bili-dm / qq）
 │  ├─ sender/          # 发送器（同通道配套）
 │  ├─ persona/         # 人格注入与回归
-│  ├─ store/           # repository 层（PG 实现）
+│  ├─ store/           # repository 接口
+│  ├─ database/        # GORM/pgx与迁移、后续repository实现
+│  ├─ infra/           # 连接、日志与进程生命周期
 │  └─ config/          # 配置
 ├─ pkg/                # 对外可复用包（如 OneBot 客户端）
 ├─ docs/ contracts/ plans/
-└─ deploy/             # docker-compose 等交付物
+└─ deployment/         # docker-compose 等交付物
 ```
 
 ## 当前状态
@@ -92,3 +94,34 @@ RaiseMyFish/
 3. `plans/phase-0.md`（当前唯一可开工的阶段）
 
 不要跳阶段、不要提前实现后续 Phase 的功能。
+
+## 0.1 本机运行
+
+需要 Go 1.25+、PostgreSQL 17+，并在本机 `.env` 填写 `FISH_DB_DSN`；`.env` 不入仓。当前只运行基础设施，不需要 LLM/B站凭据，也不会发送消息。命令从仓库根目录执行：
+
+```powershell
+go mod download
+go run ./cmd/fishd migrate up
+go run ./cmd/fishd
+# 另一个终端：
+go run ./cmd/fishctl status
+go run ./cmd/fishctl tail
+```
+
+`Ctrl+C` 优雅停止；status 只有 PG/迁移及服务心跳均正常时返回0，未启动/停止/过期返回非零。tail 从当日日志开头读取并跟随追加，跨日自动换文件，Ctrl+C退出。
+
+默认配置是 `config/fishd.toml`，通道全部关闭；可在命令前传 `--config 路径 --env-file 路径`。进程环境变量覆盖本地 dotenv，随后才是 TOML 和默认值；`FISH_LOG_LEVEL`、`FISH_LOG_DIR`、`FISH_STATE_FILE` 可覆盖日志与状态位置。加载不会修改全局环境。
+
+迁移不会随启动自动执行；`migrate up` 可重复执行并检查checksum，失败整体回滚。初始事实表不开放自动down；不要在业务库手动DROP。日志为 `logs/fishd-YYYY-MM-DD.log`（JSON、文件+stderr、保留7天）；本机心跳位于 `data/fishd-status.json`，不包含凭据。当前没有HTTP监听，通道开关误开会直接报错。
+
+```powershell
+go test ./...
+go vet ./...
+go build ./...
+# PG集成测试：使用FISH_TEST_DSN，未设置时读本机.env；创建随机独立schema并清理
+go test -tags=integration ./... -count=1
+# Windows需64位C编译器；CI已配置race和PG17
+go test -race -tags=integration ./... -count=1
+```
+
+本地 lint：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...`。CI固定Go1.27与lint2.15.0；模块最低Go1.25。未接入的人格Go草稿仍在工作区，不能据全仓本地测试把0.7b判为验收完成。

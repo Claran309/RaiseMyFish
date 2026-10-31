@@ -6,11 +6,10 @@ on:
     branches: [main, master, dev]
 
 env:
-  GO_VERSION: "1.25"
+  GO_VERSION: "1.27"
 
 jobs:
   lint:
-    if: ${{ hashFiles('go.mod') != '' }}
     name: 格式与静态检查
     runs-on: ubuntu-latest
     steps:
@@ -24,13 +23,12 @@ jobs:
           diff=$(gofmt -l .)
           if [ -n "$diff" ]; then echo "以下文件未格式化："; echo "$diff"; exit 1; fi
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          version: v2.15.0
           args: --timeout=5m
 
   test:
-    if: ${{ hashFiles('go.mod') != '' }}
     name: 单元测试
     runs-on: ubuntu-latest
     steps:
@@ -45,7 +43,6 @@ jobs:
         run: go test -race -cover ./...
 
   build:
-    if: ${{ hashFiles('go.mod') != '' }}
     name: 构建
     runs-on: ubuntu-latest
     steps:
@@ -59,28 +56,29 @@ jobs:
           go build -trimpath -o bin/fishd ./cmd/fishd
           go build -trimpath -o bin/fishctl ./cmd/fishctl
 
-  # 集成测试（需要真实 PG）：启用前确认 migrations 存在
-  # integration:
-  #   name: 集成测试
-  #   runs-on: ubuntu-latest
-  #   services:
-  #     postgres:
-  #       image: postgres:17
-  #       env:
-  #         POSTGRES_USER: fish
-  #         POSTGRES_PASSWORD: fish
-  #         POSTGRES_DB: raisemyfish_test
-  #       ports: ["5432:5432"]
-  #       options: >-
-  #         --health-cmd pg_isready
-  #         --health-interval 5s
-  #         --health-timeout 5s
-  #         --health-retries 10
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-go@v5
-  #       with: { go-version: "1.25", cache: true }
-  #     - name: 集成测试
-  #       env:
-  #         FISH_TEST_DSN: postgres://fish:fish@127.0.0.1:5432/raisemyfish_test?sslmode=disable
-  #       run: go test -tags=integration ./internal/...
+  integration:
+    name: PostgreSQL17集成测试
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: fish
+          POSTGRES_PASSWORD: fish
+          POSTGRES_DB: raisemyfish_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: 集成测试（独立schema，失败不跳过）
+        env:
+          FISH_TEST_DSN: postgres://fish:fish@127.0.0.1:5432/raisemyfish_test?sslmode=disable
+        run: go test -race -tags=integration ./... -count=1

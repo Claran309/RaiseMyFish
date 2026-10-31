@@ -1,0 +1,23 @@
+# 路径相对启动工作目录。敏感值只写环境变量名。
+[db]
+dsn_env = "FISH_DB_DSN"
+timeout_seconds = 5
+
+[log]
+level = "info"
+dir = "logs"
+
+[runtime]
+state_file = "data/fishd-status.json"
+heartbeat_seconds = 5
+stale_seconds = 20
+
+# 0.1只有基础设施，未实现通道不得启用。
+[channels.live]
+enabled = false
+[channels.comment]
+enabled = false
+[channels.dm]
+enabled = false
+[channels.qq]
+enabled = false

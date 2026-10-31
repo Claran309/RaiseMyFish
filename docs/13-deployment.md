@@ -59,6 +59,8 @@ services:
 
 ## 3. 配置
 
+当前0.1实际支持的配置以仓库 `config/fishd.toml` 为准：db、log、runtime、全部关闭的channels开关；下面是后续Brain/通道装配后的配置目标，**不能作为0.1配置直接使用**。0.1不监听8080，不提供HTTP接口；fishctl status通过PG探测与本机心跳文件判断运行状态。
+
 ```toml
 # config/fishd.toml（示例）
 [server]
@@ -128,6 +130,8 @@ FISH_LOG_LEVEL=info
 **全部不入仓**；提供 `.env.example`（占位符，不含真实值）。
 
 ## 7. 端口规划
+
+以下fishd端口为后续能力规划；0.1只需PG端口，DSN可配置非5432地址。
 
 | 服务 | 端口 |
 |---|---|

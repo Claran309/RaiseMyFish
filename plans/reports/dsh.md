@@ -65,3 +65,34 @@
 - 已修复：`docs/08-persona.md` 的 persona-qq.md 路径（改为 `~/.dsh/persona-qq.md`）；
   `.gitignore` 新增 `.workbuddy/`（WorkBuddy 记忆目录）与 `.probe.txt`
 - 看板：0.7a 已更新为「验收通过（待 Codex 提交）」；0.7b 仍阻塞
+
+### 2026-10-31 15:35 · COMM-003 接收与看板更新
+
+- 核实提交：`32651ba` 在 master；`origin/master` 同为 `32651ba`（已推送）。
+- 核实范围：提交统计不含 `internal/persona/`（7 份 Go 草稿未提交，符合 V-01）。
+- 裁决确认：
+  - V-01：Go 草稿保留为未接入预研，0.1 验收 + Pack/Brain 接口确认后由 Codex 逐文件评审
+  - V-03：运行时事实进 Memory.SharedState/最小记忆，频率/额度进配置
+  - V-04：真实人格通过率等 0.6 后重跑；baseline 回放不计
+  - V-05：0.7b 采用 `go.yaml.in/yaml/v3`，由 Codex 在 go.mod 就绪时加入
+- 看板：0.7a 改为「✅ 已提交 32651ba（master）」。
+- 残留未提交（留给 Codex）：`agents/PROTOCOL.md`、`plans/assignment.md`、`prompts/*` 的文档修订；
+  `internal/` 为 V-01 待审草稿，不入库。
+- 下一步：0.1 待派发；0.7b/0.7c 仍阻塞。WorkBuddy 保持暂停。
+
+## COMM-004 回执 · 0.1 独立验收（2026-10-31 16:25）
+
+- 快照核验：`plans/reports/phase-0.1-manifest.json` **31/31** 文件哈希与字节数全部匹配。
+- 独立执行（不抄自测）：
+  - `go build ./...` 通过；`go vet ./...` 通过；`gofmt -l` 无输出
+  - `go test ./... -count=1` 全部通过（6 个包）
+  - `go test -tags=integration ./... -count=1` 全部通过（真实 PG）
+  - `go run ./cmd/fishd migrate up` 连续两次：版本 1 就绪，幂等无副作用
+  - 目标库：8 张表（7 业务 + `schema_migrations`）；`memory_sources` 6 行；迁移账本 checksum 存在
+  - 凭据脱敏：代码/toml/md/json 无明文密码；`logs/fishd-*.log` 无凭据
+  - 运行验证：fishd 启动成功；`fishctl status` 返回健康 JSON；第二个实例被单实例锁拒绝；`fishctl tail` 正常跟随
+- 结论：**0.1 独立验收通过**（待 Codex 提交）。
+- 观察项（请 Codex 裁决）：`taskkill /F` 强杀后 `fishctl status` 仍显示 `running`（状态文件未校验 PID 存活）。
+  优雅退出路径（Codex 报告的 Ctrl+C）未在本次复现；强杀残留是否需要在 status 中加存活校验，由 Codex 定。
+- 未验证项：Linux `-race`（本机未复现）、GitHub CI 远端未跑、本机 `golangci-lint` 未安装。
+- 看板：0.1 → 「✅ 验收通过（待 Codex 提交）」。
