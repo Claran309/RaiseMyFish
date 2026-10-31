@@ -20,17 +20,27 @@ func runPersonaRescore(ctx context.Context, args []string, out, stderr io.Writer
 	source := fs.String("source", "", "原始真实run目录")
 	target := fs.String("output", "", "独立新重评目录")
 	version := fs.String("rules-version", "persona-lexical-v2", "评分版本")
+	revision := fs.String("cases-revision", "", "只改变expect的修订用例，另存快照")
+	revisionSHA := fs.String("cases-sha256", "", "修订用例必须匹配的SHA256")
 	if err := fs.Parse(args); err != nil {
 		return errors.New("离线重评参数无效")
 	}
 	if fs.NArg() != 0 || *source == "" || *target == "" {
 		return errors.New("离线重评必须指定source和独立output")
 	}
+	if (*revision == "") != (*revisionSHA == "") {
+		return errors.New("修订用例与SHA256必须同时指定")
+	}
 	scorer, err := personaeval.NewScorerVersion(*version)
 	if err != nil {
 		return err
 	}
-	report, err := personaeval.RescoreExisting(*source, *target, scorer)
+	var report personaeval.RescoreReport
+	if *revision == "" {
+		report, err = personaeval.RescoreExisting(*source, *target, scorer)
+	} else {
+		report, err = personaeval.RescoreWithExpectations(*source, *target, scorer, *revision, *revisionSHA)
+	}
 	if err != nil {
 		return err
 	}

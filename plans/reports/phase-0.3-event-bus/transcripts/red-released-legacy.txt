@@ -1,0 +1,7 @@
+--- FAIL: TestQueueClaimDeferFencingAndFilter (0.36s)
+    queue_integration_test.go:84: 释放后的旧入口绕过延期 <nil>
+--- FAIL: TestQueueTaskAtomicAndRecoveryStages (0.35s)
+    queue_integration_test.go:238: 旧入口绕过核验恢复 <nil>
+FAIL
+FAIL	RaiseMyFish/internal/database	0.972s
+FAIL

@@ -1,0 +1,198 @@
+{
+  "task": "0.7c A0/A场景装配",
+  "base_commit": "008beb6efb86ecad167f342f5d3f5bb41130fab7",
+  "owner_approval": "仅批准零调用审计和装配单次35条；第3步暂缓",
+  "contract": "P0-BRAIN-2",
+  "state": "真实35条完成，v2为13/35=37.1%未达90%；源码/产物待DSH独立复核，未暂存/提交",
+  "base_run_id": "20261031T121041Z-bcd11c0e",
+  "run_id": "20261031T124251Z-43a917e1",
+  "score": {
+    "v2_raw": 13,
+    "v2_delivered": 13,
+    "v1_same_outputs": 12,
+    "total": 35
+  },
+  "actual_model_calls": 35,
+  "new_run_only_usage": {
+    "in_tokens": 228571,
+    "out_tokens": 409,
+    "cost_usd": null
+  },
+  "old_evidence_preserved_git_bytes": 30,
+  "configured_secrets_absent": true,
+  "new_runtime_source_changes": [
+    "internal/brain/context.go"
+  ],
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 719,
+      "sha256": "9239194fe3bf4ac44f79433854aac0e0eda564459e02193e3f58bcaa46f0be4d"
+    },
+    {
+      "path": "contracts/brain.md",
+      "bytes": 9727,
+      "sha256": "fbb723bd162aa80f6211574d8d4b01637ccc212910880a7cc2bed4bb44442d82"
+    },
+    {
+      "path": "contracts/persona.md",
+      "bytes": 7017,
+      "sha256": "218107f506e5f8cc8698c452652e745ddb0a2e27dbf920572853b70830e4b41b"
+    },
+    {
+      "path": "docs/08-persona.md",
+      "bytes": 5212,
+      "sha256": "6767e2b547548729e9ceafe8c671bb60a2a9f8211b7d9449c53f492fbb8e7285"
+    },
+    {
+      "path": "docs/update/2026-10-31-0543-场景规则与动态资料分离.md",
+      "bytes": 5704,
+      "sha256": "fe3b45b7557e7f136280850eb0fa46f11eed44695bb528a606e7760b2ba87343"
+    },
+    {
+      "path": "internal/brain/context.go",
+      "bytes": 8550,
+      "sha256": "9cacd0fa602f3eacd3d8fcd32ebb8b77f32366e08fad8247f5135533c991fb7e"
+    },
+    {
+      "path": "internal/brain/context_test.go",
+      "bytes": 5120,
+      "sha256": "43800dca69c42ad3a8969c590ce0ff3e1da9ac2eabbed28af0288deba6f14818"
+    },
+    {
+      "path": "plans/phase-0.7c-optimization-design.md",
+      "bytes": 18688,
+      "sha256": "6f3246004a41acee55535f6030d2217ca6f6b4ceeb3f876ace9e1873fdb7aa19"
+    },
+    {
+      "path": "plans/phase-0.7c-scene-assembly-dispatch.md",
+      "bytes": 2781,
+      "sha256": "16cace1a68cdb27e80aa9eb6aa4f0f470c9bb20587a4e59491459f6c7ebf8d73"
+    },
+    {
+      "path": "plans/reports/codex.md",
+      "bytes": 47267,
+      "sha256": "c0e51cc6415ac20ef4a80797ed28657111c08265e20aef8018389b47334f757b"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1-compare-persona-lexical-v1/report.json",
+      "bytes": 13928,
+      "sha256": "5355bc87592bac5bbb260bdb90fa4bed4a57d383a2469071b72f6bba9c7c7fe0"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1-compare-persona-lexical-v1/report.md",
+      "bytes": 266,
+      "sha256": "240ea5e8ed471d710967d33f2b43e7d80514fdd59d4f60043b06b8af0f840291"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1-compare-persona-lexical-v1/rules.json",
+      "bytes": 5288,
+      "sha256": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1/analysis.md",
+      "bytes": 5544,
+      "sha256": "a69e87e825cbe320ddab285e834fb169ffda54db95c3653ddc32a3fa1b0daede"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1/cases.jsonl",
+      "bytes": 6051,
+      "sha256": "963a61334b106ef549ebd5289304aca2ad0b71ab5fdf0c089d3ff0720f6bcbae"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1/comparison-rules.json",
+      "bytes": 5288,
+      "sha256": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1/manifest.json",
+      "bytes": 4769,
+      "sha256": "39e0cf04330aab11dda7aff3b421bbb830b24fa2410d8cefc3b6def6657d4156"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1/pg-audit.json",
+      "bytes": 422,
+      "sha256": "19931ac141313f93d3396ffd691806bb2efbcf54593e6c7646f2d4bffa9045f2"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1/report.json",
+      "bytes": 68374,
+      "sha256": "63c0b8b1a4be1292ec7dfb222c7d62c11952c6a86eaa062b9ec074f20b4d3273"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1/report.md",
+      "bytes": 12291,
+      "sha256": "922436f08cd68be245d5fb49a68be41c8c0f37dd97dfa3b8082a9b57f605734c"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1/results.jsonl",
+      "bytes": 44637,
+      "sha256": "042177c25438b198bed7d748b597202af4dff5542f832c7b84986df5a0bf9266"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1/rules.json",
+      "bytes": 6760,
+      "sha256": "4e8264b1b07d0d98deb849d1a1f1badbfa99a12e53b845538ec20db4cb9ad854"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1/verification.json",
+      "bytes": 3064,
+      "sha256": "a2233ba58ff0496f69ed687fd16700d838ef3365c82e7680015cbfce6dc4492e"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T124251Z-43a917e1/verify.py",
+      "bytes": 8010,
+      "sha256": "5939b1c1c6b8ddf4718a9d2058bc5b7f975163d499234b6c0a729687ae8d3f9b"
+    },
+    {
+      "path": "plans/reports/persona-intent-audit/20261031-a0/audit.json",
+      "bytes": 14875,
+      "sha256": "249bb6f9d5aaf4a1b4c901cac5fcb89947a2e256c28add837f35ada9d07cbf54"
+    },
+    {
+      "path": "plans/reports/persona-intent-audit/20261031-a0/audit.md",
+      "bytes": 7327,
+      "sha256": "3ad466895e289b5bd16f5f4a36f272bbc33bb69dcf250cbab89ed2eae52f0930"
+    },
+    {
+      "path": "plans/reports/scene-assembly-preflight/checks-race.json",
+      "bytes": 1509,
+      "sha256": "6bca2a81390a5234c38c803f8caa3b6c702d067d6a465ffdc3a9c14e990f9cf1"
+    },
+    {
+      "path": "plans/reports/scene-assembly-preflight/checks-windows.json",
+      "bytes": 2059,
+      "sha256": "985cc08da6046249ca086a4dcb2ef468a0c93453a9afa938e75ccdf4f298cc79"
+    },
+    {
+      "path": "plans/reports/scene-assembly-preflight/code-review.json",
+      "bytes": 616,
+      "sha256": "1f6d662bf32bdeab7d53b352406d8a469427e8da9b7ef0d27fcf5f9ee7fc9783"
+    },
+    {
+      "path": "plans/reports/scene-assembly-preflight/contract-before-implementation.json",
+      "bytes": 949,
+      "sha256": "036d060c6b89d420e2d3122c88492b02abfa1dfde65d894f6159e8c401c401e8"
+    },
+    {
+      "path": "plans/reports/scene-assembly-preflight/experiment-freeze.json",
+      "bytes": 2809,
+      "sha256": "d1033c60286a1b65a36e35fa6d3330dba471754fbded66d50ece03bce17cb005"
+    },
+    {
+      "path": "plans/reports/scene-assembly-preflight/green.txt",
+      "bytes": 40,
+      "sha256": "7388f61fef4a2204397e6c1d3ab524359abb482f42e22b743314d56ddccf77d8"
+    },
+    {
+      "path": "plans/reports/scene-assembly-preflight/local-config-path.txt",
+      "bytes": 47,
+      "sha256": "e01b988a66182582c73926b8e5330d9ef4d1e2b52244837da61aac2572881bf2"
+    },
+    {
+      "path": "plans/reports/scene-assembly-preflight/red.txt",
+      "bytes": 1410,
+      "sha256": "a64660aa8e1b1090d4c22798f9af705b1c95fe95179647c9512262a05bf8ea9d"
+    }
+  ]
+}

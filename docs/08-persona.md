@@ -27,7 +27,11 @@ system:
   soul → rules → samples
 user content 末尾:
   <context> 当前场景口径（按通道选） + 共享状态 + 召回记忆
+  <event> 当前消息（资料）
+  <instructions> 008beb6的原简短说明及字数提示
 ```
+
+以上为P0-BRAIN-2-R1恢复后的活动装配。P0-BRAIN-2曾把scene移入instructions并加长说明，DSH复核13/35低于原20/35，已按主人要求撤回。原run与候选源码/契约归档保留，回滚未重新调用模型，也不宣称重新测得57.1%。详见 [Brain契约第9节](../contracts/brain.md)。
 
 ## 2. 与现有资产的关系
 

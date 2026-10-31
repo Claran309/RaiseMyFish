@@ -284,11 +284,18 @@ func personaEval(ctx context.Context, configPath, envPath string, args []string,
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(stdout, "run=%s model=%s persona=%s@%s raw=%d/%d (%.1f%%) delivered=%d/%d (%.1f%%) complete=%t reached90=%t report=%s\n", report.RunID, report.ProviderModel, report.PackName, report.PackVersion, report.RawPassed, report.Total, report.RawPassRate*100, report.DeliveredPassed, report.Total, report.DeliveredPassRate*100, report.Complete, report.Reached90, filepath.Join(outputDir, "report.md")); err != nil {
+	if report.PassRateBasis == "automated_safety" {
+		if _, err := fmt.Fprintf(stdout, "run=%s model=%s persona=%s@%s basis=automated_safety raw=%d/%d (%.1f%%) delivered=%d/%d (%.1f%%) unassessable=%d complete=%t automated90=%t manual=%s report=%s\n", report.RunID, report.ProviderModel, report.PackName, report.PackVersion, report.RawPassed, report.RawSafetySummary.Assessed, report.RawPassRate*100, report.DeliveredPassed, report.DeliveredSafetySummary.Assessed, report.DeliveredPassRate*100, report.RawSafetySummary.Unassessable, report.Complete, report.AutomatedReached90, report.ManualReviewStatus, filepath.Join(outputDir, "report.md")); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintf(stdout, "run=%s model=%s persona=%s@%s raw=%d/%d (%.1f%%) delivered=%d/%d (%.1f%%) complete=%t reached90=%t report=%s\n", report.RunID, report.ProviderModel, report.PackName, report.PackVersion, report.RawPassed, report.Total, report.RawPassRate*100, report.DeliveredPassed, report.Total, report.DeliveredPassRate*100, report.Complete, report.Reached90, filepath.Join(outputDir, "report.md")); err != nil {
 		return err
 	}
 	if !report.Complete {
 		return errors.New("真实评估未完成，不能宣称35条模型结果")
+	}
+	if report.ManualReviewRequired {
+		return errors.New("自动安全评估已保存，须独立人工硬核查；不据风格分数或自动安全率宣称最终验收")
 	}
 	if !report.Reached90 {
 		return errors.New("真实模型原始输出通过率未达到90%，实际结果已保存")

@@ -1,0 +1,7 @@
+{
+  "command": "WSL CGO_ENABLED=1 /usr/local/go/bin/go test -race ./... -count=1",
+  "exit_code": 0,
+  "result": "全仓通过（已检查本轮工具完成回执）；migrations无测试文件",
+  "model_calls": 0,
+  "dsh_independent_acceptance": false
+}

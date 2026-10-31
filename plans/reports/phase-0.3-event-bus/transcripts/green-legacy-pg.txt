@@ -1,0 +1,36 @@
+=== RUN   TestMigrationRealPostgres
+--- PASS: TestMigrationRealPostgres (0.34s)
+=== RUN   TestMigrationRollbackOnConflict
+--- PASS: TestMigrationRollbackOnConflict (0.31s)
+=== RUN   TestQueueClaimDeferFencingAndFilter
+--- PASS: TestQueueClaimDeferFencingAndFilter (0.28s)
+=== RUN   TestQueueConcurrentClaimSkipLockedAndOrder
+--- PASS: TestQueueConcurrentClaimSkipLockedAndOrder (0.38s)
+=== RUN   TestQueueTaskAtomicAndRecoveryStages
+--- PASS: TestQueueTaskAtomicAndRecoveryStages (0.29s)
+=== RUN   TestMigrationV1UpgradeEventLeases
+--- PASS: TestMigrationV1UpgradeEventLeases (0.27s)
+=== RUN   TestQueueTaskFailureRollsBackAndFences
+--- PASS: TestQueueTaskFailureRollsBackAndFences (0.68s)
+=== RUN   TestQueueRecoverBoundedKeepsStateClock
+--- PASS: TestQueueRecoverBoundedKeepsStateClock (0.28s)
+=== RUN   TestMigrationV2RollbackAndChecksum
+--- PASS: TestMigrationV2RollbackAndChecksum (0.27s)
+=== RUN   TestQueueInvalidCanceledAndClosedErrors
+=== RUN   TestQueueInvalidCanceledAndClosedErrors/claim
+=== RUN   TestQueueInvalidCanceledAndClosedErrors/mark
+=== RUN   TestQueueInvalidCanceledAndClosedErrors/defer
+=== RUN   TestQueueInvalidCanceledAndClosedErrors/renew
+=== RUN   TestQueueInvalidCanceledAndClosedErrors/recover
+--- PASS: TestQueueInvalidCanceledAndClosedErrors (0.26s)
+    --- PASS: TestQueueInvalidCanceledAndClosedErrors/claim (0.00s)
+    --- PASS: TestQueueInvalidCanceledAndClosedErrors/mark (0.00s)
+    --- PASS: TestQueueInvalidCanceledAndClosedErrors/defer (0.00s)
+    --- PASS: TestQueueInvalidCanceledAndClosedErrors/renew (0.00s)
+    --- PASS: TestQueueInvalidCanceledAndClosedErrors/recover (0.00s)
+=== RUN   TestEventRepositoryRealPostgres
+--- PASS: TestEventRepositoryRealPostgres (0.65s)
+=== RUN   TestTaskRepositoryRealPostgres
+--- PASS: TestTaskRepositoryRealPostgres (0.64s)
+PASS
+ok  	RaiseMyFish/internal/database	4.879s

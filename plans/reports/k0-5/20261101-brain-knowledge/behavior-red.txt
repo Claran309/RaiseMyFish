@@ -1,0 +1,17 @@
+--- FAIL: TestKnowledgeOnlyInDataAndWholeItemSerializationBudget (0.02s)
+    knowledge_test.go:89: 缺知识预算审计
+--- FAIL: TestKnowledgeEscapingCannotCreateInstructionSection (0.00s)
+    knowledge_test.go:150: 知识转义前后正文不一致
+--- FAIL: TestKnowledgeScopePrivacyAndRevisionRejectBeforeProvider (0.00s)
+    knowledge_test.go:173: 无效知识仍调用Provider或记假账
+--- FAIL: TestKnowledgePrivateScopeMatchesDMAndQQScene (0.00s)
+    knowledge_test.go:212: 跨私密会话知识被使用
+--- FAIL: TestKnowledgeEmptyAndZeroPercentKeepFullPersona (0.00s)
+    knowledge_test.go:230: 缺知识预算审计
+--- FAIL: TestKnowledgeCannotEvictMemoryAndUsesRemainingBytes (0.00s)
+    knowledge_test.go:272: 生成回复失败（类别input）
+--- FAIL: TestKnowledgeSharesInputResourceLimits (0.00s)
+    knowledge_test.go:294: 知识未计入共用资源上限
+FAIL
+FAIL	RaiseMyFish/internal/brain	0.987s
+FAIL

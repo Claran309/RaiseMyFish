@@ -1,0 +1,10 @@
+=== RUN   TestSchedulerAdmissionQuotaAtomicAndRestart
+--- PASS: TestSchedulerAdmissionQuotaAtomicAndRestart (0.63s)
+=== RUN   TestSchedulerEarlierEventAndLeaseFencing
+--- PASS: TestSchedulerEarlierEventAndLeaseFencing (0.32s)
+=== RUN   TestSchedulerAdmissionRollbackAndExistingTask
+--- PASS: TestSchedulerAdmissionRollbackAndExistingTask (0.34s)
+=== RUN   TestSchedulerRunRealPostgresWithoutModel
+--- PASS: TestSchedulerRunRealPostgresWithoutModel (0.49s)
+PASS
+ok  	RaiseMyFish/internal/database	2.015s

@@ -1,0 +1,48 @@
+{
+  "model_calls": 0,
+  "platform_calls": 0,
+  "production_connected": false,
+  "engineering_passed": true,
+  "dsh_accepted": false,
+  "quota_basis": "新增Task准入；非实际发送数",
+  "coverage": {
+    "scheduler": 84.0,
+    "store": 98.0,
+    "database": 88.7
+  },
+  "checks": [
+    {
+      "command": "go test ./... -count=1",
+      "exit_code": 0
+    },
+    {
+      "command": "go test -tags=integration ./... -count=1",
+      "exit_code": 0
+    },
+    {
+      "command": "go vet ./...",
+      "exit_code": 0
+    },
+    {
+      "command": "go build ./...",
+      "exit_code": 0
+    },
+    {
+      "command": "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run --build-tags integration",
+      "exit_code": 0
+    },
+    {
+      "command": "WSL: CGO_ENABLED=1 /usr/local/go/bin/go test -race ./... -count=1",
+      "exit_code": 0
+    }
+  ],
+  "review": "内部只读最终复核无剩余必须项，不代替DSH",
+  "red_files": [
+    "transcripts/red-unit.txt",
+    "transcripts/red-pg.txt",
+    "transcripts/red-settlement.txt",
+    "transcripts/red-late-receipt.txt",
+    "transcripts/red-dispatch-fence.txt",
+    "transcripts/red-external-reclaim.txt"
+  ]
+}

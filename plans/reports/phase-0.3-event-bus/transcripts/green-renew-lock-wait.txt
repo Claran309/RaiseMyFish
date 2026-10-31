@@ -1,0 +1,8 @@
+=== RUN   TestQueueClaimDeferFencingAndFilter
+--- PASS: TestQueueClaimDeferFencingAndFilter (0.50s)
+=== RUN   TestQueueRenewCannotReviveLeaseAfterLockWait
+--- PASS: TestQueueRenewCannotReviveLeaseAfterLockWait (2.44s)
+=== RUN   TestEventRepositoryRealPostgres
+--- PASS: TestEventRepositoryRealPostgres (0.87s)
+PASS
+ok  	RaiseMyFish/internal/database	4.101s

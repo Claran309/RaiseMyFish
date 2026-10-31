@@ -1,0 +1,5 @@
+--- FAIL: TestRetryReclaimedBeforeCallbackRetainsConservativeCooldown (0.00s)
+    scheduler_test.go:564: 回执晚于retry重领，正投递事实不应漏设保守冷却
+FAIL
+FAIL	RaiseMyFish/internal/scheduler	0.721s
+FAIL

@@ -1,0 +1,40 @@
+=== RUN   TestFiveGatesRulesAndPriority
+=== RUN   TestFiveGatesRulesAndPriority/私密直播
+=== RUN   TestFiveGatesRulesAndPriority/自消息
+=== RUN   TestFiveGatesRulesAndPriority/机器人
+=== RUN   TestFiveGatesRulesAndPriority/广告
+=== RUN   TestFiveGatesRulesAndPriority/表情
+=== RUN   TestFiveGatesRulesAndPriority/单字
+=== RUN   TestFiveGatesRulesAndPriority/白名单
+--- PASS: TestFiveGatesRulesAndPriority (0.00s)
+    --- PASS: TestFiveGatesRulesAndPriority/私密直播 (0.00s)
+    --- PASS: TestFiveGatesRulesAndPriority/自消息 (0.00s)
+    --- PASS: TestFiveGatesRulesAndPriority/机器人 (0.00s)
+    --- PASS: TestFiveGatesRulesAndPriority/广告 (0.00s)
+    --- PASS: TestFiveGatesRulesAndPriority/表情 (0.00s)
+    --- PASS: TestFiveGatesRulesAndPriority/单字 (0.00s)
+    --- PASS: TestFiveGatesRulesAndPriority/白名单 (0.00s)
+=== RUN   TestPriorityHeapStable
+--- PASS: TestPriorityHeapStable (0.00s)
+=== RUN   TestCalendarQuotaWindowHandlesDST
+--- PASS: TestCalendarQuotaWindowHandlesDST (0.02s)
+=== RUN   TestSchedulerAdmissionGates
+--- PASS: TestSchedulerAdmissionGates (0.00s)
+=== RUN   TestSchedulerBusyCooldownRateAndQuota
+=== RUN   TestSchedulerBusyCooldownRateAndQuota/会话忙
+=== RUN   TestSchedulerBusyCooldownRateAndQuota/冷却AfterFunc
+=== RUN   TestSchedulerBusyCooldownRateAndQuota/令牌桶
+=== RUN   TestSchedulerBusyCooldownRateAndQuota/每日配额
+--- PASS: TestSchedulerBusyCooldownRateAndQuota (0.00s)
+    --- PASS: TestSchedulerBusyCooldownRateAndQuota/会话忙 (0.00s)
+    --- PASS: TestSchedulerBusyCooldownRateAndQuota/冷却AfterFunc (0.00s)
+    --- PASS: TestSchedulerBusyCooldownRateAndQuota/令牌桶 (0.00s)
+    --- PASS: TestSchedulerBusyCooldownRateAndQuota/每日配额 (0.00s)
+=== RUN   TestRecoveredStagesSkipFirstNoiseAndQuota
+--- PASS: TestRecoveredStagesSkipFirstNoiseAndQuota (0.00s)
+=== RUN   TestRunCancellationStopsWorkerAndTimers
+--- PASS: TestRunCancellationStopsWorkerAndTimers (0.00s)
+=== RUN   TestConstructorAndWorkerUnsettled
+--- PASS: TestConstructorAndWorkerUnsettled (0.00s)
+PASS
+ok  	RaiseMyFish/internal/scheduler	0.842s

@@ -1,0 +1,35 @@
+{
+  "verification_kind": "independent_existing_results_and_diagnostic_audit",
+  "reader_evaluation_reexecuted": false,
+  "real_model_calls": 0,
+  "production_pipeline_connected": false,
+  "precision": 0.8214285714285714,
+  "relevant": 46,
+  "returned": 56,
+  "positive_hits": 43,
+  "required_positive_hits": 48,
+  "quality_passed": false,
+  "negative_false": 0,
+  "forbidden_returns": 0,
+  "controls_passed": 20,
+  "budget_passed": 100,
+  "positive_forms": {
+    "exact_title": {
+      "total": 20,
+      "hits": 20
+    },
+    "natural_title": {
+      "total": 20,
+      "hits": 20
+    },
+    "natural_paraphrase": {
+      "total": 20,
+      "hits": 3
+    }
+  },
+  "top3_order_passed": true,
+  "production_revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+  "frozen_code_files_verified": 24,
+  "protected_files_unchanged": 223,
+  "diagnostic_model_and_usage_calls": 0
+}

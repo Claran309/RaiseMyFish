@@ -58,8 +58,8 @@ func TestLoadRealPack(t *testing.T) {
 	if p.Meta.Name != "dafeiyu" {
 		t.Errorf("meta.name = %q，期望 dafeiyu", p.Meta.Name)
 	}
-	if p.Meta.Version != "v1" {
-		t.Errorf("meta.version = %q，期望 v1（既有 v1 必须继续有效）", p.Meta.Version)
+	if p.Meta.Version != "v1.1" {
+		t.Errorf("meta.version = %q，期望安全单句修订版 v1.1", p.Meta.Version)
 	}
 	if !filepath.IsAbs(p.Dir) {
 		t.Errorf("Pack.Dir 不是绝对路径：%q", p.Dir)

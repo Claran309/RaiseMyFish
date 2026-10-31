@@ -1,0 +1,442 @@
+{
+  "task": "persona-lexical-v4与DSH H v3分离重评",
+  "base_commit": "e72fef9cbbc27f7a9081b2efba7313255147dc95",
+  "state": "四格零调用重评完成；人格v1.1未新模型验证；待DSH独立验收，未暂存提交",
+  "source_run": "20261031T143439Z-758949f2",
+  "matrix": {
+    "v3_original": 11,
+    "v4_original": 16,
+    "v3_revised": 15,
+    "v4_revised": 20,
+    "denominator": 35
+  },
+  "actual_model_calls": 0,
+  "new_model_validation": false,
+  "new_model_cost": null,
+  "rules_version": "persona-lexical-v4",
+  "rules_sha256": "b13107a8895b4506d6ba4eca8b385fd4aa9da8fbb0bcce17736315acb9d5f9bf",
+  "cases_revision_sha256": "0acfa2afc3ed9bfce73e85a9abe479e2aee0f0e4d0301a019320853c3dea4670",
+  "old_evidence_unchanged": 166,
+  "persona_before_archived": 7,
+  "persona_version": "v1.1",
+  "new_persona_model_tested": false,
+  "configured_secrets_absent": true,
+  "dsh_revision_authorship": "DSH，Codex仅验证及读取",
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 978,
+      "sha256": "404b8b8e6d9c68b74d796e85819c6b1b0cc3a4068d158dcf9ba60dba1a283761"
+    },
+    {
+      "path": "cmd/fishctl/persona_rescore.go",
+      "bytes": 1873,
+      "sha256": "99e2c6750e96440ca05f486edb42e97deb64a30ac10ff2a4c581106dde63d300"
+    },
+    {
+      "path": "cmd/fishctl/persona_rescore_revision_test.go",
+      "bytes": 1052,
+      "sha256": "11eee61dda73b7c69d5b78b612aa99f1d3414fd70b4954fbd4ada105a4441a9b"
+    },
+    {
+      "path": "contracts/persona-eval.md",
+      "bytes": 12218,
+      "sha256": "53da3dd4691b137274cd36327a871782dfe216b6d3fef403ded06c51473fc13c"
+    },
+    {
+      "path": "docs/update/2026-10-31-0821-拒绝适用范围与离线评分校准.md",
+      "bytes": 5622,
+      "sha256": "9082c065e3e81e0f21144b109d2e5140c704daa95fa2811bd99180c905b7b683"
+    },
+    {
+      "path": "internal/persona/pack_test.go",
+      "bytes": 11023,
+      "sha256": "ddac5a8a86526557a770462e949fa48e9f908e78cb4a54818b86fff39ab6eede"
+    },
+    {
+      "path": "internal/personaeval/fixture_test.go",
+      "bytes": 1157,
+      "sha256": "2fa0754d745da84e83c42c091f172eb45471b4bed10b62e75fdce40b93ac23e0"
+    },
+    {
+      "path": "internal/personaeval/rescore.go",
+      "bytes": 10160,
+      "sha256": "e2a2e70bc57930e74612ab4bbd2eea96e9264b8f4e8ad1fb1ccf77463bffbaa0"
+    },
+    {
+      "path": "internal/personaeval/rescore_revision_test.go",
+      "bytes": 2378,
+      "sha256": "060500f00c250a6ec5a57d0a6fc752d842a34ca2df57682d96683625fbc1c453"
+    },
+    {
+      "path": "internal/personaeval/score.go",
+      "bytes": 12386,
+      "sha256": "7e2d213cb9bdece0eff42dc82cd5f62907b3d854b0f8fde644ff2bce1ab30b3b"
+    },
+    {
+      "path": "internal/personaeval/score_v2.go",
+      "bytes": 2493,
+      "sha256": "f23b23bcedfe6a17a1ad6ac29168c92afc7b9d52fdebe95f6142a2d84fc06b65"
+    },
+    {
+      "path": "internal/personaeval/score_v4.go",
+      "bytes": 3790,
+      "sha256": "a5fd8e2508d0f3493a5541078403476d6dc35597deed845f22e855fc559786dc"
+    },
+    {
+      "path": "internal/personaeval/score_v4_test.go",
+      "bytes": 4547,
+      "sha256": "c764b03e5e0e3f544904ccd48cb13148b0d908a27d838782bd7f6481c313a3a4"
+    },
+    {
+      "path": "personas/dafeiyu/meta.yaml",
+      "bytes": 734,
+      "sha256": "2476cef1f67ab7592602ce8c647aca530eeed19979ec5e5db2d30f13a6adbe02"
+    },
+    {
+      "path": "personas/dafeiyu/rules.md",
+      "bytes": 6955,
+      "sha256": "2e7597587dee25ce15e7fa2546cea0eeec6a870917d7c77a17e75c4d449dd171"
+    },
+    {
+      "path": "plans/phase-0.7c-v4-recalibration.md",
+      "bytes": 2423,
+      "sha256": "7721779db23d337568ac8b5c3719281788711bb504536996016b3915d46cb3fe"
+    },
+    {
+      "path": "plans/reports/codex.md",
+      "bytes": 66284,
+      "sha256": "8d4c98e44d09fbdadc1f984a3af11cceb512b241ee3253c5bb5b5d4a213f9768"
+    },
+    {
+      "path": "plans/reports/p0h-cases/README.md",
+      "bytes": 3664,
+      "sha256": "8ce875700f88bfd3af21104ad607ff22d2d5954bb00e1439efe7f4d90da52a8d"
+    },
+    {
+      "path": "plans/reports/p0h-cases/cases-v2.jsonl",
+      "bytes": 6324,
+      "sha256": "a1fd89c67313773fef4d947871e334f2540720344b6d821432e4dffde20f5b54"
+    },
+    {
+      "path": "plans/reports/p0h-cases/cases-v3.jsonl",
+      "bytes": 6333,
+      "sha256": "0acfa2afc3ed9bfce73e85a9abe479e2aee0f0e4d0301a019320853c3dea4670"
+    },
+    {
+      "path": "plans/reports/p0h-cases/cases.jsonl",
+      "bytes": 6389,
+      "sha256": "224653c7cfec7973ac121c3deb8b9ad288b09db0efa518597309ee31cd53adb5"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v3-original/report.json",
+      "bytes": 14459,
+      "sha256": "85ca953556dd280972ea8d5a0d4cc49286ca5bd028b12ee182edcd95e88b2b22"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v3-original/report.md",
+      "bytes": 266,
+      "sha256": "7d306a29718dc508a8aeedccf0b923a707ea89c3cee0cb4e747f4208adda3dad"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v3-original/rules.json",
+      "bytes": 8319,
+      "sha256": "1866000b5a82498ef2caa45774fd91559647252a8258b2fd5bc08c1964af0bfd"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v3-revised/cases-revision.jsonl",
+      "bytes": 6333,
+      "sha256": "0acfa2afc3ed9bfce73e85a9abe479e2aee0f0e4d0301a019320853c3dea4670"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v3-revised/report.json",
+      "bytes": 14860,
+      "sha256": "8ff09cbcc7a2b485652dab6e0fecb1fc70a4e0be9b75cca75761023413947e0f"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v3-revised/report.md",
+      "bytes": 510,
+      "sha256": "5e0f924285a1a15bbd28d60a049d7e8798916fce8f97e4477257e56619200f5a"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v3-revised/rules.json",
+      "bytes": 8319,
+      "sha256": "1866000b5a82498ef2caa45774fd91559647252a8258b2fd5bc08c1964af0bfd"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v4-original/report.json",
+      "bytes": 13961,
+      "sha256": "49ad0e0c05d14ca090f43dd4b9d1e6a46fa76f0883b6ddaccdf344b045f932f2"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v4-original/report.md",
+      "bytes": 266,
+      "sha256": "d96a97d742b4a5c268cb9b77d94e7844a98592a9bb0f75458531a2be0c11068e"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v4-original/rules.json",
+      "bytes": 11410,
+      "sha256": "b13107a8895b4506d6ba4eca8b385fd4aa9da8fbb0bcce17736315acb9d5f9bf"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v4-revised/cases-revision.jsonl",
+      "bytes": 6333,
+      "sha256": "0acfa2afc3ed9bfce73e85a9abe479e2aee0f0e4d0301a019320853c3dea4670"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v4-revised/report.json",
+      "bytes": 14508,
+      "sha256": "5e1ae1ee750d4895ef037a29ee9c99d155ceb2f21942bfba0b01f7d6162632b1"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v4-revised/report.md",
+      "bytes": 510,
+      "sha256": "3e1e583cb77d1c47f25812eed8b849cc4e5196af61984bb656ee59ea3f3b2662"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix-final/v4-revised/rules.json",
+      "bytes": 11410,
+      "sha256": "b13107a8895b4506d6ba4eca8b385fd4aa9da8fbb0bcce17736315acb9d5f9bf"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v3-original/report.json",
+      "bytes": 14459,
+      "sha256": "85ca953556dd280972ea8d5a0d4cc49286ca5bd028b12ee182edcd95e88b2b22"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v3-original/report.md",
+      "bytes": 266,
+      "sha256": "7d306a29718dc508a8aeedccf0b923a707ea89c3cee0cb4e747f4208adda3dad"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v3-original/rules.json",
+      "bytes": 8319,
+      "sha256": "1866000b5a82498ef2caa45774fd91559647252a8258b2fd5bc08c1964af0bfd"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v3-revised/cases-revision.jsonl",
+      "bytes": 6333,
+      "sha256": "0acfa2afc3ed9bfce73e85a9abe479e2aee0f0e4d0301a019320853c3dea4670"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v3-revised/report.json",
+      "bytes": 14860,
+      "sha256": "8ff09cbcc7a2b485652dab6e0fecb1fc70a4e0be9b75cca75761023413947e0f"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v3-revised/report.md",
+      "bytes": 510,
+      "sha256": "5e0f924285a1a15bbd28d60a049d7e8798916fce8f97e4477257e56619200f5a"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v3-revised/rules.json",
+      "bytes": 8319,
+      "sha256": "1866000b5a82498ef2caa45774fd91559647252a8258b2fd5bc08c1964af0bfd"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v4-original/report.json",
+      "bytes": 14021,
+      "sha256": "d25b4383badc8574b82a2b68bbcdc1020af63b2e90b23966336b632e35659092"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v4-original/report.md",
+      "bytes": 266,
+      "sha256": "9f9e3999aea1b72c938324fc7883d214429213f3256205732267584ca4e07a08"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v4-original/rules.json",
+      "bytes": 11300,
+      "sha256": "d6955b025dac5ab8071dd968552ecf240b97db8d4f5729d0d0d5bdc0b0a27904"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v4-revised/cases-revision.jsonl",
+      "bytes": 6333,
+      "sha256": "0acfa2afc3ed9bfce73e85a9abe479e2aee0f0e4d0301a019320853c3dea4670"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v4-revised/report.json",
+      "bytes": 14568,
+      "sha256": "016a5b09cab160f993721d8bdfe6944a5b9e08521a92773f6cb62984984f0ef1"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v4-revised/report.md",
+      "bytes": 510,
+      "sha256": "bd16c6120b9e21407f5fca754d6e964d3e9d6613c7d29f10347976374205379e"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T143439Z-758949f2-v4-matrix/v4-revised/rules.json",
+      "bytes": 11300,
+      "sha256": "d6955b025dac5ab8071dd968552ecf240b97db8d4f5729d0d0d5bdc0b0a27904"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/analysis.md",
+      "bytes": 5531,
+      "sha256": "c5df82ab48d4296c2b895f1e139522d042b8cd8848a7a5d1d06dcc8891a58c40"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/checks-race-final.json",
+      "bytes": 1557,
+      "sha256": "394441004ad6625058c17dd376541ad2634786336b1785953a6f6103057c4038"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/checks-race-output-root.json",
+      "bytes": 818,
+      "sha256": "5a77f539f28e2bff14dc1fe05815e8b12c6eb64bc40cbae2baf86e40669e7915"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/checks-windows-final.json",
+      "bytes": 2204,
+      "sha256": "8e3ab623f02db9f18f531a027b33978326767d952ba45d725846056e212411f0"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/checks-windows.json",
+      "bytes": 1007,
+      "sha256": "5aed1c0d6e483435c6d806d90edcb930f1eb9a1bbd83eec7fac8d97b5b62077f"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/code-review.json",
+      "bytes": 528,
+      "sha256": "db25c626a0a243b334962815efdf30e1c19727f328d268e0a6c7232f7ff988b6"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/freeze.json",
+      "bytes": 3376,
+      "sha256": "c42300cf924a0b3f6d192ebc092b1570b44df7f4ac957a36360e3b8fca3370b8"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/local-green.txt",
+      "bytes": 125,
+      "sha256": "550693b6a3539fc827df6f8f13b055c6d2a26226b95539b91ea335b34da83439"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/persona-before/context.md.snapshot",
+      "bytes": 7493,
+      "sha256": "b0096ca16512695e820a8a81c6814796985994a597d0ebef74f1892f216f5cd8"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/persona-before/eval/baseline.md.snapshot",
+      "bytes": 4441,
+      "sha256": "9ea6ea813e9d9f6449acac2245143f6dcbef991c7d5a0b9a224e1227a463a6d7"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/persona-before/eval/cases.jsonl.snapshot",
+      "bytes": 6051,
+      "sha256": "963a61334b106ef549ebd5289304aca2ad0b71ab5fdf0c089d3ff0720f6bcbae"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/persona-before/meta.yaml.snapshot",
+      "bytes": 732,
+      "sha256": "9ba3f39935235877d9b1079b9ecefa38671971a48f911f60ee602795eecd26f8"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/persona-before/rules.md.snapshot",
+      "bytes": 6629,
+      "sha256": "e6217cf1c35b221b5ddfe5b7519a0b24b816bdfe03ed1dfcabd56c459b93cd9d"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/persona-before/samples.md.snapshot",
+      "bytes": 10503,
+      "sha256": "a986fade06cdfd4ea91c167a24fd0b5ea9417c102a78ffb2c388398980cc9e77"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/persona-before/soul.md.snapshot",
+      "bytes": 3945,
+      "sha256": "4cc225dc840f2d9a7d5aa5e62ffa954937648598b3e62ed5f51301ef21188209"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/persona-rule-change.json",
+      "bytes": 582,
+      "sha256": "6cb2d0e1b5080f3ef2d186159601e4570fddacaeb67d1aadb02bc5fae50e3824"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/preservation.json",
+      "bytes": 36687,
+      "sha256": "7b373dde00a0a25b225027fcae95d5f852b3f08b70928b92d027daf80077fbc7"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/refusal-review-red.txt",
+      "bytes": 218,
+      "sha256": "8d019b3903a3e661e93624e130bae905b6459cf3c63e37daee424d54ecafbc7d"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/revision-cli-red.txt",
+      "bytes": 168,
+      "sha256": "dc27706649d449428ecb138d16bdb904f5f30afa70483f04b7df11273590d7e4"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/rules-interpreter.py",
+      "bytes": 4127,
+      "sha256": "de34228c4e1c0ba2fae3918b9760ade90635e2c08002e908efd239ef7ba6160d"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/scorer-red.txt",
+      "bytes": 410,
+      "sha256": "c6bae2942b796d1e7790513f6abe9f667d6d1fb8e21bce171b9c01abab937d8a"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/source-snapshot/cmd/fishctl/persona_rescore.go.snapshot",
+      "bytes": 1873,
+      "sha256": "99e2c6750e96440ca05f486edb42e97deb64a30ac10ff2a4c581106dde63d300"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/source-snapshot/contracts/persona-eval.md.snapshot",
+      "bytes": 12218,
+      "sha256": "53da3dd4691b137274cd36327a871782dfe216b6d3fef403ded06c51473fc13c"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/source-snapshot/internal/personaeval/rescore.go.snapshot",
+      "bytes": 10160,
+      "sha256": "e2a2e70bc57930e74612ab4bbd2eea96e9264b8f4e8ad1fb1ccf77463bffbaa0"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/source-snapshot/internal/personaeval/score.go.snapshot",
+      "bytes": 12386,
+      "sha256": "7e2d213cb9bdece0eff42dc82cd5f62907b3d854b0f8fde644ff2bce1ab30b3b"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/source-snapshot/internal/personaeval/score_v2.go.snapshot",
+      "bytes": 2493,
+      "sha256": "f23b23bcedfe6a17a1ad6ac29168c92afc7b9d52fdebe95f6142a2d84fc06b65"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/source-snapshot/internal/personaeval/score_v3.go.snapshot",
+      "bytes": 2272,
+      "sha256": "3a036d5365696ac0513967b5dbdd806549e1c94d7b2b5b55b337526470098faf"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/source-snapshot/internal/personaeval/score_v4.go.snapshot",
+      "bytes": 3790,
+      "sha256": "a5fd8e2508d0f3493a5541078403476d6dc35597deed845f22e855fc559786dc"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/source-snapshot/personas/dafeiyu/meta.yaml.snapshot",
+      "bytes": 734,
+      "sha256": "2476cef1f67ab7592602ce8c647aca530eeed19979ec5e5db2d30f13a6adbe02"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/source-snapshot/personas/dafeiyu/rules.md.snapshot",
+      "bytes": 6955,
+      "sha256": "2e7597587dee25ce15e7fa2546cea0eeec6a870917d7c77a17e75c4d449dd171"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/source-snapshot/plans/reports/p0h-cases/cases-v3.jsonl.snapshot",
+      "bytes": 6333,
+      "sha256": "0acfa2afc3ed9bfce73e85a9abe479e2aee0f0e4d0301a019320853c3dea4670"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/v4-rules.json",
+      "bytes": 11410,
+      "sha256": "b13107a8895b4506d6ba4eca8b385fd4aa9da8fbb0bcce17736315acb9d5f9bf"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/verification.json",
+      "bytes": 2048,
+      "sha256": "6427d76220a6ef16c22cfdf27893280fcf8f91d40e6e62a95f625a420a6ce5a0"
+    },
+    {
+      "path": "plans/reports/persona-v4-preflight/verify.py",
+      "bytes": 6397,
+      "sha256": "f9543dfd6d7248f2abde6574d6d2255bfce7e4a9df1e3afa2358ad372be820bf"
+    }
+  ]
+}

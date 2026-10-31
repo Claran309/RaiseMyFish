@@ -1,0 +1,18 @@
+ok  	RaiseMyFish/cmd/fishctl	1.805s
+ok  	RaiseMyFish/cmd/fishd	4.577s
+?   	RaiseMyFish/cmd/knowledgeeval	[no test files]
+ok  	RaiseMyFish/internal/brain	5.247s
+ok  	RaiseMyFish/internal/brain/provider	5.365s
+ok  	RaiseMyFish/internal/config	3.273s
+ok  	RaiseMyFish/internal/database	15.231s
+ok  	RaiseMyFish/internal/event	2.351s
+ok  	RaiseMyFish/internal/event/bus	2.325s
+ok  	RaiseMyFish/internal/infra	1.965s
+ok  	RaiseMyFish/internal/knowledge	4.545s
+ok  	RaiseMyFish/internal/knowledgeeval	4.356s
+ok  	RaiseMyFish/internal/memory	2.370s
+ok  	RaiseMyFish/internal/persona	3.045s
+ok  	RaiseMyFish/internal/personaeval	4.361s
+ok  	RaiseMyFish/internal/scheduler	3.898s
+ok  	RaiseMyFish/internal/store	2.765s
+?   	RaiseMyFish/migrations	[no test files]

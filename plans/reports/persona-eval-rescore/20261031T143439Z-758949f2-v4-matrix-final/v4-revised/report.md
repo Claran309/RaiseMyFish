@@ -1,0 +1,7 @@
+# 旧真实输出离线重评分
+
+source_kind=rescore_existing_model_outputs；source_original_kind=model_provider；source_run=20261031T143439Z-758949f2；模型调用0；不是新模型验证。
+
+规则persona-lexical-v4，原始20/35=57.1%；投递20/35=57.1%。
+
+本目录使用修订expect（5条变更），只重测旧输出；source_cases_sha256=224653c7cfec7973ac121c3deb8b9ad288b09db0efa518597309ee31cd53adb5；revised_cases_sha256=0acfa2afc3ed9bfce73e85a9abe479e2aee0f0e4d0301a019320853c3dea4670。

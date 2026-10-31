@@ -1,9 +1,9 @@
-# RaiseMyFish · 自研养鱼框架
+# RaiseMyFish · 自研养鱼框架（Super-agent 单主体实例 · 开发中）
 
 > 一条 AI 肥鱼的多通道陪伴系统：看直播、回弹幕、回私信、回评论、上 QQ，
 > 有共享记忆、有人格一致性、能无人值守跑。
 >
-> **状态：Phase 0 实现中。0.6已通过DSH独立验收并提交b51f444；0.7c真实35条评估完成，冻结词法规则通过15/35（42.9%），尚未达到90%。评估器新代码与产物待DSH复核；业务通道与Memory真实召回仍未装配。**
+> **状态：Phase 0 实现中。0.1/0.2/0.3/0.4/0.6/0.7a/b/c 已验收（0.7c v5 安全层 35/35）；K0-1~6 知识库验收通过；MVP 主线 0.5 采集/0.8 发送进行中。**
 
 ---
 
@@ -11,7 +11,22 @@
 
 不是「又一个 QQ 机器人」，而是：
 
-> **一个事件驱动的、多通道、带人格与记忆的陪伴 agent harness。**
+> **一个事件驱动的、多通道、带人格与记忆的 super-agent（单主体实例）。**
+
+一个「肥鱼」主体——Persona（怎么说）+ Presence（现在在做什么）+ Memory（记得什么）——通过直播/评论/私信/QQ 多通道持续在线、并行处理任务；会话本身无状态，每次回复完即散。
+
+与 DeepSeek Super-agent 架构的对照与演进计划见 [plans/superagent-alignment.md](plans/superagent-alignment.md)（Thread 归组、引用链召回、Watchdog、异步工具、Router/Worker 编排层按阶段推进）；完整讨论沉淀见 [docs/update/2026-11-01-super-agent讨论总览.md](docs/update/2026-11-01-super-agent讨论总览.md)。
+
+## Super-agent 讨论沉淀（2026-11-01）
+
+| 维度 | 结论 |
+|---|---|
+| 定位 | super-agent 的单主体实例（开发中） |
+| 当前差距 | 无 Router/Worker、Thread、Watchdog、异步、编排 → 按阶段补 |
+| 五个决策 | 知识库（K0→K2）、Presence 状态表、主体/会话分离、工具复用、MVP 对齐 dsh-bili-whale |
+| 演进路线 | P0 看直播+弹幕 → P1 评论私信+Thread → P2 记忆+动态 → P4 Watchdog → P6 异步 → P6.5 编排层 |
+| 无痛切换 | P0+P1+P2（约 5~7 天）+ 双轨验证 |
+| 两把尺子 | 护栏：契约/安全/旧证据/验收；放松：实现细节/探索先做再评/四种情况才请示 |
 
 ## 核心决策（详见 `docs/14-decisions.md`）
 
@@ -21,9 +36,13 @@
 | 数据库 | PostgreSQL（从 Phase 0 起），pgvector 备用 |
 | 中间件 | 不引入 Redis / 消息队列 / Milvus / 分布式（单机多进程足够） |
 | 架构 | 事件驱动：Collector → Event Bus → Scheduler → Memory/Brain → Sender |
-| 人格 | Phase 0 就做，配回归测试集，人设包化可热更新 |
-| 通道顺序 | Phase 0 弹幕单线闭环 → Phase 1 评论 → Phase 1 私信 → Phase 3 QQ |
+| 人格 | Phase 0 就做，配回归测试集，人设包化可热更新；判断器 v5 定稿（安全硬线唯一失败条件、风格仅观察） |
+| 通道顺序 | Phase 0 弹幕单线闭环 → Phase 1 评论 → Phase 1 私信 → Phase 3 QQ（支线可延后） |
 | MCP | 只用于对外暴露能力（给 Codex/Claude 等外部 agent）；内部模块用 Go interface |
+| 知识库 | 独立「知识层」：K0 文件版（梗/设定/观众/游戏）→ K1 结构化表 → K2 RAG，见 `docs/knowledge.md` |
+| Presence | 「三心二意状态表」：主体状态注册表（直播中/看直播中/剪视频中），多值、摘要每轮查、详情按需，见 `docs/presence.md` |
+| 工具复用 | 别重复造轮子：采集/发送/QQ/MCP/Web/渲染用现成轮子（dsh-bili-whale、bili-cli、ffmpeg 等），只自写人格/调度/记忆/状态/Brain |
+| MVP 范围 | 对齐 dsh-bili-whale 全套：弹幕收发 + 看直播（截图/ASR）+ 配套（送礼/常驻 Edge/活动流） |
 | 部署 | 开发期本机直跑；交付 Docker Compose |
 
 ## 文档导航
@@ -50,6 +69,10 @@
 | `docs/glossary.md` | 项目术语表 |
 | `docs/runbook.md` | 故障排查手册 |
 | `docs/reference-projects.md` | 三个既有 Go 项目的可借鉴点（lanmei-dream / ClaranAIM / ClaranCloudDisk） |
+| `docs/knowledge.md` | **知识库与 RAG**：人格/知识/记忆分层、知识源、K0/K1/K2 阶段 |
+| `docs/presence.md` | **Presence 三心二意状态表**：主体/会话分离、状态注册表、租约机制 |
+| `plans/superagent-alignment.md` | **Super-agent 对齐**：四特征/五组成对照、阶段映射、演进原则 |
+| `docs/update/2026-11-01-架构演进讨论总结.md` | 最近讨论事项汇总（11 主题 + 切换 checklist） |
 | `contracts/` | 模块接口契约（event/collector/sender/brain） |
 | `plans/` | Phase 0–8 开发计划与任务清单 |
 | `plans/assignment.md` | **分工与文件所有权**（给开发 agent 读） |

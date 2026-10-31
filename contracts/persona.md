@@ -84,6 +84,8 @@ TrimSpace(Soul) + "\n\n" + TrimSpace(Rules) + "\n\n" + TrimSpace(Samples)
 
 不添加动态状态、口径、当前消息、时间、记忆或额外标题。ContextFor只返回选中的静态场景正文；Brain在0.6自行按brain契约组织user的context/event/instructions并做预算裁剪。
 
+P0-BRAIN-2-R1撤回澄清：ContextFor接口/返回正文和SystemPrompt精确拼接始终不变；活动Brain恢复008beb6，将选中的正文放在user.context的scene字段。曾将scene移入instructions的P0-BRAIN-2仅为已撤回实验，原源码与契约已归档；不增加加载器装配/身份/评分职责。
+
 ContextFor不再裁剪Contexts中的文本；不要把SystemPrompt对三段的TrimSpace规则套到场景正文上。编码/BOM/换行归一由Load处理，场景结构与空白保留由切分器处理，动态拼装和预算属于Brain。
 
 本基线不导出Assemble、Assembled、Generator、RunEvalCLI、评分标签注册表等回归/LLM接口，也不实现CLI、真实模型评测、热更新、版本切换或A/B执行。

@@ -1,0 +1,4201 @@
+{
+  "freeze": {
+    "frozen_at": "2026-10-31T17:14:33.8342054Z",
+    "cases_sha256": "c1111d04da4bd27ff2843f5dbb9373f5238db65a12d68645c7e9761b3b1551a1",
+    "acl_fixture_sha256": "1153fec3708f0d0b4e4412c4eb86dfc0fa51cd69dd3fb3b634fc6c5a02b28f4e",
+    "order_fixture_sha256": "4f192a3e8e4dc30072a513304f27efcd2140ebe39a98481e26123f9a12e12b06",
+    "corpus": [
+      {
+        "path": "games.md",
+        "sha256": "647b1c098247517d8da46e5a6f88b57032d7128f7980e2f930ac370a2b64e636"
+      },
+      {
+        "path": "lore.md",
+        "sha256": "fd9e3671d0e0ebdb217a75b97d51e81860fe1c4c4ace6bcd216f24667b2b5a73"
+      },
+      {
+        "path": "memes.md",
+        "sha256": "2c9810991169978d8b189d2cf9f5405a119b096f7c6cf8ebcb2d8afbcbf49f1b"
+      },
+      {
+        "path": "viewers.md",
+        "sha256": "8e994f05b6b97a7077249227914b0d294ffc4132aecbb7abb82cc4b5f9f67aeb"
+      }
+    ],
+    "code": [
+      {
+        "path": "cmd/knowledgeeval/main.go",
+        "sha256": "cf09bc734aa20f04fe250da6a929272b7658f5ec0a944f692e28cb968d059e28"
+      },
+      {
+        "path": "internal/brain/brain.go",
+        "sha256": "7b143e2eae24ef5d4bac24dba0a03a03a919f93ef710214d917c291488228baf"
+      },
+      {
+        "path": "internal/brain/brain_test.go",
+        "sha256": "c2806d865d32485caf4ddf8e5196a88262e4fd5c7f723acebd7fd5119d72c43b"
+      },
+      {
+        "path": "internal/brain/context.go",
+        "sha256": "6ff01f28d3722e5eb306a7c2019e80be9821b561c6816a97ce2571ed8f28539b"
+      },
+      {
+        "path": "internal/brain/context_test.go",
+        "sha256": "cc97890763d92234fe13ae172da4ba1a4ead37d1a2a75a0abadf1990986eb905"
+      },
+      {
+        "path": "internal/brain/knowledge.go",
+        "sha256": "e73377431a786c2eaa28137129792b7481f7372fc33f7f8c567adfd7016b8deb"
+      },
+      {
+        "path": "internal/brain/knowledge_test.go",
+        "sha256": "6eb868738cb364cdcdc7f6960aba3dc74092f234cbb6327207c1f60fe643a420"
+      },
+      {
+        "path": "internal/brain/provider/openai.go",
+        "sha256": "416e1cf071e36de4645689b46615ea103f5d174c91c0d70cffa46b76560bab82"
+      },
+      {
+        "path": "internal/brain/provider/openai_test.go",
+        "sha256": "a34187e6b7a48572d5bae62137cdbbd906192e256709ecbe538ca743a9df22b0"
+      },
+      {
+        "path": "internal/brain/provider/types.go",
+        "sha256": "26a7e1994a3ec316114c1a27ecf1891130db5d32ee975baad6863186c3d1d3af"
+      },
+      {
+        "path": "internal/brain/types.go",
+        "sha256": "a6d72ae7556f1e2329f372f112df775115d8f7e3109631fb34c0157d732f8906"
+      },
+      {
+        "path": "internal/knowledge/corpus_test.go",
+        "sha256": "8a98e0e6f4183eaf4c51bdd1b209518ee917139bc02feb4e7afaf41f30711a64"
+      },
+      {
+        "path": "internal/knowledge/file.go",
+        "sha256": "2661abdaf03f2785984517b5085a87c6fa40822e1716da9aea0f2c720e477a77"
+      },
+      {
+        "path": "internal/knowledge/file_test.go",
+        "sha256": "ce017eae62dad7aa116f01773626f8917f3317da7f5dde7786e3b226e7aa2f66"
+      },
+      {
+        "path": "internal/knowledge/recall.go",
+        "sha256": "a4a665d82eb5d06577052d244b46ef15a19eb2ac323e3cd9f57223fa641ca4af"
+      },
+      {
+        "path": "internal/knowledge/recall_test.go",
+        "sha256": "ef7c9c6b988ceb800be66f9dec85f39e1c00d9facdbf7d3964a310f44bbba7cb"
+      },
+      {
+        "path": "internal/knowledge/snapshot.go",
+        "sha256": "b5fae26a144adb3f6660fd3b540eba99eb5e510a0517d15dd7274910ffae8e91"
+      },
+      {
+        "path": "internal/knowledge/types.go",
+        "sha256": "85faef13a44289c6210db2c97a0536e4902be51c3b965d2f63e6f95f2584e140"
+      },
+      {
+        "path": "internal/knowledge/validate.go",
+        "sha256": "77050d62fe43bc4f5e660a9c10089bc50e6f1765c24e50927922b1ea4161bd32"
+      },
+      {
+        "path": "internal/knowledge/validate_test.go",
+        "sha256": "8abefc7527940f1b5b223f7bceee5816f7a5c98dfc6d13dc9faa20abea81890f"
+      },
+      {
+        "path": "internal/knowledgeeval/budget.go",
+        "sha256": "fe0c8a655db2a10fd9762ae280b19995cad3eb6639cbdfc2aa9f7052a231aca0"
+      },
+      {
+        "path": "internal/knowledgeeval/eval.go",
+        "sha256": "705bddf648a1db7e3185fb46b7449d49f6b72bf8a283b267c0a6556a5425e0a6"
+      },
+      {
+        "path": "internal/knowledgeeval/eval_test.go",
+        "sha256": "dcc60a29a0e117e896b0d5f69d18f40f15290fcc97fbe82dc5199c829244178d"
+      },
+      {
+        "path": "internal/knowledgeeval/runner.go",
+        "sha256": "a2d9049b1b0cbcc290f38d1caaa4a5951c5e2689deac9af46cc0d391a3d94975"
+      }
+    ],
+    "production_revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+    "synthetic_revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+    "order_revision": "cb911d01b5fc0e5ce26dee76fe8e19a4b7d1b03ca7a397a517226c411668e60e",
+    "annotation": "开发助手按公开title/usage预先标注；非DSH独立标注。精确标题20、含标题自然句20、无目标标题语义场景20、alias0；不根据输出补标。私密/场景fixture全为合成数据，镜像与排序另计，不进入100条质量分母。"
+  },
+  "report": {
+    "cases": [
+      {
+        "id": "pos-001",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-1649c19a5530d0729adc9e3d"
+        ],
+        "actual_ids": [
+          "meme-custom-1649c19a5530d0729adc9e3d"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-1649c19a5530d0729adc9e3d"
+          ],
+          "included_ids": [
+            "meme-custom-1649c19a5530d0729adc9e3d"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 223,
+          "base_prompt_estimate": 488,
+          "prompt_estimate": 711,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-002",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-4d6e4fe7d384d4256f0a8a63"
+        ],
+        "actual_ids": [
+          "meme-custom-4d6e4fe7d384d4256f0a8a63"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-4d6e4fe7d384d4256f0a8a63"
+          ],
+          "included_ids": [
+            "meme-custom-4d6e4fe7d384d4256f0a8a63"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 256,
+          "base_prompt_estimate": 493,
+          "prompt_estimate": 749,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-003",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-8899e03c02cd65e70a106fbf"
+        ],
+        "actual_ids": [
+          "meme-custom-8899e03c02cd65e70a106fbf"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-8899e03c02cd65e70a106fbf"
+          ],
+          "included_ids": [
+            "meme-custom-8899e03c02cd65e70a106fbf"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 223,
+          "base_prompt_estimate": 487,
+          "prompt_estimate": 710,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-004",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-be185e2b73fc1b0dc9b5efe8"
+        ],
+        "actual_ids": [
+          "meme-custom-be185e2b73fc1b0dc9b5efe8"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-be185e2b73fc1b0dc9b5efe8"
+          ],
+          "included_ids": [
+            "meme-custom-be185e2b73fc1b0dc9b5efe8"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 297,
+          "base_prompt_estimate": 498,
+          "prompt_estimate": 795,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-005",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-220ead26997603d65cd070f8"
+        ],
+        "actual_ids": [
+          "meme-custom-220ead26997603d65cd070f8"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-220ead26997603d65cd070f8"
+          ],
+          "included_ids": [
+            "meme-custom-220ead26997603d65cd070f8"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 254,
+          "base_prompt_estimate": 496,
+          "prompt_estimate": 750,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-006",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-472e3b757ae5442b980306c0"
+        ],
+        "actual_ids": [
+          "meme-custom-472e3b757ae5442b980306c0"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-472e3b757ae5442b980306c0"
+          ],
+          "included_ids": [
+            "meme-custom-472e3b757ae5442b980306c0"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 241,
+          "base_prompt_estimate": 503,
+          "prompt_estimate": 744,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-007",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-43fee40ecc9fb94f46a419b7"
+        ],
+        "actual_ids": [
+          "meme-custom-43fee40ecc9fb94f46a419b7"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-43fee40ecc9fb94f46a419b7"
+          ],
+          "included_ids": [
+            "meme-custom-43fee40ecc9fb94f46a419b7"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 461,
+          "base_prompt_estimate": 496,
+          "prompt_estimate": 957,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-008",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-0b3bb52ecd9a94ddab39892d"
+        ],
+        "actual_ids": [
+          "meme-custom-0b3bb52ecd9a94ddab39892d"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-0b3bb52ecd9a94ddab39892d"
+          ],
+          "included_ids": [
+            "meme-custom-0b3bb52ecd9a94ddab39892d"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 282,
+          "base_prompt_estimate": 493,
+          "prompt_estimate": 775,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-009",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-42ff7d766df173e3e7be94b7"
+        ],
+        "actual_ids": [
+          "meme-custom-42ff7d766df173e3e7be94b7",
+          "meme-custom-7b09cb4da7f39e1747cbd7aa"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-42ff7d766df173e3e7be94b7",
+            "meme-custom-7b09cb4da7f39e1747cbd7aa"
+          ],
+          "included_ids": [
+            "meme-custom-42ff7d766df173e3e7be94b7",
+            "meme-custom-7b09cb4da7f39e1747cbd7aa"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 722,
+          "base_prompt_estimate": 486,
+          "prompt_estimate": 1208,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-010",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-68c0224e491586f62b2fcbf8"
+        ],
+        "actual_ids": [
+          "meme-custom-68c0224e491586f62b2fcbf8"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-68c0224e491586f62b2fcbf8"
+          ],
+          "included_ids": [
+            "meme-custom-68c0224e491586f62b2fcbf8"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 317,
+          "base_prompt_estimate": 484,
+          "prompt_estimate": 801,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-011",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-27d7ce36e04083f8935fe7ef"
+        ],
+        "actual_ids": [
+          "meme-custom-27d7ce36e04083f8935fe7ef"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-27d7ce36e04083f8935fe7ef"
+          ],
+          "included_ids": [
+            "meme-custom-27d7ce36e04083f8935fe7ef"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 247,
+          "base_prompt_estimate": 488,
+          "prompt_estimate": 735,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-012",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-15e2cbcbc71b812d199888da"
+        ],
+        "actual_ids": [
+          "meme-custom-15e2cbcbc71b812d199888da"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-15e2cbcbc71b812d199888da"
+          ],
+          "included_ids": [
+            "meme-custom-15e2cbcbc71b812d199888da"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 256,
+          "base_prompt_estimate": 493,
+          "prompt_estimate": 749,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-013",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-6d46eddcba0201fe3e28a005"
+        ],
+        "actual_ids": [
+          "meme-custom-6d46eddcba0201fe3e28a005"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-6d46eddcba0201fe3e28a005"
+          ],
+          "included_ids": [
+            "meme-custom-6d46eddcba0201fe3e28a005"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 256,
+          "base_prompt_estimate": 493,
+          "prompt_estimate": 749,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-014",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-afbc727e28d2e48f565840eb"
+        ],
+        "actual_ids": [
+          "meme-custom-afbc727e28d2e48f565840eb"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-afbc727e28d2e48f565840eb"
+          ],
+          "included_ids": [
+            "meme-custom-afbc727e28d2e48f565840eb"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 235,
+          "base_prompt_estimate": 492,
+          "prompt_estimate": 727,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-015",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-0a524610d30ce232d650ad75"
+        ],
+        "actual_ids": [
+          "meme-memes-0a524610d30ce232d650ad75"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-0a524610d30ce232d650ad75"
+          ],
+          "included_ids": [
+            "meme-memes-0a524610d30ce232d650ad75"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 565,
+          "base_prompt_estimate": 490,
+          "prompt_estimate": 1055,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-016",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-0edd74ced24163177b6171ec"
+        ],
+        "actual_ids": [
+          "meme-memes-0edd74ced24163177b6171ec"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-0edd74ced24163177b6171ec"
+          ],
+          "included_ids": [
+            "meme-memes-0edd74ced24163177b6171ec"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 528,
+          "base_prompt_estimate": 488,
+          "prompt_estimate": 1016,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-017",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-209185370e2743970accd09e"
+        ],
+        "actual_ids": [
+          "meme-memes-209185370e2743970accd09e"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-209185370e2743970accd09e"
+          ],
+          "included_ids": [
+            "meme-memes-209185370e2743970accd09e"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 563,
+          "base_prompt_estimate": 496,
+          "prompt_estimate": 1059,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-018",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-1d4c582438decf1fdf143266"
+        ],
+        "actual_ids": [
+          "meme-memes-1d4c582438decf1fdf143266"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-1d4c582438decf1fdf143266"
+          ],
+          "included_ids": [
+            "meme-memes-1d4c582438decf1fdf143266"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 684,
+          "base_prompt_estimate": 490,
+          "prompt_estimate": 1174,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-019",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-157caa5901bb85d72de2437e"
+        ],
+        "actual_ids": [
+          "meme-memes-157caa5901bb85d72de2437e"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-157caa5901bb85d72de2437e"
+          ],
+          "included_ids": [
+            "meme-memes-157caa5901bb85d72de2437e"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 657,
+          "base_prompt_estimate": 513,
+          "prompt_estimate": 1170,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-020",
+        "kind": "positive",
+        "form": "exact_title",
+        "labels": [
+          "明确词条查询"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-0e26cf1781cfcc4710a9d53a"
+        ],
+        "actual_ids": [
+          "meme-memes-0e26cf1781cfcc4710a9d53a"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-0e26cf1781cfcc4710a9d53a"
+          ],
+          "included_ids": [
+            "meme-memes-0e26cf1781cfcc4710a9d53a"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 341,
+          "base_prompt_estimate": 484,
+          "prompt_estimate": 825,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-021",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "抽卡"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-280aa07ee8adca6bd528e571"
+        ],
+        "actual_ids": [
+          "meme-custom-280aa07ee8adca6bd528e571"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-280aa07ee8adca6bd528e571"
+          ],
+          "included_ids": [
+            "meme-custom-280aa07ee8adca6bd528e571"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 242,
+          "base_prompt_estimate": 524,
+          "prompt_estimate": 766,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-022",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "怀旧"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-9ea4993e414802a33f21eeaa"
+        ],
+        "actual_ids": [
+          "meme-custom-9ea4993e414802a33f21eeaa"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-9ea4993e414802a33f21eeaa"
+          ],
+          "included_ids": [
+            "meme-custom-9ea4993e414802a33f21eeaa"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 230,
+          "base_prompt_estimate": 532,
+          "prompt_estimate": 762,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-023",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "评分"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-4435bd390bfab8a0f823df3f",
+          "meme-custom-fc173567c5a1e0f4885b6e88"
+        ],
+        "actual_ids": [
+          "meme-custom-4435bd390bfab8a0f823df3f",
+          "meme-custom-fc173567c5a1e0f4885b6e88"
+        ],
+        "relevant": 2,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-4435bd390bfab8a0f823df3f",
+            "meme-custom-fc173567c5a1e0f4885b6e88"
+          ],
+          "included_ids": [
+            "meme-custom-4435bd390bfab8a0f823df3f",
+            "meme-custom-fc173567c5a1e0f4885b6e88"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 670,
+          "base_prompt_estimate": 525,
+          "prompt_estimate": 1195,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-024",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "马后炮"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-197f7ea62e1ae8b1bcff036d"
+        ],
+        "actual_ids": [
+          "meme-custom-197f7ea62e1ae8b1bcff036d"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-197f7ea62e1ae8b1bcff036d"
+          ],
+          "included_ids": [
+            "meme-custom-197f7ea62e1ae8b1bcff036d"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 398,
+          "base_prompt_estimate": 522,
+          "prompt_estimate": 920,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-025",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "选择"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-1b4f855e102ed93a42f87272"
+        ],
+        "actual_ids": [
+          "meme-custom-1b4f855e102ed93a42f87272"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-1b4f855e102ed93a42f87272"
+          ],
+          "included_ids": [
+            "meme-custom-1b4f855e102ed93a42f87272"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 223,
+          "base_prompt_estimate": 520,
+          "prompt_estimate": 743,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-026",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "慷慨救场"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-b9bd8e4500792b536bb58ef7"
+        ],
+        "actual_ids": [
+          "meme-custom-b9bd8e4500792b536bb58ef7"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-b9bd8e4500792b536bb58ef7"
+          ],
+          "included_ids": [
+            "meme-custom-b9bd8e4500792b536bb58ef7"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 221,
+          "base_prompt_estimate": 530,
+          "prompt_estimate": 751,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-027",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "配合"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-a84a761617fd35947afc34a5"
+        ],
+        "actual_ids": [
+          "meme-custom-a84a761617fd35947afc34a5"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-a84a761617fd35947afc34a5"
+          ],
+          "included_ids": [
+            "meme-custom-a84a761617fd35947afc34a5"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 238,
+          "base_prompt_estimate": 529,
+          "prompt_estimate": 767,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-028",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "感动"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-53bce047f1b2d34189a97f29"
+        ],
+        "actual_ids": [
+          "meme-custom-53bce047f1b2d34189a97f29"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-53bce047f1b2d34189a97f29"
+          ],
+          "included_ids": [
+            "meme-custom-53bce047f1b2d34189a97f29"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 234,
+          "base_prompt_estimate": 514,
+          "prompt_estimate": 748,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-029",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "总结"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-50af8cdd6932d38e1a40fad0",
+          "meme-custom-90b82f6dc982e6c8aca8452e"
+        ],
+        "actual_ids": [
+          "meme-custom-50af8cdd6932d38e1a40fad0",
+          "meme-custom-90b82f6dc982e6c8aca8452e"
+        ],
+        "relevant": 2,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-50af8cdd6932d38e1a40fad0",
+            "meme-custom-90b82f6dc982e6c8aca8452e"
+          ],
+          "included_ids": [
+            "meme-custom-50af8cdd6932d38e1a40fad0",
+            "meme-custom-90b82f6dc982e6c8aca8452e"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 431,
+          "base_prompt_estimate": 528,
+          "prompt_estimate": 959,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-030",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "操作夸赞"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-58457b8154ba4eeaa38a5032"
+        ],
+        "actual_ids": [
+          "meme-custom-58457b8154ba4eeaa38a5032"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-58457b8154ba4eeaa38a5032"
+          ],
+          "included_ids": [
+            "meme-custom-58457b8154ba4eeaa38a5032"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 253,
+          "base_prompt_estimate": 514,
+          "prompt_estimate": 767,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-031",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "讲原理"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-1649c19a5530d0729adc9e3d"
+        ],
+        "actual_ids": [
+          "meme-custom-1649c19a5530d0729adc9e3d"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-1649c19a5530d0729adc9e3d"
+          ],
+          "included_ids": [
+            "meme-custom-1649c19a5530d0729adc9e3d"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 223,
+          "base_prompt_estimate": 518,
+          "prompt_estimate": 741,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-032",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "婉拒"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-715ed6a84b9210f424528464"
+        ],
+        "actual_ids": [
+          "meme-custom-715ed6a84b9210f424528464"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-715ed6a84b9210f424528464"
+          ],
+          "included_ids": [
+            "meme-custom-715ed6a84b9210f424528464"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 223,
+          "base_prompt_estimate": 544,
+          "prompt_estimate": 767,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-033",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "职场疲惫"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-9219b8945065cb09a54796f6"
+        ],
+        "actual_ids": [
+          "meme-custom-9219b8945065cb09a54796f6"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-9219b8945065cb09a54796f6"
+          ],
+          "included_ids": [
+            "meme-custom-9219b8945065cb09a54796f6"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 232,
+          "base_prompt_estimate": 523,
+          "prompt_estimate": 755,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-034",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "宠物"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-0a98d7bfa46240ab7a3b5176"
+        ],
+        "actual_ids": [
+          "meme-memes-0a98d7bfa46240ab7a3b5176",
+          "meme-memes-26387acb443ec0425f929632",
+          "meme-memes-49b02237d94aebdad53061af"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-0a98d7bfa46240ab7a3b5176",
+            "meme-memes-26387acb443ec0425f929632",
+            "meme-memes-49b02237d94aebdad53061af"
+          ],
+          "included_ids": [
+            "meme-memes-0a98d7bfa46240ab7a3b5176",
+            "meme-memes-26387acb443ec0425f929632",
+            "meme-memes-49b02237d94aebdad53061af"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 1647,
+          "base_prompt_estimate": 537,
+          "prompt_estimate": 2184,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-035",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "快速换装"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-23316695fde331b1a16b0e8d"
+        ],
+        "actual_ids": [
+          "meme-memes-23316695fde331b1a16b0e8d"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-23316695fde331b1a16b0e8d"
+          ],
+          "included_ids": [
+            "meme-memes-23316695fde331b1a16b0e8d"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 521,
+          "base_prompt_estimate": 525,
+          "prompt_estimate": 1046,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-036",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "送资源"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-0e26cf1781cfcc4710a9d53a"
+        ],
+        "actual_ids": [
+          "meme-memes-0e26cf1781cfcc4710a9d53a"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-0e26cf1781cfcc4710a9d53a"
+          ],
+          "included_ids": [
+            "meme-memes-0e26cf1781cfcc4710a9d53a"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 341,
+          "base_prompt_estimate": 539,
+          "prompt_estimate": 880,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-037",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "故弄玄虚"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-0edd74ced24163177b6171ec"
+        ],
+        "actual_ids": [
+          "meme-memes-0edd74ced24163177b6171ec"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-0edd74ced24163177b6171ec"
+          ],
+          "included_ids": [
+            "meme-memes-0edd74ced24163177b6171ec"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 528,
+          "base_prompt_estimate": 541,
+          "prompt_estimate": 1069,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-038",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "穿搭"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-209185370e2743970accd09e"
+        ],
+        "actual_ids": [
+          "meme-memes-209185370e2743970accd09e"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-209185370e2743970accd09e"
+          ],
+          "included_ids": [
+            "meme-memes-209185370e2743970accd09e"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 563,
+          "base_prompt_estimate": 541,
+          "prompt_estimate": 1104,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-039",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "配队"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-03e047e8bbd07e266b6111fe"
+        ],
+        "actual_ids": [
+          "meme-memes-03e047e8bbd07e266b6111fe"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-03e047e8bbd07e266b6111fe"
+          ],
+          "included_ids": [
+            "meme-memes-03e047e8bbd07e266b6111fe"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 455,
+          "base_prompt_estimate": 534,
+          "prompt_estimate": 989,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-040",
+        "kind": "positive",
+        "form": "natural_title",
+        "labels": [
+          "展会"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-0a524610d30ce232d650ad75"
+        ],
+        "actual_ids": [
+          "meme-memes-0a524610d30ce232d650ad75"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-0a524610d30ce232d650ad75"
+          ],
+          "included_ids": [
+            "meme-memes-0a524610d30ce232d650ad75"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 565,
+          "base_prompt_estimate": 541,
+          "prompt_estimate": 1106,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-041",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "抽卡祈愿"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-012fcce7187468b20bee37ca",
+          "meme-custom-0ead07c2c0991381f5f899bc",
+          "meme-custom-15e2cbcbc71b812d199888da",
+          "meme-custom-280aa07ee8adca6bd528e571",
+          "meme-custom-e0136ce72f4dff655188dac1"
+        ],
+        "actual_ids": [
+          "meme-custom-15e2cbcbc71b812d199888da",
+          "meme-custom-280aa07ee8adca6bd528e571",
+          "meme-memes-ba191eb6ead7de25c0c586e8"
+        ],
+        "relevant": 2,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-15e2cbcbc71b812d199888da",
+            "meme-custom-280aa07ee8adca6bd528e571",
+            "meme-memes-ba191eb6ead7de25c0c586e8"
+          ],
+          "included_ids": [
+            "meme-custom-15e2cbcbc71b812d199888da",
+            "meme-custom-280aa07ee8adca6bd528e571",
+            "meme-memes-ba191eb6ead7de25c0c586e8"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 1051,
+          "base_prompt_estimate": 524,
+          "prompt_estimate": 1575,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-042",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "全选"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-1b4f855e102ed93a42f87272"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 538,
+          "prompt_estimate": 538,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-043",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "信息过载"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-4d6e4fe7d384d4256f0a8a63"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 532,
+          "prompt_estimate": 532,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-044",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "忍耐积怒"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-42ff7d766df173e3e7be94b7",
+          "meme-custom-7b09cb4da7f39e1747cbd7aa"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 522,
+          "prompt_estimate": 522,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-045",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "轮到上场"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-4e24def2a393bb964d2c328f"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 532,
+          "prompt_estimate": 532,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-046",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "求援"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-be185e2b73fc1b0dc9b5efe8"
+        ],
+        "actual_ids": [
+          "meme-memes-1f8eabc4c27a98d88ec79bca",
+          "meme-memes-a73021e1387fd5b93d6deb22",
+          "meme-memes-e8cf21a91b2757aea1333f8e"
+        ],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-1f8eabc4c27a98d88ec79bca",
+            "meme-memes-a73021e1387fd5b93d6deb22",
+            "meme-memes-e8cf21a91b2757aea1333f8e"
+          ],
+          "included_ids": [
+            "meme-memes-1f8eabc4c27a98d88ec79bca",
+            "meme-memes-a73021e1387fd5b93d6deb22",
+            "meme-memes-e8cf21a91b2757aea1333f8e"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 1539,
+          "base_prompt_estimate": 533,
+          "prompt_estimate": 2072,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-047",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "音频故障"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-68c0224e491586f62b2fcbf8"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 535,
+          "prompt_estimate": 535,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-048",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "青春回忆"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-9ea4993e414802a33f21eeaa",
+          "meme-memes-04cd5e89e6f53de583698bc7"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 538,
+          "prompt_estimate": 538,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-049",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "评分泛滥"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-4435bd390bfab8a0f823df3f"
+        ],
+        "actual_ids": [
+          "meme-custom-4435bd390bfab8a0f823df3f"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-4435bd390bfab8a0f823df3f"
+          ],
+          "included_ids": [
+            "meme-custom-4435bd390bfab8a0f823df3f"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 249,
+          "base_prompt_estimate": 540,
+          "prompt_estimate": 789,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-050",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "只说不做"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-2b348c737aa81cd77b1a8af5"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 529,
+          "prompt_estimate": 529,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-051",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "形象崩塌"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-0c8cb86beea458b9eefe245d"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 542,
+          "prompt_estimate": 542,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-052",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "堆砌辞藻"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-0edd74ced24163177b6171ec"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 550,
+          "prompt_estimate": 550,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-053",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "送资源"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-0e26cf1781cfcc4710a9d53a"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 535,
+          "prompt_estimate": 535,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-054",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "开场剪辑"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-04c392883ec199a734c4c746"
+        ],
+        "actual_ids": [
+          "meme-memes-3f7c32f996032ecaa5850138",
+          "meme-memes-2ce7cd639a7377381f757fc1",
+          "meme-memes-60491bd0a442ddd08d16416a"
+        ],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-memes-3f7c32f996032ecaa5850138",
+            "meme-memes-2ce7cd639a7377381f757fc1",
+            "meme-memes-60491bd0a442ddd08d16416a"
+          ],
+          "included_ids": [
+            "meme-memes-3f7c32f996032ecaa5850138",
+            "meme-memes-2ce7cd639a7377381f757fc1",
+            "meme-memes-60491bd0a442ddd08d16416a"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 1545,
+          "base_prompt_estimate": 540,
+          "prompt_estimate": 2085,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-055",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "鲜艳衣着"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-209185370e2743970accd09e"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 529,
+          "prompt_estimate": 529,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-056",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "无实质情报"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-0a524610d30ce232d650ad75"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 541,
+          "prompt_estimate": 541,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-057",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "辅助抬强度"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-memes-03e047e8bbd07e266b6111fe"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 541,
+          "prompt_estimate": 541,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-058",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "总结请求"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-50af8cdd6932d38e1a40fad0",
+          "meme-custom-90b82f6dc982e6c8aca8452e"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 532,
+          "prompt_estimate": 532,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-059",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "生日求祝福"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-6d46eddcba0201fe3e28a005"
+        ],
+        "actual_ids": [
+          "meme-custom-6d46eddcba0201fe3e28a005"
+        ],
+        "relevant": 1,
+        "positive_hit": true,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": [
+            "meme-custom-6d46eddcba0201fe3e28a005"
+          ],
+          "included_ids": [
+            "meme-custom-6d46eddcba0201fe3e28a005"
+          ],
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 256,
+          "base_prompt_estimate": 522,
+          "prompt_estimate": 778,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "pos-060",
+        "kind": "positive",
+        "form": "natural_paraphrase",
+        "labels": [
+          "长期停更回归"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [
+          "meme-custom-afbc727e28d2e48f565840eb"
+        ],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 528,
+          "prompt_estimate": 528,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-001",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 521,
+          "prompt_estimate": 521,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-002",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 511,
+          "prompt_estimate": 511,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-003",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 520,
+          "prompt_estimate": 520,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-004",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 523,
+          "prompt_estimate": 523,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-005",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 514,
+          "prompt_estimate": 514,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-006",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 512,
+          "prompt_estimate": 512,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-007",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 514,
+          "prompt_estimate": 514,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-008",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 511,
+          "prompt_estimate": 511,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-009",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 516,
+          "prompt_estimate": 516,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-010",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 514,
+          "prompt_estimate": 514,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-011",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 524,
+          "prompt_estimate": 524,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-012",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 523,
+          "prompt_estimate": 523,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-013",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 511,
+          "prompt_estimate": 511,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-014",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 502,
+          "prompt_estimate": 502,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-015",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 514,
+          "prompt_estimate": 514,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-016",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 512,
+          "prompt_estimate": 512,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-017",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 523,
+          "prompt_estimate": 523,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-018",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 513,
+          "prompt_estimate": 513,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-019",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 519,
+          "prompt_estimate": 519,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "neg-020",
+        "kind": "negative",
+        "form": "natural",
+        "labels": [
+          "无库内可用接法"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "budget": {
+          "revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 514,
+          "prompt_estimate": 514,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-001",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "跨会话"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "synthetic-other",
+          "Private": true
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "dm",
+          "Session": "synthetic-a",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-dm-a"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 517,
+          "prompt_estimate": 517,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-002",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "跨平台同名会话"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "synthetic-a",
+          "Private": true
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "dm",
+          "Session": "synthetic-a",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-dm-a"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 515,
+          "prompt_estimate": 515,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-003",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "公开直播"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "dm",
+          "Session": "synthetic-a",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-dm-a"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 518,
+          "prompt_estimate": 518,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-004",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "公开评论"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "dm",
+          "Session": "synthetic-a",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-dm-a"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 523,
+          "prompt_estimate": 523,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-005",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "QQ群"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "dm",
+          "Session": "synthetic-a",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-dm-a"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 511,
+          "prompt_estimate": 511,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-006",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "跨会话"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "synthetic-other",
+          "Private": true
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "dm",
+          "Session": "synthetic-b",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-dm-b"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 517,
+          "prompt_estimate": 517,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-007",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "跨平台同名会话"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "synthetic-b",
+          "Private": true
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "dm",
+          "Session": "synthetic-b",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-dm-b"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 515,
+          "prompt_estimate": 515,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-008",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "公开直播"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "dm",
+          "Session": "synthetic-b",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-dm-b"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 518,
+          "prompt_estimate": 518,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-009",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "公开评论"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "dm",
+          "Session": "synthetic-b",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-dm-b"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 523,
+          "prompt_estimate": 523,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-010",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "QQ群"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "dm",
+          "Session": "synthetic-b",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-dm-b"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 511,
+          "prompt_estimate": 511,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-011",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "跨会话"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "synthetic-other",
+          "Private": true
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "qq",
+          "Session": "synthetic-a",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-qq-a"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 519,
+          "prompt_estimate": 519,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-012",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "跨平台同名会话"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "synthetic-a",
+          "Private": true
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "qq",
+          "Session": "synthetic-a",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-qq-a"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 513,
+          "prompt_estimate": 513,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-013",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "公开直播"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "qq",
+          "Session": "synthetic-a",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-qq-a"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 518,
+          "prompt_estimate": 518,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-014",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "公开评论"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "qq",
+          "Session": "synthetic-a",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-qq-a"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 523,
+          "prompt_estimate": 523,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-015",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成私密",
+          "QQ群"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "qq",
+          "Session": "synthetic-a",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-private-qq-a"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 511,
+          "prompt_estimate": 511,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-016",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成场景限制",
+          "仅qq_private"
+        ],
+        "scope": {
+          "Channel": "live",
+          "Session": "eval-room",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-scene-qq-private"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 512,
+          "prompt_estimate": 512,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-017",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成场景限制",
+          "仅qq_private"
+        ],
+        "scope": {
+          "Channel": "comment",
+          "Session": "eval-video",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-scene-qq-private"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 517,
+          "prompt_estimate": 517,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-018",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成场景限制",
+          "仅qq_private"
+        ],
+        "scope": {
+          "Channel": "dm",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-scene-qq-private"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 508,
+          "prompt_estimate": 508,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-019",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成场景限制",
+          "仅qq_private"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "eval-group",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-scene-qq-private"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 505,
+          "prompt_estimate": 505,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      },
+      {
+        "id": "acl-020",
+        "kind": "permission",
+        "form": "synthetic",
+        "labels": [
+          "合成场景限制",
+          "仅qq_private"
+        ],
+        "scope": {
+          "Channel": "qq",
+          "Session": "another-group",
+          "Private": false
+        },
+        "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+        "expected_ids": [],
+        "actual_ids": [],
+        "relevant": 0,
+        "positive_hit": false,
+        "negative_false": false,
+        "forbidden_returns": 0,
+        "control_scope": {
+          "Channel": "qq",
+          "Session": "eval-contact",
+          "Private": true
+        },
+        "control_ids": [
+          "synthetic-scene-qq-private"
+        ],
+        "control_passed": true,
+        "budget": {
+          "revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+          "candidate_ids": null,
+          "included_ids": null,
+          "dropped_ids": null,
+          "budget_percent": 10,
+          "cap_bytes": 3276,
+          "bytes": 0,
+          "base_prompt_estimate": 508,
+          "prompt_estimate": 508,
+          "fake_provider_calls": 2,
+          "fake_usage_rows": 2,
+          "passed": true
+        }
+      }
+    ],
+    "metrics": {
+      "returned": 56,
+      "relevant": 46,
+      "precision": 0.8214285714285714,
+      "positive_hits": 43,
+      "negative_false": 0,
+      "forbidden_returns": 0,
+      "controls_passed": 20,
+      "budget_passed": 100,
+      "distribution": {
+        "negative": 20,
+        "permission": 20,
+        "positive": 60
+      },
+      "positive_forms": {
+        "exact_title": 20,
+        "natural_paraphrase": 20,
+        "natural_title": 20
+      }
+    },
+    "quality_passed": false
+  },
+  "top3_order": {
+    "expected_ids": [
+      "sort-title",
+      "sort-a",
+      "sort-b"
+    ],
+    "actual_ids": [
+      "sort-title",
+      "sort-a",
+      "sort-b"
+    ],
+    "repeats": 10,
+    "revision": "cb911d01b5fc0e5ce26dee76fe8e19a4b7d1b03ca7a397a517226c411668e60e",
+    "passed": true
+  },
+  "passed": false
+}

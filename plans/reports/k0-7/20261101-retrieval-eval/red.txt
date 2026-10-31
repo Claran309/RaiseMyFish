@@ -1,0 +1,14 @@
+# RaiseMyFish/internal/knowledgeeval [RaiseMyFish/internal/knowledgeeval.test]
+internal\knowledgeeval\eval_test.go:20:51: undefined: QueryCase
+internal\knowledgeeval\eval_test.go:23:11: undefined: QueryCase
+internal\knowledgeeval\eval_test.go:24:10: undefined: Evaluator
+internal\knowledgeeval\eval_test.go:29:10: undefined: Evaluator
+internal\knowledgeeval\eval_test.go:29:69: undefined: QueryCase
+internal\knowledgeeval\eval_test.go:35:14: undefined: Evaluator
+internal\knowledgeeval\eval_test.go:35:84: undefined: QueryCase
+internal\knowledgeeval\eval_test.go:40:13: undefined: Evaluator
+internal\knowledgeeval\eval_test.go:40:80: undefined: QueryCase
+internal\knowledgeeval\eval_test.go:42:13: undefined: Evaluator
+internal\knowledgeeval\eval_test.go:42:13: too many errors
+FAIL	RaiseMyFish/internal/knowledgeeval [build failed]
+FAIL

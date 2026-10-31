@@ -1,0 +1,14 @@
+{
+  "rows": 35,
+  "ok_rows": 35,
+  "in_tokens": 129396,
+  "out_tokens": 429,
+  "known_cost_rows": 0,
+  "run_id": "20261031T134539Z-5b038538",
+  "started_at": "2026-10-31T13:45:39.5845294Z",
+  "finished_at": "2026-10-31T13:46:05.1300348Z",
+  "model": "deepseek:deepseek-chat",
+  "read_only": true,
+  "cost_usd": null,
+  "scope": "new run only; model + timestamp window; no run_id column; not merged with old runs"
+}

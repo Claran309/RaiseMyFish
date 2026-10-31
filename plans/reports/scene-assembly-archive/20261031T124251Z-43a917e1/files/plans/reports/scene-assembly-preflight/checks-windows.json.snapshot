@@ -1,0 +1,69 @@
+[
+  {
+    "command": [
+      "go",
+      "test",
+      "./...",
+      "-count=1"
+    ],
+    "exit_code": 0,
+    "output": "ok  \tRaiseMyFish/cmd/fishctl\t1.405s\nok  \tRaiseMyFish/cmd/fishd\t1.042s\nok  \tRaiseMyFish/internal/brain\t4.278s\nok  \tRaiseMyFish/internal/brain/provider\t4.490s\nok  \tRaiseMyFish/internal/config\t3.374s\nok  \tRaiseMyFish/internal/database\t1.082s\nok  \tRaiseMyFish/internal/event\t1.207s\nok  \tRaiseMyFish/internal/infra\t4.321s\nok  \tRaiseMyFish/internal/memory\t1.209s\nok  \tRaiseMyFish/internal/persona\t2.135s\nok  \tRaiseMyFish/internal/personaeval\t3.229s\nok  \tRaiseMyFish/internal/store\t1.172s\n?   \tRaiseMyFish/migrations\t[no test files]\n"
+  },
+  {
+    "command": [
+      "go",
+      "test",
+      "-tags=integration",
+      "./...",
+      "-count=1"
+    ],
+    "exit_code": 0,
+    "output": "ok  \tRaiseMyFish/cmd/fishctl\t1.017s\nok  \tRaiseMyFish/cmd/fishd\t3.830s\nok  \tRaiseMyFish/internal/brain\t3.808s\nok  \tRaiseMyFish/internal/brain/provider\t5.008s\nok  \tRaiseMyFish/internal/config\t2.277s\nok  \tRaiseMyFish/internal/database\t4.755s\nok  \tRaiseMyFish/internal/event\t0.732s\nok  \tRaiseMyFish/internal/infra\t2.483s\nok  \tRaiseMyFish/internal/memory\t1.406s\nok  \tRaiseMyFish/internal/persona\t2.021s\nok  \tRaiseMyFish/internal/personaeval\t2.146s\nok  \tRaiseMyFish/internal/store\t1.412s\n?   \tRaiseMyFish/migrations\t[no test files]\n"
+  },
+  {
+    "command": [
+      "go",
+      "vet",
+      "./..."
+    ],
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "command": [
+      "go",
+      "build",
+      "./..."
+    ],
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "command": [
+      "go",
+      "run",
+      "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0",
+      "run"
+    ],
+    "exit_code": 0,
+    "output": "0 issues.\n"
+  },
+  {
+    "command": [
+      "gofmt",
+      "-l",
+      "internal/brain"
+    ],
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "output": ""
+  }
+]

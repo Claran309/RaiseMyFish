@@ -1,0 +1,80 @@
+{
+  "task": "v4 / H expect离线四格",
+  "frozen_at": "2026-10-31T15:25:34.236596+00:00",
+  "actual_model_calls": 0,
+  "source_run": "20261031T143439Z-758949f2",
+  "rules_version": "persona-lexical-v4",
+  "rules_sha256": "b13107a8895b4506d6ba4eca8b385fd4aa9da8fbb0bcce17736315acb9d5f9bf",
+  "revised_cases_sha256": "0acfa2afc3ed9bfce73e85a9abe479e2aee0f0e4d0301a019320853c3dea4670",
+  "matrix_counts": {
+    "v3_original": 11,
+    "v4_original": 16,
+    "v3_revised": 15,
+    "v4_revised": 20,
+    "total": 35
+  },
+  "persona_version": "v1.1",
+  "new_persona_tested_by_model": false,
+  "files": [
+    {
+      "path": "internal/personaeval/score.go",
+      "snapshot": "plans/reports/persona-v4-preflight/source-snapshot/internal/personaeval/score.go.snapshot",
+      "bytes": 12386,
+      "sha256": "7e2d213cb9bdece0eff42dc82cd5f62907b3d854b0f8fde644ff2bce1ab30b3b"
+    },
+    {
+      "path": "internal/personaeval/score_v2.go",
+      "snapshot": "plans/reports/persona-v4-preflight/source-snapshot/internal/personaeval/score_v2.go.snapshot",
+      "bytes": 2493,
+      "sha256": "f23b23bcedfe6a17a1ad6ac29168c92afc7b9d52fdebe95f6142a2d84fc06b65"
+    },
+    {
+      "path": "internal/personaeval/score_v3.go",
+      "snapshot": "plans/reports/persona-v4-preflight/source-snapshot/internal/personaeval/score_v3.go.snapshot",
+      "bytes": 2272,
+      "sha256": "3a036d5365696ac0513967b5dbdd806549e1c94d7b2b5b55b337526470098faf"
+    },
+    {
+      "path": "internal/personaeval/score_v4.go",
+      "snapshot": "plans/reports/persona-v4-preflight/source-snapshot/internal/personaeval/score_v4.go.snapshot",
+      "bytes": 3790,
+      "sha256": "a5fd8e2508d0f3493a5541078403476d6dc35597deed845f22e855fc559786dc"
+    },
+    {
+      "path": "internal/personaeval/rescore.go",
+      "snapshot": "plans/reports/persona-v4-preflight/source-snapshot/internal/personaeval/rescore.go.snapshot",
+      "bytes": 10160,
+      "sha256": "e2a2e70bc57930e74612ab4bbd2eea96e9264b8f4e8ad1fb1ccf77463bffbaa0"
+    },
+    {
+      "path": "cmd/fishctl/persona_rescore.go",
+      "snapshot": "plans/reports/persona-v4-preflight/source-snapshot/cmd/fishctl/persona_rescore.go.snapshot",
+      "bytes": 1873,
+      "sha256": "99e2c6750e96440ca05f486edb42e97deb64a30ac10ff2a4c581106dde63d300"
+    },
+    {
+      "path": "contracts/persona-eval.md",
+      "snapshot": "plans/reports/persona-v4-preflight/source-snapshot/contracts/persona-eval.md.snapshot",
+      "bytes": 12218,
+      "sha256": "53da3dd4691b137274cd36327a871782dfe216b6d3fef403ded06c51473fc13c"
+    },
+    {
+      "path": "personas/dafeiyu/rules.md",
+      "snapshot": "plans/reports/persona-v4-preflight/source-snapshot/personas/dafeiyu/rules.md.snapshot",
+      "bytes": 6955,
+      "sha256": "2e7597587dee25ce15e7fa2546cea0eeec6a870917d7c77a17e75c4d449dd171"
+    },
+    {
+      "path": "personas/dafeiyu/meta.yaml",
+      "snapshot": "plans/reports/persona-v4-preflight/source-snapshot/personas/dafeiyu/meta.yaml.snapshot",
+      "bytes": 734,
+      "sha256": "2476cef1f67ab7592602ce8c647aca530eeed19979ec5e5db2d30f13a6adbe02"
+    },
+    {
+      "path": "plans/reports/p0h-cases/cases-v3.jsonl",
+      "snapshot": "plans/reports/persona-v4-preflight/source-snapshot/plans/reports/p0h-cases/cases-v3.jsonl.snapshot",
+      "bytes": 6333,
+      "sha256": "0acfa2afc3ed9bfce73e85a9abe479e2aee0f0e4d0301a019320853c3dea4670"
+    }
+  ]
+}

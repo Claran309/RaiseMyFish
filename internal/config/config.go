@@ -15,11 +15,12 @@ import (
 
 // Config 是当前阶段实际装配的配置。
 type Config struct {
-	Database Database `toml:"db"`
-	Log      Log      `toml:"log"`
-	Runtime  Runtime  `toml:"runtime"`
-	Channels Channels `toml:"channels"`
-	LLM      LLM      `toml:"llm"`
+	Database  Database  `toml:"db"`
+	Log       Log       `toml:"log"`
+	Runtime   Runtime   `toml:"runtime"`
+	Channels  Channels  `toml:"channels"`
+	LLM       LLM       `toml:"llm"`
+	Knowledge Knowledge `toml:"knowledge"`
 }
 
 // Database 的连接串只从环境/本地dotenv读取，不能序列化输出。
@@ -66,10 +67,11 @@ func (e *safeError) Unwrap() error { return e.cause }
 // Load 按进程环境 > dotenv > TOML > 默认值加载；空路径表示不读该文件。
 func Load(path, envPath string) (Config, error) {
 	cfg := Config{
-		Database: Database{DSNEnv: "FISH_DB_DSN", TimeoutSeconds: 5},
-		Log:      Log{Level: "info", Dir: "logs"},
-		Runtime:  Runtime{StateFile: "data/fishd-status.json", HeartbeatSeconds: 5, StaleSeconds: 20},
-		LLM:      defaultLLM(),
+		Database:  Database{DSNEnv: "FISH_DB_DSN", TimeoutSeconds: 5},
+		Log:       Log{Level: "info", Dir: "logs"},
+		Runtime:   Runtime{StateFile: "data/fishd-status.json", HeartbeatSeconds: 5, StaleSeconds: 20},
+		LLM:       defaultLLM(),
+		Knowledge: defaultKnowledge(),
 	}
 	if path != "" {
 		data, err := os.ReadFile(path)
@@ -130,6 +132,9 @@ func (c Config) Validate() error {
 	}
 	if c.Channels.Live.Enabled || c.Channels.Comment.Enabled || c.Channels.DM.Enabled || c.Channels.QQ.Enabled {
 		return errors.New("当前尚未装配业务通道，请关闭通道开关")
+	}
+	if err := c.Knowledge.Validate(); err != nil {
+		return err
 	}
 	return c.LLM.Validate()
 }

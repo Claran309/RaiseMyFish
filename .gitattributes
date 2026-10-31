@@ -10,6 +10,20 @@
 plans/reports/persona-eval/** -text
 plans/reports/persona-eval-rescore/** -text
 plans/reports/phase-0.7c-v2-manifest.json -text
+plans/reports/persona-intent-audit/** -text
+plans/reports/scene-assembly-preflight/** -text
+plans/reports/phase-0.7c-scene-a-manifest.json -text
+plans/reports/scene-assembly-archive/** -text
+plans/reports/scene-assembly-rollback/** -text
+plans/reports/p0b-v3-preflight/** -text
+plans/reports/p0h-cases/** -text
+plans/reports/p0h-old-persona-preflight/** -text
+plans/reports/persona-v4-preflight/** -text
+plans/reports/persona-v5-preflight/** -text
+plans/reports/persona-v5-ruling-preflight/** -text
+plans/reports/k0-5/** -text
+plans/reports/k0-6/** -text
+plans/reports/k0-7/** -text
 
 # 二进制文件不做转换
 *.exe binary

@@ -1,0 +1,61 @@
+[
+  {
+    "command": [
+      "go",
+      "test",
+      "./...",
+      "-count=1"
+    ],
+    "exit_code": 0,
+    "output": "ok  \tRaiseMyFish/cmd/fishctl\t0.501s\nok  \tRaiseMyFish/cmd/fishd\t0.496s\nok  \tRaiseMyFish/internal/brain\t1.806s\nok  \tRaiseMyFish/internal/brain/provider\t2.191s\nok  \tRaiseMyFish/internal/config\t1.417s\nok  \tRaiseMyFish/internal/database\t0.384s\nok  \tRaiseMyFish/internal/event\t0.895s\nok  \tRaiseMyFish/internal/infra\t1.974s\nok  \tRaiseMyFish/internal/knowledge\t2.850s\nok  \tRaiseMyFish/internal/memory\t0.844s\nok  \tRaiseMyFish/internal/persona\t1.093s\nok  \tRaiseMyFish/internal/personaeval\t1.926s\nok  \tRaiseMyFish/internal/store\t0.832s\n?   \tRaiseMyFish/migrations\t[no test files]\n"
+  },
+  {
+    "command": [
+      "go",
+      "test",
+      "-tags=integration",
+      "./...",
+      "-count=1"
+    ],
+    "exit_code": 0,
+    "output": "ok  \tRaiseMyFish/cmd/fishctl\t0.495s\nok  \tRaiseMyFish/cmd/fishd\t1.751s\nok  \tRaiseMyFish/internal/brain\t1.535s\nok  \tRaiseMyFish/internal/brain/provider\t2.496s\nok  \tRaiseMyFish/internal/config\t1.116s\nok  \tRaiseMyFish/internal/database\t2.738s\nok  \tRaiseMyFish/internal/event\t0.857s\nok  \tRaiseMyFish/internal/infra\t1.282s\nok  \tRaiseMyFish/internal/knowledge\t2.096s\nok  \tRaiseMyFish/internal/memory\t0.857s\nok  \tRaiseMyFish/internal/persona\t1.020s\nok  \tRaiseMyFish/internal/personaeval\t1.514s\nok  \tRaiseMyFish/internal/store\t0.857s\n?   \tRaiseMyFish/migrations\t[no test files]\n"
+  },
+  {
+    "command": [
+      "go",
+      "vet",
+      "./..."
+    ],
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "command": [
+      "go",
+      "build",
+      "./..."
+    ],
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "command": [
+      "go",
+      "run",
+      "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0",
+      "run"
+    ],
+    "exit_code": 0,
+    "output": "0 issues.\n"
+  },
+  {
+    "command": [
+      "gofmt",
+      "-l",
+      "internal/brain",
+      "internal/database"
+    ],
+    "exit_code": 0,
+    "output": ""
+  }
+]

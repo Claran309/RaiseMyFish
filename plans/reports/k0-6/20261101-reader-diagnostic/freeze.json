@@ -1,0 +1,89 @@
+{
+  "task": "K0-6/7集成交接",
+  "frozen_at": "2026-10-31T17:39:13.522433+00:00",
+  "real_model_calls": 0,
+  "knowledge_default_enabled": false,
+  "knowledge_budget_limit": 10,
+  "business_pipeline_connected": false,
+  "quality_gate": {
+    "precision": 0.8214285714285714,
+    "positive_coverage": 43,
+    "positive_total": 60,
+    "required_positive_hits": 48,
+    "passed": false
+  },
+  "files": [
+    {
+      "path": "internal/config/config.go",
+      "snapshot": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/internal/config/config.go.snapshot",
+      "sha256": "86a2d49eb1b742a572d5825f8e26ac14b279cadb58b22fdbe6268b33bbab3775",
+      "bytes": 4513
+    },
+    {
+      "path": "internal/config/knowledge.go",
+      "snapshot": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/internal/config/knowledge.go.snapshot",
+      "sha256": "4fe34166df4f62ab321a5d4a6d8773c2adbbb4388f530ce2645e1b0d28e4ab93",
+      "bytes": 765
+    },
+    {
+      "path": "internal/config/knowledge_test.go",
+      "snapshot": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/internal/config/knowledge_test.go.snapshot",
+      "sha256": "a077619c67a1dfd4d4f8961531feff277a2b3ae15dac927a23a22af365ba4428",
+      "bytes": 1546
+    },
+    {
+      "path": "cmd/fishd/main.go",
+      "snapshot": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/cmd/fishd/main.go.snapshot",
+      "sha256": "7a040caacf0bee50859884b443610135421ad66ed448d2b0e9782698dd1922e7",
+      "bytes": 5146
+    },
+    {
+      "path": "cmd/fishd/brain.go",
+      "snapshot": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/cmd/fishd/brain.go.snapshot",
+      "sha256": "2edd82439473dea141ed55e73a0c231be8203b808b4e92955fa95b1e41601d4f",
+      "bytes": 3022
+    },
+    {
+      "path": "cmd/fishd/knowledge.go",
+      "snapshot": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/cmd/fishd/knowledge.go.snapshot",
+      "sha256": "b42f239cb0c4dd02c1090c2d101df821599808c21e09834d58e7d34b35afda67",
+      "bytes": 2791
+    },
+    {
+      "path": "cmd/fishd/knowledge_test.go",
+      "snapshot": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/cmd/fishd/knowledge_test.go.snapshot",
+      "sha256": "5bdd42ca36f46a4ce7e48b8f3db4624ff3f0e28a57249466ab3bacf91af81b01",
+      "bytes": 6093
+    },
+    {
+      "path": "cmd/fishd/knowledge_check_integration_test.go",
+      "snapshot": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/cmd/fishd/knowledge_check_integration_test.go.snapshot",
+      "sha256": "7ade6400360a9d41faa106c80c08a4de54b7e30e9f5d2388fece99408dc11310",
+      "bytes": 5629
+    },
+    {
+      "path": "internal/knowledge/snapshot.go",
+      "snapshot": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/internal/knowledge/snapshot.go.snapshot",
+      "sha256": "b5fae26a144adb3f6660fd3b540eba99eb5e510a0517d15dd7274910ffae8e91",
+      "bytes": 497
+    },
+    {
+      "path": "internal/knowledge/snapshot_test.go",
+      "snapshot": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/internal/knowledge/snapshot_test.go.snapshot",
+      "sha256": "e7228bff1d9033105d7afbd836f430d79085ffab5ace13946645ff0147f4087e",
+      "bytes": 209
+    },
+    {
+      "path": "config/fishd.toml",
+      "snapshot": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/config/fishd.toml.snapshot",
+      "sha256": "7f880d23427814c6829b65e771f4068404685124624047b5a52ef7161ac7a365",
+      "bytes": 1385
+    },
+    {
+      "path": "contracts/knowledge.md",
+      "snapshot": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/contracts/knowledge.md.snapshot",
+      "sha256": "d3d3da1ca05c12c161a9ed640c6db63b22a8f88f46dba04ee1035ec439524cb4",
+      "bytes": 9701
+    }
+  ]
+}

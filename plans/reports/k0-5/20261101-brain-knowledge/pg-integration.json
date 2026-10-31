@@ -1,0 +1,15 @@
+{
+  "command": "go test -tags=integration ./internal/database -run TestKnowledgeBrainHTTPReachesRealPostgres -count=1 -v",
+  "exit_code": 0,
+  "provider": "本机httptest假HTTP",
+  "real_postgres": true,
+  "schema": "独立随机schema，测试清理",
+  "successful_http_calls": 1,
+  "ledger_rows": 1,
+  "in_tokens": 123,
+  "out_tokens": 7,
+  "cost_usd": null,
+  "invalid_scope_additional_calls": 0,
+  "invalid_scope_additional_rows": 0,
+  "real_model_calls": 0
+}

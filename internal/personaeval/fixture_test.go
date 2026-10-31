@@ -16,7 +16,7 @@ func TestPrepareUsesExactCaseSnapshotAndRealPack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Cases) != 35 || len(f.Files) != 6 || f.Pack.Meta.Version != "v1" {
+	if len(f.Cases) != 35 || len(f.Files) != 6 || f.Pack.Meta.Version != "v1.1" {
 		t.Fatal("快照或真实用例不完整")
 	}
 	for _, file := range f.Files {

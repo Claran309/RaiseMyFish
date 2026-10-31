@@ -1,0 +1,13 @@
+{
+  "reviewer": "内部只读k05_review，非DSH独立验收",
+  "critical": 0,
+  "important": 0,
+  "commands_passed": [
+    "go test ./internal/brain/... ./internal/knowledge/... -count=1",
+    "go vet ./internal/brain/..."
+  ],
+  "scope": "预算/隐私/资源/默认关闭/只读/审计，集成测试代码",
+  "reviewer_ran_pg": false,
+  "model_or_api_calls": 0,
+  "credentials_read": false
+}

@@ -20,6 +20,8 @@
 | 16 | [glossary.md](glossary.md) | 项目术语表 | ✅ |
 | 17 | [runbook.md](runbook.md) | 故障排查手册 | ✅ |
 | 18 | [reference-projects.md](reference-projects.md) | 既有项目参考（lanmei-dream / ClaranAIM / ClaranCloudDisk） | ✅ |
+| 19 | [knowledge.md](knowledge.md) | 知识库与 RAG：人格/知识/记忆分层、K0/K1/K2 阶段 | ✅ |
+| 20 | [presence.md](presence.md) | Presence 三心二意状态表：主体/会话分离、状态注册表、租约 | ✅ |
 
 契约文档：`../contracts/`（event / collector / sender / brain）
 

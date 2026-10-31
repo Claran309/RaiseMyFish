@@ -1,0 +1,43 @@
+{
+  "model_calls": 0,
+  "platform_calls": 0,
+  "engineering_passed": true,
+  "dsh_accepted": false,
+  "store_coverage_percent": 98.0,
+  "database_coverage_percent": 91.5,
+  "checks": [
+    {
+      "command": "go test ./... -count=1",
+      "exit_code": 0
+    },
+    {
+      "command": "go test -tags=integration ./... -count=1",
+      "exit_code": 0
+    },
+    {
+      "command": "go vet ./...",
+      "exit_code": 0
+    },
+    {
+      "command": "go build ./...",
+      "exit_code": 0
+    },
+    {
+      "command": "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run",
+      "exit_code": 0
+    },
+    {
+      "command": "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run --build-tags integration",
+      "exit_code": 0
+    },
+    {
+      "command": "WSL: CGO_ENABLED=1 /usr/local/go/bin/go test -race ./... -count=1",
+      "exit_code": 0
+    },
+    {
+      "command": "go test -tags=integration ./internal/database -run TestRepository(Invalid|Closed) -count=1 -v",
+      "exit_code": 0
+    }
+  ],
+  "note": "实际工具退出结果见本轮交付报告；WSL启动有既有配置选项提示；integration首次lint及修复说明保留。"
+}

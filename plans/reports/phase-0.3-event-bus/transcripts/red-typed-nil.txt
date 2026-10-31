@@ -1,0 +1,5 @@
+--- FAIL: TestNewRejectsTypedNilRepository (0.00s)
+    bus_test.go:119: 接口包装的nil仓储应被拒绝，不能把panic留给Publish
+FAIL
+FAIL	RaiseMyFish/internal/event/bus	0.686s
+FAIL

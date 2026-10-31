@@ -1,0 +1,5 @@
+=== RUN   TestKnowledgeCheckWithRealPostgresNoModelOrUsage
+{"level":"info","ts":"2026-11-01T01:17:57.315+0800","msg":"数据库迁移就绪","action":"migrate","version":1}
+--- PASS: TestKnowledgeCheckWithRealPostgresNoModelOrUsage (0.88s)
+PASS
+ok  	RaiseMyFish/cmd/fishd	1.113s

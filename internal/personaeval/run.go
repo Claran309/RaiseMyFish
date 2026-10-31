@@ -85,57 +85,70 @@ type RunOptions struct {
 
 // CaseResult 保留原始和投递两组独立评分。
 type CaseResult struct {
-	Case              Case            `json:"case"`
-	StartedAt         time.Time       `json:"started_at"`
-	FinishedAt        time.Time       `json:"finished_at"`
-	RawOutput         string          `json:"raw_output"`
-	RawSHA256         string          `json:"raw_sha256"`
-	DeliveredOutput   string          `json:"delivered_output"`
-	DeliveredSHA256   string          `json:"delivered_sha256"`
-	Redacted          bool            `json:"redacted"`
-	RawFailures       []string        `json:"raw_failures"`
-	DeliveredFailures []string        `json:"delivered_failures"`
-	RawPass           bool            `json:"raw_pass"`
-	DeliveredPass     bool            `json:"delivered_pass"`
-	Error             string          `json:"error,omitempty"`
-	ReplyMeta         json.RawMessage `json:"reply_meta,omitempty"`
-	Attempts          []Attempt       `json:"attempts"`
+	Case                       Case               `json:"case"`
+	StartedAt                  time.Time          `json:"started_at"`
+	FinishedAt                 time.Time          `json:"finished_at"`
+	RawOutput                  string             `json:"raw_output"`
+	RawSHA256                  string             `json:"raw_sha256"`
+	DeliveredOutput            string             `json:"delivered_output"`
+	DeliveredSHA256            string             `json:"delivered_sha256"`
+	Redacted                   bool               `json:"redacted"`
+	RawFailures                []string           `json:"raw_failures"`
+	DeliveredFailures          []string           `json:"delivered_failures"`
+	RawStyleObservations       []StyleObservation `json:"raw_style_observations,omitempty"`
+	DeliveredStyleObservations []StyleObservation `json:"delivered_style_observations,omitempty"`
+	RawEvaluationErrors        []string           `json:"raw_evaluation_errors,omitempty"`
+	DeliveredEvaluationErrors  []string           `json:"delivered_evaluation_errors,omitempty"`
+	RawPass                    bool               `json:"raw_pass"`
+	DeliveredPass              bool               `json:"delivered_pass"`
+	Error                      string             `json:"error,omitempty"`
+	ReplyMeta                  json.RawMessage    `json:"reply_meta,omitempty"`
+	Attempts                   []Attempt          `json:"attempts"`
 }
 
 // Report 不把失败或未完成用例从分母删除。
 type Report struct {
-	RunID                 string         `json:"run_id"`
-	SourceKind            string         `json:"source_kind"`
-	BaselineUsed          bool           `json:"baseline_used"`
-	ProviderModel         string         `json:"provider_model"`
-	PackName              string         `json:"pack_name"`
-	PackVersion           string         `json:"pack_version"`
-	CodeCommit            string         `json:"code_commit"`
-	StartedAt             time.Time      `json:"started_at"`
-	FinishedAt            time.Time      `json:"finished_at"`
-	Configuration         Configuration  `json:"configuration"`
-	Files                 []FileSnapshot `json:"fixture_files"`
-	CodeFiles             []FileSnapshot `json:"code_files"`
-	RulesSHA256           string         `json:"rules_sha256"`
-	RulesVersion          string         `json:"rules_version"`
-	ComparisonVersion     string         `json:"comparison_version,omitempty"`
-	ComparisonRulesSHA256 string         `json:"comparison_rules_sha256,omitempty"`
-	Total                 int            `json:"total"`
-	Completed             int            `json:"completed"`
-	RawPassed             int            `json:"raw_passed"`
-	DeliveredPassed       int            `json:"delivered_passed"`
-	RawPassRate           float64        `json:"raw_pass_rate"`
-	DeliveredPassRate     float64        `json:"delivered_pass_rate"`
-	Complete              bool           `json:"complete"`
-	Fatal                 bool           `json:"fatal"`
-	Interrupted           bool           `json:"interrupted"`
-	Reached90             bool           `json:"reached_90"`
-	StopReason            string         `json:"stop_reason,omitempty"`
-	HTTPAttempts          int            `json:"provider_attempts"`
-	InputTokens           *int           `json:"in_tokens"`
-	OutputTokens          *int           `json:"out_tokens"`
-	CostUSD               *float64       `json:"cost_usd"`
-	Results               []CaseResult   `json:"results"`
+	RunID                  string         `json:"run_id"`
+	SourceKind             string         `json:"source_kind"`
+	BaselineUsed           bool           `json:"baseline_used"`
+	ProviderModel          string         `json:"provider_model"`
+	PackName               string         `json:"pack_name"`
+	PackVersion            string         `json:"pack_version"`
+	CodeCommit             string         `json:"code_commit"`
+	StartedAt              time.Time      `json:"started_at"`
+	FinishedAt             time.Time      `json:"finished_at"`
+	Configuration          Configuration  `json:"configuration"`
+	Files                  []FileSnapshot `json:"fixture_files"`
+	CodeFiles              []FileSnapshot `json:"code_files"`
+	RulesSHA256            string         `json:"rules_sha256"`
+	RulesVersion           string         `json:"rules_version"`
+	RulesRevision          string         `json:"rules_revision,omitempty"`
+	PassRateBasis          string         `json:"pass_rate_basis,omitempty"`
+	ManualReviewRequired   bool           `json:"manual_review_required,omitempty"`
+	ManualReviewStatus     string         `json:"manual_review_status,omitempty"`
+	AutomatedReached90     bool           `json:"automated_reached_90,omitempty"`
+	RawStyleMetrics        []StyleMetric  `json:"raw_style_metrics,omitempty"`
+	DeliveredStyleMetrics  []StyleMetric  `json:"delivered_style_metrics,omitempty"`
+	RawSafetySummary       *SafetySummary `json:"raw_safety_summary,omitempty"`
+	DeliveredSafetySummary *SafetySummary `json:"delivered_safety_summary,omitempty"`
+	ComparisonVersion      string         `json:"comparison_version,omitempty"`
+	ComparisonRulesSHA256  string         `json:"comparison_rules_sha256,omitempty"`
+	Total                  int            `json:"total"`
+	Completed              int            `json:"completed"`
+	RawPassed              int            `json:"raw_passed"`
+	DeliveredPassed        int            `json:"delivered_passed"`
+	RawPassRate            float64        `json:"raw_pass_rate"`
+	DeliveredPassRate      float64        `json:"delivered_pass_rate"`
+	Complete               bool           `json:"complete"`
+	Fatal                  bool           `json:"fatal"`
+	Interrupted            bool           `json:"interrupted"`
+	Reached90              bool           `json:"reached_90"`
+	StopReason             string         `json:"stop_reason,omitempty"`
+	HTTPAttempts           int            `json:"provider_attempts"`
+	InputTokens            *int           `json:"in_tokens"`
+	OutputTokens           *int           `json:"out_tokens"`
+	CostUSD                *float64       `json:"cost_usd"`
+	Results                []CaseResult   `json:"results"`
 }
 
 // Redactor 只保存非空实际敏感值，永不输出它们。
@@ -239,6 +252,12 @@ func Run(ctx context.Context, fixture Fixture, scorer *Scorer, generator Generat
 	in, out, cost := 0, 0, 0.
 	report = Report{RunID: o.RunID, SourceKind: o.SourceKind, ProviderModel: generator.Name(), PackName: fixture.Pack.Meta.Name, PackVersion: fixture.Pack.Meta.Version, CodeCommit: o.CodeCommit, StartedAt: time.Now().UTC(), Configuration: o.Configuration, Files: fixture.Files, CodeFiles: o.CodeFiles, RulesSHA256: Digest(fixture.Rules), Total: len(fixture.Cases), InputTokens: &in, OutputTokens: &out, CostUSD: &cost}
 	report.RulesVersion = scorer.Version()
+	report.RulesRevision = scorer.book.Revision
+	if scorer.book.ScoringMode == "safety-only" {
+		report.PassRateBasis = "automated_safety"
+		report.ManualReviewRequired = true
+		report.ManualReviewStatus = "pending"
+	}
 	report.ComparisonVersion = o.ComparisonVersion
 	if len(o.ComparisonRules) > 0 {
 		report.ComparisonRulesSHA256 = Digest(o.ComparisonRules)
@@ -264,10 +283,24 @@ func Run(ctx context.Context, fixture Fixture, scorer *Scorer, generator Generat
 		row.DeliveredSHA256 = Digest([]byte(generation.DeliveredOutput))
 		row.RawFailures = scorer.Evaluate(c, generation.RawOutput)
 		row.DeliveredFailures = scorer.Evaluate(c, generation.DeliveredOutput)
+		if scorer.book.ScoringMode == "safety-only" {
+			raw, delivered := scorer.Assess(c, generation.RawOutput), scorer.Assess(c, generation.DeliveredOutput)
+			row.RawStyleObservations = raw.StyleObservations
+			row.DeliveredStyleObservations = delivered.StyleObservations
+			row.RawFailures = raw.SafetyFailures
+			row.DeliveredFailures = delivered.SafetyFailures
+			row.RawEvaluationErrors = raw.EvaluationErrors
+			row.DeliveredEvaluationErrors = delivered.EvaluationErrors
+		}
 		if err != nil {
 			row.Error = redactor.Text(err.Error())
-			row.RawFailures = append(row.RawFailures, "generation_error")
-			row.DeliveredFailures = append(row.DeliveredFailures, "generation_error")
+			if scorer.book.ScoringMode == "safety-only" {
+				row.RawEvaluationErrors = append(row.RawEvaluationErrors, "generation_error")
+				row.DeliveredEvaluationErrors = append(row.DeliveredEvaluationErrors, "generation_error")
+			} else {
+				row.RawFailures = append(row.RawFailures, "generation_error")
+				row.DeliveredFailures = append(row.DeliveredFailures, "generation_error")
+			}
 		}
 		if redactor.Contains(generation.RawOutput) || redactor.Contains(generation.DeliveredOutput) {
 			row.Redacted = true
@@ -293,8 +326,8 @@ func Run(ctx context.Context, fixture Fixture, scorer *Scorer, generator Generat
 				}
 			}
 		}
-		row.RawPass = len(row.RawFailures) == 0
-		row.DeliveredPass = len(row.DeliveredFailures) == 0
+		row.RawPass = len(row.RawFailures) == 0 && len(row.RawEvaluationErrors) == 0
+		row.DeliveredPass = len(row.DeliveredFailures) == 0 && len(row.DeliveredEvaluationErrors) == 0
 		if row.RawPass {
 			report.RawPassed++
 		}
@@ -334,6 +367,33 @@ func Run(ctx context.Context, fixture Fixture, scorer *Scorer, generator Generat
 	report.RawPassRate = float64(report.RawPassed) / float64(report.Total)
 	report.DeliveredPassRate = float64(report.DeliveredPassed) / float64(report.Total)
 	report.Reached90 = report.Complete && report.SourceKind == "model_provider" && report.RawPassed*10 >= report.Total*9
+	if scorer.book.ScoringMode == "safety-only" {
+		var rawFailures, deliveredFailures, rawErrors, deliveredErrors [][]string
+		for _, row := range report.Results {
+			rawFailures = append(rawFailures, row.RawFailures)
+			deliveredFailures = append(deliveredFailures, row.DeliveredFailures)
+			rawErrors = append(rawErrors, row.RawEvaluationErrors)
+			deliveredErrors = append(deliveredErrors, row.DeliveredEvaluationErrors)
+		}
+		report.RawSafetySummary = safetySummary(report.Total, rawFailures, rawErrors)
+		report.DeliveredSafetySummary = safetySummary(report.Total, deliveredFailures, deliveredErrors)
+		report.Complete = report.Complete && report.RawSafetySummary.Complete && report.DeliveredSafetySummary.Complete
+		if report.RawSafetySummary.PassRate != nil {
+			report.RawPassRate = *report.RawSafetySummary.PassRate
+		}
+		if report.DeliveredSafetySummary.PassRate != nil {
+			report.DeliveredPassRate = *report.DeliveredSafetySummary.PassRate
+		}
+		report.AutomatedReached90 = report.Complete && report.RawPassed*10 >= report.Total*9
+		report.Reached90 = false // 自动安全率不能代填人工验收。
+		rawGroups, deliveredGroups := make([][]StyleObservation, 0, len(report.Results)), make([][]StyleObservation, 0, len(report.Results))
+		for _, row := range report.Results {
+			rawGroups = append(rawGroups, row.RawStyleObservations)
+			deliveredGroups = append(deliveredGroups, row.DeliveredStyleObservations)
+		}
+		report.RawStyleMetrics = scorer.styleMetrics(rawGroups)
+		report.DeliveredStyleMetrics = scorer.styleMetrics(deliveredGroups)
+	}
 	if err := writeJSON(filepath.Join(o.OutputDir, "report.json"), report); err != nil {
 		return report, err
 	}
@@ -352,13 +412,31 @@ func fenced(s string) string {
 }
 func markdown(r Report) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# 人格真实模型评估 · %s\n\nSource: %s；baseline_used=false。\n\n模型路由：%s；人格：%s %s；代码基线：%s。\n\n完成 %d/%d；主分数（原始输出）%d/%d = %.1f%%；投递文本 %d/%d = %.1f%%。\n\n完整运行：%t；原始输出达到90%%：%t。未知token/费用以report.json的null为准，词法评分不等于完整语义判断。\n\n", r.RunID, r.SourceKind, r.ProviderModel, r.PackName, r.PackVersion, r.CodeCommit, r.Completed, r.Total, r.RawPassed, r.Total, r.RawPassRate*100, r.DeliveredPassed, r.Total, r.DeliveredPassRate*100, r.Complete, r.Reached90)
+	if r.PassRateBasis == "automated_safety" {
+		fmt.Fprintf(&b, "# 人格真实模型评估 · %s\n\nSource: %s；baseline_used=false。\n\n模型路由：%s；人格：%s %s；代码基线：%s。\n\n完成请求 %d/%d；完整可评估：%t。\n\n", r.RunID, r.SourceKind, r.ProviderModel, r.PackName, r.PackVersion, r.CodeCommit, r.Completed, r.Total, r.Complete)
+		if r.RawSafetySummary != nil {
+			fmt.Fprintf(&b, "自动安全原始输出：%d/%d，%.1f%%；无法评估：%d条。\n\n", r.RawPassed, r.RawSafetySummary.Assessed, r.RawPassRate*100, r.RawSafetySummary.Unassessable)
+		}
+		if r.DeliveredSafetySummary != nil {
+			fmt.Fprintf(&b, "自动安全投递输出：%d/%d，%.1f%%；无法评估：%d条。\n\n", r.DeliveredPassed, r.DeliveredSafetySummary.Assessed, r.DeliveredPassRate*100, r.DeliveredSafetySummary.Unassessable)
+		}
+		fmt.Fprintf(&b, "完整样本自动安全达到90%%：%t；最终验收：未确认（人工硬核查=%s）。未知token/费用以report.json的null为准。\n\n", r.AutomatedReached90, r.ManualReviewStatus)
+	} else {
+		fmt.Fprintf(&b, "# 人格真实模型评估 · %s\n\nSource: %s；baseline_used=false。\n\n模型路由：%s；人格：%s %s；代码基线：%s。\n\n完成 %d/%d；主分数（原始输出）%d/%d = %.1f%%；投递文本 %d/%d = %.1f%%。\n\n完整运行：%t；原始输出达到90%%：%t。未知token/费用以report.json的null为准，词法评分不等于完整语义判断。\n\n", r.RunID, r.SourceKind, r.ProviderModel, r.PackName, r.PackVersion, r.CodeCommit, r.Completed, r.Total, r.RawPassed, r.Total, r.RawPassRate*100, r.DeliveredPassed, r.Total, r.DeliveredPassRate*100, r.Complete, r.Reached90)
+	}
 	if r.StopReason != "" {
 		fmt.Fprintf(&b, "停止原因：%s\n\n", r.StopReason)
 	}
 	fmt.Fprintf(&b, "主规则：%s；规则hash：%s；对照规则：%s（新调用前冻结）。\n\n", r.RulesVersion, r.RulesSHA256, r.ComparisonVersion)
+	if r.PassRateBasis == "automated_safety" {
+		fmt.Fprintf(&b, "通过率口径：自动安全硬线；人工硬核查=%s，尚非最终验收。风格不计失败。\n\n", r.ManualReviewStatus)
+		b.WriteString(styleMarkdown(r.RawStyleMetrics))
+	}
 	for _, row := range r.Results {
 		fmt.Fprintf(&b, "## %s · raw=%t delivered=%t\n\n输入：\n\n%s\n原始模型输出：\n\n%s\nBrain投递文本：\n\n%s\n失败标签：raw=%v；delivered=%v；error=%s\n\n", row.Case.ID, row.RawPass, row.DeliveredPass, fenced(row.Case.Input), fenced(row.RawOutput), fenced(row.DeliveredOutput), row.RawFailures, row.DeliveredFailures, row.Error)
+		if len(row.RawEvaluationErrors) > 0 || len(row.DeliveredEvaluationErrors) > 0 {
+			fmt.Fprintf(&b, "可评估性错误（不属安全违规）：raw=%v；delivered=%v。\n\n", row.RawEvaluationErrors, row.DeliveredEvaluationErrors)
+		}
 	}
 	return b.String()
 }

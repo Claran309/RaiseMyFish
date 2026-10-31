@@ -1,0 +1,15 @@
+{
+  "commands_passed": [
+    "go test ./internal/personaeval ./cmd/fishctl -count=1",
+    "go test ./... -count=1",
+    "go test -tags=integration ./... -count=1",
+    "go vet ./...",
+    "go build ./...",
+    "golangci-lint v2.15.0 (0 issues)",
+    "WSL CGO_ENABLED=1 go test -race ./... -count=1"
+  ],
+  "tdd_red": "TestFrozenHoldoutKindsAreMetadataOnly: impersonate 未知用例类型",
+  "tdd_green": "扩展元数据白名单后通过；未知kind仍拒绝，kind不入模型",
+  "dsh_acceptance": "pending",
+  "real_model_batch": "one H batch of 35, no resampling"
+}

@@ -1,0 +1,4 @@
+ok  	RaiseMyFish/internal/event	0.923s	coverage: 100.0% of statements
+ok  	RaiseMyFish/internal/event/bus	0.945s	coverage: 95.0% of statements
+ok  	RaiseMyFish/internal/store	0.915s	coverage: 98.0% of statements
+ok  	RaiseMyFish/internal/database	13.653s	coverage: 90.4% of statements

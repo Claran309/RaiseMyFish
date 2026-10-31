@@ -1,0 +1,464 @@
+{
+  "task": "P0-B candidate v2 + persona-lexical-v3",
+  "base_commit": "008beb6efb86ecad167f342f5d3f5bb41130fab7",
+  "state": "B25/35=71.4%未达32，已停；待DSH独立复核，未暂存提交",
+  "run_id": "20261031T134539Z-5b038538",
+  "rules_v3_sha256": "1866000b5a82498ef2caa45774fd91559647252a8258b2fd5bc08c1964af0bfd",
+  "old_outputs_offline_v3": [
+    23,
+    30,
+    26
+  ],
+  "new_scores": {
+    "v1": 15,
+    "v2": 17,
+    "v3": 25,
+    "total": 35
+  },
+  "actual_new_model_calls": 35,
+  "holdout_read_or_run": false,
+  "manual_hard_violations_observed_by_codex": {
+    "credentials": 0,
+    "owner_impersonation": 0,
+    "unauthorized_commitments": 0
+  },
+  "manual_review_not_dsh_acceptance": true,
+  "configured_secrets_absent": true,
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 852,
+      "sha256": "f4149f450b12182467ed41f525c286e47bc79a2e8ab09503abe9254d0379dcdd"
+    },
+    {
+      "path": "cmd/fishctl/persona_candidate_test.go",
+      "bytes": 2575,
+      "sha256": "06a25ffa781c44feb0a325b064e6fd37f6886b2a94357772d1c34759a46b46d9"
+    },
+    {
+      "path": "contracts/persona-eval.md",
+      "bytes": 8273,
+      "sha256": "d3ee4937187135734bd33642fe9663ee485193693a37c85a4fa56c426207778e"
+    },
+    {
+      "path": "docs/update/2026-10-31-0646-评分语义修正与候选人格对照.md",
+      "bytes": 5477,
+      "sha256": "45dbe2e9fcc71be940f508f023d0442b82db0f5779cb4796ce27ea98681cfc02"
+    },
+    {
+      "path": "internal/personaeval/score.go",
+      "bytes": 10658,
+      "sha256": "356f740d0e77f3d5af15d00b7e3b367504485afd5aaf428083ac0507fff56e66"
+    },
+    {
+      "path": "internal/personaeval/score_v2.go",
+      "bytes": 2429,
+      "sha256": "308e2f9b9ec05ea1a7f637d4f99c8d501566cec0d8cfc2dc8a4b846cb35dda6e"
+    },
+    {
+      "path": "internal/personaeval/score_v3.go",
+      "bytes": 2272,
+      "sha256": "3a036d5365696ac0513967b5dbdd806549e1c94d7b2b5b55b337526470098faf"
+    },
+    {
+      "path": "internal/personaeval/score_v3_test.go",
+      "bytes": 3422,
+      "sha256": "036a54d13ee98cbcef60428649d4d448362c8ebc45ff18872672bee17da17db3"
+    },
+    {
+      "path": "personas/dafeiyu-v2/context.md",
+      "bytes": 2662,
+      "sha256": "85178d8d8e79919995395dcf2b50d66fc0618fb457221a9b9280000e80b4083a"
+    },
+    {
+      "path": "personas/dafeiyu-v2/meta.yaml",
+      "bytes": 732,
+      "sha256": "45e94faf031d7842f6e0cb4d453d8913f8e1a3c08baee76dae5025e3290c9f51"
+    },
+    {
+      "path": "personas/dafeiyu-v2/rules.md",
+      "bytes": 4584,
+      "sha256": "cfb925e4789689d275bcc2ba2951ac734a54979b15a2dcc60ccd20d9fd2d4ba3"
+    },
+    {
+      "path": "personas/dafeiyu-v2/samples.md",
+      "bytes": 5674,
+      "sha256": "30ccea1c3aeb283ac7e99d9e4782a4add784e2d2bec6e466244f40c9aa4c1ac5"
+    },
+    {
+      "path": "personas/dafeiyu-v2/soul.md",
+      "bytes": 2731,
+      "sha256": "0f28e41983b62b6c5216fc0b835d5790ef3baca8c47b8a609c3f163ae7e3977d"
+    },
+    {
+      "path": "plans/phase-0.7c-p0b-v3-dispatch.md",
+      "bytes": 2643,
+      "sha256": "6ba095defbe35a7c94d82ac0c29aced71d0d2c6a3336b31c96b84d95f3b2dc4a"
+    },
+    {
+      "path": "plans/phase-0.7c-persona-v2-edit-list.md",
+      "bytes": 18003,
+      "sha256": "3216a1686fbd1ee75e114e31e6d06a7bc3d0d0bfcd6ddce0f1b763c17cac537e"
+    },
+    {
+      "path": "plans/reports/codex.md",
+      "bytes": 55791,
+      "sha256": "619baab4b007fe706fc54f451fdf372245e17cbd5479f6ad7c64c4af2abd6c49"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/checks.json",
+      "bytes": 581,
+      "sha256": "8023f911d82ed3ea5bf9f306f5a62bc8bedacad7e6a652649cb1077900cbf964"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/freeze.json",
+      "bytes": 5643,
+      "sha256": "01f4e6967004aab1e7261c9c4cc0b021476c225c44a083060c86b05b1ee51555"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/local-config-path.txt",
+      "bytes": 43,
+      "sha256": "139c449645676859cfa2cac5f37bcf3d77f42bd5efda24f056266b315548d734"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/offline-verification.json",
+      "bytes": 1347,
+      "sha256": "229045d60709d1a282bc187ab79d60aeeff3d61a397fa591d94148322e5078a6"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/old-evidence-inventory.json",
+      "bytes": 13871,
+      "sha256": "1d4a57144e72e7baaca6e8156d6fb161433639d672d5bbf2a1a4d48aedd712ad"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot-manifest.json",
+      "bytes": 5323,
+      "sha256": "fbfef4c91ad494b87f41388566eafe2cf29925bff72da667f67a20ac4c6b0349"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/cmd/fishctl/main.go.snapshot",
+      "bytes": 4097,
+      "sha256": "417158038b1d2e33629c77da4f26a1a7cf5e43e6ea46798748b6ba3ec19c3884"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/cmd/fishctl/persona_eval.go.snapshot",
+      "bytes": 12856,
+      "sha256": "bfc4c67ae20906b945ca97a051445eafc82f15035f8f61b54bf79a41b9f0db20"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/brain/brain.go.snapshot",
+      "bytes": 8143,
+      "sha256": "a5805eb2cb451ac2d53d7c3ac7068f2f68b0421dd5d998bc18db7ac149559b6d"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/brain/context.go.snapshot",
+      "bytes": 8225,
+      "sha256": "0f029327bc523ea771eb5018115d7f99d831909539d68cc2ada1f5c02af197d9"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/brain/provider/openai.go.snapshot",
+      "bytes": 5411,
+      "sha256": "416e1cf071e36de4645689b46615ea103f5d174c91c0d70cffa46b76560bab82"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/brain/provider/types.go.snapshot",
+      "bytes": 1431,
+      "sha256": "26a7e1994a3ec316114c1a27ecf1891130db5d32ee975baad6863186c3d1d3af"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/brain/types.go.snapshot",
+      "bytes": 2370,
+      "sha256": "ed5e0ccb96dfa5e3734cb4bc46269c1eea2d75616884857684a86995f37ff5b2"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/config/config.go.snapshot",
+      "bytes": 4362,
+      "sha256": "fb7a6938c09b19649fd5f756772811fe8ea41f6d94bb2ff205de4c6a33e6f149"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/config/llm.go.snapshot",
+      "bytes": 5419,
+      "sha256": "c9deb7b75f88e01561a4531ce18cf86da856cb3264d4e65100196a86801b0a49"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/persona/meta.go.snapshot",
+      "bytes": 3633,
+      "sha256": "4f89c5dc3e81ae1dca52396f4e08508756117a590277d22394393a2db74a6ec2"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/persona/pack.go.snapshot",
+      "bytes": 12663,
+      "sha256": "301248f44f83ee67d2f6d26ec19a2604bb7e0c5a5ceea17587e38546f7d61362"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/personaeval/fixture.go.snapshot",
+      "bytes": 3507,
+      "sha256": "6fdf59a9e65eb24a87fe15a8bbd1e631a28e3e9d97ac4434d5e1ca632dfd2e23"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/personaeval/rescore.go.snapshot",
+      "bytes": 7074,
+      "sha256": "4cb0206e2e6da3a706273b06d88f7ab7b00870c36df15c04f9e918fa103a3e5f"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/personaeval/run.go.snapshot",
+      "bytes": 14627,
+      "sha256": "25ea9fb1bcd19bb48343d64567bdbb576506753b88fc608aa9376986db2281af"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/personaeval/score.go.snapshot",
+      "bytes": 10658,
+      "sha256": "356f740d0e77f3d5af15d00b7e3b367504485afd5aaf428083ac0507fff56e66"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/personaeval/score_v2.go.snapshot",
+      "bytes": 2429,
+      "sha256": "308e2f9b9ec05ea1a7f637d4f99c8d501566cec0d8cfc2dc8a4b846cb35dda6e"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/personaeval/score_v3.go.snapshot",
+      "bytes": 2272,
+      "sha256": "3a036d5365696ac0513967b5dbdd806549e1c94d7b2b5b55b337526470098faf"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/personas/dafeiyu-v2/context.md.snapshot",
+      "bytes": 2662,
+      "sha256": "85178d8d8e79919995395dcf2b50d66fc0618fb457221a9b9280000e80b4083a"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/personas/dafeiyu-v2/meta.yaml.snapshot",
+      "bytes": 732,
+      "sha256": "45e94faf031d7842f6e0cb4d453d8913f8e1a3c08baee76dae5025e3290c9f51"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/personas/dafeiyu-v2/rules.md.snapshot",
+      "bytes": 4584,
+      "sha256": "cfb925e4789689d275bcc2ba2951ac734a54979b15a2dcc60ccd20d9fd2d4ba3"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/personas/dafeiyu-v2/samples.md.snapshot",
+      "bytes": 5674,
+      "sha256": "30ccea1c3aeb283ac7e99d9e4782a4add784e2d2bec6e466244f40c9aa4c1ac5"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/source-snapshot/personas/dafeiyu-v2/soul.md.snapshot",
+      "bytes": 2731,
+      "sha256": "0f28e41983b62b6c5216fc0b835d5790ef3baca8c47b8a609c3f163ae7e3977d"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/v1-rules.json",
+      "bytes": 5288,
+      "sha256": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/v2-rules.json",
+      "bytes": 6760,
+      "sha256": "4e8264b1b07d0d98deb849d1a1f1badbfa99a12e53b845538ec20db4cb9ad854"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/v3-rules.json",
+      "bytes": 8319,
+      "sha256": "1866000b5a82498ef2caa45774fd91559647252a8258b2fd5bc08c1964af0bfd"
+    },
+    {
+      "path": "plans/reports/p0b-v3-preflight/verify.py",
+      "bytes": 5549,
+      "sha256": "48818436f373ed80488d923e04e4b1a500b88adfecbd85274854d2811935c5af"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v3-final/report.json",
+      "bytes": 13192,
+      "sha256": "3255350d928f8b84d5278681c25abcf25e3bca6022fcf2b70e174ec1a6d205e1"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v3-final/report.md",
+      "bytes": 266,
+      "sha256": "54c950d245460145c81f6dd43f9d0f0eca0505555e2a565bf5b219ac414e6b13"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v3-final/rules.json",
+      "bytes": 8319,
+      "sha256": "1866000b5a82498ef2caa45774fd91559647252a8258b2fd5bc08c1964af0bfd"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v3/report.json",
+      "bytes": 13192,
+      "sha256": "5f4e5a1cde26f387e4a7105e55a982a045d54517248bfaf6eaefadadd5e49c2d"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v3/report.md",
+      "bytes": 266,
+      "sha256": "54c950d245460145c81f6dd43f9d0f0eca0505555e2a565bf5b219ac414e6b13"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T105248Z-501d0282-v3/rules.json",
+      "bytes": 8178,
+      "sha256": "bb1758dde08832950bf0576b235d4aca47d8ab3f0cbd141d81f899af49ef6955"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T121041Z-bcd11c0e-v3-final/report.json",
+      "bytes": 12710,
+      "sha256": "3336007ad31ced7a92fbedd1ac72219bb09edc4b1f6b2614b53872ab00ab9223"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T121041Z-bcd11c0e-v3-final/report.md",
+      "bytes": 266,
+      "sha256": "dfd9bdad2de2dafb0283aacbecdaccbd70051d3ef6ea68a7891762c27b67837d"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T121041Z-bcd11c0e-v3-final/rules.json",
+      "bytes": 8319,
+      "sha256": "1866000b5a82498ef2caa45774fd91559647252a8258b2fd5bc08c1964af0bfd"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T121041Z-bcd11c0e-v3/report.json",
+      "bytes": 12710,
+      "sha256": "7cf26cd564649b14694713cea240007d07395d14b35b083f4790271550eb8546"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T121041Z-bcd11c0e-v3/report.md",
+      "bytes": 266,
+      "sha256": "dfd9bdad2de2dafb0283aacbecdaccbd70051d3ef6ea68a7891762c27b67837d"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T121041Z-bcd11c0e-v3/rules.json",
+      "bytes": 8178,
+      "sha256": "bb1758dde08832950bf0576b235d4aca47d8ab3f0cbd141d81f899af49ef6955"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T124251Z-43a917e1-v3-final/report.json",
+      "bytes": 12956,
+      "sha256": "5097cccd2969a43a80737b4efe5eb4d2c500d59c7a4993ab531e6dc72dbab2ff"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T124251Z-43a917e1-v3-final/report.md",
+      "bytes": 266,
+      "sha256": "014d055530313aaf25103abeffbe39b64e7cd93965e3fabb4186c3948b17016a"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T124251Z-43a917e1-v3-final/rules.json",
+      "bytes": 8319,
+      "sha256": "1866000b5a82498ef2caa45774fd91559647252a8258b2fd5bc08c1964af0bfd"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T124251Z-43a917e1-v3/report.json",
+      "bytes": 12956,
+      "sha256": "61d62a5adcb0894dc9c3f105c7e962e4d77af257de9dce154613aa762f148a10"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T124251Z-43a917e1-v3/report.md",
+      "bytes": 266,
+      "sha256": "014d055530313aaf25103abeffbe39b64e7cd93965e3fabb4186c3948b17016a"
+    },
+    {
+      "path": "plans/reports/persona-eval-rescore/20261031T124251Z-43a917e1-v3/rules.json",
+      "bytes": 8178,
+      "sha256": "bb1758dde08832950bf0576b235d4aca47d8ab3f0cbd141d81f899af49ef6955"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538-compare-persona-lexical-v1/report.json",
+      "bytes": 13766,
+      "sha256": "2617866d1b76cb1bbe3fc4056c9aae6b0b9bd47e5070ff2e00a0473abce0c6f3"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538-compare-persona-lexical-v1/report.md",
+      "bytes": 266,
+      "sha256": "7ffe46323c953f4ae5f7ce635c71ef7383890c290bbf47695da77da75aa60c08"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538-compare-persona-lexical-v1/rules.json",
+      "bytes": 5288,
+      "sha256": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538-compare-persona-lexical-v2/report.json",
+      "bytes": 13626,
+      "sha256": "b16289e035aba8790acd8ea6e3ee2cc7b0c1ae4a534cee9b5ee7626df0ddb2d7"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538-compare-persona-lexical-v2/report.md",
+      "bytes": 266,
+      "sha256": "91079cc9bf1b7957b053649451dac60fcef917237c5d202db0a3d8d6902f1b1f"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538-compare-persona-lexical-v2/rules.json",
+      "bytes": 6760,
+      "sha256": "4e8264b1b07d0d98deb849d1a1f1badbfa99a12e53b845538ec20db4cb9ad854"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/analysis.md",
+      "bytes": 5065,
+      "sha256": "ee552d403f93ad5afd9ff01ede70efbb6ec51e32afdb00b170acb14c7dbb0e74"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/cases.jsonl",
+      "bytes": 6051,
+      "sha256": "963a61334b106ef549ebd5289304aca2ad0b71ab5fdf0c089d3ff0720f6bcbae"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/comparison-persona-lexical-v1-rules.json",
+      "bytes": 5288,
+      "sha256": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/comparison-rules.json",
+      "bytes": 6760,
+      "sha256": "4e8264b1b07d0d98deb849d1a1f1badbfa99a12e53b845538ec20db4cb9ad854"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/manifest.json",
+      "bytes": 4935,
+      "sha256": "ef00390af3d7d651a08196ebaa3c71624de637eff2830d41d1cf339e3afc86f6"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/manual-review.md",
+      "bytes": 3135,
+      "sha256": "cb2de65bf95bfd5b4db1b85c5c448cfbbe2ca29e17ef919750e619ff09e21a66"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/pg-audit.json",
+      "bytes": 415,
+      "sha256": "911f662492ce779ba997838c13f50276005ae09d3af0c5b5151111a8a0fa2942"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/preflight-freeze.json",
+      "bytes": 5643,
+      "sha256": "01f4e6967004aab1e7261c9c4cc0b021476c225c44a083060c86b05b1ee51555"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/report.json",
+      "bytes": 67874,
+      "sha256": "eb5135aa7de2f407e249b03f4bf7cc4af588af3a347b900dc848e2d26aad1f1a"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/report.md",
+      "bytes": 11991,
+      "sha256": "e8555428ab1fc3af1cffb081d67687a1d30b3c8bf8ad4348e78dcc3d309eeb71"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/results.jsonl",
+      "bytes": 44375,
+      "sha256": "037d3c52b58c87e63cb3c710bfd9b339476e0cec2e4baadb3ebc1dbdff201d59"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/rules.json",
+      "bytes": 8319,
+      "sha256": "1866000b5a82498ef2caa45774fd91559647252a8258b2fd5bc08c1964af0bfd"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/verification.json",
+      "bytes": 957,
+      "sha256": "67c9e24ff137b36a308943047114e86aeb2cee719cd02a248584b312d5c14e17"
+    },
+    {
+      "path": "plans/reports/persona-eval/20261031T134539Z-5b038538/verify.py",
+      "bytes": 5782,
+      "sha256": "8053e0aba404524e86b7893f016aac0392f61ccc34ffc4e263641e5a805cff60"
+    },
+    {
+      "path": "plans/reports/persona-v2-edit-list-review.json",
+      "bytes": 5032,
+      "sha256": "60f7c34cdc92f70271d53661528837a7064d60008557eb634d8bb4b32a8cdda1"
+    }
+  ]
+}

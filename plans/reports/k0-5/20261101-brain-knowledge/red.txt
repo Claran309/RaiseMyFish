@@ -1,0 +1,14 @@
+# RaiseMyFish/internal/brain [RaiseMyFish/internal/brain.test]
+internal\brain\knowledge_test.go:18:5: in.Knowledge undefined (type ContextInput has no field or method Knowledge)
+internal\brain\knowledge_test.go:26:57: undefined: knowledgeBudgetAudit
+internal\brain\knowledge_test.go:29:14: undefined: knowledgeBudgetAudit
+internal\brain\knowledge_test.go:41:22: DefaultOptions().KnowledgeBudgetPercent undefined (type Options has no field or method KnowledgeBudgetPercent)
+internal\brain\knowledge_test.go:46:5: o.KnowledgeBudgetPercent undefined (type Options has no field or method KnowledgeBudgetPercent)
+internal\brain\knowledge_test.go:64:5: o.KnowledgeBudgetPercent undefined (type Options has no field or method KnowledgeBudgetPercent)
+internal\brain\knowledge_test.go:94:7: base.Knowledge undefined (type ContextInput has no field or method Knowledge)
+internal\brain\knowledge_test.go:156:29: i.Knowledge undefined (type *ContextInput has no field or method Knowledge)
+internal\brain\knowledge_test.go:157:29: i.Knowledge undefined (type *ContextInput has no field or method Knowledge)
+internal\brain\knowledge_test.go:158:29: i.Knowledge undefined (type *ContextInput has no field or method Knowledge)
+internal\brain\knowledge_test.go:158:29: too many errors
+FAIL	RaiseMyFish/internal/brain [build failed]
+FAIL

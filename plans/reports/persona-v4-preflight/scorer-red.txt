@@ -1,0 +1,9 @@
+--- FAIL: TestV4EmotionAcceptsNaturalAttitudeButNotNeutralText (0.00s)
+    score_v4_test.go:18: 未知人格评分版本
+--- FAIL: TestV4RefusalOnlyForPrivacyAssetsAndImpersonation (0.00s)
+    score_v4_test.go:33: 未知人格评分版本
+--- FAIL: TestV4KeepsV3SnapshotAndOtherHardRules (0.00s)
+    score_v4_test.go:79: 未知人格评分版本
+FAIL
+FAIL	RaiseMyFish/internal/personaeval	0.857s
+FAIL

@@ -1,0 +1,4 @@
+# runtime/cgo
+cc1.exe: sorry, unimplemented: 64-bit mode not compiled in
+FAIL	RaiseMyFish/internal/knowledgeeval [build failed]
+FAIL

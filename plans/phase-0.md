@@ -51,7 +51,7 @@
 - [ ] 单测覆盖每一闸
 
 ### 0.5 弹幕采集器（live）
-- [ ] 复用 `danmaku-await` 子进程或自写 WS（二选一，先验证可用性）
+- [ ] **采用 dsh-bili-whale 实现**（`tools/commands/danmaku-await.mjs`，WS 长连接）→ 复制进 `tools/bili-whale/`，去掉 DSH 依赖，子进程跑
 - [ ] 标准化事件 + 幂等键
 - [ ] 自消息过滤（self id）
 - [ ] 断线重连（指数退避）
@@ -80,11 +80,25 @@
 0.7c本轮真实运行已完成：run 20261031T105248Z-501d0282，dafeiyu@v1，请求deepseek:deepseek-chat、服务端标识deepseek-flash；原始/投递文本均42.9%，35次调用全部成功并有PG核账。不修改旧结论凑门槛，整体0.7/人格退出标准保持未完成，证据见plans/reports/persona-eval对应目录。
 
 ### 0.8 弹幕发送器
-- [ ] 发送（复用 bili-cli 或自写）
+- [ ] **采用 dsh-bili-whale 实现**（`tools/commands/danmaku.mjs`，`POST api.live.bilibili.com/msg/send`）→ 复制进 `tools/bili-whale/`，子进程跑
 - [ ] 核验（回执/回读）
 - [ ] 限流（令牌桶）
 - [ ] `send_log` + `out` 事件
 - [ ] 失败分类（retry / dead / skipped）
+
+### 0.12 看直播（截图 / 听声）— MVP 范围（主人选 C）
+- [ ] 直播流/录屏 → ffmpeg 抽帧（参考 `rec_desktop`/`cf_every` 的参数与输出）
+- [ ] 多模态模型读帧（需配支持视觉的模型）
+- [ ] ffmpeg 抽音频 → ASR（faster-whisper 本地服务或 SenseVoice）
+- [ ] 文件式流水线：录 10 秒 → 抽帧 → 读图 → 转写（延迟 20~40 秒是已知边界）
+- [ ] 失败降级：黑屏/无音轨告警，不阻塞弹幕闭环
+- [ ] 参考实现与能力边界：`docs/07-channels.md` §9 + `D:\B站直播能力清单_给群友agent.txt`
+
+### 0.13 配套能力（按 dsh-bili-whale 对齐）
+- [ ] 送礼（`gift.mjs` 思路：小花花 1 电池）——按需搬
+- [ ] 常驻 Edge（`presence.mjs`：截图/点赞）——按需搬
+- [ ] 跨链路活动流（`activity.mjs`）——记录「在看/在回/在送」状态，接 Presence
+- [ ] 梗白学习（`meme-learn.mjs`）——可选，P2 知识库联动
 
 ### 0.9 记忆最小版
 - [ ] 发送后写 `out` 事件（必写）
@@ -112,6 +126,8 @@
 4. 日报可读，能看出「回了多少、跳过多少、花了多少」
 5. 静默失败检测生效（人为断开采集 30 分钟 → warn）
 6. `go test ./...` 全绿
+7. **看直播（0.12）**：录 10 秒 → 抽帧读图 → ASR 转写，黑屏/无音轨有明确告警
+8. **配套（0.13）**：送礼/常驻 Edge/活动流按需可用，活动流接 Presence
 
 ## 风险与应对
 

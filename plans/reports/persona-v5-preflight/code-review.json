@@ -1,0 +1,13 @@
+{
+  "reviewer": "内部只读v5_layers_review，非DSH",
+  "critical": 0,
+  "important": 0,
+  "resolved": "财务否认、NTR双重否定、报告门槛及空/error完整性隔离，最后身份风格观察和离线错误护栏通过",
+  "commands_passed": [
+    "go test ./internal/personaeval ./cmd/fishctl -count=1"
+  ],
+  "model_calls": 0,
+  "database_calls": 0,
+  "credentials_read": false,
+  "reviewed_generated_artifact_independently": false
+}

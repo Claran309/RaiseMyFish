@@ -1,0 +1,14 @@
+FAIL	RaiseMyFish/internal/scheduler [build failed]
+FAIL
+# RaiseMyFish/internal/scheduler [RaiseMyFish/internal/scheduler.test]
+internal\scheduler\scheduler_test.go:21:55: undefined: Timer
+internal\scheduler\scheduler_test.go:27:54: undefined: DefaultOptions
+internal\scheduler\scheduler_test.go:30:6: undefined: aclAllowed
+internal\scheduler\scheduler_test.go:30:37: undefined: noiseReason
+internal\scheduler\scheduler_test.go:39:74: undefined: aclAllowed
+internal\scheduler\scheduler_test.go:39:112: undefined: noiseReason
+internal\scheduler\scheduler_test.go:69:77: undefined: store.ScheduleQuota
+internal\scheduler\scheduler_test.go:69:98: undefined: store.ScheduleAdmission
+internal\scheduler\scheduler_test.go:71:29: undefined: Scheduler
+internal\scheduler\scheduler_test.go:87:32: undefined: Scheduler
+internal\scheduler\scheduler_test.go:39:112: too many errors

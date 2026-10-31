@@ -2,6 +2,13 @@
 
 > 目标：让鱼能玩星露谷物语。走 SMAPI mod + 决策循环，不做内存破解。
 
+## 参考资产（2026-11-01 主人指定）
+
+- **星露谷 MCP v0.4.0 原版**：`D:\星露谷MCP_v0.4.0_原版.zip`（43MB，372 文件）
+- 内容：`Mods/StardewMCP/`（manifest.json、StardewMCP.dll、assets/overlay.html、replay.html、system_prompt.md）、
+  `SMAPI 安装器/`（Windows/Linux/macOS）、`install.ps1`、`给agent的操作手册.md`
+- 用法：玩星露谷用这个包，不自己从零写 mod；P7 开工时先读包里的「给agent的操作手册.md」
+
 ## 依赖
 
 Phase 6（MCP 工具层）。

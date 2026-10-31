@@ -1,0 +1,409 @@
+{
+  "task": "K0-6/7装配诊断与100条离线检索",
+  "base_commit": "e72fef9cbbc27f7a9081b2efba7313255147dc95",
+  "state": "K0-6开发/工程验证完成；K0-7首次100条已测但覆盖43/60<48，质量未通过；待DSH独立验收，未暂存提交",
+  "default_knowledge_enabled": false,
+  "production_pipeline_connected": false,
+  "actual_model_calls": 0,
+  "paid_35_case_on_off_comparison": "explicitly_not_run",
+  "quality": {
+    "relevant": 46,
+    "returned": 56,
+    "precision": 0.8214285714285714,
+    "positive_hits": 43,
+    "positive_total": 60,
+    "required_positive_hits": 48,
+    "negative_false": 0,
+    "negative_total": 20,
+    "forbidden_returns": 0,
+    "controls_passed": 20,
+    "budget_passed": 100,
+    "top3_order_passed": true,
+    "passed": false
+  },
+  "protected_files_unchanged": 223,
+  "brain_k0_5_implementation_unchanged": true,
+  "configured_secrets_absent": true,
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 1157,
+      "sha256": "41b84660371b94de4c6ab1aa81fe63361a4c948f8ba91677fe43aa907f785510"
+    },
+    {
+      "path": "cmd/fishd/brain.go",
+      "bytes": 3022,
+      "sha256": "2edd82439473dea141ed55e73a0c231be8203b808b4e92955fa95b1e41601d4f"
+    },
+    {
+      "path": "cmd/fishd/knowledge.go",
+      "bytes": 2791,
+      "sha256": "b42f239cb0c4dd02c1090c2d101df821599808c21e09834d58e7d34b35afda67"
+    },
+    {
+      "path": "cmd/fishd/knowledge_check_integration_test.go",
+      "bytes": 5629,
+      "sha256": "7ade6400360a9d41faa106c80c08a4de54b7e30e9f5d2388fece99408dc11310"
+    },
+    {
+      "path": "cmd/fishd/knowledge_test.go",
+      "bytes": 6093,
+      "sha256": "5bdd42ca36f46a4ce7e48b8f3db4624ff3f0e28a57249466ab3bacf91af81b01"
+    },
+    {
+      "path": "cmd/fishd/main.go",
+      "bytes": 5146,
+      "sha256": "7a040caacf0bee50859884b443610135421ad66ed448d2b0e9782698dd1922e7"
+    },
+    {
+      "path": "cmd/knowledgeeval/main.go",
+      "bytes": 1092,
+      "sha256": "cf09bc734aa20f04fe250da6a929272b7658f5ec0a944f692e28cb968d059e28"
+    },
+    {
+      "path": "config/fishd.toml",
+      "bytes": 1385,
+      "sha256": "7f880d23427814c6829b65e771f4068404685124624047b5a52ef7161ac7a365"
+    },
+    {
+      "path": "contracts/knowledge.md",
+      "bytes": 9701,
+      "sha256": "d3d3da1ca05c12c161a9ed640c6db63b22a8f88f46dba04ee1035ec439524cb4"
+    },
+    {
+      "path": "docs/knowledge.md",
+      "bytes": 5586,
+      "sha256": "cd5eeb685bf90668dc14643b9c5a8bf4ec71b82e99c66ffca5c0041453d9f1b4"
+    },
+    {
+      "path": "docs/runbook.md",
+      "bytes": 3480,
+      "sha256": "ec56eb90d9b89593a7c8fda0c1b8b9ebe3f4f7f49a5f47f54a804e97b96fa4b9"
+    },
+    {
+      "path": "docs/update/2026-11-01-1025-知识装配诊断与离线检索验证.md",
+      "bytes": 5483,
+      "sha256": "c405a7ea4f4fed87fef5517e4efe59e94addf59afb476749c506f6da168becbf"
+    },
+    {
+      "path": "internal/config/config.go",
+      "bytes": 4513,
+      "sha256": "86a2d49eb1b742a572d5825f8e26ac14b279cadb58b22fdbe6268b33bbab3775"
+    },
+    {
+      "path": "internal/config/knowledge.go",
+      "bytes": 765,
+      "sha256": "4fe34166df4f62ab321a5d4a6d8773c2adbbb4388f530ce2645e1b0d28e4ab93"
+    },
+    {
+      "path": "internal/config/knowledge_test.go",
+      "bytes": 1546,
+      "sha256": "a077619c67a1dfd4d4f8961531feff277a2b3ae15dac927a23a22af365ba4428"
+    },
+    {
+      "path": "internal/knowledge/snapshot.go",
+      "bytes": 497,
+      "sha256": "b5fae26a144adb3f6660fd3b540eba99eb5e510a0517d15dd7274910ffae8e91"
+    },
+    {
+      "path": "internal/knowledge/snapshot_test.go",
+      "bytes": 209,
+      "sha256": "e7228bff1d9033105d7afbd836f430d79085ffab5ace13946645ff0147f4087e"
+    },
+    {
+      "path": "internal/knowledgeeval/budget.go",
+      "bytes": 5480,
+      "sha256": "fe0c8a655db2a10fd9762ae280b19995cad3eb6639cbdfc2aa9f7052a231aca0"
+    },
+    {
+      "path": "internal/knowledgeeval/eval.go",
+      "bytes": 8414,
+      "sha256": "705bddf648a1db7e3185fb46b7449d49f6b72bf8a283b267c0a6556a5425e0a6"
+    },
+    {
+      "path": "internal/knowledgeeval/eval_test.go",
+      "bytes": 4599,
+      "sha256": "dcc60a29a0e117e896b0d5f69d18f40f15290fcc97fbe82dc5199c829244178d"
+    },
+    {
+      "path": "internal/knowledgeeval/runner.go",
+      "bytes": 12729,
+      "sha256": "a2d9049b1b0cbcc290f38d1caaa4a5951c5e2689deac9af46cc0d391a3d94975"
+    },
+    {
+      "path": "internal/knowledgeeval/testdata/author_cases.py",
+      "bytes": 12095,
+      "sha256": "dc5c46f22b0a5f3614ed334f2203fe5f84fbd9e36c406990ea2a6f36ac8f077a"
+    },
+    {
+      "path": "internal/knowledgeeval/testdata/batch-synthetic-acl.md",
+      "bytes": 1647,
+      "sha256": "1153fec3708f0d0b4e4412c4eb86dfc0fa51cd69dd3fb3b634fc6c5a02b28f4e"
+    },
+    {
+      "path": "internal/knowledgeeval/testdata/batch-synthetic-order.md",
+      "bytes": 1481,
+      "sha256": "4f192a3e8e4dc30072a513304f27efcd2140ebe39a98481e26123f9a12e12b06"
+    },
+    {
+      "path": "internal/knowledgeeval/testdata/cases.jsonl",
+      "bytes": 34207,
+      "sha256": "c1111d04da4bd27ff2843f5dbb9373f5238db65a12d68645c7e9761b3b1551a1"
+    },
+    {
+      "path": "plans/phase-0.5-implementation.md",
+      "bytes": 36113,
+      "sha256": "7b55c7bb1bb7092d6e41a8c7fa573fe8fdc6daae3f615ef7c579789e51e6b45c"
+    },
+    {
+      "path": "plans/phase-0.5-k0-6-7-dispatch.md",
+      "bytes": 2060,
+      "sha256": "0aed0b13c4091f1dba8f6da43b93a45db1f9437e2fa6ea7b1ada81d4999135bd"
+    },
+    {
+      "path": "plans/reports/codex.md",
+      "bytes": 85483,
+      "sha256": "0832152a177836b1d3f0f31dfa6f8728df3da395008a45aa49096e01743323c8"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/analysis.md",
+      "bytes": 5353,
+      "sha256": "853a66d3fd9354995e535cee9e98e8a073280eaa5505cedf958ee33d57b06811"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/before/cmd/fishd/brain.go.snapshot",
+      "bytes": 2965,
+      "sha256": "c309ca24fd29371fbff5f4204019bc86b8b18e8f438c6edb0b4531ad11c6260b"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/before/cmd/fishd/main.go.snapshot",
+      "bytes": 4534,
+      "sha256": "77becd7990b5a9db1e2402c8752ee8a80d911890c990c7490809e157c88804b7"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/before/cmd/fishd/main_test.go.snapshot",
+      "bytes": 3277,
+      "sha256": "53213202ac9c20e8289e34ae86359c3f2c4eb6fd1afc069d7bc3163525faa7bf"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/before/cmd/fishd/runtime_integration_test.go.snapshot",
+      "bytes": 3184,
+      "sha256": "644680347e744ea3cbfc9afb7e5f5a6bdc090fda8ce18de6bd727e042b87921c"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/before/config/fishd.toml.snapshot",
+      "bytes": 1226,
+      "sha256": "39cb5ac7dff931b931934d2abd5ff7f419818ff6f8df88df33a955a39567497c"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/before/internal/config/config.go.snapshot",
+      "bytes": 4362,
+      "sha256": "fb7a6938c09b19649fd5f756772811fe8ea41f6d94bb2ff205de4c6a33e6f149"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/before/internal/config/config_test.go.snapshot",
+      "bytes": 3164,
+      "sha256": "e062d64776241f3a823342f50142a8be38bcf411eb9698a8d1e6923abde26475"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/before/internal/config/llm.go.snapshot",
+      "bytes": 5419,
+      "sha256": "c9deb7b75f88e01561a4531ce18cf86da856cb3264d4e65100196a86801b0a49"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/before/internal/config/llm_test.go.snapshot",
+      "bytes": 2655,
+      "sha256": "21655f80d16ce29103a70556c73954c3c42e81deed75fbca6aee93f49915a055"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/before/internal/knowledge/types.go.snapshot",
+      "bytes": 1071,
+      "sha256": "85faef13a44289c6210db2c97a0536e4902be51c3b965d2f63e6f95f2584e140"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/check-default.json",
+      "bytes": 247,
+      "sha256": "437724ea1d1be819ed11170ad6dba4552c46a9f34d46540661ba171148e53331"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/check-enabled.json",
+      "bytes": 325,
+      "sha256": "6c4f312c8075cae8edf63771da3af2df19c59cab18a059ac57a35cc19ee01ac8"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/checks-race.json",
+      "bytes": 867,
+      "sha256": "b1b7935a6513f2006cbaf0abe7f7640000390e19906bacc346b473c7b8212835"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/checks-windows.json",
+      "bytes": 2466,
+      "sha256": "7d19f796fddb74dff86700ab03d7167872fa60a839155d871ca52ecbb856efa0"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/code-review.json",
+      "bytes": 649,
+      "sha256": "bfd8e92bdde7020d86033c9850b7715a358973963b0eec2ca07d5986aa51c03a"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/freeze.json",
+      "bytes": 3780,
+      "sha256": "5f97fcbe8b83f9b34d24a673441df53ff8875c78e1cdaebd9d5d438654536083"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/pg-check.txt",
+      "bytes": 284,
+      "sha256": "ac0e06e8b27dc03e3ad41cc25038ebfcdcdc4d485af12655f357cc2c96e34287"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/preservation.json",
+      "bytes": 48889,
+      "sha256": "06fd377f5b3975c3d8cdea6d0676bf44a1384c35883a89175c9555f698192e2b"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/red.txt",
+      "bytes": 1168,
+      "sha256": "fa7561b758979e47b924df78bd941422b58f0c42b556c8fa429978499731ce44"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/cmd/fishd/brain.go.snapshot",
+      "bytes": 3022,
+      "sha256": "2edd82439473dea141ed55e73a0c231be8203b808b4e92955fa95b1e41601d4f"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/cmd/fishd/knowledge.go.snapshot",
+      "bytes": 2791,
+      "sha256": "b42f239cb0c4dd02c1090c2d101df821599808c21e09834d58e7d34b35afda67"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/cmd/fishd/knowledge_check_integration_test.go.snapshot",
+      "bytes": 5629,
+      "sha256": "7ade6400360a9d41faa106c80c08a4de54b7e30e9f5d2388fece99408dc11310"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/cmd/fishd/knowledge_test.go.snapshot",
+      "bytes": 6093,
+      "sha256": "5bdd42ca36f46a4ce7e48b8f3db4624ff3f0e28a57249466ab3bacf91af81b01"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/cmd/fishd/main.go.snapshot",
+      "bytes": 5146,
+      "sha256": "7a040caacf0bee50859884b443610135421ad66ed448d2b0e9782698dd1922e7"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/config/fishd.toml.snapshot",
+      "bytes": 1385,
+      "sha256": "7f880d23427814c6829b65e771f4068404685124624047b5a52ef7161ac7a365"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/contracts/knowledge.md.snapshot",
+      "bytes": 9701,
+      "sha256": "d3d3da1ca05c12c161a9ed640c6db63b22a8f88f46dba04ee1035ec439524cb4"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/internal/config/config.go.snapshot",
+      "bytes": 4513,
+      "sha256": "86a2d49eb1b742a572d5825f8e26ac14b279cadb58b22fdbe6268b33bbab3775"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/internal/config/knowledge.go.snapshot",
+      "bytes": 765,
+      "sha256": "4fe34166df4f62ab321a5d4a6d8773c2adbbb4388f530ce2645e1b0d28e4ab93"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/internal/config/knowledge_test.go.snapshot",
+      "bytes": 1546,
+      "sha256": "a077619c67a1dfd4d4f8961531feff277a2b3ae15dac927a23a22af365ba4428"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/internal/knowledge/snapshot.go.snapshot",
+      "bytes": 497,
+      "sha256": "b5fae26a144adb3f6660fd3b540eba99eb5e510a0517d15dd7274910ffae8e91"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/source-snapshot/internal/knowledge/snapshot_test.go.snapshot",
+      "bytes": 209,
+      "sha256": "e7228bff1d9033105d7afbd836f430d79085ffab5ace13946645ff0147f4087e"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/verification.json",
+      "bytes": 899,
+      "sha256": "c141e8e9d26e09f777ef72d7e8287623c2916975514c8ec844b7ee67438296b5"
+    },
+    {
+      "path": "plans/reports/k0-6/20261101-reader-diagnostic/verify.py",
+      "bytes": 6304,
+      "sha256": "8a94e1bd29017ed3b380b226bb55bda90e4284e729936d0d5ce926f95e6154eb"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/2026-10-31-1718-离线检索评测.md",
+      "bytes": 5637,
+      "sha256": "dca8c77ee04731c6e2cfb9968ac518e71a69628f056feb632f02f4bedd28f6e4"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/coverage-review.md",
+      "bytes": 3788,
+      "sha256": "7c660eeaf5841c8e9f6c9c95ebda5189abff4924aa7476448f979daa06fe9cd2"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/freeze-before-reader.md",
+      "bytes": 1887,
+      "sha256": "af7be5493411fbf1910a41b1c1b861b9271b06c1d1593a49682fd5e6fdbed8c6"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/green-runner.txt",
+      "bytes": 100,
+      "sha256": "78656399edabd7b014e9ccf62b39a75ee987f06ac7d9813b7a526992eb090d48"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/green-unit.txt",
+      "bytes": 48,
+      "sha256": "270703cd74f64a29120feac85f9621e239ec3892b539bfa34478811e9b7ed565"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/handoff-hashes.json",
+      "bytes": 3549,
+      "sha256": "f60c441fcf45c8a19780b7c0d68c04463971130108313f6313797d7426be109c"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/race.txt",
+      "bytes": 137,
+      "sha256": "2f9f32bf0016dd6bcfd17c6528fbb6c97401a2053d89e255a87ddd406cd8b522"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/red-runner.txt",
+      "bytes": 208,
+      "sha256": "4d5428372c1bb057db8a1eea5c8654eeaba8a830c8e5cd1db0cc4375d9aa6658"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/red.txt",
+      "bytes": 852,
+      "sha256": "619b4a4f47a2a59b334dfc08973ffe9dff599203863bf91b6b494758c4220583"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/run-command.txt",
+      "bytes": 130,
+      "sha256": "ee524ff63557bdf991263e7c273c1a48caf6870e9293aaac7b9b4aaf1ffdea1c"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/run/freeze.json",
+      "bytes": 4860,
+      "sha256": "536c2f4984264564bbd8dc9be2624896de76d6c335dcbf69f1ba725f6a37ca86"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/run/report.md",
+      "bytes": 17822,
+      "sha256": "727520ad20bf9b140b81bd25e9b3ffda9082143c679a7480b972e0606097e7a6"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/run/results.json",
+      "bytes": 125469,
+      "sha256": "cdf60642cae128d0c7d97124b6443a942077406dfbe6aa1be561ad0d7fb5d635"
+    },
+    {
+      "path": "plans/reports/k0-7/20261101-retrieval-eval/verification.md",
+      "bytes": 2262,
+      "sha256": "843c125e188af7868b0e9316059d25203bb3d774d6d3ac30fc39a2a7ebc19506"
+    }
+  ]
+}

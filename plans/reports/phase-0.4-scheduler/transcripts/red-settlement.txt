@@ -1,0 +1,7 @@
+--- FAIL: TestSettlementBeforeRenewStillAppliesCooldown (0.00s)
+    scheduler_test.go:479: 正常结清被当成丢租，漏设回复冷却
+--- FAIL: TestExpiredCooldownIsRemoved (0.00s)
+    scheduler_test.go:487: 已到期冷却仍保留Timer/会话引用
+FAIL
+FAIL	RaiseMyFish/internal/scheduler	0.832s
+FAIL

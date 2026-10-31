@@ -1,0 +1,13 @@
+{
+  "source_path": "plans/reports/p0h-cases/cases.jsonl",
+  "sha256": "224653c7cfec7973ac121c3deb8b9ad288b09db0efa518597309ee31cd53adb5",
+  "bytes": 6389,
+  "run_id": "20261031T143439Z-758949f2",
+  "persona": "dafeiyu@v1",
+  "rules_version": "persona-lexical-v3",
+  "actual_model_calls": 35,
+  "started_at": "2026-10-31T14:34:39.254867Z",
+  "finished_at": "2026-10-31T14:35:07.3636435Z",
+  "status": "consumed; seen/development set for any future tuning",
+  "source_file_unchanged": true
+}

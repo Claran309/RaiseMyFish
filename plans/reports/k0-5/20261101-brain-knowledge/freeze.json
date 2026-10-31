@@ -1,0 +1,61 @@
+{
+  "task": "K0-5",
+  "recorded_at": "2026-10-31T16:59:20.824759+00:00",
+  "status": "开发自测完成，DSH独立验收待",
+  "knowledge_budget_percent_default": 10,
+  "knowledge_budget_percent_maximum": 10,
+  "default_enabled": false,
+  "enabled_by": "ContextInput.Knowledge非nil显式输入",
+  "production_config_wiring": "not_implemented_K0-6",
+  "actual_model_calls": 0,
+  "files": [
+    {
+      "path": "internal/brain/types.go",
+      "snapshot": "plans/reports/k0-5/20261101-brain-knowledge/source-snapshot/internal/brain/types.go.snapshot",
+      "bytes": 2530,
+      "sha256": "a6d72ae7556f1e2329f372f112df775115d8f7e3109631fb34c0157d732f8906"
+    },
+    {
+      "path": "internal/brain/brain.go",
+      "snapshot": "plans/reports/k0-5/20261101-brain-knowledge/source-snapshot/internal/brain/brain.go.snapshot",
+      "bytes": 8490,
+      "sha256": "7b143e2eae24ef5d4bac24dba0a03a03a919f93ef710214d917c291488228baf"
+    },
+    {
+      "path": "internal/brain/context.go",
+      "snapshot": "plans/reports/k0-5/20261101-brain-knowledge/source-snapshot/internal/brain/context.go.snapshot",
+      "bytes": 10285,
+      "sha256": "6ff01f28d3722e5eb306a7c2019e80be9821b561c6816a97ce2571ed8f28539b"
+    },
+    {
+      "path": "internal/brain/knowledge.go",
+      "snapshot": "plans/reports/k0-5/20261101-brain-knowledge/source-snapshot/internal/brain/knowledge.go.snapshot",
+      "bytes": 3675,
+      "sha256": "e73377431a786c2eaa28137129792b7481f7372fc33f7f8c567adfd7016b8deb"
+    },
+    {
+      "path": "internal/brain/knowledge_test.go",
+      "snapshot": "plans/reports/k0-5/20261101-brain-knowledge/source-snapshot/internal/brain/knowledge_test.go.snapshot",
+      "bytes": 11203,
+      "sha256": "6eb868738cb364cdcdc7f6960aba3dc74092f234cbb6327207c1f60fe643a420"
+    },
+    {
+      "path": "internal/database/knowledge_brain_integration_test.go",
+      "snapshot": "plans/reports/k0-5/20261101-brain-knowledge/source-snapshot/internal/database/knowledge_brain_integration_test.go.snapshot",
+      "bytes": 4786,
+      "sha256": "0e4441d9fcc406d85daccdf9c4b08dd7cc9b267c694d1ea832b8f3e03a8721ec"
+    },
+    {
+      "path": "contracts/knowledge.md",
+      "snapshot": "plans/reports/k0-5/20261101-brain-knowledge/source-snapshot/contracts/knowledge.md.snapshot",
+      "bytes": 7836,
+      "sha256": "656568f9c528deef82eb04582fd6be0d5ad4eefec5066b31f349d38e74f5ab63"
+    },
+    {
+      "path": "contracts/brain.md",
+      "snapshot": "plans/reports/k0-5/20261101-brain-knowledge/source-snapshot/contracts/brain.md.snapshot",
+      "bytes": 12811,
+      "sha256": "a4916a2faef999d2694936bdd2e0f8be01b74ab3437408978a8d9e2ccff009c5"
+    }
+  ]
+}

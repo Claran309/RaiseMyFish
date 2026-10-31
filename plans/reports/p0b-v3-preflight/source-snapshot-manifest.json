@@ -1,0 +1,112 @@
+[
+  {
+    "original_path": "internal/personaeval/fixture.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/personaeval/fixture.go.snapshot",
+    "sha256": "6fdf59a9e65eb24a87fe15a8bbd1e631a28e3e9d97ac4434d5e1ca632dfd2e23"
+  },
+  {
+    "original_path": "internal/personaeval/rescore.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/personaeval/rescore.go.snapshot",
+    "sha256": "4cb0206e2e6da3a706273b06d88f7ab7b00870c36df15c04f9e918fa103a3e5f"
+  },
+  {
+    "original_path": "internal/personaeval/run.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/personaeval/run.go.snapshot",
+    "sha256": "25ea9fb1bcd19bb48343d64567bdbb576506753b88fc608aa9376986db2281af"
+  },
+  {
+    "original_path": "internal/personaeval/score.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/personaeval/score.go.snapshot",
+    "sha256": "356f740d0e77f3d5af15d00b7e3b367504485afd5aaf428083ac0507fff56e66"
+  },
+  {
+    "original_path": "internal/personaeval/score_v2.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/personaeval/score_v2.go.snapshot",
+    "sha256": "308e2f9b9ec05ea1a7f637d4f99c8d501566cec0d8cfc2dc8a4b846cb35dda6e"
+  },
+  {
+    "original_path": "internal/personaeval/score_v3.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/personaeval/score_v3.go.snapshot",
+    "sha256": "3a036d5365696ac0513967b5dbdd806549e1c94d7b2b5b55b337526470098faf"
+  },
+  {
+    "original_path": "internal/brain/brain.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/brain/brain.go.snapshot",
+    "sha256": "a5805eb2cb451ac2d53d7c3ac7068f2f68b0421dd5d998bc18db7ac149559b6d"
+  },
+  {
+    "original_path": "internal/brain/context.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/brain/context.go.snapshot",
+    "sha256": "0f029327bc523ea771eb5018115d7f99d831909539d68cc2ada1f5c02af197d9"
+  },
+  {
+    "original_path": "internal/brain/provider/openai.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/brain/provider/openai.go.snapshot",
+    "sha256": "416e1cf071e36de4645689b46615ea103f5d174c91c0d70cffa46b76560bab82"
+  },
+  {
+    "original_path": "internal/brain/provider/types.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/brain/provider/types.go.snapshot",
+    "sha256": "26a7e1994a3ec316114c1a27ecf1891130db5d32ee975baad6863186c3d1d3af"
+  },
+  {
+    "original_path": "internal/brain/types.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/brain/types.go.snapshot",
+    "sha256": "ed5e0ccb96dfa5e3734cb4bc46269c1eea2d75616884857684a86995f37ff5b2"
+  },
+  {
+    "original_path": "internal/persona/meta.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/persona/meta.go.snapshot",
+    "sha256": "4f89c5dc3e81ae1dca52396f4e08508756117a590277d22394393a2db74a6ec2"
+  },
+  {
+    "original_path": "internal/persona/pack.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/persona/pack.go.snapshot",
+    "sha256": "301248f44f83ee67d2f6d26ec19a2604bb7e0c5a5ceea17587e38546f7d61362"
+  },
+  {
+    "original_path": "cmd/fishctl/persona_eval.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/cmd/fishctl/persona_eval.go.snapshot",
+    "sha256": "bfc4c67ae20906b945ca97a051445eafc82f15035f8f61b54bf79a41b9f0db20"
+  },
+  {
+    "original_path": "cmd/fishctl/main.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/cmd/fishctl/main.go.snapshot",
+    "sha256": "417158038b1d2e33629c77da4f26a1a7cf5e43e6ea46798748b6ba3ec19c3884"
+  },
+  {
+    "original_path": "internal/config/config.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/config/config.go.snapshot",
+    "sha256": "fb7a6938c09b19649fd5f756772811fe8ea41f6d94bb2ff205de4c6a33e6f149"
+  },
+  {
+    "original_path": "internal/config/llm.go",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/internal/config/llm.go.snapshot",
+    "sha256": "c9deb7b75f88e01561a4531ce18cf86da856cb3264d4e65100196a86801b0a49"
+  },
+  {
+    "original_path": "personas/dafeiyu-v2/context.md",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/personas/dafeiyu-v2/context.md.snapshot",
+    "sha256": "85178d8d8e79919995395dcf2b50d66fc0618fb457221a9b9280000e80b4083a"
+  },
+  {
+    "original_path": "personas/dafeiyu-v2/meta.yaml",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/personas/dafeiyu-v2/meta.yaml.snapshot",
+    "sha256": "45e94faf031d7842f6e0cb4d453d8913f8e1a3c08baee76dae5025e3290c9f51"
+  },
+  {
+    "original_path": "personas/dafeiyu-v2/rules.md",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/personas/dafeiyu-v2/rules.md.snapshot",
+    "sha256": "cfb925e4789689d275bcc2ba2951ac734a54979b15a2dcc60ccd20d9fd2d4ba3"
+  },
+  {
+    "original_path": "personas/dafeiyu-v2/samples.md",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/personas/dafeiyu-v2/samples.md.snapshot",
+    "sha256": "30ccea1c3aeb283ac7e99d9e4782a4add784e2d2bec6e466244f40c9aa4c1ac5"
+  },
+  {
+    "original_path": "personas/dafeiyu-v2/soul.md",
+    "path": "plans/reports/p0b-v3-preflight/source-snapshot/personas/dafeiyu-v2/soul.md.snapshot",
+    "sha256": "0f28e41983b62b6c5216fc0b835d5790ef3baca8c47b8a609c3f163ae7e3977d"
+  }
+]

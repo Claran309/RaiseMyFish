@@ -1,0 +1,3 @@
+ok  	RaiseMyFish/internal/personaeval	1.639s
+ok  	RaiseMyFish/cmd/fishctl	0.631s
+ok  	RaiseMyFish/internal/persona	1.000s

@@ -1,0 +1,8 @@
+--- FAIL: TestRecoveredDispatchFencesAfterRepositoryReads (0.00s)
+    --- FAIL: TestRecoveredDispatchFencesAfterRepositoryReads/generate (0.00s)
+        scheduler_test.go:801: 仓储查询期间丢租，仍启动了下游回调
+    --- FAIL: TestRecoveredDispatchFencesAfterRepositoryReads/verify (0.00s)
+        scheduler_test.go:801: 仓储查询期间丢租，仍启动了下游回调
+FAIL
+FAIL	RaiseMyFish/internal/scheduler	0.834s
+FAIL

@@ -1,0 +1,5 @@
+--- FAIL: TestExternalReclaimBeforeCompletionIsNotUnsettled (0.00s)
+    scheduler_test.go:834: 外代的queued误报为本代未结清 调度worker返回但事件尚未结清
+FAIL
+FAIL	RaiseMyFish/internal/scheduler	0.814s
+FAIL

@@ -1,0 +1,6 @@
+{
+  "command": "WSL CGO_ENABLED=1 /usr/local/go/bin/go test -race ./... -count=1",
+  "exit_code": 0,
+  "output": "ok  \tRaiseMyFish/cmd/fishctl\t1.369s\nok  \tRaiseMyFish/cmd/fishd\t2.005s\n?   \tRaiseMyFish/cmd/knowledgeeval\t[no test files]\nok  \tRaiseMyFish/internal/brain\t1.150s\nok  \tRaiseMyFish/internal/brain/provider\t1.234s\nok  \tRaiseMyFish/internal/config\t1.034s\nok  \tRaiseMyFish/internal/database\t1.078s\nok  \tRaiseMyFish/internal/event\t1.060s\nok  \tRaiseMyFish/internal/infra\t1.092s\nok  \tRaiseMyFish/internal/knowledge\t6.561s\nok  \tRaiseMyFish/internal/knowledgeeval\t1.091s\nok  \tRaiseMyFish/internal/memory\t1.058s\nok  \tRaiseMyFish/internal/persona\t1.142s\nok  \tRaiseMyFish/internal/personaeval\t4.140s\nok  \tRaiseMyFish/internal/store\t1.062s\n?   \tRaiseMyFish/migrations\t[no test files]\n",
+  "includes_knowledgeeval": true
+}

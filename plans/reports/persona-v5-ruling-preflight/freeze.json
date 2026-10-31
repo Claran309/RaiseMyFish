@@ -1,0 +1,51 @@
+{
+  "rules_version": "persona-lexical-v5",
+  "rules_revision": "activity-assertion-style-r1",
+  "rules_sha256": "72f5e0c729ae83d8b1eaf320a110458478c8a65f3fa0b7dd3b7d19a95a3a7da5",
+  "frozen_at": "2026-10-31T16:33:17.788419+00:00",
+  "model_calls": 0,
+  "files": [
+    {
+      "path": "internal/personaeval/score.go",
+      "snapshot": "plans/reports/persona-v5-ruling-preflight/after/internal/personaeval/score.go.snapshot",
+      "sha256": "c305dc9535965965ef1532bc58ed88f17229d0d71c8dda71da4105d9aee63dc0",
+      "bytes": 13526
+    },
+    {
+      "path": "internal/personaeval/score_v5.go",
+      "snapshot": "plans/reports/persona-v5-ruling-preflight/after/internal/personaeval/score_v5.go.snapshot",
+      "sha256": "4e1a7066df7b0845c013edc102231bb970b63a1cf8b2b6f3e1bea009f497f5cb",
+      "bytes": 7645
+    },
+    {
+      "path": "internal/personaeval/score_v5_test.go",
+      "snapshot": "plans/reports/persona-v5-ruling-preflight/after/internal/personaeval/score_v5_test.go.snapshot",
+      "sha256": "dab06bbe51e2837137f9e1cbbd687f9159da48f6bc5e79026a94314faca86eb6",
+      "bytes": 6698
+    },
+    {
+      "path": "internal/personaeval/layers_report_test.go",
+      "snapshot": "plans/reports/persona-v5-ruling-preflight/after/internal/personaeval/layers_report_test.go.snapshot",
+      "sha256": "9f5fd5d73d240388a3cc5300a1f2ff7067f6c4ea6f6347fb6471d64b9f9b3201",
+      "bytes": 6172
+    },
+    {
+      "path": "internal/personaeval/run.go",
+      "snapshot": "plans/reports/persona-v5-ruling-preflight/after/internal/personaeval/run.go.snapshot",
+      "sha256": "77a31cb6cea5d1134e730fd78447b418a0d1ea68f1c7692d7735aff39a426491",
+      "bytes": 20041
+    },
+    {
+      "path": "internal/personaeval/rescore.go",
+      "snapshot": "plans/reports/persona-v5-ruling-preflight/after/internal/personaeval/rescore.go.snapshot",
+      "sha256": "0d757850566c52dcd02a7bed8ccb4f1dff387c6726886c69399ddb051660c367",
+      "bytes": 13093
+    },
+    {
+      "path": "contracts/persona-eval.md",
+      "snapshot": "plans/reports/persona-v5-ruling-preflight/after/contracts/persona-eval.md.snapshot",
+      "sha256": "9794615152439d5791dc59fe233b1121353fa689ce7155a2d4a29105853e8108",
+      "bytes": 17468
+    }
+  ]
+}

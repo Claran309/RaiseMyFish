@@ -10,7 +10,8 @@
 ## 通用要求（每次带上）
 
 - 先读：`plans/assignment.md` → `AGENTS.md` → 对应契约 → `plans/phase-0.md`
-- 只碰 `internal/collector/`、`internal/sender/`、`internal/persona/`、`personas/`
+- 只碰 DSH 实际派发的精确路径；旧正文是模块背景，不授予整个目录开发权。
+- **不执行任何 git 命令**（add/commit/push/checkout）；代码写完留在工作区，由 Codex 提交与 push
 - 需要新依赖 → 报 Codex 加 `go.mod`，不要自己改
 - 契约问题 → 报 Codex 裁决
 - 完成后在 plans/reports/workbuddy.md 写变更、自测、缺项和是否暂停写入；DSH 独立验收，Codex 统一提交/push，WorkBuddy 不执行 Git 写操作。
@@ -26,7 +27,7 @@
 
 范围：
 - personas/dafeiyu/：meta.yaml、soul.md、rules.md、samples.md、context.md、eval/cases.jsonl
-- internal/persona/：加载包、组装 system 段、回归执行器
+- internal/persona/：已确认 Pack 接口下的简单加载与文件校验；Brain 上下文、回归执行器和 CLI 由 Codex 实现/集成
 
 素材：
 - ~/.bili-ai/persona.md（评论/私信总纲）
@@ -93,7 +94,7 @@
 
 范围：
 - internal/sender：Sender 接口实现（bili-live）
-- 发送（复用 bili-cli 或 danmaku.mjs）、核验、记账（send_log + out 事件）
+- 只实现已确认协议下的单次发送/核验薄适配；send_log + out、状态机与补偿由 Codex 负责
 - 失败分类（retry / dead / skipped）
 - 单元测试
 
@@ -124,7 +125,7 @@
 前置：0.3 已完成。
 
 范围：
-- internal/memory：发送后写 out 事件（必写）
+- 仅实现 Codex 定义输入输出后的规则函数及用例；不独立开发整个 internal/memory，不写 out 事件
 - 简单提炼 worker（规则版：主人相关/承诺/首次出现 → memory_records）
 - 召回最小版（最近会话滑窗 + 共享事件；P0 不做语义）
 
@@ -134,7 +135,7 @@
 - 私密记录带 private
 - 重启后未提炼事件可补
 
-验收：out 事件落库测试、提炼 worker 测试、重启补提炼测试。
+轻量子任务验收：给定输入的规则结果与测试。out 记账、提炼 worker、隐私查询和重启补提炼由 Codex 实现，DSH 独立验收。
 
 完成后按交接格式汇报。
 ```

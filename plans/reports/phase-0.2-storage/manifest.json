@@ -1,0 +1,139 @@
+{
+  "baseline_commit": "e72fef9cbbc27f7a9081b2efba7313255147dc95",
+  "created_utc": "2026-10-31T18:00:35.1658170Z",
+  "status": "awaiting_dsh_acceptance",
+  "files": [
+    {
+      "path": "internal/store/errors.go",
+      "sha256": "8f7e71af49933ba78235795d41169259d9c6aa67966de4151ab67ed054f977d4",
+      "bytes": 282,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/store/event.go",
+      "sha256": "caf5aa24c6e2bc7172d516d597c3f8a5f2977b2bdc3a777a5e94a8ef280b1fdf",
+      "bytes": 2409,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/store/task.go",
+      "sha256": "8b4a551a4c6e1d38cdc92b9b59d7f9e012fb720ca0044e0bed8b1e5f86e4392c",
+      "bytes": 1041,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/store/memory.go",
+      "sha256": "9a1d576c13b79e0580128a6cb659e65b68309c83aecda88a6c0bbdc06485a034",
+      "bytes": 1768,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/store/repositories_test.go",
+      "sha256": "ed48569495a39811ccd42aa7b872b289fece6e8a8fd516538a29a623b633555b",
+      "bytes": 4819,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/database/events.go",
+      "sha256": "cf2ae1a4d0c5d2cab25bb8e42d47a4627ae1065b9f4c365f654abf327caecdc5",
+      "bytes": 2984,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/database/tasks.go",
+      "sha256": "ea4cc60a1e14a44c0a05d710de27f303800e8c0d8ebdb0f9205b2c467f0809cb",
+      "bytes": 2304,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/database/memories.go",
+      "sha256": "1b91c115389798187fdae9597fdfa21ff572c47dd7ba53bd7938e3daf3785b31",
+      "bytes": 5387,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/database/repositories_integration_test.go",
+      "sha256": "ca4ff8a2f9edb88315817048fc1c083041737ed64ae639963d6fc700ed4fbfda",
+      "bytes": 18920,
+      "role": "delivery"
+    },
+    {
+      "path": "plans/phase-0.2-storage-dispatch.md",
+      "sha256": "dcff5876dbf187a6394c80fcf9d11349cd3ed11c443a530cf2077639012e1d09",
+      "bytes": 3363,
+      "role": "delivery"
+    },
+    {
+      "path": "docs/update/2026-11-01-1057-事件任务与记忆存储基础.md",
+      "sha256": "caec25cb259f5684884677ad6f130b4206ce492eefc977e98ff1ff920a7b91c4",
+      "bytes": 6763,
+      "role": "delivery"
+    },
+    {
+      "path": "contracts/event.md",
+      "sha256": "299abdb6d89846a182e9adc840462644606be35f87ebc4fb21c3f8164ea66b8c",
+      "bytes": 3698,
+      "role": "baseline"
+    },
+    {
+      "path": "contracts/memory.md",
+      "sha256": "5854f205a796cc28abdd9ddf6d91d2b6d5220e41bae658c3746251e1f732ef77",
+      "bytes": 6845,
+      "role": "baseline"
+    },
+    {
+      "path": "migrations/0001_init.sql",
+      "sha256": "0a60002251a155ed5d5137e4df65936b394ff4b198b4ae6893090cc34d68fb0a",
+      "bytes": 2813,
+      "role": "baseline"
+    },
+    {
+      "path": "migrations/seed.sql",
+      "sha256": "f451f634dca551fab36f875caa35b1050df1886ed58ef6d984021d2cf0dded36",
+      "bytes": 383,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/event/types.go",
+      "sha256": "363604ba318f8fdf7b93ce49bc0d5894292eae338a8246f31294b145677c1182",
+      "bytes": 1576,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/memory/context.go",
+      "sha256": "bed9e49de208766470e6882ad6d330469481081250bdf087ed3d251cba05d685",
+      "bytes": 4279,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/store/usage.go",
+      "sha256": "741d3b477639ca61b2443739d95e212f8f5b0975da0e885cbd4c18a12faf289c",
+      "bytes": 1294,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/usage.go",
+      "sha256": "cf2b3ac4c98b88d515fb68dd34f18b434da7c04f2066ff54444e6e1d43d506e5",
+      "bytes": 1514,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/migration.go",
+      "sha256": "b5559fd70e861ba27712c7732857767f2ea2d4d3ec12b047cdc20b43add981df",
+      "bytes": 2990,
+      "role": "baseline"
+    },
+    {
+      "path": "go.mod",
+      "sha256": "cb70573763aaa64507549530d41146faa2e81a17b13047d2eee5136dbeb2093a",
+      "bytes": 693,
+      "role": "baseline"
+    },
+    {
+      "path": "go.sum",
+      "sha256": "e7945a320d9856b498becdd65f4f8799af3870e450085db95adcf542ececf954",
+      "bytes": 4072,
+      "role": "baseline"
+    }
+  ]
+}

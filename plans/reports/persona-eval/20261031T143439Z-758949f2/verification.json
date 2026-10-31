@@ -1,0 +1,44 @@
+{
+  "checked_by": "Codex独立Python重算；非DSH验收",
+  "run_id": "20261031T143439Z-758949f2",
+  "scores": {
+    "v1": {
+      "raw": 8,
+      "delivered": 8,
+      "total": 35
+    },
+    "v2": {
+      "raw": 8,
+      "delivered": 8,
+      "total": 35
+    },
+    "v3": {
+      "raw": 11,
+      "delivered": 11,
+      "total": 35
+    }
+  },
+  "original_set_historical_same_v3_raw": 30,
+  "failure_tags": {
+    "expect:情绪": 12,
+    "expect:兜底": 2,
+    "expect:拒绝": 7,
+    "expect:接梗": 2,
+    "expect:问主人": 5,
+    "expect:短句": 3
+  },
+  "model_calls": 35,
+  "generation_errors": 0,
+  "served_models": [
+    "deepseek-flash"
+  ],
+  "new_run_only_input_tokens": 227542,
+  "new_run_only_output_tokens": 458,
+  "new_run_only_cost_usd": null,
+  "system_bytes": 21078,
+  "full_system_retained_cases": 35,
+  "independently_reconstructed_user_hashes": 35,
+  "old_evidence_unchanged": 81,
+  "holdout_read_or_run": true,
+  "stopped_below_32": true
+}

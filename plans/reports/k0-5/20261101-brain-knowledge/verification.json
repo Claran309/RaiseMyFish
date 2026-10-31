@@ -1,0 +1,21 @@
+{
+  "task": "K0-5 Brain知识预算/注入",
+  "actual_model_calls": 0,
+  "protected_persona_and_eval_files_unchanged": 166,
+  "knowledge_implementation_unchanged": true,
+  "default_config_unchanged": true,
+  "prior_cli_changes_preserved": true,
+  "configured_secrets_absent": true,
+  "index_empty": true,
+  "brain_statement_coverage_percent": 84.3,
+  "engineering_checks_passed": true,
+  "pg_test": {
+    "fake_http_calls": 1,
+    "real_postgres_rows": 1,
+    "in_tokens": 123,
+    "out_tokens": 7,
+    "cost_usd": null,
+    "invalid_scope_additional_calls_or_rows": 0
+  },
+  "dsh_acceptance": "pending"
+}

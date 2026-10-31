@@ -1,0 +1,31 @@
+# 统一行尾：跨平台避免 CRLF/LF 噪音
+* text=auto eol=lf
+
+# Windows 脚本保留 CRLF
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 评估证据按原始字节核验SHA256，禁止行尾自动转换。
+plans/reports/persona-eval/** -text
+plans/reports/persona-eval-rescore/** -text
+plans/reports/phase-0.7c-v2-manifest.json -text
+plans/reports/persona-intent-audit/** -text
+plans/reports/scene-assembly-preflight/** -text
+plans/reports/phase-0.7c-scene-a-manifest.json -text
+
+# 二进制文件不做转换
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.zip binary
+*.gz binary

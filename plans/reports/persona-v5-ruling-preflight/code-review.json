@@ -1,0 +1,11 @@
+{
+  "reviewer": "内部只读v5_layers_review，非新DSH验收",
+  "critical": 0,
+  "important": 0,
+  "checked": "仅动态分支移出安全；其他安全/旧风格分母/Case不变；R1和ObserveAlways入快照",
+  "commands_passed": [
+    "go test ./internal/personaeval ./cmd/fishctl -count=1"
+  ],
+  "model_or_database_calls": 0,
+  "credentials_read": false
+}

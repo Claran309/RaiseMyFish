@@ -49,3 +49,9 @@ live = "deepseek:deepseek-chat"
 # [llm.providers.deepseek.prices.deepseek-chat]
 # input_usd_per_million = 0.0
 # output_usd_per_million = 0.0
+
+# 仅装配知识Reader；默认关闭，事件消费链路尚未接入。
+[knowledge]
+enabled = false
+dir = "personas/dafeiyu/knowledge"
+budget_percent = 10

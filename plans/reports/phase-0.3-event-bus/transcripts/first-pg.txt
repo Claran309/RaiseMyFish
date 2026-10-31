@@ -1,0 +1,10 @@
+=== RUN   TestQueueClaimDeferFencingAndFilter
+--- PASS: TestQueueClaimDeferFencingAndFilter (0.66s)
+=== RUN   TestQueueConcurrentClaimSkipLockedAndOrder
+--- PASS: TestQueueConcurrentClaimSkipLockedAndOrder (0.46s)
+=== RUN   TestQueueTaskAtomicAndRecoveryStages
+--- PASS: TestQueueTaskAtomicAndRecoveryStages (0.30s)
+=== RUN   TestMigrationV1UpgradeEventLeases
+--- PASS: TestMigrationV1UpgradeEventLeases (0.29s)
+PASS
+ok  	RaiseMyFish/internal/database	1.966s

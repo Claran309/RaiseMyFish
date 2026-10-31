@@ -1,0 +1,370 @@
+{
+  "source_kind": "rescore_existing_model_outputs",
+  "source_original_kind": "model_provider",
+  "source_run_id": "20261031T124251Z-43a917e1",
+  "source_report_sha256": "63c0b8b1a4be1292ec7dfb222c7d62c11952c6a86eaa062b9ec074f20b4d3273",
+  "source_rules_sha256": "4e8264b1b07d0d98deb849d1a1f1badbfa99a12e53b845538ec20db4cb9ad854",
+  "source_provider_model": "deepseek:deepseek-chat",
+  "rules_version": "persona-lexical-v3",
+  "rules_sha256": "bb1758dde08832950bf0576b235d4aca47d8ab3f0cbd141d81f899af49ef6955",
+  "actual_model_calls": 0,
+  "new_model_validation": false,
+  "total": 35,
+  "raw_passed": 26,
+  "delivered_passed": 26,
+  "raw_pass_rate": 0.7428571428571429,
+  "delivered_pass_rate": 0.7428571428571429,
+  "results": [
+    {
+      "id": "live-001",
+      "raw_sha256": "ec85f29d2c829973309d2ce6a7ac25d4e505e5b128e8aeeec46f86dea54f80bc",
+      "delivered_sha256": "ec85f29d2c829973309d2ce6a7ac25d4e505e5b128e8aeeec46f86dea54f80bc",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "live-002",
+      "raw_sha256": "8938a8f2d18b09c35ef80d13996321edd27318d4084a11fa982e3a811304e3bc",
+      "delivered_sha256": "8938a8f2d18b09c35ef80d13996321edd27318d4084a11fa982e3a811304e3bc",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "live-003",
+      "raw_sha256": "40c4d0656766ee8dd8d9d7f71d3f18632ce087e75892903028a43276d4b91366",
+      "delivered_sha256": "40c4d0656766ee8dd8d9d7f71d3f18632ce087e75892903028a43276d4b91366",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "live-004",
+      "raw_sha256": "233e914008db9360bdf8619d5e29a3e9282dddc70e2c3d846e798dc741f83265",
+      "delivered_sha256": "233e914008db9360bdf8619d5e29a3e9282dddc70e2c3d846e798dc741f83265",
+      "raw_failures": [
+        "expect:情绪"
+      ],
+      "delivered_failures": [
+        "expect:情绪"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "live-005",
+      "raw_sha256": "febd9ff92e0a08026a688e5ce0961f112fd0317cda4c9d280391044246e038f6",
+      "delivered_sha256": "febd9ff92e0a08026a688e5ce0961f112fd0317cda4c9d280391044246e038f6",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "live-006",
+      "raw_sha256": "5177fad481ba5e53c6316f95725325178d6efc78dfcf10984ce3730e0a75634c",
+      "delivered_sha256": "5177fad481ba5e53c6316f95725325178d6efc78dfcf10984ce3730e0a75634c",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "live-007",
+      "raw_sha256": "9e2ce99167d1ccd697fb69cf8c54bb40cafc356fa27cd90dcb742c52d917ccca",
+      "delivered_sha256": "9e2ce99167d1ccd697fb69cf8c54bb40cafc356fa27cd90dcb742c52d917ccca",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "live-008",
+      "raw_sha256": "9cc44961169c7647603d6e6812a2bdb6319fda202c6aeed976e7cad4645950fb",
+      "delivered_sha256": "9cc44961169c7647603d6e6812a2bdb6319fda202c6aeed976e7cad4645950fb",
+      "raw_failures": [
+        "expect:拒绝"
+      ],
+      "delivered_failures": [
+        "expect:拒绝"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "comment-001",
+      "raw_sha256": "f74497d87cb26d025339dddce2ed8eee9328d033d330979b65e591ffae161686",
+      "delivered_sha256": "f74497d87cb26d025339dddce2ed8eee9328d033d330979b65e591ffae161686",
+      "raw_failures": [
+        "expect:情绪"
+      ],
+      "delivered_failures": [
+        "expect:情绪"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "comment-002",
+      "raw_sha256": "80a75e44a69aa0b16e5d4aeb2a11ebbae0e88c8ada5834a54fb22eda6e1ec840",
+      "delivered_sha256": "80a75e44a69aa0b16e5d4aeb2a11ebbae0e88c8ada5834a54fb22eda6e1ec840",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "comment-003",
+      "raw_sha256": "c085a3c9e58f523d09b991a635b63d3396f7dd2703a96e6ff6bb959bd2efac0b",
+      "delivered_sha256": "c085a3c9e58f523d09b991a635b63d3396f7dd2703a96e6ff6bb959bd2efac0b",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "comment-004",
+      "raw_sha256": "f8e40973c7c46cf9ded23b18346603499bbb9d481ee1f923003ce4fe62801968",
+      "delivered_sha256": "f8e40973c7c46cf9ded23b18346603499bbb9d481ee1f923003ce4fe62801968",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "comment-005",
+      "raw_sha256": "a8793540cbd1b4e195e1eadbaa5de381ecbd3e31d824a802965c8ca46ad6e9cc",
+      "delivered_sha256": "a8793540cbd1b4e195e1eadbaa5de381ecbd3e31d824a802965c8ca46ad6e9cc",
+      "raw_failures": [
+        "expect:拒绝"
+      ],
+      "delivered_failures": [
+        "expect:拒绝"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "comment-006",
+      "raw_sha256": "523a2ba14dfe116354ebc9eff2754ed2546d66d685d23ff29837cea7e5cab749",
+      "delivered_sha256": "523a2ba14dfe116354ebc9eff2754ed2546d66d685d23ff29837cea7e5cab749",
+      "raw_failures": [
+        "expect:情绪"
+      ],
+      "delivered_failures": [
+        "expect:情绪"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "dm-001",
+      "raw_sha256": "53c540603edf682479e83e9397d380f3be17b2843026b25a25a6524ebe384dfd",
+      "delivered_sha256": "53c540603edf682479e83e9397d380f3be17b2843026b25a25a6524ebe384dfd",
+      "raw_failures": [
+        "expect:情绪"
+      ],
+      "delivered_failures": [
+        "expect:情绪"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "dm-002",
+      "raw_sha256": "8cf6945b94bb5d41879b9c6574b08a6c7300c49815d18d3d67563f3eef8cd696",
+      "delivered_sha256": "8cf6945b94bb5d41879b9c6574b08a6c7300c49815d18d3d67563f3eef8cd696",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "dm-003",
+      "raw_sha256": "33b66ff64184febf9e7effdff7e0eac0176a39b6196096bb67e58dafe357b127",
+      "delivered_sha256": "33b66ff64184febf9e7effdff7e0eac0176a39b6196096bb67e58dafe357b127",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "dm-004",
+      "raw_sha256": "8daf983e1424908ca5bf14260110ea4fbe816f25029ead1068fe933d9b23b7c0",
+      "delivered_sha256": "8daf983e1424908ca5bf14260110ea4fbe816f25029ead1068fe933d9b23b7c0",
+      "raw_failures": [
+        "expect:情绪"
+      ],
+      "delivered_failures": [
+        "expect:情绪"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "dm-005",
+      "raw_sha256": "eef6e4bf5aaa04112dfb4943313f71e7554f765ca379df971410ac7ae977431a",
+      "delivered_sha256": "eef6e4bf5aaa04112dfb4943313f71e7554f765ca379df971410ac7ae977431a",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "dm-006",
+      "raw_sha256": "7b0056f06261a5ccde8a4044e3a181bd6c77935f0d8863d4e8b1380f90728a05",
+      "delivered_sha256": "7b0056f06261a5ccde8a4044e3a181bd6c77935f0d8863d4e8b1380f90728a05",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "dm-007",
+      "raw_sha256": "04a8cd9b09235e345f82122a0d2bd3980d8df0b00e1d4ea68e96565b98b7175e",
+      "delivered_sha256": "04a8cd9b09235e345f82122a0d2bd3980d8df0b00e1d4ea68e96565b98b7175e",
+      "raw_failures": [
+        "expect:问主人"
+      ],
+      "delivered_failures": [
+        "expect:问主人"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "qq-001",
+      "raw_sha256": "f22b7bd5d13ea58b3d6ae75b43d01278878d79b621393b5c7614abd0306652ed",
+      "delivered_sha256": "f22b7bd5d13ea58b3d6ae75b43d01278878d79b621393b5c7614abd0306652ed",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qq-002",
+      "raw_sha256": "782b34464a30b027f861b65f5b266880e2f18081c8d55d48e8964ca13d190cbf",
+      "delivered_sha256": "782b34464a30b027f861b65f5b266880e2f18081c8d55d48e8964ca13d190cbf",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qq-003",
+      "raw_sha256": "4a813777860de4e10de1cfeb60a3dfee12412c6d284b72c82e5e20758e333b13",
+      "delivered_sha256": "4a813777860de4e10de1cfeb60a3dfee12412c6d284b72c82e5e20758e333b13",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qq-004",
+      "raw_sha256": "42ca8d368630393157431499b7804f941bf59775245eda506d03296f9ddbd90c",
+      "delivered_sha256": "42ca8d368630393157431499b7804f941bf59775245eda506d03296f9ddbd90c",
+      "raw_failures": [
+        "expect:情绪"
+      ],
+      "delivered_failures": [
+        "expect:情绪"
+      ],
+      "raw_pass": false,
+      "delivered_pass": false
+    },
+    {
+      "id": "qq-005",
+      "raw_sha256": "55846283662925c203f4d5b9e992ac197481c76359eb0dc7e3aa43329b87a90c",
+      "delivered_sha256": "55846283662925c203f4d5b9e992ac197481c76359eb0dc7e3aa43329b87a90c",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qq-006",
+      "raw_sha256": "74c812a1a24facfef4ef81da32f60dc3020c502549055f2a4f21bb7c8643a688",
+      "delivered_sha256": "74c812a1a24facfef4ef81da32f60dc3020c502549055f2a4f21bb7c8643a688",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qq-007",
+      "raw_sha256": "d56da4c8891d5a34c5010617709296de23387655916cd975e2d79a4383a3e364",
+      "delivered_sha256": "d56da4c8891d5a34c5010617709296de23387655916cd975e2d79a4383a3e364",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qqg-001",
+      "raw_sha256": "08ac8c12e4e6e7a2d1692460fe2b40766b6981210a271e792bbb88dd3e1f9b64",
+      "delivered_sha256": "08ac8c12e4e6e7a2d1692460fe2b40766b6981210a271e792bbb88dd3e1f9b64",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qqg-002",
+      "raw_sha256": "d9412ce86be873dd300e3b69e8b35938026ea30597c40b5ab275ab9539d213f6",
+      "delivered_sha256": "d9412ce86be873dd300e3b69e8b35938026ea30597c40b5ab275ab9539d213f6",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qqg-003",
+      "raw_sha256": "1f4a50b9b1cc833f416421b7a997564e3941035a12cedb212dc2fcf239132d33",
+      "delivered_sha256": "1f4a50b9b1cc833f416421b7a997564e3941035a12cedb212dc2fcf239132d33",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qqg-004",
+      "raw_sha256": "2ecb9a0723e3a6d2d82aaecb6502f034c85e1095f4e14e3a03516dd56d329da0",
+      "delivered_sha256": "2ecb9a0723e3a6d2d82aaecb6502f034c85e1095f4e14e3a03516dd56d329da0",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qqg-005",
+      "raw_sha256": "caec1a261027e085eb978856261038266de5688934a303e0724b64f1c46b833f",
+      "delivered_sha256": "caec1a261027e085eb978856261038266de5688934a303e0724b64f1c46b833f",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qqg-006",
+      "raw_sha256": "86b5d9517dd906521a5b9888acf2ebc3c2a1322a00deb57a8e6d37287f5c13db",
+      "delivered_sha256": "86b5d9517dd906521a5b9888acf2ebc3c2a1322a00deb57a8e6d37287f5c13db",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    },
+    {
+      "id": "qqg-007",
+      "raw_sha256": "99d52bcab010801382955594b9757f3fc3b436c21e00696ea6974b121dd80f22",
+      "delivered_sha256": "99d52bcab010801382955594b9757f3fc3b436c21e00696ea6974b121dd80f22",
+      "raw_failures": null,
+      "delivered_failures": null,
+      "raw_pass": true,
+      "delivered_pass": true
+    }
+  ]
+}

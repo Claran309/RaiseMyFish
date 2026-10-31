@@ -1,0 +1,18 @@
+--- FAIL: TestSceneAssemblyTrustBoundary (0.00s)
+    --- FAIL: TestSceneAssemblyTrustBoundary/live (0.00s)
+        context_test.go:61: instructions没有结构化可信场景：invalid character 'c' looking for beginning of value
+    --- FAIL: TestSceneAssemblyTrustBoundary/comment (0.00s)
+        context_test.go:61: instructions没有结构化可信场景：invalid character 'c' looking for beginning of value
+    --- FAIL: TestSceneAssemblyTrustBoundary/dm (0.00s)
+        context_test.go:61: instructions没有结构化可信场景：invalid character 'c' looking for beginning of value
+    --- FAIL: TestSceneAssemblyTrustBoundary/qq_private (0.00s)
+        context_test.go:61: instructions没有结构化可信场景：invalid character 'c' looking for beginning of value
+    --- FAIL: TestSceneAssemblyTrustBoundary/qq_group (0.00s)
+        context_test.go:61: instructions没有结构化可信场景：invalid character 'c' looking for beginning of value
+--- FAIL: TestSceneAssemblyDataCannotForgeInstructionSections (0.00s)
+    context_test.go:102: instructions没有结构化可信场景：invalid character 'c' looking for beginning of value
+--- FAIL: TestSceneAssemblyBudgetRetainsInstructionAndInput (0.04s)
+    context_test.go:125: instructions没有结构化可信场景：invalid character 'c' looking for beginning of value
+FAIL
+FAIL	RaiseMyFish/internal/brain	1.423s
+FAIL

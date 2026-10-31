@@ -26,9 +26,44 @@ func migrationSource() (string, string, error) {
 	return source, hex.EncodeToString(hash[:]), nil
 }
 
-// Migrate 在单事务及事务锁内应用初始迁移；失败不留下半套表。
-func Migrate(ctx context.Context, db *gorm.DB) error {
+type migrationStep struct {
+	Version  int64
+	Source   string
+	Checksum string
+}
+type migrationReceipt struct {
+	Version  int64
+	Checksum string
+}
+
+func migrationSteps() ([]migrationStep, error) {
 	source, checksum, err := migrationSource()
+	if err != nil {
+		return nil, err
+	}
+	leases, err := migrations.Files.ReadFile("0002_event_leases.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取租约迁移：%w", err)
+	}
+	hash := sha256.Sum256(leases)
+	return []migrationStep{{1, source, checksum}, {2, string(leases), hex.EncodeToString(hash[:])}}, nil
+}
+
+func checkMigrationPrefix(rows []migrationReceipt, steps []migrationStep) error {
+	if len(rows) > len(steps) {
+		return errors.New("迁移包含未知版本")
+	}
+	for i, row := range rows {
+		if row.Version != steps[i].Version || row.Checksum != steps[i].Checksum {
+			return errors.New("迁移版本或checksum不匹配")
+		}
+	}
+	return nil
+}
+
+// Migrate 校验已应用前缀后顺序升级；保留v1原校验值，失败整体回滚。
+func Migrate(ctx context.Context, db *gorm.DB) error {
+	steps, err := migrationSteps()
 	if err != nil {
 		return err
 	}
@@ -39,23 +74,22 @@ func Migrate(ctx context.Context, db *gorm.DB) error {
 		if err := tx.Exec("CREATE TABLE IF NOT EXISTS schema_migrations (version bigint PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())").Error; err != nil {
 			return err
 		}
-		var rows []struct {
-			Version  int64
-			Checksum string
-		}
+		var rows []migrationReceipt
 		if err := tx.Raw("SELECT version,checksum FROM schema_migrations ORDER BY version").Scan(&rows).Error; err != nil {
 			return err
 		}
-		if len(rows) > 0 {
-			if len(rows) != 1 || rows[0].Version != 1 || rows[0].Checksum != checksum {
-				return errors.New("迁移版本或checksum不匹配")
-			}
-			return nil
-		}
-		if err := tx.Exec(source).Error; err != nil {
+		if err := checkMigrationPrefix(rows, steps); err != nil {
 			return err
 		}
-		return tx.Exec("INSERT INTO schema_migrations(version,checksum) VALUES (?,?)", 1, checksum).Error
+		for _, step := range steps[len(rows):] {
+			if err := tx.Exec(step.Source).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec("INSERT INTO schema_migrations(version,checksum) VALUES (?,?)", step.Version, step.Checksum).Error; err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return &safeError{"应用迁移失败（检查版本、checksum或既有表冲突）", err}
@@ -65,19 +99,19 @@ func Migrate(ctx context.Context, db *gorm.DB) error {
 
 // Ready 只验证迁移账本及必需表，不隐式改库。
 func Ready(ctx context.Context, db *gorm.DB) error {
-	_, checksum, err := migrationSource()
+	steps, err := migrationSteps()
 	if err != nil {
 		return err
 	}
-	var rows []struct {
-		Version  int64
-		Checksum string
-	}
+	var rows []migrationReceipt
 	if err := db.WithContext(ctx).Raw("SELECT version,checksum FROM schema_migrations ORDER BY version").Scan(&rows).Error; err != nil {
 		return &safeError{"数据库尚未迁移，请执行 fishd migrate up", err}
 	}
-	if len(rows) != 1 || rows[0].Version != 1 || rows[0].Checksum != checksum {
-		return errors.New("数据库迁移版本或checksum不匹配")
+	if err := checkMigrationPrefix(rows, steps); err != nil {
+		return err
+	}
+	if len(rows) != len(steps) {
+		return errors.New("数据库需要升级，请执行 fishd migrate up")
 	}
 	var exists bool
 	err = db.WithContext(ctx).Raw(`SELECT bool_and(to_regclass(name) IS NOT NULL) FROM unnest(ARRAY['events','tasks','memory_sources','memory_records','llm_usage','send_log','dlq']) AS name`).Scan(&exists).Error
@@ -86,6 +120,9 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	}
 	if !exists {
 		return errors.New("数据库业务表不完整")
+	}
+	if err := db.WithContext(ctx).Exec("SELECT stage,status_changed_at,lease_owner,lease_version,lease_until FROM events LIMIT 0").Error; err != nil {
+		return &safeError{"数据库租约字段不完整", err}
 	}
 	return nil
 }

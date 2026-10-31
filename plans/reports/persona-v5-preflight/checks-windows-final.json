@@ -1,0 +1,70 @@
+[
+  {
+    "command": [
+      "go",
+      "test",
+      "./...",
+      "-count=1"
+    ],
+    "exit_code": 0,
+    "output": "ok  \tRaiseMyFish/cmd/fishctl\t0.448s\nok  \tRaiseMyFish/cmd/fishd\t0.372s\nok  \tRaiseMyFish/internal/brain\t1.254s\nok  \tRaiseMyFish/internal/brain/provider\t2.092s\nok  \tRaiseMyFish/internal/config\t0.809s\nok  \tRaiseMyFish/internal/database\t0.251s\nok  \tRaiseMyFish/internal/event\t0.577s\nok  \tRaiseMyFish/internal/infra\t1.250s\nok  \tRaiseMyFish/internal/knowledge\t1.858s\nok  \tRaiseMyFish/internal/memory\t0.580s\nok  \tRaiseMyFish/internal/persona\t0.751s\nok  \tRaiseMyFish/internal/personaeval\t1.181s\nok  \tRaiseMyFish/internal/store\t0.580s\n?   \tRaiseMyFish/migrations\t[no test files]\n"
+  },
+  {
+    "command": [
+      "go",
+      "test",
+      "-tags=integration",
+      "./...",
+      "-count=1"
+    ],
+    "exit_code": 0,
+    "output": "ok  \tRaiseMyFish/cmd/fishctl\t0.406s\nok  \tRaiseMyFish/cmd/fishd\t1.327s\nok  \tRaiseMyFish/internal/brain\t1.628s\nok  \tRaiseMyFish/internal/brain/provider\t2.415s\nok  \tRaiseMyFish/internal/config\t1.080s\nok  \tRaiseMyFish/internal/database\t2.060s\nok  \tRaiseMyFish/internal/event\t0.853s\nok  \tRaiseMyFish/internal/infra\t0.999s\nok  \tRaiseMyFish/internal/knowledge\t1.993s\nok  \tRaiseMyFish/internal/memory\t0.838s\nok  \tRaiseMyFish/internal/persona\t1.018s\nok  \tRaiseMyFish/internal/personaeval\t1.547s\nok  \tRaiseMyFish/internal/store\t0.871s\n?   \tRaiseMyFish/migrations\t[no test files]\n"
+  },
+  {
+    "command": [
+      "go",
+      "vet",
+      "./..."
+    ],
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "command": [
+      "go",
+      "build",
+      "./..."
+    ],
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "command": [
+      "go",
+      "run",
+      "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0",
+      "run"
+    ],
+    "exit_code": 0,
+    "output": "0 issues.\n"
+  },
+  {
+    "command": [
+      "gofmt",
+      "-l",
+      "internal/personaeval",
+      "cmd/fishctl"
+    ],
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "output": ""
+  }
+]

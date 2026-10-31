@@ -1,0 +1,12 @@
+[
+  {
+    "command": [
+      "go",
+      "test",
+      "./...",
+      "-count=1"
+    ],
+    "exit_code": 1,
+    "output": "ok  \tRaiseMyFish/cmd/fishctl\t1.359s\nok  \tRaiseMyFish/cmd/fishd\t1.197s\nok  \tRaiseMyFish/internal/brain\t4.008s\nok  \tRaiseMyFish/internal/brain/provider\t4.073s\nok  \tRaiseMyFish/internal/config\t3.005s\nok  \tRaiseMyFish/internal/database\t1.133s\nok  \tRaiseMyFish/internal/event\t1.352s\nok  \tRaiseMyFish/internal/infra\t3.668s\nok  \tRaiseMyFish/internal/knowledge\t7.093s\nok  \tRaiseMyFish/internal/memory\t1.357s\n--- FAIL: TestLoadRealPack (0.00s)\n    pack_test.go:62: meta.version = \"v1.1\"，期望 v1（既有 v1 必须继续有效）\nFAIL\nFAIL\tRaiseMyFish/internal/persona\t2.781s\n--- FAIL: TestPrepareUsesExactCaseSnapshotAndRealPack (0.01s)\n    fixture_test.go:20: 快照或真实用例不完整\nFAIL\nFAIL\tRaiseMyFish/internal/personaeval\t2.975s\nok  \tRaiseMyFish/internal/store\t2.049s\n?   \tRaiseMyFish/migrations\t[no test files]\nFAIL\n"
+  }
+]

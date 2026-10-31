@@ -1,0 +1,14 @@
+{
+  "reviewer": "内部只读v4_review，非DSH",
+  "critical": 0,
+  "important": 0,
+  "previous_findings": "拒绝同意/normal敏感索取/词义误伤已加正反回归闭环；自然拒绝同义通过",
+  "final_narrow_review": "OpenRoot固定相对文件及Close错误合并未发现问题",
+  "commands_passed": [
+    "go test ./internal/personaeval ./internal/persona ./cmd/fishctl -count=1"
+  ],
+  "artifact_recompute_by_reviewer": false,
+  "actual_model_calls": 0,
+  "api_or_pg_calls": 0,
+  "credentials_read": false
+}

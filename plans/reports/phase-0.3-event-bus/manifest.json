@@ -1,0 +1,262 @@
+{
+  "baseline_commit": "e72fef9cbbc27f7a9081b2efba7313255147dc95",
+  "created_utc": "2026-10-31T18:23:36.5260723Z",
+  "status": "awaiting_dsh_acceptance",
+  "contract": "P0-EVENT-2",
+  "files": [
+    {
+      "path": "contracts/event.md",
+      "sha256": "df7f2a66a3dbd9edb41018981bc933e88f28040ebce9e5dccc8732235a878e9d",
+      "bytes": 9697,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/event/bus.go",
+      "sha256": "cc889dcdf5217fa3d80d79765c63651712a38f6effdc45dd151eb5dd6794a448",
+      "bytes": 1188,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/event/bus/bus.go",
+      "sha256": "12248f3339a4f62053f9e2a0014f2c94161d3dac088d133b879bacc0239b23ee",
+      "bytes": 3051,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/event/bus/bus_test.go",
+      "sha256": "eb157c5c420e075864f24955c0e6ba8bd1daae0b366052205e33d1fd7014e0ae",
+      "bytes": 4461,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/store/queue.go",
+      "sha256": "fdca774277c214830889b8d91ef5907ca9b532a4ad77d1229434628333a18961",
+      "bytes": 736,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/store/event.go",
+      "sha256": "a7dd68d5d0cf68016438b035c6e197815f416e44f4796bd8b32153c203b0345b",
+      "bytes": 2464,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/store/repositories_test.go",
+      "sha256": "8adae88368e36c08772a18e65e9366288400ffbad0d3c1e46eabafd49a641701",
+      "bytes": 4858,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/database/queue.go",
+      "sha256": "7b1a2c0b6837a58998ad1112b15932b266e12f477aabbd298cf62019563396c9",
+      "bytes": 8519,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/database/queue_integration_test.go",
+      "sha256": "35b305e158ec14b44ce2d02961839938259e7cee1fef5000e4dc7800b98ff59f",
+      "bytes": 19078,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/database/events.go",
+      "sha256": "c86e74508e2d7601767dd9ecb7673077a4be370ad15a1df3a8214aaeadfc4a9a",
+      "bytes": 3919,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/database/tasks.go",
+      "sha256": "3e0a6af70f05efe3dc2a3cd99a2b80c51d99061feaf2d088e0be5e93ecbceeab",
+      "bytes": 3338,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/database/migration.go",
+      "sha256": "d6106985fc4932eee3216e9cf00ded3449dbe2da2fbdc5e57d4d5f0b339e71d2",
+      "bytes": 4085,
+      "role": "delivery"
+    },
+    {
+      "path": "migrations/0002_event_leases.sql",
+      "sha256": "2d3e486dfb2adbc2260ed375405f156f2138d2e988a4a222eba1567c2b44dad8",
+      "bytes": 1458,
+      "role": "delivery"
+    },
+    {
+      "path": "plans/phase-0.3-event-bus-dispatch.md",
+      "sha256": "db575af2651c838fff678efecda7a5b17648a1350c74e53c1239f8e18025a99a",
+      "bytes": 2404,
+      "role": "delivery"
+    },
+    {
+      "path": "docs/update/2026-11-01-1130-租约事件总线与崩溃恢复.md",
+      "sha256": "53e5acbe405834ba88f8f6a76ff6db012fd727578db6f50ff90d02f54fb5c47b",
+      "bytes": 7663,
+      "role": "delivery"
+    },
+    {
+      "path": "contracts/memory.md",
+      "sha256": "5854f205a796cc28abdd9ddf6d91d2b6d5220e41bae658c3746251e1f732ef77",
+      "bytes": 6845,
+      "role": "baseline"
+    },
+    {
+      "path": "migrations/0001_init.sql",
+      "sha256": "0a60002251a155ed5d5137e4df65936b394ff4b198b4ae6893090cc34d68fb0a",
+      "bytes": 2813,
+      "role": "baseline"
+    },
+    {
+      "path": "migrations/seed.sql",
+      "sha256": "f451f634dca551fab36f875caa35b1050df1886ed58ef6d984021d2cf0dded36",
+      "bytes": 383,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/event/types.go",
+      "sha256": "363604ba318f8fdf7b93ce49bc0d5894292eae338a8246f31294b145677c1182",
+      "bytes": 1576,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/store/task.go",
+      "sha256": "8b4a551a4c6e1d38cdc92b9b59d7f9e012fb720ca0044e0bed8b1e5f86e4392c",
+      "bytes": 1041,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/store/errors.go",
+      "sha256": "8f7e71af49933ba78235795d41169259d9c6aa67966de4151ab67ed054f977d4",
+      "bytes": 282,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/store/usage.go",
+      "sha256": "741d3b477639ca61b2443739d95e212f8f5b0975da0e885cbd4c18a12faf289c",
+      "bytes": 1294,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/usage.go",
+      "sha256": "cf2b3ac4c98b88d515fb68dd34f18b434da7c04f2066ff54444e6e1d43d506e5",
+      "bytes": 1514,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/repositories_integration_test.go",
+      "sha256": "ca4ff8a2f9edb88315817048fc1c083041737ed64ae639963d6fc700ed4fbfda",
+      "bytes": 18920,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/migration_integration_test.go",
+      "sha256": "3a8c0e6c7ea8a0b8d11444886487637b2bb3ae17e69e24d17ed33d45662bca5e",
+      "bytes": 4009,
+      "role": "baseline"
+    },
+    {
+      "path": "go.mod",
+      "sha256": "cb70573763aaa64507549530d41146faa2e81a17b13047d2eee5136dbeb2093a",
+      "bytes": 693,
+      "role": "baseline"
+    },
+    {
+      "path": "go.sum",
+      "sha256": "e7945a320d9856b498becdd65f4f8799af3870e450085db95adcf542ececf954",
+      "bytes": 4072,
+      "role": "baseline"
+    }
+  ],
+  "evidence_files": [
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/coverage-summary.txt",
+      "sha256": "bad7f5801b6f0790bbc79e65782f868c10ce4bdd7a3903449b90d6a8aa26071f",
+      "bytes": 285
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/first-pg.txt",
+      "sha256": "4244380009ba48815599302263b2b710226dd7e7b78e8b2010851708fef7cffd",
+      "bytes": 459
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/green-legacy-pg.txt",
+      "sha256": "81bf618fadce3672dc2738244ea4deb34d8cafa492f1149b40319b801b07be87",
+      "bytes": 1853
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/green-pg.txt",
+      "sha256": "e189145106fbf7cad2f16f9a239042a46af0271d7755c2912ec8bfb9cc46fb97",
+      "bytes": 1499
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/green-renew-lock-wait.txt",
+      "sha256": "348d2cf6dde4c4cb621bdbba8fae073da6e77d34ce485d5326d98ca79bbbb0fc",
+      "bytes": 357
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/green-unit-initial.txt",
+      "sha256": "24114a56850f28febbc5202465ff255d79cc9cd99665d2631e9fb0b28747bfac",
+      "bytes": 43
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/integration.txt",
+      "sha256": "d5cccf913c019a45d176a9147dc382b055792990ef2bdd713a58ce52ee632dc2",
+      "bytes": 711
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/lint.txt",
+      "sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "bytes": 10
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/race.txt",
+      "sha256": "50600cce71ffa93ffe365f604ce18d4fb860805d2d9c966a7ba04e02136c6db8",
+      "bytes": 967
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/red-integration.txt",
+      "sha256": "78029144197d4fa0f4d48e1dcae4494c58ed938f3ecf9782a3eeb26a2cfee132",
+      "bytes": 155
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/red-released-legacy.txt",
+      "sha256": "ab11ec12e407c72d74bcedd2643ce48335e6e6a088d4f6943d03756fc581a856",
+      "bytes": 304
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/red-renew-lock-wait.txt",
+      "sha256": "c2c8c369301ac926d8fde198d6cc8d9acf99fb65faa62a96a4858a4ad21f59d3",
+      "bytes": 251
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/red-typed-nil.txt",
+      "sha256": "c839d0a57a22a1100465957d873399ba15cf79bdceb29315bb7537f24aaae6f7",
+      "bytes": 192
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/red-unit.txt",
+      "sha256": "5cb43795c55797d53fec5cf1cd6a7da419b52b1f354d79c1b28257b9b00f79f6",
+      "bytes": 576
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/transcripts/unit.txt",
+      "sha256": "65779abebf6bf9ecf9fcaa890e8813488bae506de58c8db4c48972f5a249b13a",
+      "bytes": 710
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/analysis.md",
+      "sha256": "60c3e4fbb17dbe66b8e24a52db8bf127b92dca3ffcdaa17eeb837f8ba00163ab",
+      "bytes": 4112
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/verify.ps1",
+      "sha256": "40bade61dd7fd8e44c0e0bf1e69bfdc3af3f5b35b3ec1bfd57cb96ba4a586191",
+      "bytes": 1724
+    },
+    {
+      "path": "plans/reports/phase-0.3-event-bus/verification.json",
+      "sha256": "b27626429ec570131e08c67288ea02b0afe5914394a421c341dd773d03a23e4c",
+      "bytes": 1209
+    }
+  ]
+}

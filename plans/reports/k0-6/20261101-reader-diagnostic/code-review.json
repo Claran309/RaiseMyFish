@@ -1,0 +1,26 @@
+{
+  "reviewer": "内部只读k067_review，非DSH",
+  "critical": 0,
+  "important": 0,
+  "independently_recomputed_quality": {
+    "cases": 100,
+    "relevant": 46,
+    "returned": 56,
+    "positive_hits": 43,
+    "negative_false": 0,
+    "forbidden": 0,
+    "controls": 20,
+    "budget": 100,
+    "quality_passed": false
+  },
+  "checked_frozen_hashes": {
+    "code_files": 24,
+    "corpus_files": 4,
+    "cases_acl_order": true
+  },
+  "commands_passed": [
+    "go test ./internal/knowledge ./internal/knowledgeeval ./internal/config ./cmd/fishd ./cmd/knowledgeeval -count=1"
+  ],
+  "reviewer_ran_pg_or_models": false,
+  "credentials_read": false
+}

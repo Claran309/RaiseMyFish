@@ -1,0 +1,7 @@
+{
+  "command": "WSL CGO_ENABLED=1 /usr/local/go/bin/go test -race ./... -count=1",
+  "exit_code": 0,
+  "verified_after_root_writefile_change": true,
+  "output": "ok RaiseMyFish/cmd/fishctl 1.725s\nok RaiseMyFish/cmd/fishd 1.212s\nok RaiseMyFish/internal/brain 1.195s\nok RaiseMyFish/internal/brain/provider 1.376s\nok RaiseMyFish/internal/config 1.151s\nok RaiseMyFish/internal/database 1.130s\nok RaiseMyFish/internal/event 1.118s\nok RaiseMyFish/internal/infra 1.095s\nok RaiseMyFish/internal/knowledge 12.968s\nok RaiseMyFish/internal/memory 1.041s\nok RaiseMyFish/internal/persona 1.303s\nok RaiseMyFish/internal/personaeval 4.172s\nok RaiseMyFish/internal/store 1.088s\n? RaiseMyFish/migrations [no test files]\n",
+  "note": "转录本轮最终write_stdin返回，标准化空白；较早检查日志保留。"
+}

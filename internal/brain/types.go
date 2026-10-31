@@ -3,6 +3,7 @@ package brain
 
 import (
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/knowledge"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/persona"
 	"context"
@@ -33,11 +34,12 @@ type Action struct{ Name string }
 
 // ContextInput 必须显式携带相同目标Scope。
 type ContextInput struct {
-	Event   event.Event
-	Persona persona.Pack
-	Memory  memory.Context
-	Shared  memory.SharedState
-	Tools   []Tool
+	Event     event.Event
+	Persona   persona.Pack
+	Memory    memory.Context
+	Shared    memory.SharedState
+	Knowledge *knowledge.Context
+	Tools     []Tool
 }
 
 // Reply 不包含原始prompt或模型凭据。
@@ -49,21 +51,22 @@ type Reply struct {
 
 // Options 控制单次生成，不包含全局调度或日配额。
 type Options struct {
-	Model               string
-	MaxPromptTokens     int
-	MaxReplyTokens      int
-	AttemptTimeout      time.Duration
-	TotalTimeout        time.Duration
-	Backoff             time.Duration
-	MaxConcurrent       int
-	Temperature         float64
-	InputUSDPerMillion  *float64
-	OutputUSDPerMillion *float64
+	Model                  string
+	MaxPromptTokens        int
+	KnowledgeBudgetPercent int
+	MaxReplyTokens         int
+	AttemptTimeout         time.Duration
+	TotalTimeout           time.Duration
+	Backoff                time.Duration
+	MaxConcurrent          int
+	Temperature            float64
+	InputUSDPerMillion     *float64
+	OutputUSDPerMillion    *float64
 }
 
 // DefaultOptions 使用保守字节预算，实际费用只依据服务端用量。
 func DefaultOptions() Options {
-	return Options{MaxPromptTokens: 8192, MaxReplyTokens: 128, AttemptTimeout: 10 * time.Second, TotalTimeout: 40 * time.Second, Backoff: 250 * time.Millisecond, MaxConcurrent: 4, Temperature: .7}
+	return Options{MaxPromptTokens: 8192, KnowledgeBudgetPercent: 10, MaxReplyTokens: 128, AttemptTimeout: 10 * time.Second, TotalTimeout: 40 * time.Second, Backoff: 250 * time.Millisecond, MaxConcurrent: 4, Temperature: .7}
 }
 
 // Kind 是日志可安全输出的错误类型。

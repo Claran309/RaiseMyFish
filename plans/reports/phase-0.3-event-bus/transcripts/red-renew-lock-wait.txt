@@ -1,0 +1,6 @@
+=== RUN   TestQueueRenewCannotReviveLeaseAfterLockWait
+    queue_integration_test.go:577: 锁等待跨过期后复活了旧租约 <nil>
+--- FAIL: TestQueueRenewCannotReviveLeaseAfterLockWait (2.41s)
+FAIL
+FAIL	RaiseMyFish/internal/database	2.642s
+FAIL

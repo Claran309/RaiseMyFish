@@ -1,0 +1,315 @@
+{
+  "baseline_commit": "e72fef9cbbc27f7a9081b2efba7313255147dc95",
+  "created_utc": "2026-10-31T19:03:32.7247717Z",
+  "status": "awaiting_dsh_acceptance",
+  "files": [
+    {
+      "path": "internal/scheduler/types.go",
+      "sha256": "7ee9470d70c5a23985c7de2d71e6b700ffd521546af2579bb80d240deeaeb783",
+      "bytes": 2860,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/scheduler/rules.go",
+      "sha256": "68019cf93489e2cacc318f47c4eace895d14bcb6281024cb8e36110dd5f614ae",
+      "bytes": 2073,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/scheduler/queue.go",
+      "sha256": "b9b84e5877f4a40a6d60889d0d618933cd2c79478cf5794e45eeaae8ec27a75e",
+      "bytes": 872,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/scheduler/scheduler.go",
+      "sha256": "fd9491b8efa234f771a0c4764c0166b99bdfc9894723860849c979b92dfe8484",
+      "bytes": 11076,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/scheduler/run.go",
+      "sha256": "e41dfcc5d1de9989cd81300014306e6cc23fb9bc3204913c2497ab02b2b214e9",
+      "bytes": 5249,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/scheduler/scheduler_test.go",
+      "sha256": "22126cc43cea4d30a7172c559e8d6c1eb0baf6284824982f78263d5a7871b32a",
+      "bytes": 25255,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/store/scheduler.go",
+      "sha256": "a1b1a808a09fa46b9489aca95874e4d352675a4cdc28c797ac8bcfdd20953ca3",
+      "bytes": 735,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/database/scheduler.go",
+      "sha256": "23e878138588974779536724aa99d315a69ed559283503bbc99d3e7737320143",
+      "bytes": 4423,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/database/scheduler_integration_test.go",
+      "sha256": "c24841326e8f2fb1d0bd0d7b3a6f27b8c18c849a8547bed9fff174767596b858",
+      "bytes": 8250,
+      "role": "delivery"
+    },
+    {
+      "path": "go.mod",
+      "sha256": "32661778af4f3d115e1b0261a6ea415f04188a4e1ef68fb56cb5735abf4ad7c1",
+      "bytes": 720,
+      "role": "delivery"
+    },
+    {
+      "path": "go.sum",
+      "sha256": "5e93d840b7b202c2f722c7e7a590e844dd1ebaedcc8f9df534479f5d6db63b8c",
+      "bytes": 4227,
+      "role": "delivery"
+    },
+    {
+      "path": "plans/phase-0.4-scheduler-dispatch.md",
+      "sha256": "6ed205fe81dc3dabdfb4f1b05df00787c3a4da07ac30e78ec20cd505da6ba80f",
+      "bytes": 3897,
+      "role": "delivery"
+    },
+    {
+      "path": "docs/update/2026-11-01-1230-五道闸调度与持久化准入.md",
+      "sha256": "f1d609093c2757dd813ea82016abd056089487a8c2ac864df952744e90f55bd8",
+      "bytes": 7462,
+      "role": "delivery"
+    },
+    {
+      "path": "contracts/event.md",
+      "sha256": "df7f2a66a3dbd9edb41018981bc933e88f28040ebce9e5dccc8732235a878e9d",
+      "bytes": 9697,
+      "role": "baseline"
+    },
+    {
+      "path": "contracts/memory.md",
+      "sha256": "5854f205a796cc28abdd9ddf6d91d2b6d5220e41bae658c3746251e1f732ef77",
+      "bytes": 6845,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/event/types.go",
+      "sha256": "363604ba318f8fdf7b93ce49bc0d5894292eae338a8246f31294b145677c1182",
+      "bytes": 1576,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/event/bus.go",
+      "sha256": "cc889dcdf5217fa3d80d79765c63651712a38f6effdc45dd151eb5dd6794a448",
+      "bytes": 1188,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/event/bus/bus.go",
+      "sha256": "12248f3339a4f62053f9e2a0014f2c94161d3dac088d133b879bacc0239b23ee",
+      "bytes": 3051,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/store/errors.go",
+      "sha256": "8f7e71af49933ba78235795d41169259d9c6aa67966de4151ab67ed054f977d4",
+      "bytes": 282,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/store/task.go",
+      "sha256": "8b4a551a4c6e1d38cdc92b9b59d7f9e012fb720ca0044e0bed8b1e5f86e4392c",
+      "bytes": 1041,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/store/queue.go",
+      "sha256": "fdca774277c214830889b8d91ef5907ca9b532a4ad77d1229434628333a18961",
+      "bytes": 736,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/store/event.go",
+      "sha256": "a7dd68d5d0cf68016438b035c6e197815f416e44f4796bd8b32153c203b0345b",
+      "bytes": 2464,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/tasks.go",
+      "sha256": "3e0a6af70f05efe3dc2a3cd99a2b80c51d99061feaf2d088e0be5e93ecbceeab",
+      "bytes": 3338,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/events.go",
+      "sha256": "c86e74508e2d7601767dd9ecb7673077a4be370ad15a1df3a8214aaeadfc4a9a",
+      "bytes": 3919,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/queue.go",
+      "sha256": "7b1a2c0b6837a58998ad1112b15932b266e12f477aabbd298cf62019563396c9",
+      "bytes": 8519,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/migration.go",
+      "sha256": "d6106985fc4932eee3216e9cf00ded3449dbe2da2fbdc5e57d4d5f0b339e71d2",
+      "bytes": 4085,
+      "role": "baseline"
+    },
+    {
+      "path": "migrations/0001_init.sql",
+      "sha256": "0a60002251a155ed5d5137e4df65936b394ff4b198b4ae6893090cc34d68fb0a",
+      "bytes": 2813,
+      "role": "baseline"
+    },
+    {
+      "path": "migrations/seed.sql",
+      "sha256": "f451f634dca551fab36f875caa35b1050df1886ed58ef6d984021d2cf0dded36",
+      "bytes": 383,
+      "role": "baseline"
+    },
+    {
+      "path": "migrations/0002_event_leases.sql",
+      "sha256": "2d3e486dfb2adbc2260ed375405f156f2138d2e988a4a222eba1567c2b44dad8",
+      "bytes": 1458,
+      "role": "baseline"
+    },
+    {
+      "path": "config/fishd.toml",
+      "sha256": "7f880d23427814c6829b65e771f4068404685124624047b5a52ef7161ac7a365",
+      "bytes": 1385,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/config/config.go",
+      "sha256": "86a2d49eb1b742a572d5825f8e26ac14b279cadb58b22fdbe6268b33bbab3775",
+      "bytes": 4513,
+      "role": "baseline"
+    }
+  ],
+  "evidence_files": [
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/expanded-pg.txt",
+      "sha256": "e8914510a7d8a9295f71cf80acc866cae4c94b5cb8c75cd43fb9ee7f415bbf76",
+      "bytes": 503
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/expanded-unit.txt",
+      "sha256": "3427927c9825c3012f125d439b57e51b350af615e69c2d2ae0d8f0b1290fe4d7",
+      "bytes": 43
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/first-pg.txt",
+      "sha256": "ebba2d9eb19e98690851256b6b16d28fdfe560dd3b322b07a8bbd5e97bf4258b",
+      "bytes": 273
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/first-unit.txt",
+      "sha256": "a48946df4b263ea214696ca951ba01733a1651dd905b8bbb00f10ada60bedf0f",
+      "bytes": 2112
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/green-dispatch-fence.txt",
+      "sha256": "af0e83b60529a37326eb1bd1e6ac0999d07fc12dca4a9fe2e710a13b5d79186e",
+      "bytes": 43
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/green-external-reclaim.txt",
+      "sha256": "ace759d21f3a6d152140dfa8d9d2676c41f0e2695e00017cb271829296221e2b",
+      "bytes": 43
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/green-settlement.txt",
+      "sha256": "2bede899566c3c2fe853ab4597bb4d97b866a68b620a7e5275900f7a7660c245",
+      "bytes": 2318
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/integration.txt",
+      "sha256": "1f032a72d47c4d86013b22f4806c19e6f3cdf9f69a226c4bc955bf97f592cfc8",
+      "bytes": 754
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/lint.txt",
+      "sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "bytes": 10
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/measured-coverage.txt",
+      "sha256": "ec1e33ccbb974057732688a270b57a4d0d138b466a1357be0ca375a01caeba01",
+      "bytes": 215
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/race.txt",
+      "sha256": "2e85f508adb927f54c3bd01183295b69bae8f8599bf250909d0ea0dc9801f625",
+      "bytes": 1010
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/red-dispatch-fence.txt",
+      "sha256": "81093eac7df2ed9d185af76cccf1fd78f9cce084ae3588c84af3b60fd5c4c1f8",
+      "bytes": 441
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/red-external-reclaim.txt",
+      "sha256": "623f6cd4aff9412f077e1d9cb09f30569d8c3bf4fec26378b33d52fc9ae27de2",
+      "bytes": 228
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/red-late-receipt.txt",
+      "sha256": "62b1d11e54e68e0f528bdd4f81be9b1e4a23ef99476dd9a73621af15a1e27b1c",
+      "bytes": 224
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/red-pg.txt",
+      "sha256": "f6e003e5fad23fea4565d297f4023c45e561c1842a948cd240796a73973e0285",
+      "bytes": 637
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/red-settlement.txt",
+      "sha256": "bfc6ce7fcdf62766874262bbf7682f7638eafc0db5768a1d58ba716923f6ce7a",
+      "bytes": 310
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/red-unit.txt",
+      "sha256": "8e7880bdd043465d59cacce9553dbe42ee2a06c3a92a3e1ba4b63a7a1a737c49",
+      "bytes": 869
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/targeted-race.txt",
+      "sha256": "fcabe71372700fcb8030cd7a7eefc733f0f1149704b0b6e5da91ba5e17b5b282",
+      "bytes": 341
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/transcripts/unit.txt",
+      "sha256": "4a32e3e54c1f7705e101816ab609f866f9a0bd1225a7a112a021343f51ae270e",
+      "bytes": 753
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/analysis.md",
+      "sha256": "815f34423f03ba86518bd7df67c1543b2bc0ae80c3bfd7bb9a7f5bd9a3f24fad",
+      "bytes": 4606
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/verify.ps1",
+      "sha256": "0163d4008b68cf63588011a53871de209e1cc029670ad61470f9bada9d722a26",
+      "bytes": 1789
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/verification.json",
+      "sha256": "9e90685a1bed707cf90ae168731a0b0802aa8986d202a01690e408eee5be9c2e",
+      "bytes": 1243
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/profile.cover",
+      "sha256": "9009e02e66f53f9fd0abc2b3fd2d6816a6a37459a481665ba0533c2309606f2c",
+      "bytes": 37615
+    },
+    {
+      "path": "plans/reports/phase-0.4-scheduler/.gitattributes",
+      "sha256": "bcb6cbcd1eec183534d81fb6e00d0f8a2ea1041940b09cb64e49024add9580ff",
+      "bytes": 93
+    }
+  ]
+}

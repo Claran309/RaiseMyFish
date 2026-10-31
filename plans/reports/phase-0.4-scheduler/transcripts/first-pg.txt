@@ -1,0 +1,6 @@
+=== RUN   TestSchedulerAdmissionQuotaAtomicAndRestart
+--- PASS: TestSchedulerAdmissionQuotaAtomicAndRestart (0.65s)
+=== RUN   TestSchedulerEarlierEventAndLeaseFencing
+--- PASS: TestSchedulerEarlierEventAndLeaseFencing (0.34s)
+PASS
+ok  	RaiseMyFish/internal/database	1.242s

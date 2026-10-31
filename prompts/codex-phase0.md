@@ -10,9 +10,8 @@
 ## 通用要求（每次带上）
 
 - 先读：`plans/assignment.md` → `AGENTS.md` → 对应契约 → `plans/phase-0.md`
-- 遵守文件所有权表：你负责 `go.mod`、`cmd/`、`internal/{event,store,database,config,infra,scheduler,brain}`
-- 不要碰：`internal/collector`、`internal/sender`、`internal/persona`、`personas/`
-- 不直接改 `contracts/` 与 `plans/`（需要改就告诉主人，由本鱼执行）
+- 负责核心逻辑、接口、依赖和统一装配；跨旧模块所有权的核心子任务先由 DSH 登记具体路径并确认原写入者暂停。
+- 不覆盖 WorkBuddy 正在写的获派文件；接口/契约由 Codex 裁决，DSH 同步文档和计划，Codex 获授权时可直接修订技术文档。
 - 技术争议你自己裁决；遇到账号/环境问题告诉主人
 - 完成后按 docs/testing.md 自测并写 plans/reports/codex.md；DSH 对快照独立验收后，由 Codex 统一集成提交/push。
 
@@ -43,7 +42,7 @@
 
 验收：
 - go build ./... 通过
-- fishd 能启动并打印有效配置后退出（或常驻）
+- fishd 能启动并输出脱敏健康/配置摘要后退出（或常驻），不打印完整配置或凭据
 - 迁移能在空 PG 库执行（如果本机 PG 未就绪，写清如何验证）
 - go vet 通过
 

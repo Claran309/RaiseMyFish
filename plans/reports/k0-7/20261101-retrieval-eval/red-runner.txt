@@ -1,0 +1,4 @@
+# RaiseMyFish/internal/knowledgeeval [RaiseMyFish/internal/knowledgeeval.test]
+internal\knowledgeeval\eval_test.go:32:12: undefined: RunOffline
+FAIL	RaiseMyFish/internal/knowledgeeval [build failed]
+FAIL

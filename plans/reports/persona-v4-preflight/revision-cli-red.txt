@@ -1,0 +1,5 @@
+--- FAIL: TestRescoreCLIRevisionNeedsPinnedHash (0.00s)
+    persona_rescore_revision_test.go:21: 离线重评参数无效
+FAIL
+FAIL	RaiseMyFish/cmd/fishctl	0.384s
+FAIL

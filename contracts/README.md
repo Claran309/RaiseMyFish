@@ -20,6 +20,7 @@
 | [brain.md](brain.md) | 大脑接口 | P0 核心 |
 | [persona.md](persona.md) | Persona Pack静态数据、加载与场景映射（P0-PACK-1） | 0.7b、0.6 |
 | [memory.md](memory.md) | Memory最小上下文、Scope与读取边界（P0-MEMORY-1） | 0.6、0.9 |
+| [knowledge.md](knowledge.md) | 知识上下文、Scope隔离、文件召回与版本（P05-KNOWLEDGE-1） | P0.5 K0 |
 
 ## 变更流程
 

@@ -60,6 +60,7 @@ func buildBrains(ctx context.Context, cfg config.Config, usage store.UsageRepo, 
 		o.Backoff = time.Duration(cfg.LLM.BackoffMS) * time.Millisecond
 		o.MaxConcurrent = cfg.LLM.MaxConcurrent
 		o.Temperature = cfg.LLM.Temperature
+		o.KnowledgeBudgetPercent = cfg.Knowledge.BudgetPercent
 		if price, ok := p.Prices[model]; ok {
 			o.InputUSDPerMillion = price.InputUSDPerMillion
 			o.OutputUSDPerMillion = price.OutputUSDPerMillion

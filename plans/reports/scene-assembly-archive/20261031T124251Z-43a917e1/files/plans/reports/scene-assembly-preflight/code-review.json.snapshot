@@ -1,0 +1,14 @@
+{
+  "reviewer": "Codex内部只读子审查scene_review，非DSH独立验收",
+  "base_commit": "008beb6",
+  "critical": 0,
+  "important": 0,
+  "checked": ["P0-BRAIN-2范围", "场景可信来源及JSON转义", "system稳定", "预算与输入不变", "既有Scope/取消/重试/记账回归"],
+  "commands": ["go test ./internal/brain -count=1", "go vet ./internal/brain"],
+  "command_results": "通过",
+  "minor_suggestion": "预算测试直接断言事件及固定指令完整；已补充断言并验证通过",
+  "model_calls": 0,
+  "database_calls": 0,
+  "credentials_read": false,
+  "files_modified": false
+}

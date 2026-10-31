@@ -1,0 +1,51 @@
+# 路径相对启动工作目录。敏感值只写环境变量名。
+[db]
+dsn_env = "FISH_DB_DSN"
+timeout_seconds = 5
+
+[log]
+level = "info"
+dir = "logs"
+
+[runtime]
+state_file = "data/fishd-status.json"
+heartbeat_seconds = 5
+stale_seconds = 20
+
+# 0.1只有基础设施，未实现通道不得启用。
+[channels.live]
+enabled = false
+[channels.comment]
+enabled = false
+[channels.dm]
+enabled = false
+[channels.qq]
+enabled = false
+
+# 只装配Brain与无调用诊断；通道仍必须关闭。
+[llm]
+enabled = false
+persona_dir = "personas/dafeiyu"
+max_prompt_tokens = 8192
+max_reply_tokens = 128
+attempt_timeout_ms = 10000
+total_timeout_ms = 40000
+backoff_ms = 250
+max_concurrent = 4
+temperature = 0.7
+
+[llm.providers.deepseek]
+type = "openai"
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "FISH_LLM_KEY"
+models = ["deepseek-chat"]
+
+[llm.routing]
+default = "deepseek:deepseek-chat"
+live = "deepseek:deepseek-chat"
+
+# 报价可省略（费用存NULL）；如配置需同时给两项，按具体model定价。
+# 下面0仅演示明确免费场景，不是DeepSeek报价；不确定真实价格就保留注释。
+# [llm.providers.deepseek.prices.deepseek-chat]
+# input_usd_per_million = 0.0
+# output_usd_per_million = 0.0

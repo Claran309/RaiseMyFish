@@ -2,6 +2,19 @@
 
 > 出问题时按这里排查。先看 `fishctl status`，再看日志。
 
+## 装配诊断（不调用模型）
+
+```powershell
+go run ./cmd/fishd check
+go run ./cmd/fishd --config config.local.knowledge-diagnostic.toml check
+```
+
+`check`会连接PG确认ready，并按配置装配Brain/知识Reader；不调用Brain.Reply、不写LLM用量、不拿服务单例锁、不写运行状态。默认`[knowledge].enabled=false`；需要本地检查时另建被忽略的config.local.*配置启用，默认文件不要打开。
+
+知识启用后输出`assembled`、Revision、条数与budget_percent（0–10）；加载失败明确报错，空库加载成功与缺/坏目录不是同一状态。`provider_called=false`、`pipeline_connected=false`表示只有装配/诊断，没有宣称事件worker已消费知识。Reader加载成功也不保证每个实际事件都能在总预算内生成，仍须K0-5逐请求预算。
+
+离线检索开发验证入口为`go run ./cmd/knowledgeeval --output <不存在的新目录>`，不会加载.env或真实模型。现有100条首轮结果相关率82.14%，但正例43/60低于48/60，质量门禁尚未通过；不要据此启用真实模型对照或扩量。旧输出目录不可覆盖。
+
 ## 1. 服务起不来
 
 | 检查 | 命令/动作 |

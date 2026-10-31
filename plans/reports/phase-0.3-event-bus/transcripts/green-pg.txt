@@ -1,0 +1,28 @@
+=== RUN   TestQueueClaimDeferFencingAndFilter
+--- PASS: TestQueueClaimDeferFencingAndFilter (0.47s)
+=== RUN   TestQueueConcurrentClaimSkipLockedAndOrder
+--- PASS: TestQueueConcurrentClaimSkipLockedAndOrder (0.49s)
+=== RUN   TestQueueTaskAtomicAndRecoveryStages
+--- PASS: TestQueueTaskAtomicAndRecoveryStages (0.38s)
+=== RUN   TestMigrationV1UpgradeEventLeases
+--- PASS: TestMigrationV1UpgradeEventLeases (0.35s)
+=== RUN   TestQueueTaskFailureRollsBackAndFences
+--- PASS: TestQueueTaskFailureRollsBackAndFences (1.05s)
+=== RUN   TestQueueRecoverBoundedKeepsStateClock
+--- PASS: TestQueueRecoverBoundedKeepsStateClock (0.31s)
+=== RUN   TestMigrationV2RollbackAndChecksum
+--- PASS: TestMigrationV2RollbackAndChecksum (0.41s)
+=== RUN   TestQueueInvalidCanceledAndClosedErrors
+=== RUN   TestQueueInvalidCanceledAndClosedErrors/claim
+=== RUN   TestQueueInvalidCanceledAndClosedErrors/mark
+=== RUN   TestQueueInvalidCanceledAndClosedErrors/defer
+=== RUN   TestQueueInvalidCanceledAndClosedErrors/renew
+=== RUN   TestQueueInvalidCanceledAndClosedErrors/recover
+--- PASS: TestQueueInvalidCanceledAndClosedErrors (0.29s)
+    --- PASS: TestQueueInvalidCanceledAndClosedErrors/claim (0.00s)
+    --- PASS: TestQueueInvalidCanceledAndClosedErrors/mark (0.00s)
+    --- PASS: TestQueueInvalidCanceledAndClosedErrors/defer (0.00s)
+    --- PASS: TestQueueInvalidCanceledAndClosedErrors/renew (0.00s)
+    --- PASS: TestQueueInvalidCanceledAndClosedErrors/recover (0.00s)
+PASS
+ok  	RaiseMyFish/internal/database	3.978s

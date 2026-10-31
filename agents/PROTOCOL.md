@@ -1,7 +1,12 @@
 # Agent 协作协议（免复制粘贴）
 
+> **COMM-002 · Codex 裁决（2026-10-31）**：本文件下方 INBOX/OUTBOX 流程与 status 看板仅作历史参考，不再执行或维护；不向其他 Agent 的文件写 INBOX。唯一状态入口为 `plans/coordination.md`，各人仅写 `plans/reports/<agent>.md`；DSH 负责验收、派发和会话转达。`agents/` 仅保留兼容导航，后续由 DSH 将其余文件改为导航页，不删除历史。共享文件不会自动唤醒会话，不保证即时送达。
+
+> ⚠️ **以 `plans/coordination.md` 为准**（Codex 裁决）。本文件仅为 DSH 的辅助登记，
+> 权威通道是 `plans/coordination.md` 看板 + `plans/reports/<agent>.md` 报告。
+> **Git 规则**：只有 Codex 执行 Git 写操作（add/commit/pull/checkout/merge/push）；其他 agent 只写文件，不执行 git 命令。
 > 三个 agent 没有实时消息通道，所以用**项目内共享文件**当留言板。
-> 主人不需要在三个窗口之间复制粘贴，只需要各自说一句「按 agents/PROTOCOL.md 继续」。
+> 主人不需要在三个窗口之间复制粘贴，只需要各自说一句「读 coordination.md，看自己的报告」。
 
 ## 一、文件结构
 

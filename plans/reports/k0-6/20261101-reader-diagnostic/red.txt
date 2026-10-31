@@ -1,0 +1,18 @@
+# RaiseMyFish/internal/config [RaiseMyFish/internal/config.test]
+internal\config\knowledge_test.go:16:9: cfg.Knowledge undefined (type Config has no field or method Knowledge)
+internal\config\knowledge_test.go:29:12: cfg.Knowledge undefined (type Config has no field or method Knowledge)
+FAIL	RaiseMyFish/internal/config [build failed]
+# RaiseMyFish/cmd/fishd [RaiseMyFish/cmd/fishd.test]
+cmd\fishd\knowledge_test.go:16:16: undefined: config.Knowledge
+cmd\fishd\knowledge_test.go:17:12: undefined: buildKnowledge
+cmd\fishd\knowledge_test.go:25:12: undefined: printCheckDiagnostic
+cmd\fishd\knowledge_test.go:25:47: unknown field Knowledge in struct literal of type config.Config
+cmd\fishd\knowledge_test.go:30:18: undefined: knowledgeDiagnostic
+cmd\fishd\knowledge_test.go:50:12: undefined: buildKnowledge
+cmd\fishd\knowledge_test.go:64:16: undefined: config.Knowledge
+cmd\fishd\knowledge_test.go:65:12: undefined: buildKnowledge
+cmd\fishd\knowledge_test.go:70:15: undefined: buildKnowledge
+cmd\fishd\knowledge_test.go:76:15: undefined: buildKnowledge
+cmd\fishd\knowledge_test.go:76:15: too many errors
+FAIL	RaiseMyFish/cmd/fishd [build failed]
+FAIL

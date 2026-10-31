@@ -37,6 +37,9 @@ func New(p provider.Provider, usage store.UsageRepo, o Options, logger *zap.Logg
 	if (o.InputUSDPerMillion == nil) != (o.OutputUSDPerMillion == nil) {
 		return nil, &Error{Kind: KindInput}
 	}
+	if o.KnowledgeBudgetPercent < 0 || o.KnowledgeBudgetPercent > 10 {
+		return nil, &Error{Kind: KindInput}
+	}
 	for _, price := range []*float64{o.InputUSDPerMillion, o.OutputUSDPerMillion} {
 		if price != nil && (math.IsNaN(*price) || math.IsInf(*price, 0) || *price < 0) {
 			return nil, &Error{Kind: KindInput}
@@ -70,13 +73,14 @@ func cost(u provider.Usage, o Options) *float64 {
 }
 
 type replyMeta struct {
-	Provider     string   `json:"provider"`
-	Model        string   `json:"model"`
-	InputTokens  *int     `json:"in_tokens"`
-	OutputTokens *int     `json:"out_tokens"`
-	CostUSD      *float64 `json:"cost_usd"`
-	Milliseconds int      `json:"ms"`
-	Attempts     int      `json:"attempts"`
+	Provider     string                `json:"provider"`
+	Model        string                `json:"model"`
+	InputTokens  *int                  `json:"in_tokens"`
+	OutputTokens *int                  `json:"out_tokens"`
+	CostUSD      *float64              `json:"cost_usd"`
+	Milliseconds int                   `json:"ms"`
+	Attempts     int                   `json:"attempts"`
+	Knowledge    *knowledgeBudgetAudit `json:"knowledge,omitempty"`
 }
 
 func addCount(total **int, value *int) {
@@ -113,12 +117,13 @@ func (b *OpenAI) Reply(ctx context.Context, task Task, in ContextInput) (Reply, 
 	if err := validateInput(task, in); err != nil {
 		return Reply{}, err
 	}
-	messages, err := buildMessages(totalCtx, in, b.options.MaxPromptTokens)
+	plan, err := buildPrompt(totalCtx, in, b.options.MaxPromptTokens, b.options.KnowledgeBudgetPercent)
 	if err != nil {
 		return Reply{}, err
 	}
+	messages := plan.Messages
 	zeroIn, zeroOut, zeroCost := 0, 0, 0.
-	meta := replyMeta{Provider: b.provider.Name(), Model: b.options.Model, InputTokens: &zeroIn, OutputTokens: &zeroOut, CostUSD: &zeroCost}
+	meta := replyMeta{Provider: b.provider.Name(), Model: b.options.Model, InputTokens: &zeroIn, OutputTokens: &zeroOut, CostUSD: &zeroCost, Knowledge: plan.Knowledge}
 	emptyRetries := 0
 	for attempt := 1; attempt <= 3; attempt++ {
 		if err := pendingError(totalCtx); err != nil {

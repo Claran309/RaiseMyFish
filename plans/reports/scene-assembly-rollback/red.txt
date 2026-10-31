@@ -1,0 +1,18 @@
+--- FAIL: TestBaselineSceneAssemblyAndShortInstruction (0.00s)
+    --- FAIL: TestBaselineSceneAssemblyAndShortInstruction/live (0.00s)
+        context_test.go:62: 可信场景未准确选择或正文被修改
+    --- FAIL: TestBaselineSceneAssemblyAndShortInstruction/comment (0.00s)
+        context_test.go:62: 可信场景未准确选择或正文被修改
+    --- FAIL: TestBaselineSceneAssemblyAndShortInstruction/dm (0.00s)
+        context_test.go:62: 可信场景未准确选择或正文被修改
+    --- FAIL: TestBaselineSceneAssemblyAndShortInstruction/qq_private (0.00s)
+        context_test.go:62: 可信场景未准确选择或正文被修改
+    --- FAIL: TestBaselineSceneAssemblyAndShortInstruction/qq_group (0.00s)
+        context_test.go:62: 可信场景未准确选择或正文被修改
+--- FAIL: TestBaselineSceneAssemblyDataCannotForgeInstructionSections (0.00s)
+    context_test.go:98: 不可信资料或Meta覆盖了场景指令
+--- FAIL: TestBaselineSceneAssemblyBudgetRetainsInstructionAndInput (0.06s)
+    context_test.go:121: 预算未保留完整场景/身份或仍然超限
+FAIL
+FAIL	RaiseMyFish/internal/brain	1.480s
+FAIL

@@ -1,0 +1,29 @@
+{
+  "contract": "P0-BRAIN-2",
+  "recorded_at": "2026-10-31T12:39:14.988803+00:00",
+  "source_implementation_still_at": "008beb6",
+  "production_code_changed": false,
+  "actual_model_calls": 0,
+  "files": [
+    {
+      "path": "contracts/brain.md",
+      "sha256": "fbb723bd162aa80f6211574d8d4b01637ccc212910880a7cc2bed4bb44442d82"
+    },
+    {
+      "path": "contracts/persona.md",
+      "sha256": "218107f506e5f8cc8698c452652e745ddb0a2e27dbf920572853b70830e4b41b"
+    },
+    {
+      "path": "docs/08-persona.md",
+      "sha256": "6767e2b547548729e9ceafe8c671bb60a2a9f8211b7d9449c53f492fbb8e7285"
+    },
+    {
+      "path": "plans/reports/persona-intent-audit/20261031-a0/audit.json",
+      "sha256": "249bb6f9d5aaf4a1b4c901cac5fcb89947a2e256c28add837f35ada9d07cbf54"
+    },
+    {
+      "path": "plans/reports/persona-intent-audit/20261031-a0/audit.md",
+      "sha256": "3ad466895e289b5bd16f5f4a36f272bbc33bb69dcf250cbab89ed2eae52f0930"
+    }
+  ]
+}

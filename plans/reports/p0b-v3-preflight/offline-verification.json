@@ -1,0 +1,66 @@
+{
+  "kind": "independent_offline_rules_recompute",
+  "actual_model_calls": 0,
+  "old_evidence_unchanged": 61,
+  "rules_sha256": {
+    "v1": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4",
+    "v2": "4e8264b1b07d0d98deb849d1a1f1badbfa99a12e53b845538ec20db4cb9ad854",
+    "v3": "1866000b5a82498ef2caa45774fd91559647252a8258b2fd5bc08c1964af0bfd"
+  },
+  "score_matrix": [
+    {
+      "run_id": "20261031T105248Z-501d0282",
+      "v1": {
+        "raw": 15,
+        "delivered": 15,
+        "total": 35
+      },
+      "v2": {
+        "raw": 17,
+        "delivered": 17,
+        "total": 35
+      },
+      "v3": {
+        "raw": 23,
+        "delivered": 23,
+        "total": 35
+      }
+    },
+    {
+      "run_id": "20261031T121041Z-bcd11c0e",
+      "v1": {
+        "raw": 19,
+        "delivered": 19,
+        "total": 35
+      },
+      "v2": {
+        "raw": 20,
+        "delivered": 20,
+        "total": 35
+      },
+      "v3": {
+        "raw": 30,
+        "delivered": 30,
+        "total": 35
+      }
+    },
+    {
+      "run_id": "20261031T124251Z-43a917e1",
+      "v1": {
+        "raw": 12,
+        "delivered": 12,
+        "total": 35
+      },
+      "v2": {
+        "raw": 13,
+        "delivered": 13,
+        "total": 35
+      },
+      "v3": {
+        "raw": 26,
+        "delivered": 26,
+        "total": 35
+      }
+    }
+  ]
+}

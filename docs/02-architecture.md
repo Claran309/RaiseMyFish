@@ -126,3 +126,12 @@ cmd/fishd
 | `meme-ctx.mjs` / 梗库 | subprocess 调用，作为 brain 的工具 |
 | 人设 md | 迁移为 persona 包 |
 | `shared/memory.mjs` 的事件模型 | 参考，正式版落 PG |
+
+## 9. 与 Super-agent 的关系（2026-10-31 主人要求对照）
+
+- **目标形态**：养鱼是 super-agent 的**单主体实例**——一个「肥鱼」通过多通道连续交互、并行处理多项任务、持续在线。
+- **当前形态**：事件驱动的单会话多通道 Agent（Collector → Event Bus → Scheduler → Brain → Sender），每事件独立处理，无全局编排层。
+- **四特征现状**：连续 ✅、持久 ✅、高效 ⏳、主动 ⏳（评论巡逻 P1）。
+- **缺口与阶段**：全局上下文（Presence，P0.6）、Thread 归组（P1）、引用链召回（P2）、Watchdog（P0.10 雏形/P4 加强）、异步工具（P6.5）、Router/Worker 双层（P6.5，规模够再拆）。
+- **原则**：按项目节奏演进，不因文章一次性堆架构；详细对照见 [plans/superagent-alignment.md](../plans/superagent-alignment.md)。
+- 参考：[DeepSeek Super-agent 设计探索](https://m.ithome.com/html/1020615.htm)（外部资料，仅作参考）。

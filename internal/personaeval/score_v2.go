@@ -7,6 +7,15 @@ import (
 
 // NewScorerVersion 保留v1精确快照，v2仅改两项已获主人批准的缺陷。
 func NewScorerVersion(version string) (*Scorer, error) {
+	if version == "persona-lexical-v5" {
+		return newScorerV5()
+	}
+	if version == "persona-lexical-v4" {
+		return newScorerV4()
+	}
+	if version == "persona-lexical-v3" {
+		return newScorerV3()
+	}
 	base, err := NewScorer()
 	if err != nil {
 		return nil, err

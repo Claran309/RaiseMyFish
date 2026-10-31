@@ -1,0 +1,15 @@
+{
+  "commands_passed": [
+    "go test ./... -count=1",
+    "go test -tags=integration ./... -count=1",
+    "go vet ./...",
+    "go build ./...",
+    "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run (0 issues)",
+    "WSL CGO_ENABLED=1 go test -race ./... -count=1",
+    "TestCandidateFullPersonaBudget (35 cases, 0 real calls)"
+  ],
+  "internal_spec_review": "通过，缺口已RED/GREEN闭环",
+  "internal_quality_review": "通过，Critical0/Important0",
+  "dsh_acceptance": "pending",
+  "model_batch": "only one B batch, 35 attempts; H not read/run"
+}

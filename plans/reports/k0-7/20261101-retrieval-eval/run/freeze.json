@@ -1,0 +1,126 @@
+{
+  "frozen_at": "2026-10-31T17:14:33.8342054Z",
+  "cases_sha256": "c1111d04da4bd27ff2843f5dbb9373f5238db65a12d68645c7e9761b3b1551a1",
+  "acl_fixture_sha256": "1153fec3708f0d0b4e4412c4eb86dfc0fa51cd69dd3fb3b634fc6c5a02b28f4e",
+  "order_fixture_sha256": "4f192a3e8e4dc30072a513304f27efcd2140ebe39a98481e26123f9a12e12b06",
+  "corpus": [
+    {
+      "path": "games.md",
+      "sha256": "647b1c098247517d8da46e5a6f88b57032d7128f7980e2f930ac370a2b64e636"
+    },
+    {
+      "path": "lore.md",
+      "sha256": "fd9e3671d0e0ebdb217a75b97d51e81860fe1c4c4ace6bcd216f24667b2b5a73"
+    },
+    {
+      "path": "memes.md",
+      "sha256": "2c9810991169978d8b189d2cf9f5405a119b096f7c6cf8ebcb2d8afbcbf49f1b"
+    },
+    {
+      "path": "viewers.md",
+      "sha256": "8e994f05b6b97a7077249227914b0d294ffc4132aecbb7abb82cc4b5f9f67aeb"
+    }
+  ],
+  "code": [
+    {
+      "path": "cmd/knowledgeeval/main.go",
+      "sha256": "cf09bc734aa20f04fe250da6a929272b7658f5ec0a944f692e28cb968d059e28"
+    },
+    {
+      "path": "internal/brain/brain.go",
+      "sha256": "7b143e2eae24ef5d4bac24dba0a03a03a919f93ef710214d917c291488228baf"
+    },
+    {
+      "path": "internal/brain/brain_test.go",
+      "sha256": "c2806d865d32485caf4ddf8e5196a88262e4fd5c7f723acebd7fd5119d72c43b"
+    },
+    {
+      "path": "internal/brain/context.go",
+      "sha256": "6ff01f28d3722e5eb306a7c2019e80be9821b561c6816a97ce2571ed8f28539b"
+    },
+    {
+      "path": "internal/brain/context_test.go",
+      "sha256": "cc97890763d92234fe13ae172da4ba1a4ead37d1a2a75a0abadf1990986eb905"
+    },
+    {
+      "path": "internal/brain/knowledge.go",
+      "sha256": "e73377431a786c2eaa28137129792b7481f7372fc33f7f8c567adfd7016b8deb"
+    },
+    {
+      "path": "internal/brain/knowledge_test.go",
+      "sha256": "6eb868738cb364cdcdc7f6960aba3dc74092f234cbb6327207c1f60fe643a420"
+    },
+    {
+      "path": "internal/brain/provider/openai.go",
+      "sha256": "416e1cf071e36de4645689b46615ea103f5d174c91c0d70cffa46b76560bab82"
+    },
+    {
+      "path": "internal/brain/provider/openai_test.go",
+      "sha256": "a34187e6b7a48572d5bae62137cdbbd906192e256709ecbe538ca743a9df22b0"
+    },
+    {
+      "path": "internal/brain/provider/types.go",
+      "sha256": "26a7e1994a3ec316114c1a27ecf1891130db5d32ee975baad6863186c3d1d3af"
+    },
+    {
+      "path": "internal/brain/types.go",
+      "sha256": "a6d72ae7556f1e2329f372f112df775115d8f7e3109631fb34c0157d732f8906"
+    },
+    {
+      "path": "internal/knowledge/corpus_test.go",
+      "sha256": "8a98e0e6f4183eaf4c51bdd1b209518ee917139bc02feb4e7afaf41f30711a64"
+    },
+    {
+      "path": "internal/knowledge/file.go",
+      "sha256": "2661abdaf03f2785984517b5085a87c6fa40822e1716da9aea0f2c720e477a77"
+    },
+    {
+      "path": "internal/knowledge/file_test.go",
+      "sha256": "ce017eae62dad7aa116f01773626f8917f3317da7f5dde7786e3b226e7aa2f66"
+    },
+    {
+      "path": "internal/knowledge/recall.go",
+      "sha256": "a4a665d82eb5d06577052d244b46ef15a19eb2ac323e3cd9f57223fa641ca4af"
+    },
+    {
+      "path": "internal/knowledge/recall_test.go",
+      "sha256": "ef7c9c6b988ceb800be66f9dec85f39e1c00d9facdbf7d3964a310f44bbba7cb"
+    },
+    {
+      "path": "internal/knowledge/snapshot.go",
+      "sha256": "b5fae26a144adb3f6660fd3b540eba99eb5e510a0517d15dd7274910ffae8e91"
+    },
+    {
+      "path": "internal/knowledge/types.go",
+      "sha256": "85faef13a44289c6210db2c97a0536e4902be51c3b965d2f63e6f95f2584e140"
+    },
+    {
+      "path": "internal/knowledge/validate.go",
+      "sha256": "77050d62fe43bc4f5e660a9c10089bc50e6f1765c24e50927922b1ea4161bd32"
+    },
+    {
+      "path": "internal/knowledge/validate_test.go",
+      "sha256": "8abefc7527940f1b5b223f7bceee5816f7a5c98dfc6d13dc9faa20abea81890f"
+    },
+    {
+      "path": "internal/knowledgeeval/budget.go",
+      "sha256": "fe0c8a655db2a10fd9762ae280b19995cad3eb6639cbdfc2aa9f7052a231aca0"
+    },
+    {
+      "path": "internal/knowledgeeval/eval.go",
+      "sha256": "705bddf648a1db7e3185fb46b7449d49f6b72bf8a283b267c0a6556a5425e0a6"
+    },
+    {
+      "path": "internal/knowledgeeval/eval_test.go",
+      "sha256": "dcc60a29a0e117e896b0d5f69d18f40f15290fcc97fbe82dc5199c829244178d"
+    },
+    {
+      "path": "internal/knowledgeeval/runner.go",
+      "sha256": "a2d9049b1b0cbcc290f38d1caaa4a5951c5e2689deac9af46cc0d391a3d94975"
+    }
+  ],
+  "production_revision": "3c6e9e32d543f2bd62004a2f37910d1a72d8ff539883f00a4988e153298c4c43",
+  "synthetic_revision": "6aff3275df0f9220115b9744f3eb4380a9e0baaa2157ebf0d9255020e2a94182",
+  "order_revision": "cb911d01b5fc0e5ce26dee76fe8e19a4b7d1b03ca7a397a517226c411668e60e",
+  "annotation": "开发助手按公开title/usage预先标注；非DSH独立标注。精确标题20、含标题自然句20、无目标标题语义场景20、alias0；不根据输出补标。私密/场景fixture全为合成数据，镜像与排序另计，不进入100条质量分母。"
+}

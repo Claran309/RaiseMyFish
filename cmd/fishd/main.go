@@ -43,8 +43,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	action := fs.Args()
 	migrate := len(action) == 2 && action[0] == "migrate" && action[1] == "up"
 	checkBrain := len(action) == 1 && action[0] == "check-brain"
-	if len(action) > 0 && !migrate && !checkBrain {
-		return errors.New("用法：fishd [--config 路径] [--env-file 路径] [migrate up|check-brain]；不支持破坏性回滚")
+	checkAll := len(action) == 1 && action[0] == "check"
+	if len(action) > 0 && !migrate && !checkBrain && !checkAll {
+		return errors.New("用法：fishd [--config 路径] [--env-file 路径] [migrate up|check|check-brain]；不支持破坏性回滚")
 	}
 	cfg, err := config.Load(*path, *envPath)
 	if err != nil {
@@ -75,7 +76,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	err = database.Ready(checkCtx, resources.DB)
-	if err == nil && !checkBrain {
+	if err == nil && !checkBrain && !checkAll {
 		err = resources.Acquire(checkCtx)
 	}
 	cancel()
@@ -90,10 +91,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
+	knowledgeRuntime, err := buildKnowledge(ctx, cfg.Knowledge)
+	if err != nil {
+		return err
+	}
+	if checkAll {
+		return printCheckDiagnostic(cfg, routes, knowledgeRuntime, stdout)
+	}
 	if checkBrain {
 		return printBrainDiagnostic(*brainRoute, routes, pack, stdout)
 	}
 	logger.Info("Brain装配检查完成，未消费事件", zap.String("action", "brain_setup"), zap.Int("routes", len(routes)))
+	logger.Info("知识装配检查完成，未接入事件消费", zap.String("action", "knowledge_setup"), zap.Bool("enabled", knowledgeRuntime.Diagnostic.Enabled), zap.Bool("assembled", knowledgeRuntime.Diagnostic.Assembled), zap.Int("entries", knowledgeRuntime.Diagnostic.Entries), zap.String("revision", knowledgeRuntime.Diagnostic.Revision))
 	check := func(parent context.Context) error {
 		probe, stop := context.WithTimeout(parent, timeout)
 		defer stop()

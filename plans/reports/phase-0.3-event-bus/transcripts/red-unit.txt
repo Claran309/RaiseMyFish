@@ -1,0 +1,11 @@
+FAIL	RaiseMyFish/internal/event/bus [build failed]
+FAIL
+# RaiseMyFish/internal/event/bus [RaiseMyFish/internal/event/bus.test]
+internal\event\bus\bus_test.go:13:30: undefined: store.QueueRepo
+internal\event\bus\bus_test.go:15:87: undefined: event.Claim
+internal\event\bus\bus_test.go:19:41: undefined: New
+internal\event\bus\bus_test.go:19:91: undefined: event.Bus
+internal\event\bus\bus_test.go:29:28: undefined: New
+internal\event\bus\bus_test.go:33:12: undefined: New
+internal\event\bus\bus_test.go:34:79: undefined: New
+internal\event\bus\bus_test.go:35:7: undefined: New

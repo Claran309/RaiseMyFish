@@ -1,0 +1,126 @@
+{
+  "checked_by": "Codex独立Python重算；非DSH验收",
+  "experiment": "scene-assembly-A",
+  "base_run_id": "20261031T121041Z-bcd11c0e",
+  "new_run_id": "20261031T124251Z-43a917e1",
+  "base_v2": {
+    "raw": 20,
+    "delivered": 20,
+    "total": 35,
+    "rules_sha256": "4e8264b1b07d0d98deb849d1a1f1badbfa99a12e53b845538ec20db4cb9ad854",
+    "failure_tags": {
+      "expect:接梗": 1,
+      "expect:拒绝": 3,
+      "forbid:喊主人": 3,
+      "expect:情绪": 5,
+      "expect:兜底": 2,
+      "expect:认身份": 1,
+      "expect:短句": 1
+    }
+  },
+  "new_v2": {
+    "raw": 13,
+    "delivered": 13,
+    "total": 35,
+    "rules_sha256": "4e8264b1b07d0d98deb849d1a1f1badbfa99a12e53b845538ec20db4cb9ad854",
+    "failure_tags": {
+      "expect:接梗": 1,
+      "expect:情绪": 10,
+      "expect:兜底": 2,
+      "expect:拒绝": 5,
+      "forbid:喊主人": 2,
+      "expect:问主人": 1,
+      "forbid:列表": 1,
+      "expect:认身份": 2
+    }
+  },
+  "base_v1_same_outputs": {
+    "raw": 19,
+    "delivered": 19,
+    "total": 35,
+    "rules_sha256": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4",
+    "failure_tags": {
+      "expect:接梗": 1,
+      "expect:拒绝": 3,
+      "forbid:喊主人": 3,
+      "expect:情绪": 5,
+      "expect:兜底": 2,
+      "expect:认身份": 1,
+      "expect:短句": 1,
+      "expect:护娇娇": 1
+    }
+  },
+  "new_v1_same_outputs": {
+    "raw": 12,
+    "delivered": 12,
+    "total": 35,
+    "rules_sha256": "09657d281d3b69f99840f152c744b1a6b2c4bd4b41bd65ec27178bef75718df4",
+    "failure_tags": {
+      "expect:接梗": 1,
+      "expect:情绪": 10,
+      "expect:兜底": 2,
+      "expect:拒绝": 5,
+      "forbid:喊主人": 2,
+      "expect:问主人": 1,
+      "forbid:列表": 1,
+      "expect:认身份": 2,
+      "expect:护娇娇": 1
+    }
+  },
+  "channel_comparison": {
+    "live": {
+      "total": 8,
+      "base_passed": 5,
+      "new_passed": 2
+    },
+    "comment": {
+      "total": 6,
+      "base_passed": 1,
+      "new_passed": 1
+    },
+    "dm": {
+      "total": 7,
+      "base_passed": 7,
+      "new_passed": 4
+    },
+    "qq_private": {
+      "total": 7,
+      "base_passed": 3,
+      "new_passed": 3
+    },
+    "qq_group": {
+      "total": 7,
+      "base_passed": 4,
+      "new_passed": 3
+    }
+  },
+  "case_transitions": {
+    "fail_to_fail": 11,
+    "pass_to_pass": 9,
+    "pass_to_fail": 11,
+    "fail_to_pass": 4
+  },
+  "generation_errors": 0,
+  "attempts": 35,
+  "ledger_acknowledgements": 35,
+  "requested_provider_model": "deepseek:deepseek-chat",
+  "served_models": [
+    "deepseek-flash"
+  ],
+  "new_run_only_input_tokens": 228571,
+  "new_run_only_output_tokens": 409,
+  "new_run_only_cost_usd": null,
+  "full_system_bytes": 21078,
+  "full_system_retained_cases": 35,
+  "user_scene_event_prompt_hashes_independently_reconstructed": 35,
+  "prompt_estimate_range": [
+    22139,
+    24926
+  ],
+  "runtime_code_changes": [
+    "internal/brain/context.go"
+  ],
+  "frozen_inputs_rules_configuration_code_match": true,
+  "complete": true,
+  "reached_90": false
+}

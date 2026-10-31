@@ -1,0 +1,21 @@
+{
+  "kind": "one safety sentence plus version metadata",
+  "previous_version": "v1",
+  "new_version": "v1.1",
+  "source_snapshots": "persona-before/",
+  "changes": [
+    {
+      "path": "personas/dafeiyu/rules.md",
+      "sha256": "2e7597587dee25ce15e7fa2546cea0eeec6a870917d7c77a17e75c4d449dd171",
+      "bytes": 6955
+    },
+    {
+      "path": "personas/dafeiyu/meta.yaml",
+      "sha256": "2476cef1f67ab7592602ce8c647aca530eeed19979ec5e5db2d30f13a6adbe02",
+      "bytes": 734
+    }
+  ],
+  "new_model_calls": 0,
+  "behavior_revalidated": false,
+  "candidate_v2_unchanged": true
+}
