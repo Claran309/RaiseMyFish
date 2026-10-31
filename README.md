@@ -52,6 +52,7 @@
 | `docs/reference-projects.md` | 三个既有 Go 项目的可借鉴点（lanmei-dream / ClaranAIM / ClaranCloudDisk） |
 | `contracts/` | 模块接口契约（event/collector/sender/brain） |
 | `plans/` | Phase 0–8 开发计划与任务清单 |
+| `plans/assignment.md` | **分工与文件所有权**（给开发 agent 读） |
 
 ## 目标目录结构（实现期）
 
