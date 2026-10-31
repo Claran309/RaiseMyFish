@@ -19,12 +19,14 @@
 ## 任务清单
 
 ### 0.1 仓库骨架与基础设施
-- [ ] Go module 初始化，目录结构按 `README.md`
-- [ ] 配置加载（TOML + 环境变量覆盖 + 校验）
-- [ ] 结构化日志（zap，JSON，落文件 + stderr）
-- [ ] `cmd/fishd` 入口：装配依赖、优雅退出
-- [ ] `cmd/fishctl` 入口：至少 `status` / `tail`
-- [ ] `migrations/0001_init.sql` 建表（events/tasks/memory_sources/memory_records/llm_usage/send_log/dlq）
+- [x] Go module 初始化，目录结构按 `README.md`
+- [x] 配置加载（TOML + 环境变量覆盖 + 校验）
+- [x] 结构化日志（zap，JSON，落文件 + stderr）
+- [x] `cmd/fishd` 入口：装配依赖、优雅退出
+- [x] `cmd/fishctl` 入口：至少 `status` / `tail`
+- [x] `migrations/0001_init.sql` 建表（events/tasks/memory_sources/memory_records/llm_usage/send_log/dlq）
+
+0.1结果：364dcb3已推送；DSH COMM-004确认manifest31/31及单测/真实PG/迁移/运行路径通过，Codex另有Linux race和lint证据。强杀后的即时存活检测留到0.11；当前默认20秒心跳判定不变。
 
 ### 0.2 store 层
 - [ ] repository 接口（EventRepo / TaskRepo / MemoryRepo / UsageRepo）
@@ -117,12 +119,15 @@
 - P0-G01（0.2/0.3/0.4 前，Codex 裁决）：`ClaimPending` 已把事件改为 queued，但调度文档仍要求 pending 上过滤/延期，且合法迁移无 queued→skipped；需统一抢占、过滤、retry_at 和任务原子创建的语义后再冻结接口。
 - P0-G02（0.2/0.3 前，Codex 裁决）：恢复要求重新领取 queued/retry，而 Bus 只有 ClaimPending；超时恢复也缺少明确的状态起始时间/持有权依据。需确定领取、超时字段与补偿阶段标识，不得仅按事件平台时间判断 worker 已失效。
 - P0-G03（0.5/0.8 前，Codex 设计，WorkBuddy 验证平台）：稳定平台消息 ID、失败 out 事件幂等键、发送回执/核验信息的持久化，以及「平台已收但本地尚未标 sent」的崩溃窗口仍未定义；只补 sent 超时规则不足以证明重启不重发。out 唯一写入责任按 coordination，memory 不重复写。
-- P0-G04（0.6/0.7/0.9 前，Codex 裁决）：明确 Persona/Memory 最小共享类型和加载/回归接口；0.7 拆素材、加载器、真实回归，0.6 不依赖完整回归。人格≥90%必须有目标模型实际输出，mock 仅测试执行器。
+- P0-G04（部分已裁决）：Persona静态Pack接口已冻结为contracts/persona.md的P0-PACK-1，0.7b已放行；Memory最小类型与回归执行接口仍须0.6/0.9前确认。0.6不等待完整回归，真实人格≥90%仍等0.6，mock仅测试执行器。
 - P0-G05（0.1 验收前，Codex 负责，DSH 验证）：CI 的 job 级 hashFiles 检查在 checkout 前执行，需核实表达式支持与空仓保护位置；lint action/latest 与现有配置版本需对齐；真实 PG 集成 job 仍被注释，功能验收前启用并实际执行。
 - P0-G06（0.11 前，Codex 拆任务、WorkBuddy 修脚本、DSH 验收）：dev.ps1 已修 PID 命名，但仍需创建日志目录、避免 go run 父子进程生命周期遗漏、落实优雅退出/重复启动检查；补充验证命令并记录未通过项。
+- P0-G07（0.11增强，Codex裁决，DSH复验）：0.1暂不追加单独PID存活校验，强杀后在线判断按默认20秒心跳时效；service.state是最后记录。0.11增强需同时考虑PID复用/进程创建身份与心跳/PG锁信息，设计方案另行明确，不能仅用os.FindProcess成功认定为同一实例。
 - 弹幕采集用子进程还是自写 WS：0.5 先验证子进程，不行再自写
 - 提炼 worker 的触发频率：先每 5 分钟扫一次
 
 ## 完成记录
 
 > 每完成一项，勾选并写一句结果。格式：`[x] 任务 — 结果（验证方式）`
+
+- [x] 0.1 — 已实现基础设施并推送364dcb3（DSH COMM-004独立验收；单测、真实PG、迁移幂等和运行检查）。

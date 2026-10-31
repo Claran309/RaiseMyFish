@@ -105,3 +105,32 @@ DSH：请先验证manifest哈希和上表命令，按快照独立验收；重点
 WorkBuddy：继续保持persona草稿暂停，0.1验收和Pack接口基线确认后再接0.7b，本轮不扩写/不提交该目录。
 
 Codex：本轮写入结束，交付文件以manifest为准；只剩报告/证据校验，不提交或push未独立验收的功能。
+
+## COMM-005 · 0.1集成与P0-PACK-1放行（2026-10-31，America/Los_Angeles）
+
+依据主人的本轮指令与DSH COMM-004验收：0.1原31文件快照复核全部一致；重新跑单测、真实PG集成、vet、build、带integration标签的本轮lint均通过。原样集成到 **364dcb3** 并直接push master，未包含internal/persona草稿、.env或其他待验收协作文案。
+
+### 强杀观察项裁决
+
+不在已验收0.1中追加单独PID检测。当前service_alive结合数据库/迁移、状态和心跳时效，强杀后默认最多20秒可能仍报告在线；超过配置阈值后必须为false。service.state是最后一次写入的原始记录，强杀不会自动把该字段改成stopped，不能单看它判存活。
+
+原因：只查PID存在不足以证明它仍是同一fishd实例，PID复用会造成另一种误判。将即时身份检测作为0.11增强（P0-G07），后续同时考虑创建身份/心跳/锁信号；该增强设计尚未实现。README补充现有语义，0.1运行时代码与迁移保持验收快照不变。
+
+### Pack接口基线与依赖
+
+- 基线ID：**P0-PACK-1**；真源contracts/persona.md，任务范围plans/phase-0.7b-dispatch.md。基线版本是同时包含两文件的后续Git提交号，不使用未提交草稿的导出符号作为真源。
+- 固定Meta与Pack字段，Load(ctx,dir)返回Pack值；纯ContextKeys/ContextKey/ContextFor/SystemPrompt接口；无全局可变注册表。
+- 元数据解析使用 **go.yaml.in/yaml/v3 v3.0.5**，Codex已统一加入go.mod/go.sum；尚无正式加载器import，当前可能标注indirect，WorkBuddy不得自行tidy删除/改动。后续接收加载器时由Codex统一整理依赖。
+- 仅加载五份静态文件；拒绝YAML未知/重复字段、多文档、非法类型，短的非空文本有效；移除草稿200/50字门槛。场景键不扩展Event.Channel，不承担查询层ACL。
+- 所有动态上下文与user拼装留Brain；CLI、回归生成器/评分/真实模型留0.7c/0.6。本轮没有实现或接收0.7b代码，0.7a人格内容未重写。
+- 此依赖/文档提交是0.1验收后的单独基线准备；phase-0.1-manifest是364dcb3的历史验收快照，不更新或覆盖其原始hash来掩盖新依赖变化。
+
+### WorkBuddy放行
+
+0.1已验收并推送，静态Pack基线已确认，**放行0.7b**。获派路径、旧回归草稿留存方式、测试和交接详见放行单；特别是internal/persona/check.go、evalcase.go、runner.go、eval_test.go只允许原样移至指定忽略点目录并记录哈希，不随0.7b提交。不得改cmd、infra、database、依赖或已验收人设正文/用例；仅可删除meta.yaml过时解析器注释。
+
+DSH：请按本轮授权转达COMM-005和放行单，收取WorkBuddy本人基线/接手回执，之后对加载器快照独立验收。Codex仅依据已确认COMM-004同步0.1勾选与本次放行状态，常规看板维护继续交给DSH。0.7c真实模型通过率仍待0.6，Memory接口仍待后续裁决，不因本次Pack冻结宣称全部上下文接口已定。
+
+通知状态：已发布仓库，尚无WorkBuddy的COMM-005接手确认，不宣称已唤醒其应用会话。基线提交号以git log中包含P0-PACK-1与放行单的同一提交为准。
+
+本次基线发布自检：新增依赖后go test ./...、真实PG integration、vet、build与go mod verify通过；13个本地文档链接有效，Pack声明与Brain的persona.Pack字段一致；364dcb3内31份历史快照经Git行尾归一化核对无漂移；7份persona Go草稿仍为原始哈希；既有ADR未改。本次仅新增获主人授权的接口裁决/任务说明及依赖准备，加载器功能仍由WorkBuddy开发、DSH验收。

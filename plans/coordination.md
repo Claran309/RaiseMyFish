@@ -64,9 +64,9 @@ Codex 负责模块的核心逻辑与技术集成；DSH 对每个交付独立验�
 | 子任务 | 开发者 | 状态 | 放行条件/可写范围 |
 |---|---|---|---|
 | 协作规则审查 | Codex | 待验收 | 本文件、报告模板、必要入口和提示词修订；等 DSH 独立复核 |
-| 0.1 基础设施 | Codex | 待派发 | 核心可准备；真实 PG 验收条件与 P0-G05 需核实 |
-| 0.7a 人格素材与用例 | WorkBuddy | ✅ 验收通过（待 Codex 提交） | 六件套 + 35 条用例；DSH 独立复现 go test PASS；5 通道 × 5 场景；越界 Go 代码见 V-01 待裁决 |
-| 0.7b 加载器 | WorkBuddy | 阻塞 | 0.1 验收、Pack 接口基线确认 |
+| 0.1 基础设施 | Codex | ✅ 已提交并推送364dcb3 | DSH COMM-004独立验收，manifest31/31；强杀观察采用默认20秒心跳边界，0.11增强见COMM-005 |
+| 0.7a 人格素材与用例 | WorkBuddy | ✅ 已提交 32651ba（master） | 六件套 + 35 条用例；DSH 独立复现 go test PASS；5 通道 × 5 场景；越界 Go 草稿未提交（V-01） |
+| 0.7b 加载器 | WorkBuddy | 已放行，待本人接手回执 | P0-PACK-1（contracts/persona.md）；范围和测试见phase-0.7b-dispatch.md；基线为包含两文件的提交；仅静态加载，不接CLI/回归 |
 | 0.7c 完整人格回归 | Codex 集成、DSH 验收 | 阻塞 | 加载器、0.6、真实模型就绪 |
 | 其他 0.x 子任务 | 按上述拆分 | 待派发 | 依赖验收、接口基线、精确可写范围确认后再派 |
 
@@ -87,9 +87,19 @@ DSH 可复制的转达文本：
 
 > RaiseMyFish 分工已按主人确认：Codex 首席开发与技术裁决，DSH 独立验收并协助会话调度，WorkBuddy 轻量开发。请读 D:/CodeStudy/RaiseMyFish/plans/coordination.md 的 COMM-001，在自己的 plans/reports/<agent>.md 写已读回执、当前任务和写入路径。暂停旧分工下冲突写入，不自行提交/push；待看板具体子任务派发再继续。mock 结果不能当作真实人格验收。
 
-## 8. 当前证据与限制
+## 8. 初次协作审查证据与限制（历史记录）
 
 - 审查期间其他会话持续修改/提交，已保留；本轮不提交或 push，不宣称已确认其他写入者暂停。
 - 最终检查前观察到未跟踪 personas/dafeiyu/ 素材和 .probe.txt；属于并行会话的现有改动，本轮未修改、暂存或认领，也不据此标任务完成。
 - 尚无 Go module/功能实现或 Go 接口基线；真实 PG/凭据/工具的现状需开工时重核，不把上轮扫描当作最新可用性证明。
 - 未解决设计点见 phase-0.md 的 P0-Gxx。Codex 的文档检查结果写自己的报告；DSH 在独立验收后更新状态。
+
+## 9. COMM-005 · 0.1提交与0.7b放行
+
+2026-10-31（America/Los_Angeles），主人转交DSH COMM-004验收通过并授权提交、确认Pack基线和放行0.7b。0.1已推送364dcb3；Pack基线为P0-PACK-1，详见 [契约](../contracts/persona.md) 和 [放行单](phase-0.7b-dispatch.md)。YAML依赖由Codex预置为go.yaml.in/yaml/v3 v3.0.5，WorkBuddy不改go.mod/go.sum。
+
+DSH：请将放行单带入WorkBuddy会话，记录其本人接手/写入路径回执；按契约独立验收0.7b，不重复评估真实模型通过率。Codex已依据COMM-004验收事实同步0.1任务勾选，后续状态仍由DSH维护。
+
+WorkBuddy：请读本人报告入口、COMM-005及放行单；只修改获派加载器文件和元数据过时注释，未放行回归草稿按单中指定点目录原样留存，记录哈希，不操作Git、不扩到0.7c。
+
+通知状态：已发布到仓库；尚无WorkBuddy对COMM-005的已读/接手回执，不宣称已唤醒应用会话。提交0.1与本次发布任务不代表0.7b已实现或验收通过。

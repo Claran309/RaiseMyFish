@@ -1,0 +1,97 @@
+# 契约 · Persona Pack（基线 P0-PACK-1）
+
+> 2026-10-31，Codex 技术裁决，主人授权确认基线并放行0.7b。
+> 仅定义P0静态人格数据与文件加载；与 brain.md 的 `ContextInput.Persona persona.Pack` 对齐。
+> 基线由包含本文件的Git提交定位；修改导出符号/错误/映射需先走契约变更流程。
+
+## 1. Go 数据类型与API
+
+```go
+package persona
+
+import "context"
+
+const (
+    ContextLive      = "live"
+    ContextComment   = "comment"
+    ContextDM        = "dm"
+    ContextQQPrivate = "qq_private"
+    ContextQQGroup   = "qq_group"
+)
+
+type Meta struct {
+    Name        string   `yaml:"name"`
+    DisplayName string   `yaml:"display_name"`
+    Version     string   `yaml:"version"`
+    Channels    []string `yaml:"channels"`
+    TTSVoice    string   `yaml:"tts_voice"`
+    Description string   `yaml:"description"`
+}
+
+type Pack struct {
+    Dir      string
+    Meta     Meta
+    Soul     string
+    Rules    string
+    Samples  string
+    Contexts map[string]string
+}
+
+func Load(ctx context.Context, dir string) (Pack, error)
+func ContextKeys() []string
+func ContextKey(channel string, private bool) (string, error)
+func (p Pack) ContextFor(channel string, private bool) (string, error)
+func (p Pack) SystemPrompt() string
+```
+
+I/O入口必须传Context；纯数据访问/组装函数无外部调用，不需要Context。这是对contracts/README通用约定的明确例外，与Brain.Name等纯访问方法一致。
+
+Pack是一次加载得到的快照，调用方将其视为只读；修改人格需重新Load并替换整个快照。包不提供全局可变Pack、map或slice注册表。ContextKeys每次返回新slice，顺序固定为上列五个常量；禁止把草稿KnownChannels全局slice作为正式API。
+
+## 2. 文件与校验
+
+- Load只读指定目录的 meta.yaml、soul.md、rules.md、samples.md、context.md；Dir返回清理后的绝对目录。不读取本机旧人设、.env、日志、账本或其他外部配置。
+- 文件须为常规UTF-8文本；允许一个UTF-8 BOM与CRLF，返回正文去BOM并统一LF，保留其他文本内容。单文件上限1MiB，这是防止误读大文件的I/O边界，不是最低篇幅要求。
+- soul/rules/samples及有效场景正文trim后非空即可；**不设200/50字等最小篇幅**。缺文件、空文件、无效UTF-8、超限、不支持的文件类型均返回错误和零值Pack，不返回半成品。
+- meta用 `go.yaml.in/yaml/v3` v3.0.5结构化解码（KnownFields），拒绝未知/重复字段、类型错误和多个YAML文档；支持正常YAML引号、行内或块状数组，不维护自写YAML子集。
+- Meta.Name与Version非空；既有version: v1有效，不额外强制SemVer。Channels至少一个、无重复、只允许五个场景键；DisplayName/TTSVoice/Description可选。TTSVoice只是元数据，不实现语音能力。
+- context.md以围栏代码块外的独立二级ASCII标题 `## <key>` 切分；头部说明不作为场景。场景键须属于五种允许值，重复标题、未知ASCII键、空段报错；声明Channels与有效段集合必须相等，允许只包含live的最小包。中文说明标题不成为新场景，已有场景中的段落/子标题原样保留。
+- 不读取/强制要求eval/cases.jsonl或baseline.md；回归文件属于0.7a/0.7c，加载器不能要求Brain或回归执行器就绪。
+- 开始及文件读取之间检查ctx取消/超时；取消错误保留errors.Is(context.Canceled/DeadlineExceeded)。包装I/O错误用%w；错误展示仅含阶段、文件名、字段名，不回显文件正文、完整prompt或敏感值。无失败重试、后台goroutine、文件监听或全局缓存。
+
+## 3. 场景键映射
+
+| 输入channel | private | 输出键 |
+|---|---|---|
+| live | 任意 | live |
+| comment | 任意 | comment |
+| dm | 任意 | dm |
+| qq | true | qq_private |
+| qq | false | qq_group |
+
+这里只选取人格口径，不作为公开/私密权限检查。事件Channel依然是live/comment/dm/qq，qq_private/qq_group不是事件通道。实际ACL与身份判断仍由repository/上层负责；保留非live口径数据不代表实现后续通道。
+
+未知channel返回错误；ContextFor找不到该包声明的场景返回错误，不默认回退live或私聊。已知非QQ通道不使用private参数选择另一个口径，兼容现有回归JSONL中只为QQ显式标注private的格式。
+
+## 4. 静态system边界
+
+SystemPrompt仅按以下方式连接三段，重复调用结果必须稳定：
+
+```text
+TrimSpace(Soul) + "\n\n" + TrimSpace(Rules) + "\n\n" + TrimSpace(Samples)
+```
+
+不添加动态状态、口径、当前消息、时间、记忆或额外标题。ContextFor只返回选中的静态场景正文；Brain在0.6自行按brain契约组织user的context/event/instructions并做预算裁剪。
+
+本基线不导出Assemble、Assembled、Generator、RunEvalCLI、评分标签注册表等回归/LLM接口，也不实现CLI、真实模型评测、热更新、版本切换或A/B执行。
+
+## 5. 0.7b 验收
+
+- 既有dafeiyu包与最小live包都能加载；不变更已接收人设正文/用例。
+- YAML引号、中文、行内/块状数组正确；未知/重复字段、类型错误、多文档明确拒绝。
+- 缺/空/损坏/超大文件、ctx取消、重复/未知/漏声明/空context段覆盖；错误不含正文。
+- 短的非空soul/rules/samples/context可加载，证明已去掉草稿最小字数门槛。
+- 五种场景映射正确；未知通道/缺失场景不回退；修改ContextKeys返回值不会污染下次结果。
+- SystemPrompt稳定、soul/rules/samples顺序正确，动态内容和场景不混入。
+- 对获派文件gofmt；go test ./...、go vet ./...、go build ./...及对应lint通过；Linux/可用编译器下race通过。数据层未变化，不要求为纯文件加载器新建PG测试，但不得破坏既有PG集成。
+- DSH对冻结快照独立验收；0.7c真实模型通过率仍等0.6，不能用baseline回放替代。

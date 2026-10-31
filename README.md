@@ -3,7 +3,7 @@
 > 一条 AI 肥鱼的多通道陪伴系统：看直播、回弹幕、回私信、回评论、上 QQ，
 > 有共享记忆、有人格一致性、能无人值守跑。
 >
-> **状态：Phase 0 实现中。0.7a 人格素材已接收；0.1 提供配置、日志、PG迁移和服务/运维入口，待 DSH 独立验收。业务通道尚未装配。**
+> **状态：Phase 0 实现中。0.7a 人格素材已接收；0.1 基础设施已通过DSH独立验收并提交（364dcb3）。Pack基线P0-PACK-1已确认，0.7b加载器已放行待接手。业务通道尚未装配。**
 
 ---
 
@@ -54,6 +54,7 @@
 | `plans/` | Phase 0–8 开发计划与任务清单 |
 | `plans/assignment.md` | **分工与文件所有权**（给开发 agent 读） |
 | `plans/coordination.md` | **协作裁决、任务看板、通知与验收交接入口** |
+| `contracts/persona.md` / `plans/phase-0.7b-dispatch.md` | **Pack接口基线与WorkBuddy加载器任务范围** |
 | `prompts/` | 给 Codex / WorkBuddy / DSH-flash 的开工提示词（主人复制粘贴用） |
 
 ## 目标目录结构（实现期）
@@ -109,6 +110,8 @@ go run ./cmd/fishctl tail
 ```
 
 `Ctrl+C` 优雅停止；status 只有 PG/迁移及服务心跳均正常时返回0，未启动/停止/过期返回非零。tail 从当日日志开头读取并跟随追加，跨日自动换文件，Ctrl+C退出。
+
+强杀不会刷新状态文件；当前0.1按心跳时效判断，默认最多20秒可能仍报告在线，过期后 `service_alive=false`。`service.state` 是最后一次记录，可能仍为running，不能单独用它判断存活。即时实例身份校验作为0.11增强项，单查PID不能防止PID复用，本次不改变已验收0.1代码。
 
 默认配置是 `config/fishd.toml`，通道全部关闭；可在命令前传 `--config 路径 --env-file 路径`。进程环境变量覆盖本地 dotenv，随后才是 TOML 和默认值；`FISH_LOG_LEVEL`、`FISH_LOG_DIR`、`FISH_STATE_FILE` 可覆盖日志与状态位置。加载不会修改全局环境。
 

@@ -18,6 +18,7 @@
 | [collector.md](collector.md) | 采集器接口 | 通道实现 |
 | [sender.md](sender.md) | 发送器接口 | 通道实现 |
 | [brain.md](brain.md) | 大脑接口 | P0 核心 |
+| [persona.md](persona.md) | Persona Pack静态数据、加载与场景映射（P0-PACK-1） | 0.7b、0.6 |
 
 ## 变更流程
 

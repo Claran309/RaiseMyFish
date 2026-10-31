@@ -4,6 +4,8 @@
 
 ## 1. 人格包（Persona Pack）
 
+0.7b的正式Go接口、YAML校验、错误与场景映射以 [P0-PACK-1 契约](../contracts/persona.md) 为准；旧Go草稿不构成接口基线。实际派发范围见 [0.7b放行单](../plans/phase-0.7b-dispatch.md)。
+
 人格是**可热更新的数据包**，不是代码里的字符串：
 
 ```
