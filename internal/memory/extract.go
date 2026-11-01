@@ -56,10 +56,19 @@ const (
 	maxExtractRunes = 4000
 )
 
-// promiseMarkers 是「承诺」规则的触发词。
+// promiseMarkers 是「承诺」规则里可以独立成立的关键词。
 //
-// 按派发单原样取四个，不做同义词扩展——扩词属于规则调参，需要另外裁决。
-var promiseMarkers = []string{"我答应", "我保证", "一定", "包在我身上"}
+// 0.9b 起把「一定」从这里拆出去单独处理：它是副词，单独匹配会误判。
+var promiseMarkers = []string{"我答应", "我保证", "包在我身上"}
+
+// promiseDingYiVerbs 是「一定」后面必须跟的动词白名单（0.9b 收紧）。
+//
+// 为什么不能直接匹配「一定」：「今天一定很热」「一定是这样」「他一定会来的」都是副词用法，
+// 判成 0.9 重要度的承诺会污染记忆库。这里用**闭合白名单**，宁可漏判也不误判；
+// 需要扩词就往列表里加一条，不做词性猜测、不加正则通配。
+var promiseDingYiVerbs = []string{
+	"一定帮", "一定给", "一定做到", "一定带", "一定发",
+}
 
 // ownerKeyword 是「主人相关」规则的文本触发词。
 const ownerKeyword = "主人"
@@ -80,35 +89,37 @@ type Candidate struct {
 
 // ExtractOptions 是提炼所需的调用方上下文。
 //
-// 这里刻意不放「是否允许提炼私密事件」的开关：派发单只给了两个字段，
-// 隐私授权属于需要裁决的设计项，不能由实现自行发明。
+// 隐私授权用 AllowPrivate 显式表达，**默认拒绝**：不传就是 false，
+// 私密事件一律不提炼（fail-closed）。要提炼私密会话，必须由知道的调用方主动置 true。
 type ExtractOptions struct {
 	// OwnerName 主人的昵称；FromName 与之相等时判为主人相关。为空表示不按昵称判定。
 	OwnerName string
 	// IsFirstNick 由调用方判定：该昵称是否在本 session 首次出现。
 	IsFirstNick bool
+	// AllowPrivate 为 true 时才允许提炼 Private 事件（0.9b 起）。
+	AllowPrivate bool
 }
 
 // Extract 按规则从一条事件提炼候选，返回顺序固定为规则优先级：
 // 承诺 → 主人相关 → 首次出现。
 //
 // 规则（只做这四条）：
-//  1. 承诺：文本含「我答应 / 我保证 / 一定 / 包在我身上」→ promise，Importance 0.9；
+//  1. 承诺：文本含「我答应 / 我保证 / 包在我身上」，或含「一定 + 动词」白名单
+//     （一定帮 / 一定给 / 一定做到 / 一定带 / 一定发）→ promise，Importance 0.9；
 //  2. 主人相关：文本含「主人」，或 FromName 等于 OwnerName → preference，Importance 0.8；
 //  3. 首次出现：IsFirstNick 为真且 FromName 非空 → first_seen，Importance 0.4；
 //  4. 默认：四条都不匹配则不提炼，返回空。
 //
 // 过滤（任一命中即返回空）：
-//   - 私密事件（Private=true）：当前 API 没有授权字段，按「调用方未授权」处理，fail-closed；
+//   - 私密事件（Private=true）且调用方未 AllowPrivate 授权；
 //   - 文本 trim 后为空；
 //   - 文本只有符号/标点/emoji，没有任何字母或数字；
 //   - 文本超过 4000 字（按 rune 计）。
 //
 // 多条规则同时命中时返回多条候选，不回退、不合并——合并属于 worker 的去重策略。
 func Extract(ev Event, opts ExtractOptions) []Candidate {
-	// 私密事件 fail-closed：没有显式授权就不能提炼。
-	// 若 0.9b 要提炼私密会话的主人偏好，须先补一个显式授权字段并另行裁决。
-	if ev.Private {
+	// 私密事件 fail-closed：只有调用方显式 AllowPrivate 才提炼。
+	if ev.Private && !opts.AllowPrivate {
 		return nil
 	}
 
@@ -126,7 +137,7 @@ func Extract(ev Event, opts ExtractOptions) []Candidate {
 	var out []Candidate
 
 	// 规则 1：承诺
-	if containsAny(text, promiseMarkers) {
+	if containsAny(text, promiseMarkers) || containsAny(text, promiseDingYiVerbs) {
 		out = append(out, Candidate{
 			Kind:       KindPromise,
 			Title:      titled("承诺", text),

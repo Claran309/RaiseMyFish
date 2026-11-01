@@ -82,6 +82,61 @@ func TestExtractPromise(t *testing.T) {
 	}
 }
 
+// TestExtractPromiseDingYiNeedsVerb 「一定」必须后接动词才算承诺（0.9b 收紧）。
+//
+// 反例「今天一定很热」「一定是这样」是副词用法，不能当成承诺；
+// 正例「一定帮」「一定给」这类才是答应对方做某事。
+func TestExtractPromiseDingYiNeedsVerb(t *testing.T) {
+	positives := []string{
+		"明天一定帮你带话",
+		"一定给你留一碗",
+		"这个一定做到",
+		"一定带你去",
+		"一定发你一份",
+	}
+	for _, text := range positives {
+		t.Run("正例/"+text, func(t *testing.T) {
+			got := Extract(Event{Text: text, FromName: "路人"}, ExtractOptions{})
+			if len(got) != 1 || got[0].Kind != KindPromise {
+				t.Fatalf("期望 1 条承诺，实际 %+v", got)
+			}
+		})
+	}
+
+	negatives := []string{
+		"今天一定很热",
+		"一定是这样",
+		"他一定会来的",
+		"这一定不是巧合",
+	}
+	for _, text := range negatives {
+		t.Run("反例/"+text, func(t *testing.T) {
+			if got := Extract(Event{Text: text, FromName: "路人"}, ExtractOptions{}); len(got) != 0 {
+				t.Errorf("「一定」+非动词不应判成承诺，实际 %+v", got)
+			}
+		})
+	}
+}
+
+// TestExtractPrivateNeedsAuthorization 私密事件默认不提炼，显式授权后才提炼。
+func TestExtractPrivateNeedsAuthorization(t *testing.T) {
+	ev := Event{Text: "我答应明天陪你", FromName: "主人", Private: true, Channel: "dm"}
+
+	// 默认（AllowPrivate 零值 = false）→ 空
+	if got := Extract(ev, ExtractOptions{OwnerName: "主人"}); len(got) != 0 {
+		t.Errorf("未授权时不应提炼私密事件，实际 %+v", got)
+	}
+
+	// 显式授权 → 正常提炼，规则与公开事件一致
+	got := Extract(ev, ExtractOptions{OwnerName: "主人", AllowPrivate: true})
+	if len(got) != 2 {
+		t.Fatalf("授权后应产出 2 条（承诺 + 主人相关），实际 %d：%+v", len(got), got)
+	}
+	if kinds := kindsOf(got); !slices.Equal(kinds, []string{KindPromise, KindPreference}) {
+		t.Errorf("顺序 = %v，期望 [promise preference]", kinds)
+	}
+}
+
 // TestExtractOwnerByText 文本提到主人 → preference。
 func TestExtractOwnerByText(t *testing.T) {
 	got := Extract(Event{Text: "主人今天又充了 token", FromName: "路人"}, ExtractOptions{})

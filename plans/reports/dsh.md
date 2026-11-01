@@ -447,3 +447,17 @@
   3. 多规则多条：保留多条候选（承诺+主人+首次各有价值），worker 按 kind 分别落库
 - 顺手修正：`internal/memory/context.go` 包注释过时（「不实现提炼」）已更新（DSH 一行）。
 - 结论：**0.9a 验收通过**（待提交）。
+
+## 0.9b 提炼 worker 独立验收（2026-11-01 19:10）
+
+- 交付：`internal/memory/extractworker/`（worker.go、watermark.go、worker_test.go）+ extract 修改；未越界。
+- 独立执行：`go test ./internal/memory/...` 全 PASS（extract 15 + extractworker 15）；全仓 21 包通过。
+- 核对：AllowPrivate 落地（默认 false）；「一定+动词」白名单 + 反例；worker 只读注入的 DoneSource、写走 store.MemoryRepo.InsertRecord；
+  幂等 `mem_+sha256(event_id+kind+title)[:12]` + ON CONFLICT；水位跳过的私密/无规则事件也推进、出错不越过失败事件。
+- **DSH 裁决它报的四个缺口**：
+  1. DoneSource 的 PG 实现缺失 → **0.9c 补**（internal/database，不造接口）
+  2. first_seen 无对应 kind（Validate 只认 talk/preference/promise/fact/summary/note）→ 映射 note 接受，断言已过
+  3. IsFirstNick 恒 false（无「已见昵称」存储）→ 0.9b 只产 promise/preference 接受；首次出现留后续（需要新存储，设计项）
+  4. memory_sources 无陌生人互动 → 接受现状（owner_interaction）
+- **race 阻塞**：Windows 原生 ccl 64 位不可用、WSL 被安全策略拦。需主人放行 `wsl.exe`（安全中心→命令安全）或装 64 位 gcc；在补上前不宣称 race 通过。
+- 结论：**0.9b 验收通过**（race 未验证，如实记录）。

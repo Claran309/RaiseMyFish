@@ -310,3 +310,125 @@ Windows 侧（仓库内，`RaiseMyFish` 模块）：
 
 - **是。** 本轮写入结束，仅新增上述 2 个文件；未执行 git 命令、未提交、未 push。
 - 交 DSH 逐条验收：按 `plans/phase-0.9-workbuddy-dispatch.md`「DSH 验收标准」1–5 项复核，重点是 rune 截断与四条规则的正反例。
+
+---
+
+## 0.9b 交接 · 提炼 worker（2026-11-01，Asia/Shanghai）
+
+- 任务：0.9b 提炼 worker，按 DSH 本轮四条裁决执行（AllowPrivate 授权、承诺「一定+动词」收紧、worker 落库与水位、指定测试）。
+- 获派与实际修改路径：
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/memory/extract.go` | 修改 | `A56DEE9654B5614ACE6E04C9CEEB2950442EF33FB149AE3A84B01F22F16B2905` | 8638 |
+| `internal/memory/extract_test.go` | 修改 | `12748ABC27569C4A368C12256433C8CB6DCA12CE202EACC89D8A0AFC2F9FDA8A` | 14870 |
+| `internal/memory/extractworker/worker.go` | 新增 | `C47F4EC9CD4D6C32F3467FD53C3AE45125D694BA27AEE7AF43FE2F0C59003418` | 9879 |
+| `internal/memory/extractworker/watermark.go` | 新增 | `3096F925AEFF42A8F366FF0F40EB3D35D4D3B17126BCA365017C281882B76072` | 4651 |
+| `internal/memory/extractworker/worker_test.go` | 新增 | `91DD770415BEA39D10A0EE9F2BD9A03FCDAD743867DF576D85C3F802E96534A7` | 17709 |
+
+未触碰：`internal/database/`、`internal/sender/`、`internal/store/`、`cmd/`、`contracts/`、`migrations/`、`go.mod`/`go.sum`。未调用模型、未连 PG、未新增依赖。
+
+### 为什么 worker 放在 `internal/memory/extractworker`
+
+`internal/store` 已经 import `internal/memory`（`store.MemoryRecord` 内嵌 `memory.Record`），
+若 worker 写在 `internal/memory` 里再 import `store` 就是**循环依赖**，编译不过。
+所以按仓库既有惯例（`internal/event/bus`、`internal/collector/live`、`internal/sender/live`）下沉为子包。
+子包只 import `memory` + `store` + `event`，没有反向依赖。
+
+### 按裁决做的两处改动（0.9a → 0.9b）
+
+1. **`ExtractOptions.AllowPrivate`**：默认 false，`Private=true` 且未授权 → 仍返回空（fail-closed）。
+   授权后规则与公开事件完全一致。
+2. **承诺规则收紧**：`promiseMarkers` 去掉「一定」，新增 `promiseDingYiVerbs` 白名单
+   `一定帮 / 一定给 / 一定做到 / 一定带 / 一定发`。
+   `今天一定很热`、`一定是这样`、`他一定会来的`、`这一定不是巧合` 现在都不会误判（有反例用例）。
+   白名单是闭合列表，需要扩词就加一条，不做词性猜测、不加正则通配。
+
+### worker 设计
+
+- **接口注入，不写 SQL**：读用 `DoneSource.ListDoneAfter(ctx, after Cursor, limit)`，写用既有 `store.MemoryRepo.InsertRecord`。
+  worker 不 import `database`，也不知道表名。
+- **水位 `Cursor{At, ID}`**：排序键 (At, ID)，零值表示从头开始。两种实现：
+  - `MemoryWatermark`：进程内，仅测试/开发；
+  - `FileWatermark`：本机 JSON，`CreateTemp` + `Rename` 原子替换（沿用 `infra.WriteStatus` 的手法），带 `version` 字段。
+- **幂等**：记录主键 `mem_` + `sha256(event_id␟kind␟title)` 前 12 字节；
+  真实写入是 `INSERT ... ON CONFLICT (id) DO NOTHING`，重扫同一批事件只会得到 `Duplicated++`。
+  用 `\x1f` 做分隔符，防「ab+c / a+bc」拼接撞车（有用例）。
+- **水位推进**：跳过的事件（私密未授权、无规则命中、事件时间缺失）**也要推进水位**，否则会卡死重扫；
+  出错时只保存「已成功处理到」的位置，绝不越过失败事件，重启后从那一条补。
+- **时间缺失**：`At` 为零的事件直接跳过——既算不出 `valid_from`，也过不了持久化校验。
+- **Body 留空**：摘要已够召回，不把完整正文写进记忆库。
+
+### 测试（先红后绿，有证据）
+
+先写测试、先跑：
+
+```
+go test ./internal/memory/... -count=1
+# internal\memory\extract_test.go:131:57: unknown field AllowPrivate in struct literal of type ExtractOptions
+# internal\memory\extractworker\worker_test.go:39:24: undefined: Cursor
+# ... undefined: DoneSource / Watermark / Options / Worker / New / NewMemoryWatermark
+FAIL  RaiseMyFish/internal/memory [build failed]
+FAIL  RaiseMyFish/internal/memory/extractworker [build failed]
+```
+
+实现后：
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l internal/memory` | 无输出 |
+| `go build ./...` | 通过 |
+| `go vet ./...` | 通过 |
+| `go test ./internal/memory/... -count=1` | **ok**（`memory` 16 个顶层测试、`extractworker` 15 个顶层测试全 PASS） |
+| `go test ./... -count=1` | 全仓通过（21 个包，含 brain/collector/scheduler/sender/store） |
+| 覆盖率 | `internal/memory` 91.9%；`internal/memory/extractworker` **82.1%** |
+| `golangci-lint v2.15.0 run ./internal/memory/...` | **0 issues** |
+| `go test -race` | **未通过，环境阻塞**（见下） |
+
+DSH 点名的四类用例都有：幂等（`TestRunOnceIdempotent`，两次零水位扫描 → `Inserted=0/ Duplicated=1`，行数仍为 1）、
+私密默认不提炼（`TestPrivateSkippedByDefault` + `TestExtractPrivateNeedsAuthorization`）、
+授权后提炼（`TestPrivateAllowed`，落库 `private=true` / `channel=dm`）、
+水位重启补提炼（`TestWatermarkResumeAfterRestart` + `TestFileWatermarkPersistsAcrossInstances`）。
+另有：无候选也推进水位、批量循环、来源报错/落库报错的水位语义、零时间事件、kind 映射、主键稳定性、构造期拒绝 nil。
+
+### race：本批**阻塞**，不是通过
+
+| 途径 | 结果 |
+|---|---|
+| Windows `go test -race ./internal/memory/...` | `cc1.exe: sorry, unimplemented: 64-bit mode not compiled in` —— 本机只有 mingw32 gcc，仍是老问题 |
+| WSL `CGO_ENABLED=1 go test -race` | **无法执行**：`wsl.exe` 被安全策略拦下（Program Blacklist），提示需主人在 安全中心→命令安全 里放行 |
+
+0.9a 时 WSL 还能跑，本轮已被拦截。**race 记为未验证**，不计入通过；需要主人放行 `wsl.exe` 或装 64 位 gcc 后补跑。
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| `DoneSource` 的 PG 实现（按 status=done + (at,id) 游标查询） | 要写 SQL，落在 `internal/database/`，不在本批可写范围；**没有它 worker 无法在生产跑起来**，请 DSH 指派 |
+| `cmd/` 装配（启动 worker、给水位文件路径） | `cmd/` 不在范围 |
+| 首次出现规则的 `IsFirstNick` | 需要「该 session 已见昵称集合」的持久化，既有 repo 无此接口；worker 固定传 false，不臆造存储 |
+| 真实 PG 验证 | 本批不连 PG；0.9d 用真实 PG 验收查询过滤与重启补提炼 |
+| 召回装配（Recent/CrossChannel） | 属 0.9c |
+| `internal/memory/context.go` 那行过时包注释（「不实现…提炼」） | 上一批就提过，仍不在可写范围 |
+
+### 风险 / 需 DSH 裁决
+
+1. **`first_seen` 没有对应的 store kind（重要）**：`store.MemoryRecord.Validate` 只接受
+   `talk / preference / promise / fact / summary / note`。worker 把 `first_seen` 映射成 `note`，
+   并有用例断言「映射后必须过 `Validate()`」。要不要正式给 store 加 `first_seen`，得先改校验与契约，本批没动。
+2. **`memory_sources` 没有「陌生人互动」项**：承诺/主人相关用 `owner_direct` 合理；
+   首次出现只能用 `owner_interaction`（种子字典里最接近的一项）。要更准确得加种子行，属迁移范围。
+3. **`IsFirstNick` 恒为 false**：等于 0.9b 实际只会产出 promise / preference 两类记录。
+   若 DSH 认为首次出现属本批必达，需要先给出「已见昵称」的存储方案。
+4. **worker 目前跑不起来**：`DoneSource` 只有接口与测试假实现。要么 DSH 指派 `internal/database` 的实现，
+   要么授权白酱下一批写（会碰 database，需要明确范围）。
+5. **文件水位放哪**：`FileWatermark` 的路径由装配层给；`fishd` 现在把状态放在哪、要不要并到 `infra` 状态目录，需要 DSH 定。
+6. **流程说明**：本轮走了先红后绿（有上面的失败输出为证）。中途自己造过一次语法错误
+   ——删注释行尾换行把 `func TestFileWatermark...` 并进了注释，`gofmt` 报 `441:2: expected declaration`，
+   已修正后重跑；不影响结论，但如实记录。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，只改了上表 5 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 逐条验收：四类点名用例 + 幂等主键语义 + 水位推进/出错不越过 + kind 映射回归；
+  race 一项请按「环境阻塞」处理，不要当通过。
