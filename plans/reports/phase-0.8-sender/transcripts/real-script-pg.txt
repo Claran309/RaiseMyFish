@@ -1,0 +1,6 @@
+=== RUN   TestDeliveryNodeServiceRealPostgres
+=== RUN   TestDeliveryNodeServiceRealPostgres/real-adapter
+--- PASS: TestDeliveryNodeServiceRealPostgres (1.47s)
+    --- PASS: TestDeliveryNodeServiceRealPostgres/real-adapter (1.47s)
+PASS
+ok  	RaiseMyFish/internal/database	1.869s

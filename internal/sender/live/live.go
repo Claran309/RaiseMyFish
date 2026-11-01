@@ -114,6 +114,18 @@ func (s *Service) settle(ctx context.Context, c event.Claim, a sender.Attempt, v
 	defer cancel()
 	return s.repo.Settle(save, c, a.ID, v)
 }
+func keepCause(err, cause error) error {
+	if cause == nil {
+		return err
+	}
+	var typed *sender.Error
+	if errors.As(err, &typed) {
+		copy := *typed
+		copy.Cause = errors.Join(typed.Cause, cause)
+		return &copy
+	}
+	return &sender.Error{Kind: sender.KindUncertain, Cause: errors.Join(err, cause)}
+}
 func (s *Service) process(ctx context.Context, c event.Claim, a sender.Attempt) (sender.Result, error) {
 	if a.ActorID != s.options.SelfID || a.EventID != c.Event.ID || a.RoomID != c.Event.Session {
 		return sender.Result{}, &sender.Error{Kind: sender.KindInput}
@@ -130,6 +142,7 @@ func (s *Service) process(ctx context.Context, c event.Claim, a sender.Attempt) 
 	}
 	if a.State != sender.StateReady {
 		v, err := s.transport.Verify(ctx, a)
+		transportErr := err
 		v.Origin = sender.OriginVerify
 		if err != nil {
 			v = sender.Verdict{Outcome: sender.OutcomeUnknown, ErrorKind: "network", Evidence: "none", Origin: sender.OriginVerify}
@@ -152,7 +165,8 @@ func (s *Service) process(ctx context.Context, c event.Claim, a sender.Attempt) 
 		if err := v.Validate(); err != nil {
 			v = sender.Verdict{Outcome: sender.OutcomeUnknown, ErrorKind: "protocol", Evidence: "none", Origin: sender.OriginVerify}
 		}
-		return s.settle(ctx, c, a, v)
+		result, settleErr := s.settle(ctx, c, a, v)
+		return result, keepCause(settleErr, transportErr)
 	}
 	now := time.Now()
 	reservation := s.limiter.ReserveN(now, 1)
@@ -178,7 +192,8 @@ func (s *Service) process(ctx context.Context, c event.Claim, a sender.Attempt) 
 		if !count {
 			code = "cancelled"
 		}
-		return s.wait(ctx, c, a, sender.Deferral{Kind: kind, Code: code, CountFailure: count})
+		result, waitErr := s.wait(ctx, c, a, sender.Deferral{Kind: kind, Code: code, CountFailure: count})
+		return result, keepCause(waitErr, err)
 	}
 	defer func() {
 		if err := session.Close(); err != nil {
@@ -195,6 +210,7 @@ func (s *Service) process(ctx context.Context, c event.Claim, a sender.Attempt) 
 		return sender.Result{}, err
 	}
 	v, err := session.Post(ctx, permit)
+	transportErr := err
 	v.Origin = sender.OriginPost
 	if err != nil {
 		v = sender.Verdict{Outcome: sender.OutcomeUnknown, ErrorKind: "network", Evidence: "none", Origin: sender.OriginPost}
@@ -205,5 +221,6 @@ func (s *Service) process(ctx context.Context, c event.Claim, a sender.Attempt) 
 	if v.Outcome == sender.OutcomeNotPosted {
 		reservation.CancelAt(now)
 	}
-	return s.settle(ctx, c, a, v)
+	result, settleErr := s.settle(ctx, c, a, v)
+	return result, keepCause(settleErr, transportErr)
 }

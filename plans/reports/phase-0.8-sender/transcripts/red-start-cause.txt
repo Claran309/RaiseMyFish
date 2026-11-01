@@ -1,0 +1,5 @@
+--- FAIL: TestNodeKeepsCancellationAndStartCauses (0.00s)
+    node_causes_test.go:29: 普通启动失败被误报取消 弹幕发送结果（retry）
+FAIL
+FAIL	RaiseMyFish/internal/sender/live	1.720s
+FAIL

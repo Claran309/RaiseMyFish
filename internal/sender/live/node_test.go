@@ -64,12 +64,19 @@ func TestNodeHelperProcess(t *testing.T) {
 		return
 	}
 	mode, action, path := os.Args[index+1], os.Args[index+2], os.Args[index+3]
+	// helper的记录文件只能位于操作系统临时目录，且仅使用父测试固定的文件名。
+	absPath, pathErr := filepath.Abs(path)
+	relative, relErr := filepath.Rel(os.TempDir(), absPath)
+	if pathErr != nil || relErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) || filepath.Base(absPath) != "frames.jsonl" {
+		os.Exit(20)
+	}
 	read := bufio.NewScanner(os.Stdin)
 	if !read.Scan() {
 		os.Exit(21)
 	}
 	first := append([]byte(nil), read.Bytes()...)
-	if err := os.WriteFile(path, append(first, '\n'), 0600); err != nil {
+	// #nosec G703 -- 仅测试helper；父测试的临时记录文件已校验目录和固定文件名。
+	if err := os.WriteFile(absPath, append(first, '\n'), 0600); err != nil {
 		os.Exit(22)
 	}
 	var f map[string]any
@@ -117,17 +124,19 @@ func TestNodeHelperProcess(t *testing.T) {
 	if mode == "request" {
 		request = "other"
 	}
-	if mode == "unknown-field" {
+	switch mode {
+	case "unknown-field":
 		fmt.Println(`{"protocol":1,"type":"ready","request_id":"attempt_1","room_id":"123","self_id":"456","secret":"synthetic-secret"}`)
-	} else if mode == "duplicate" {
+	case "duplicate":
 		fmt.Println(`{"protocol":1,"type":"ready","request_id":"other","request_id":"attempt_1","room_id":"123","self_id":"456"}`)
-	} else {
+	default:
 		fmt.Printf(`{"protocol":1,"type":"ready","request_id":%q,"room_id":%q,"self_id":%q}`+"\n", request, room, self)
 	}
 	if !read.Scan() {
 		os.Exit(26)
 	}
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+	// #nosec G703 -- 仅测试helper；同一已校验的临时记录文件用于确认commit次数。
+	file, err := os.OpenFile(absPath, os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		os.Exit(29)
 	}

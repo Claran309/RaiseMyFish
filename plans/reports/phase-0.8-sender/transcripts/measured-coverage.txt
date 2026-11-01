@@ -1,0 +1,4 @@
+ok  	RaiseMyFish/internal/sender	3.134s	coverage: 97.2% of statements
+ok  	RaiseMyFish/internal/sender/live	11.913s	coverage: 77.0% of statements
+ok  	RaiseMyFish/internal/scheduler	4.916s	coverage: 83.9% of statements
+ok  	RaiseMyFish/internal/database	58.106s	coverage: 84.8% of statements

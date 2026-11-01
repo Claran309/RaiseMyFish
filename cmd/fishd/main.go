@@ -71,8 +71,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 			logger.Error("迁移失败", zap.Error(err))
 			return err
 		}
-		logger.Info("数据库迁移就绪", zap.String("action", "migrate"), zap.Int("version", 1))
-		_, err := fmt.Fprintln(stdout, "迁移版本1就绪（重复执行无副作用）")
+		logger.Info("数据库迁移就绪", zap.String("action", "migrate"))
+		_, err := fmt.Fprintln(stdout, "数据库迁移就绪（重复执行无副作用）")
 		return err
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)

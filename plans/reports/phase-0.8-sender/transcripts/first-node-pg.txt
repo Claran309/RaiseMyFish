@@ -1,0 +1,12 @@
+=== RUN   TestDeliveryNodeServiceRealPostgres
+=== RUN   TestDeliveryNodeServiceRealPostgres/accepted
+=== RUN   TestDeliveryNodeServiceRealPostgres/unverified
+=== RUN   TestDeliveryNodeServiceRealPostgres/unknown
+--- PASS: TestDeliveryNodeServiceRealPostgres (1.69s)
+    --- PASS: TestDeliveryNodeServiceRealPostgres/accepted (0.43s)
+    --- PASS: TestDeliveryNodeServiceRealPostgres/unverified (0.58s)
+    --- PASS: TestDeliveryNodeServiceRealPostgres/unknown (0.68s)
+=== RUN   TestDeliveryServiceDefaultDoesNotOpenTransport
+--- PASS: TestDeliveryServiceDefaultDoesNotOpenTransport (0.32s)
+PASS
+ok  	RaiseMyFish/internal/database	2.225s

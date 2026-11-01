@@ -1,0 +1,11 @@
+?   	RaiseMyFish/internal/sender	[no test files]
+=== RUN   TestSendSinglePostAndVerification
+--- PASS: TestSendSinglePostAndVerification (0.00s)
+=== RUN   TestUnknownDoesNotRetryAndResumeOnlyVerifies
+--- PASS: TestUnknownDoesNotRetryAndResumeOnlyVerifies (0.00s)
+=== RUN   TestPrivacyLengthAndDisabledBeforeIO
+--- PASS: TestPrivacyLengthAndDisabledBeforeIO (0.00s)
+=== RUN   TestPhysicalTokenOnlyForDelivery
+--- PASS: TestPhysicalTokenOnlyForDelivery (0.00s)
+PASS
+ok  	RaiseMyFish/internal/sender/live	1.434s

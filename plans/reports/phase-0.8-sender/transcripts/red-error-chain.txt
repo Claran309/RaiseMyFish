@@ -1,0 +1,7 @@
+--- FAIL: TestTransportCauseRemainsBehindSafeError (0.00s)
+    live_test.go:172: 运输原因链丢失或泄漏 弹幕发送结果（uncertain）
+--- FAIL: TestNodeKeepsCancellationAndStartCauses (0.00s)
+    node_causes_test.go:21: 取消原因丢失 弹幕发送结果（retry）
+FAIL
+FAIL	RaiseMyFish/internal/sender/live	1.482s
+FAIL

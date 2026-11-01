@@ -8,6 +8,6 @@
 
 - [x] 主人批准并更新契约
 - [x] Node薄适配测试先RED后GREEN
-- [ ] Go/PG失败测试与实现
-- [ ] 全仓工程验证/交接
+- [x] Go/PG失败测试与实现 — 持久化意图/permit/单POST/核验/原子审计及恢复路径已验证。
+- [x] 全仓工程验证/交接 — Node35项、Go unit/integration/vet/build/lint/WSL race通过，证据/教学说明冻结。
 - [ ] DSH独立验收

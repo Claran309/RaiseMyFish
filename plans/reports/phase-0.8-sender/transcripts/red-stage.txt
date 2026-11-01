@@ -1,0 +1,5 @@
+# RaiseMyFish/internal/scheduler [RaiseMyFish/internal/scheduler.test]
+internal\scheduler\scheduler_test.go:848:12: s.workers.Deliver undefined (type Workers has no field or method Deliver)
+internal\scheduler\scheduler_test.go:849:70: undefined: event.StageDeliver
+FAIL	RaiseMyFish/internal/scheduler [build failed]
+FAIL

@@ -1,0 +1,4 @@
+FAIL	RaiseMyFish/internal/sender/live [setup failed]
+FAIL
+# RaiseMyFish/internal/sender/live
+internal\sender\live\live_test.go:11:2: package RaiseMyFish/internal/sender is not in std (D:\CodeStudy\Go\src\RaiseMyFish\internal\sender)

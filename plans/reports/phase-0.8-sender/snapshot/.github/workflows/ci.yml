@@ -1,0 +1,92 @@
+name: CI
+
+# 个人项目：直接 push，不走 PR 流程。
+on:
+  push:
+    branches: [main, master, dev]
+
+env:
+  GO_VERSION: "1.27"
+
+jobs:
+  lint:
+    name: 格式与静态检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: gofmt 检查
+        run: |
+          diff=$(gofmt -l .)
+          if [ -n "$diff" ]; then echo "以下文件未格式化："; echo "$diff"; exit 1; fi
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+          args: --timeout=5m
+
+  test:
+    name: 单元测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: go vet
+        run: go vet ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: 直播协议离线测试
+        run: node --test tools/bili-whale/protocol.test.mjs tools/bili-whale/sender.test.mjs
+      - name: 测试（含竞态检测）
+        run: go test -race -cover ./...
+
+  build:
+    name: 构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: 构建二进制
+        run: |
+          go build -trimpath -o bin/fishd ./cmd/fishd
+          go build -trimpath -o bin/fishctl ./cmd/fishctl
+
+  integration:
+    name: PostgreSQL17集成测试
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: fish
+          POSTGRES_PASSWORD: fish
+          POSTGRES_DB: raisemyfish_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: 集成测试（独立schema，失败不跳过）
+        env:
+          FISH_TEST_DSN: postgres://fish:fish@127.0.0.1:5432/raisemyfish_test?sslmode=disable
+        run: go test -race -tags=integration ./... -count=1

@@ -1,0 +1,20 @@
+internal\database\send_integration_test.go:248:3: ifElseChain: rewrite if-else to switch statement (gocritic)
+		if err == nil {
+		^
+internal\sender\live\node_test.go:120:2: ifElseChain: rewrite if-else to switch statement (gocritic)
+	if mode == "unknown-field" {
+	^
+internal\sender\live\node_test.go:72:24: G703: Path traversal via taint analysis (gosec)
+	if err := os.WriteFile(path, append(first, '\n'), 0600); err != nil {
+	                      ^
+internal\sender\live\node_test.go:130:26: G703: Path traversal via taint analysis (gosec)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+	                        ^
+internal\sender\live\node.go:229:49: nodeObject - result 0 (map[string]encoding/json.RawMessage) is never used (unparam)
+func nodeObject(data []byte, fields ...string) (map[string]json.RawMessage, error) {
+                                                ^
+5 issues:
+* gocritic: 2
+* gosec: 2
+* unparam: 1
+exit status 1

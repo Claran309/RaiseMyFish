@@ -49,6 +49,8 @@ type sendRecord struct {
 	sender.Attempt `gorm:"embedded"`
 	TextSHA        string `gorm:"column:text_sha"`
 	ArmedAt        *time.Time
+	ArmedOwner     *string
+	ArmedVersion   *int64
 	OK             *bool
 }
 
@@ -260,11 +262,11 @@ func (r *SendRepo) Load(ctx context.Context, c event.Claim, actor string) (sende
 
 func (r *SendRepo) sendDuplicate(tx *gorm.DB, a sendRecord) (bool, error) {
 	var duplicate bool
-	err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM send_attempts WHERE actor_id=? AND room_id=? AND text_sha=? AND id<>? AND state IN ('armed','unknown','accepted') AND permit_until+(? * interval '1 microsecond')>clock_timestamp())`, a.ActorID, a.RoomID, a.TextSHA, a.ID, r.policy.DuplicateWindow.Microseconds()).Scan(&duplicate).Error
+	err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM send_attempts WHERE actor_id=? AND room_id=? AND text_sha=? AND id<>? AND state IN ('armed','unknown','accepted','manual') AND permit_until+(? * interval '1 microsecond')>clock_timestamp())`, a.ActorID, a.RoomID, a.TextSHA, a.ID, r.policy.DuplicateWindow.Microseconds()).Scan(&duplicate).Error
 	return duplicate, err
 }
 func sendSaveAttempt(tx *gorm.DB, a sendRecord) error {
-	return tx.Table("send_attempts").Where("id=?", a.ID).Updates(map[string]any{"state": a.State, "nonce": nullableNonce(a.Nonce), "permit_until": a.PermitUntil, "armed_at": a.ArmedAt, "verify_count": a.VerifyCount, "prep_failures": a.PrepFailures, "ok": a.OK, "verified": a.Verified, "msg_id": a.MsgID, "evidence": a.Evidence, "error_kind": a.ErrorKind}).Error
+	return tx.Table("send_attempts").Where("id=?", a.ID).Updates(map[string]any{"state": a.State, "nonce": nullableNonce(a.Nonce), "permit_until": a.PermitUntil, "armed_at": a.ArmedAt, "armed_owner": a.ArmedOwner, "armed_version": a.ArmedVersion, "verify_count": a.VerifyCount, "prep_failures": a.PrepFailures, "ok": a.OK, "verified": a.Verified, "msg_id": a.MsgID, "evidence": a.Evidence, "error_kind": a.ErrorKind}).Error
 }
 func nullableNonce(s string) any {
 	if s == "" {
@@ -383,6 +385,9 @@ func (r *SendRepo) Arm(ctx context.Context, c event.Claim, id string) (sender.Pe
 		a.Nonce = n.String()
 		a.State = sender.StateArmed
 		a.ArmedAt = &now
+		owner, version := c.Lease.Owner, c.Lease.Version
+		a.ArmedOwner = &owner
+		a.ArmedVersion = &version
 		a.PermitUntil = &until
 		a.OK = nil
 		if err := sendSaveAttempt(tx, a); err != nil {
@@ -526,8 +531,12 @@ func (r *SendRepo) Settle(ctx context.Context, c event.Claim, id string, v sende
 		if a.Verified || (a.State != sender.StateArmed && a.State != sender.StateUnknown && a.State != sender.StateAccepted) {
 			return store.ErrConflict
 		}
-		if v.Origin == sender.OriginVerify && a.MsgID != "" && v.MsgID != a.MsgID {
-			// 已知回执必须精确匹配；同文或其他消息ID均不能替换原回执。
+		// POST回执只属于最初取得许可的有效租约，恢复后的worker只能核验。
+		if v.Origin == sender.OriginPost && (a.State != sender.StateArmed || a.ArmedOwner == nil || a.ArmedVersion == nil || *a.ArmedOwner != c.Lease.Owner || *a.ArmedVersion != c.Lease.Version) {
+			return store.ErrConflict
+		}
+		if a.MsgID != "" && (v.MsgID != a.MsgID || (v.Origin == sender.OriginVerify && v.Verified && v.Evidence != "history_id")) {
+			// 任意来源都不能替换已知ID；已知ID核验必须采用精确ID证据。
 			v.Outcome = sender.OutcomeUnknown
 			v.Verified = false
 			v.MsgID = ""

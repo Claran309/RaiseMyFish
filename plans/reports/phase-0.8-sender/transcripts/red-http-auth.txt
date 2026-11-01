@@ -1,0 +1,39 @@
+✖ HTTP鉴权失败预检须暂停，投递后鉴权响应仍unknown而非未投递 (5.0969ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 194.5639
+
+✖ failing tests:
+
+test at tools\bili-whale\sender.test.mjs:80:1
+✖ HTTP鉴权失败预检须暂停，投递后鉴权响应仍unknown而非未投递 (5.0969ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    Comparison {
+  +   code: 'network'
+  -   code: 'auth'
+    }
+  
+      at async TestContext.<anonymous> (file:///D:/CodeStudy/RaiseMyFish/tools/bili-whale/sender.test.mjs:82:5)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: network
+        at failure (file:///D:/CodeStudy/RaiseMyFish/tools/bili-whale/protocol.mjs:9:54)
+        at preflight (file:///D:/CodeStudy/RaiseMyFish/tools/bili-whale/danmaku.mjs:104:27)
+        at async waitForActual (node:assert:646:5)
+        at async strict.rejects (node:assert:769:25)
+        at async TestContext.<anonymous> (file:///D:/CodeStudy/RaiseMyFish/tools/bili-whale/sender.test.mjs:82:5)
+        at async Test.run (node:internal/test_runner/test:1125:7)
+        at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3),
+    expected: { code: 'auth' },
+    operator: 'rejects',
+    diff: 'simple'
+  }

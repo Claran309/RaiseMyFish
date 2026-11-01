@@ -77,6 +77,17 @@ test('回读仅强证据，相同正文/时间不证明发送，绝不POST', asy
   assert.equal(byNonce.verified, true); assert.equal(byNonce.msg_id, 'nonce-msg')
 })
 
+test('HTTP鉴权失败预检须暂停，投递后鉴权响应仍unknown而非未投递', async () => {
+  for (const status of [401, 403]) {
+    await assert.rejects(preflight(request, { cookie, fetch: async () => response({}, status) }), { code: 'auth' })
+  }
+  const session = await preflight(request, preparation())
+  const result = await postOnce(request, session, permit(), { fetch: async () => response({}, 401) })
+  assert.equal(result.outcome, 'unknown'); assert.equal(result.error_kind, 'auth'); assert.equal(result.verified, false)
+  const readback = await verifyOnce(request, session, permit(), { fetch: async () => response({}, 403) })
+  assert.equal(readback.outcome, 'unknown'); assert.equal(readback.error_kind, 'auth')
+})
+
 test('会话隐藏秘密并绑定完整请求，伪造/交换会话不得投递', async () => {
   const session = await preflight(request, preparation()); let calls = 0
   assert.ok(Object.isFrozen(session)); assert.ok(!JSON.stringify(session).includes('fixture'))

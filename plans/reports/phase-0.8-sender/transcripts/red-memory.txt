@@ -1,0 +1,5 @@
+--- FAIL: TestOnlyVerifiedOutIsConversationMemory (0.83s)
+    delivery_memory_integration_test.go:13: 事件初始状态错误：存储入参无效
+FAIL
+FAIL	RaiseMyFish/internal/database	1.215s
+FAIL

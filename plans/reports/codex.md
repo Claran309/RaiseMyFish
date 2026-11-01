@@ -730,3 +730,27 @@ Go严格归一化/自过滤/4000字截断/Health/子进程最小环境与取消�
 DSH请独立验收Collector/Event接口、归一化/稳定ID/自身与重复、生命周期/背压/退避/鉴权暂停/Health、凭据与日志边界、默认关闭/无调用诊断和PG失败收尾。无真实B站/模型调用；真实房间ID字段、长连、断线/离线补漏仍未验证，不把工程mock或合成PG路径当P0两小时/不漏证明。
 
 0.8已记录采用danmaku.mjs/POST /msg/send方向；发送意图、未知结果、核验、限流和out记账仍需后续独立设计/验收，未提前实现。源码和证据冻结后停写，既有契约/迁移/Scheduler/Brain/人格/v5/旧快照不改。通知仅仓库发布，不宣称跨应用会话已送达。
+
+## COMM-027 · 0.8当前写入窗口与并行会话提醒
+
+主人本会话已批准P0-SEND-1并明确“继续”，Codex当前正在完成0.8，尚未下线。已完成Node薄适配及34项离线测试、租约化Service/Node驱动、PG意图/尝试/审计，正在最终集成与复核。内部助手已按各自文件停写，最终整合仍归本会话。
+
+期间另一会话生成8d68f00（保留，不重置），将进行中的0.8文件提交；该提交不是DSH独立验收结果，本轮不据此直接push。coordination的“Codex长期下线”新增说明与本会话当前执行状态不符，请DSH同步会话状态。WorkBuddy报告尚未有0.8接手回执；当前tools/bili-whale/danmaku.mjs/sender.test.mjs/SENDER_ADAPTATION.md及internal/sender/、database/send*.go写入窗口仍为本次0.8集成，请勿同时覆盖。
+
+新phase-0.8-workbuddy-dispatch.md要求恢复本地文件防重/outbox及另一套stdout，这与已批准P0-SEND-1的PG唯一记账、两阶段许可冲突。技术裁决：该0.8a重复制脚本任务暂不执行，保留现有Node适配与契约；DSH可在本轮冻结/验收后另拆无冲突轻任务。0.9派发仍需0.8验收，当前不由本会话提前实现。
+
+本记录仅仓库内协调提醒，不表示其他会话已读或已暂停；不改其他会话报告、未提交的分工说明及0.9草稿。
+
+## COMM-028 · P0-SEND-1完整0.8工程交付，待DSH独立验收
+
+主人已批准[契约提案](../phase-0.8-contract-proposal.md)并要求继续，三个契约先更新后实现。已完成独立Node POST/核验、租约化Send/Resume、不可变发送计划、deliver分流、投递前未知审计、单POST许可、PG账号间隔/防重、唯一send_log/out、结果原子结清及失败out查询过滤。默认发送关闭，未接生产模型/真实发送worker。
+
+关键安全边界：原POST只可由arm原Owner/Version结算；恢复租约只核验，known MsgID不得替换；未知不回投递，核验耗尽inputdead/DLQ但out仍retry/unknown_manual；manual依然参与防重。取消/断管/5xx不推断未发送；真实Cookie/原始响应/私密Scope不进入公开审计或日志。错误原因链保留，普通启动失败不伪装成取消。
+
+已实际先RED再修复的内容包括Node核验CLI误报not_posted、真实EventID冒号、退款/ID绑定/证据来源、PG跨代Post与nonce旁路、manual防重、启动/运输原因链及HTTP鉴权分类。内部助手与规格/质量复核不是DSH，最终必须项已关闭。真实Node脚本在本机fake fetch下→Go驱动→Service→真实PG完成单POST/核验/审计；无真实B站或项目模型调用。
+
+最终Node35/35；Go全仓unit/integration/vet/build、integration标签lint（0 issues）、WSL race通过。sender97.2%、sender/live77.0%、scheduler83.9%、database84.8%。[交付/证据入口](phase-0.8-sender/analysis.md)、[教学说明](../../docs/update/2026-11-01-1800-持久化弹幕投递与核验记账.md)；manifest/snapshot为精确验收基线，旧迁移/人格/v5与旧证据保留。
+
+DSH请按contracts/sender.md、event增量、memory增量独立验收：Scope/许可、原租约/未知恢复、rate/同文/重启、唯一审计/回滚、失败out不进记忆、子进程取消/秘密边界、新迁移与默认关闭。真实房间响应/限流/两小时运行仍留0.11，不把工程模拟当平台实测。
+
+并行8d68f00已保留，尚不是最终源码快照；最终工作区增量及本报告待验收，本会话未执行提交或push。COMM-027的文件冲突提醒继续有效，WorkBuddy不要用旧0.8a覆盖已批协议；coordination临时分工与0.9草稿不属于本轮修改。本轮冻结后暂停源码写入，仅仓库通知，不声称外部会话已读/已停。

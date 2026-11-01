@@ -1,0 +1,49 @@
+{
+  "contract": "P0-SEND-1",
+  "human_approved": true,
+  "engineering_passed": true,
+  "dsh_accepted": false,
+  "model_calls": 0,
+  "platform_calls": 0,
+  "default_sending_enabled": false,
+  "node_tests_passed": 35,
+  "coverage": {
+    "sender": 97.2,
+    "live": 77.0,
+    "scheduler": 83.9,
+    "database": 84.8
+  },
+  "checks": [
+    {
+      "command": "node --test tools/bili-whale/protocol.test.mjs tools/bili-whale/sender.test.mjs",
+      "exit_code": 0
+    },
+    {
+      "command": "go test ./... -count=1",
+      "exit_code": 0
+    },
+    {
+      "command": "go test -tags=integration ./... -count=1",
+      "exit_code": 0
+    },
+    {
+      "command": "go vet ./...",
+      "exit_code": 0
+    },
+    {
+      "command": "go build ./...",
+      "exit_code": 0
+    },
+    {
+      "command": "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run --build-tags integration",
+      "exit_code": 0
+    },
+    {
+      "command": "WSL: CGO_ENABLED=1 /usr/local/go/bin/go test -race ./... -count=1",
+      "exit_code": 0
+    }
+  ],
+  "concurrent_commit": "8d68f00保留；最终以本manifest为准",
+  "real_room_verified": false,
+  "exactly_once_claimed": false
+}

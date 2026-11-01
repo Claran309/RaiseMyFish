@@ -418,3 +418,19 @@
   凭据仅 `FISH_BILI_COOKIE`/`_FILE`；默认 `[channels.live] enabled=false`
 - 结论：**0.5 验收通过**（待 Codex 提交）。
 - 未验证（交接声明）：真实房间 WS 稳定性/稳定 ID 字段/断线行为留 0.11；不宣称满足 P0 两小时门槛。
+
+## 0.8 弹幕发送独立验收（2026-11-01 15:15）
+
+- 交付：`tools/bili-whale/danmaku.mjs` + `sender.test.mjs`、`internal/sender/`（types + live/live.go、node.go）、
+  `internal/store/delivery.go`、`internal/database/send.go` + 迁移 `0003_send_delivery.sql`、契约 sender/event/memory 增量。
+- 独立执行：
+  - Node `node --test tools/bili-whale/*.test.mjs`：**35/35 通过**（protocol 17 + sender 18）
+  - Go 全仓 `go test ./...` 通过；发送集成测试 15+ 全 PASS（Prepare/Arm/Settle/Recovery/未知结果/负回执/限流/幂等/崩溃恢复/租约围栏）
+- 核对：
+  - 单次 POST（postOnce 不重试）；未知结果只核验不重发（`TestSendUnknownVerificationExhaustionNeverRearms`）
+  - 限流 + 10 秒防重（`TestSendActorRateAndDuplicateAcrossRepositories`）
+  - 严格核验（verifyOnce：本账号+完整正文+稳定 ID）
+  - 失败分类 retry/dead/skipped + Outcome accepted/rejected/unknown/not_posted
+  - `send_log`（ON CONFLICT attempt_id）+ `out` 事件（`live:out:{room}:{id}`）原子记账
+- 结论：**0.8 验收通过**（待 Codex 提交/push）。
+- 边界：默认发送关闭，未调用真实 B站；真实房间发送留 0.11。

@@ -162,3 +162,13 @@ func TestKnownMessageIDCannotBeReplacedByVerifier(t *testing.T) {
 		t.Fatal("核验更换了原消息ID")
 	}
 }
+
+func TestTransportCauseRemainsBehindSafeError(t *testing.T) {
+	s, _, f, c, p := fixture(t)
+	cause := errors.New("private-network-canary")
+	f.postErr = cause
+	_, err := s.Send(context.Background(), c, p)
+	if !errors.Is(err, cause) || strings.Contains(err.Error(), "canary") {
+		t.Fatal("运输原因链丢失或泄漏", err)
+	}
+}

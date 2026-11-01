@@ -1,0 +1,8 @@
+{
+  "package": "dsh-bili-whale",
+  "version": "0.4.5",
+  "source": "tools/commands/danmaku.mjs",
+  "sha256": "119d0ef000968f3746fee071c31bc502b421b2a785ef50b17060839b29013b1c",
+  "license": "MIT",
+  "note": "只读来源；无主目录凭据/DSH配置/outbox移植"
+}

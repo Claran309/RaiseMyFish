@@ -1,6 +1,6 @@
 # 0.8 Node 弹幕薄适配
 
-本目录的 `danmaku.mjs` 只负责只读预检、一次投递和一次只读核验。它尚未接入 Go Sender，也不代表 Phase 0.8 或 P0-SEND-1 契约提案已通过。
+本目录的 `danmaku.mjs` 只负责只读预检、一次投递和一次只读核验。Node独立实现时P0-SEND-1仍待批准；现主人已批准，Go/PG已完成本机合成集成。完整工程交付与DSH状态以 `plans/reports/phase-0.8-sender/analysis.md` 为准；不代表真实平台验收。
 
 ## 来源与许可
 
@@ -38,7 +38,9 @@ Go 必须保持 stdin 打开直到 result。进程收到并处理EOF、SIGINT/SI
 
 核验使用 `--action verify`，无需 `--go`；只读一帧 `{protocol:1,type:"verify",...request,attempt_id,nonce,msg_id}`，重新只读预检后读取历史并输出 result。只有 verified=true 退出码为0。核验针对已存在的投递，缺凭据、预检失败、提前取消及其他核验失败始终为unknown，绝不能返回not_posted；有效attempt_id在预检前保存，失败帧仍关联原尝试。任何失败 stdout 只含受控 JSONL 结果，无原始错误文本。
 
-该 Node 层每次调用不重试，**也不承诺跨调用的 attempt_id 去重**。未来 Go/PG 核心负责持久化许可、唯一尝试、10秒防重、实际POST限流、未知结果只核验和发送记账；不能用 Node 内存或本地文件代替 PG 账本。rnd 是相关性证据，不是平台幂等键。
+该 Node 层每次调用不重试，**也不承诺跨调用的 attempt_id 去重**。Go/PG核心负责持久化许可、唯一尝试、10秒防重、实际POST限流、未知结果只核验和发送记账；不能用Node内存或本地文件代替PG账本。rnd是相关性证据，不是平台幂等键。Go驱动在commit写出后即保守视为可能投递，缺帧/坏帧/进程死亡不会生成未投递证据；只有未写commit前的确定取消或许可失效可给not_posted。
+
+HTTP401/403会保留auth类别：只读预检失败暂停账号，POST发起后即便响应鉴权失败也保持unknown，不能据此自动重投。
 
 ## 验证记录与限制
 
@@ -48,6 +50,7 @@ Go 必须保持 stdin 打开直到 result。进程收到并处理EOF、SIGINT/SI
 - 质量审查发现核验预检失败会误报not_posted且丢失attempt_id。先新增CLI缺凭据/合成预检失败/合成SIGTERM取消三条反例，执行 `node --test --test-name-pattern="CLI核验" tools/bili-whale/sender.test.mjs` 实际RED为0通过/3失败，均观察到实际not_posted与预期unknown不符；修复后全量34/34通过（17个既有协议测试、17个发送测试）。取消用例通过子进程内process.emit执行已注册处理器，不宣称验证Windows原生强杀会产帧。
 - `node --check tools/bili-whale/danmaku.mjs` 与 `node --check tools/bili-whale/sender.test.mjs`：通过。
 - 子进程握手通过子进程内注入 fetch 测试，无真实网络。其他CLI反例使用清空的凭据环境，在凭据/参数/输入层失败。
-- 未执行真实B站/真实模型/真实凭据操作；没有读取上游运行状态，没有 Git 操作。Go/契约/PG集成及真实平台响应形态仍未验证，不计作已完成0.8。
+- 后续主线程补HTTP鉴权分类反例，实际RED后修复；最终35/35通过（17采集协议+18发送协议）。Go驱动、Service和真实PG另验证，包括运行本脚本并在子进程内替换fetch的完整合成POST链路。
+- 未执行真实B站/真实模型操作；Node测试仅用合成Cookie，不读取上游运行状态。真实平台响应形态、限流和重启实测仍留0.11。
 
-完成该快照后暂停写入，供父线程规格与质量复核；DSH 独立验收及契约批准仍须单独完成。
+契约批准已完成，DSH独立验收仍单独进行；所有旧Node阶段RED/GREEN记录保留，不把合成回执冒充真实平台证据。

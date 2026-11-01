@@ -245,11 +245,12 @@ func TestSendActorRateAndDuplicateAcrossRepositories(t *testing.T) {
 	close(errs)
 	arms, waits := 0, 0
 	for err := range errs {
-		if err == nil {
+		switch {
+		case err == nil:
 			arms++
-		} else if sender.Handled(err) {
+		case sender.Handled(err):
 			waits++
-		} else {
+		default:
 			t.Fatal(err)
 		}
 	}
@@ -841,4 +842,147 @@ func TestSendMigrationV3FailureRollsBackStageConstraint(t *testing.T) {
 	if err := Ready(ctx, db); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestSendRecoveredLeaseCannotImpersonatePostReceipt(t *testing.T) {
+	for _, priorPost := range []bool{false, true} {
+		t.Run(fmt.Sprint(priorPost), func(t *testing.T) {
+			db, ctx := repositoryDB(t)
+			r := sendRepo(t, db)
+			c := sendFixture(t, db, ctx, "live:123:post-fence", "123")
+			a, err := r.Prepare(ctx, c, sendReply("123", "许可归属"), "456")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.Arm(ctx, c, a.ID); err != nil {
+				t.Fatal(err)
+			}
+			if priorPost {
+				if _, err := r.Settle(ctx, c, a.ID, sender.Verdict{Origin: sender.OriginPost, Outcome: sender.OutcomeAccepted, MsgID: "777"}); !sender.Handled(err) {
+					t.Fatal(err)
+				}
+				c = sendReclaim(t, db, ctx, c.Event.ID)
+			} else {
+				expireClaim(t, db, c.Event.ID)
+				b := makeBus(t, db)
+				if n, err := b.Recover(ctx, 10); err != nil || n != 1 {
+					t.Fatal(n, err)
+				}
+				// 故意复用Owner，只增加Version，证明许可围栏不能只比较Owner。
+				events, _ := NewEventRepo(db)
+				claims, err := events.Claim(ctx, c.Lease.Owner, time.Minute, 1)
+				if err != nil || len(claims) != 1 || claims[0].Lease.Version <= c.Lease.Version {
+					t.Fatal("未能取得同Owner的新代次", err)
+				}
+				c = claims[0]
+			}
+			if _, err := r.Settle(ctx, c, a.ID, sender.Verdict{Origin: sender.OriginPost, Outcome: sender.OutcomeAccepted, Verified: true, MsgID: "888", Evidence: "receipt_id"}); !errors.Is(err, store.ErrConflict) {
+				t.Fatal("新租约冒充原POST回执", err)
+			}
+			loaded, err := r.Load(ctx, c, "456")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.Verified || loaded.MsgID == "888" || loaded.VerifyCount != 0 {
+				t.Fatal("拒绝冒充时修改了既有尝试", loaded)
+			}
+			id, evidence := "888", "history_nonce"
+			if priorPost {
+				id, evidence = "777", "history_id"
+			}
+			result, err := r.Settle(ctx, c, a.ID, sender.Verdict{Origin: sender.OriginVerify, Outcome: sender.OutcomeAccepted, Verified: true, MsgID: id, Evidence: evidence})
+			if err != nil || !result.Verified {
+				t.Fatal("合法恢复核验被挡住", result, err)
+			}
+			sendCounts(t, db, 1)
+		})
+	}
+}
+
+func TestSendKnownReceiptCannotUseNonceEvidence(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	r := sendRepo(t, db)
+	c := sendFixture(t, db, ctx, "live:123:nonce-evidence", "123")
+	a, err := r.Prepare(ctx, c, sendReply("123", "不能用nonce替代精确ID"), "456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Arm(ctx, c, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Settle(ctx, c, a.ID, sender.Verdict{Origin: sender.OriginPost, Outcome: sender.OutcomeAccepted, MsgID: "777"}); !sender.Handled(err) {
+		t.Fatal(err)
+	}
+	c = sendReclaim(t, db, ctx, c.Event.ID)
+	result, err := r.Settle(ctx, c, a.ID, sender.Verdict{Origin: sender.OriginVerify, Outcome: sender.OutcomeAccepted, MsgID: "777", Verified: true, Evidence: "history_nonce"})
+	if !sender.Handled(err) || result.Verified || result.OK {
+		t.Fatal("已知ID通过nonce证据绕过精确核验", result, err)
+	}
+	c = sendReclaim(t, db, ctx, c.Event.ID)
+	a, err = r.Load(ctx, c, "456")
+	if err != nil || a.MsgID != "777" || a.VerifyCount != 1 || a.State != sender.StateUnknown {
+		t.Fatal(a, err)
+	}
+	result, err = r.Settle(ctx, c, a.ID, sender.Verdict{Origin: sender.OriginVerify, Outcome: sender.OutcomeAccepted, MsgID: "777", Verified: true, Evidence: "history_id"})
+	if err != nil || !result.Verified {
+		t.Fatal(result, err)
+	}
+	sendCounts(t, db, 1)
+}
+
+func TestSendManualUnknownStillBlocksDuplicateWithinWindow(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	policy := sender.DefaultPolicy()
+	policy.MinInterval = time.Millisecond
+	policy.PermitTTL = time.Millisecond
+	policy.RetryDelay = time.Millisecond
+	policy.DuplicateWindow = time.Hour
+	policy.MaxVerifications = 1
+	r, err := NewSendRepo(db, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := sendFixture(t, db, ctx, "live:123:manual-duplicate-a", "123")
+	a, err := r.Prepare(ctx, c, sendReply("123", "可能已经发过"), "456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Arm(ctx, c, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Settle(ctx, c, a.ID, sender.Verdict{Origin: sender.OriginPost, Outcome: sender.OutcomeUnknown, ErrorKind: "timeout"}); !sender.Handled(err) {
+		t.Fatal(err)
+	}
+	c = sendReclaim(t, db, ctx, c.Event.ID)
+	if _, err := r.Settle(ctx, c, a.ID, sender.Verdict{Origin: sender.OriginVerify, Outcome: sender.OutcomeUnknown, ErrorKind: "network"}); !sender.Handled(err) {
+		t.Fatal(err)
+	}
+	sendState(t, db, c.Event.ID, event.StatusDead, event.StageVerify)
+	var manual bool
+	if err := db.Raw("SELECT state='manual' AND error_kind='unknown_manual' AND ok IS NULL FROM send_attempts WHERE id=?", a.ID).Scan(&manual).Error; err != nil || !manual {
+		t.Fatal("未进入manual未知状态", err)
+	}
+	var out eventRow
+	if err := db.Table("events").Where("id=?", "live:out:123:"+a.ID).Take(&out).Error; err != nil || out.Status != event.StatusRetry {
+		t.Fatal("manual被当作明确未投递", err)
+	}
+	// 等到普通间隔结束，防重仍须独立保护潜在已发出的manual尝试。
+	if err := db.Exec("SELECT pg_sleep(0.01)").Error; err != nil {
+		t.Fatal(err)
+	}
+	var intervalEnded bool
+	if err := db.Raw("SELECT permit_until+interval '1 millisecond'<clock_timestamp() FROM send_attempts WHERE id=?", a.ID).Scan(&intervalEnded).Error; err != nil || !intervalEnded {
+		t.Fatal("普通间隔尚未结束", err)
+	}
+	restarted, err := NewSendRepo(db, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := sendFixture(t, db, ctx, "live:123:manual-duplicate-b", "123")
+	duplicate, err := restarted.Prepare(ctx, second, sendReply("123", "可能已经发过"), "456")
+	if err != nil || duplicate.State != sender.StateSkipped {
+		t.Fatal("manual未知结果绕过防重窗口", duplicate.State, err)
+	}
+	sendState(t, db, second.Event.ID, event.StatusSkipped, event.StageDeliver)
+	sendCounts(t, db, 2)
 }

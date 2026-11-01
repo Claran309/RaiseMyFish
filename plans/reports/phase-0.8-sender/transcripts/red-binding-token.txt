@@ -1,0 +1,7 @@
+--- FAIL: TestNoPostRefundsPhysicalToken (0.00s)
+    live_test.go:151: 明确未投递却消耗了实际发送令牌
+--- FAIL: TestKnownMessageIDCannotBeReplacedByVerifier (0.00s)
+    live_test.go:162: 核验更换了原消息ID
+FAIL
+FAIL	command-line-arguments	1.254s
+FAIL

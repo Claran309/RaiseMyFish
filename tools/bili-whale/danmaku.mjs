@@ -84,6 +84,7 @@ async function http(url, method, session, deps, body) {
         'user-agent': 'Mozilla/5.0 RaiseMyFish/0.8', ...(method === 'POST' ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
       }, ...(body === undefined ? {} : { body }) })
       // HTTP 失败不能用看似成功的 JSON 伪装为可信回执。
+      if (response.status === 401 || response.status === 403) throw failure('auth')
       if (!response.ok || response.status < 200 || response.status >= 300) throw failure('network')
       return parseWireJSON(await responseText(response))
     })()])
@@ -131,7 +132,7 @@ export async function postOnce(request, session, permit, deps = {}) {
       return result('accepted', '', id, id ? 'receipt_id' : 'none')
     }
     return negative.has(data?.code) ? result('rejected', negative.get(data.code)) : result('unknown', 'protocol')
-  } catch { return result('unknown', 'network') }
+  } catch (error) { return result('unknown', error?.code === 'auth' ? 'auth' : 'network') }
 }
 
 export async function verifyOnce(request, session, expected, deps = {}) {
@@ -151,7 +152,7 @@ export async function verifyOnce(request, session, expected, deps = {}) {
       if (knownID ? id === knownID : decimalID(row.rnd) === nonce) return result('accepted', '', id, knownID ? 'history_id' : 'history_nonce')
     }
     return result('unknown', 'unconfirmed')
-  } catch { return result('unknown', 'network') }
+  } catch (error) { return result('unknown', error?.code === 'auth' ? 'auth' : 'network') }
 }
 
 // stdin 每行及单次进程总输入最多16KiB；只消费 prepare + commit 两帧。

@@ -1,0 +1,5 @@
+--- FAIL: TestEvidenceOriginCannotBeSwapped (0.00s)
+    types_test.go:3: 跨来源证据被接受
+FAIL
+FAIL	RaiseMyFish/internal/sender	0.967s
+FAIL

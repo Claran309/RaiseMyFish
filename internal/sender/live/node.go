@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -122,7 +123,9 @@ type nodeSession struct {
 	read    int
 }
 
-func nodeFailure(kind sender.Kind) error { return &sender.Error{Kind: kind} }
+func nodeFailure(kind sender.Kind, causes ...error) error {
+	return &sender.Error{Kind: kind, Cause: errors.Join(causes...)}
+}
 
 // start自持管道；Wait不会提前关闭仍待读取的stdout。取消同时关闭管道以中断阻塞读写。
 func (n *NodeTransport) start(parent context.Context, a sender.Attempt, action string) (*nodeSession, error) {
@@ -130,20 +133,20 @@ func (n *NodeTransport) start(parent context.Context, a sender.Attempt, action s
 		return nil, nodeFailure(sender.KindInput)
 	}
 	if parent.Err() != nil {
-		return nil, nodeFailure(sender.KindRetry)
+		return nil, nodeFailure(sender.KindRetry, parent.Err())
 	}
 	ctx, cancel := context.WithTimeout(parent, n.options.Timeout)
 	inRead, inWrite, err := os.Pipe()
 	if err != nil {
 		cancel()
-		return nil, nodeFailure(sender.KindRetry)
+		return nil, nodeFailure(sender.KindRetry, err)
 	}
 	outRead, outWrite, err := os.Pipe()
 	if err != nil {
 		cancel()
 		_ = inRead.Close()
 		_ = inWrite.Close()
-		return nil, nodeFailure(sender.KindRetry)
+		return nil, nodeFailure(sender.KindRetry, err)
 	}
 	cmd := n.command(ctx, action)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = inRead, outWrite, io.Discard
@@ -152,10 +155,11 @@ func (n *NodeTransport) start(parent context.Context, a sender.Attempt, action s
 	_ = inRead.Close()
 	_ = outWrite.Close()
 	if err != nil {
+		ctxErr := ctx.Err()
 		cancel()
 		_ = inWrite.Close()
 		_ = outRead.Close()
-		return nil, nodeFailure(sender.KindRetry)
+		return nil, nodeFailure(sender.KindRetry, err, ctxErr)
 	}
 	s := &nodeSession{attempt: a, ctx: ctx, cancel: cancel, stdin: inWrite, stdout: outRead, reader: bufio.NewReaderSize(outRead, 64*1024+1), done: make(chan struct{})}
 	context.AfterFunc(ctx, func() {
@@ -191,7 +195,7 @@ func (n *NodeTransport) Open(ctx context.Context, a sender.Attempt) (Session, er
 	}
 	f, err := s.readFrame()
 	if err != nil || f.RequestID != a.ID {
-		return nil, nodeFailure(sender.KindRetry)
+		return nil, nodeFailure(sender.KindRetry, err, s.ctx.Err())
 	}
 	if f.Type == "result" {
 		v, err := decodeNodeVerdict(f.Result, sender.OriginPost)
@@ -216,46 +220,46 @@ func (s *nodeSession) writeFrame(value any) error {
 	written, err := s.stdin.Write(data)
 	s.written += written
 	if err != nil || written != len(data) {
-		return nodeFailure(sender.KindRetry)
+		return nodeFailure(sender.KindRetry, err, s.ctx.Err())
 	}
 	return nil
 }
 
 // nodeObject拒绝重复键、null、尾随JSON以及缺失或新增字段。
-func nodeObject(data []byte, fields ...string) (map[string]json.RawMessage, error) {
+func nodeObject(data []byte, fields ...string) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	first, err := decoder.Token()
 	if err != nil || first != json.Delim('{') {
-		return nil, nodeFailure(sender.KindRetry)
+		return nodeFailure(sender.KindRetry, err)
 	}
 	object := make(map[string]json.RawMessage, len(fields))
 	for decoder.More() {
 		key, err := decoder.Token()
 		name, ok := key.(string)
 		if err != nil || !ok {
-			return nil, nodeFailure(sender.KindRetry)
+			return nodeFailure(sender.KindRetry, err)
 		}
 		if _, duplicate := object[name]; duplicate {
-			return nil, nodeFailure(sender.KindRetry)
+			return nodeFailure(sender.KindRetry)
 		}
 		var raw json.RawMessage
 		if err := decoder.Decode(&raw); err != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return nil, nodeFailure(sender.KindRetry)
+			return nodeFailure(sender.KindRetry, err)
 		}
 		object[name] = raw
 	}
 	if last, err := decoder.Token(); err != nil || last != json.Delim('}') {
-		return nil, nodeFailure(sender.KindRetry)
+		return nodeFailure(sender.KindRetry, err)
 	}
 	if decoder.Decode(new(any)) != io.EOF || len(object) != len(fields) {
-		return nil, nodeFailure(sender.KindRetry)
+		return nodeFailure(sender.KindRetry)
 	}
 	for _, field := range fields {
 		if _, ok := object[field]; !ok {
-			return nil, nodeFailure(sender.KindRetry)
+			return nodeFailure(sender.KindRetry)
 		}
 	}
-	return object, nil
+	return nil
 }
 
 func (s *nodeSession) readFrame() (nodeFrame, error) {
@@ -263,10 +267,10 @@ func (s *nodeSession) readFrame() (nodeFrame, error) {
 	s.read += len(line)
 	var frame nodeFrame
 	if err != nil || s.read > 64*1024 || !utf8.Valid(line) {
-		return frame, nodeFailure(sender.KindRetry)
+		return frame, nodeFailure(sender.KindRetry, err, s.ctx.Err())
 	}
 	if err := json.Unmarshal(line, &frame); err != nil || frame.Protocol != 1 {
-		return frame, nodeFailure(sender.KindRetry)
+		return frame, nodeFailure(sender.KindRetry, err)
 	}
 	fields := []string{"protocol", "type", "request_id"}
 	switch frame.Type {
@@ -277,7 +281,7 @@ func (s *nodeSession) readFrame() (nodeFrame, error) {
 	default:
 		return frame, nodeFailure(sender.KindRetry)
 	}
-	if _, err := nodeObject(line, fields...); err != nil {
+	if err := nodeObject(line, fields...); err != nil {
 		return frame, err
 	}
 	return frame, nil
@@ -285,15 +289,15 @@ func (s *nodeSession) readFrame() (nodeFrame, error) {
 
 func decodeNodeVerdict(data []byte, origin string) (sender.Verdict, error) {
 	var verdict sender.Verdict
-	if _, err := nodeObject(data, "outcome", "msg_id", "verified", "error_kind", "evidence"); err != nil {
+	if err := nodeObject(data, "outcome", "msg_id", "verified", "error_kind", "evidence"); err != nil {
 		return verdict, err
 	}
 	if err := json.Unmarshal(data, &verdict); err != nil {
-		return verdict, nodeFailure(sender.KindRetry)
+		return verdict, nodeFailure(sender.KindRetry, err)
 	}
 	verdict.Origin = origin
 	if err := verdict.Validate(); err != nil {
-		return sender.Verdict{}, nodeFailure(sender.KindRetry)
+		return sender.Verdict{}, nodeFailure(sender.KindRetry, err)
 	}
 	return verdict, nil
 }
@@ -318,16 +322,16 @@ func (s *nodeSession) Post(ctx context.Context, permit sender.Permit) (sender.Ve
 	stop := context.AfterFunc(ctx, s.cancel)
 	defer stop()
 	if err := s.writeFrame(nodeCommit{Protocol: 1, Type: "commit", Permit: permit}); err != nil {
-		return sender.Verdict{}, err
+		return sender.Verdict{}, nodeFailure(sender.KindRetry, err, ctx.Err())
 	}
 	f, err := s.readFrame()
 	if err != nil || f.Type != "result" || f.RequestID != s.attempt.ID || f.AttemptID != s.attempt.ID {
-		return sender.Verdict{}, nodeFailure(sender.KindRetry)
+		return sender.Verdict{}, nodeFailure(sender.KindRetry, err, ctx.Err(), s.ctx.Err())
 	}
 	v, err := decodeNodeVerdict(f.Result, sender.OriginPost)
 	if err != nil || v.Outcome == sender.OutcomeNotPosted {
 		// commit已写入时，子进程的未发分类不能推翻父进程持久化的不确定边界。
-		return sender.Verdict{}, nodeFailure(sender.KindRetry)
+		return sender.Verdict{}, nodeFailure(sender.KindRetry, err)
 	}
 	return v, nil
 }
@@ -358,7 +362,7 @@ func (n *NodeTransport) Verify(ctx context.Context, a sender.Attempt) (sender.Ve
 	}
 	f, err := s.readFrame()
 	if err != nil || f.Type != "result" || f.RequestID != a.ID || f.AttemptID != a.ID {
-		return unknown, nodeFailure(sender.KindRetry)
+		return unknown, nodeFailure(sender.KindRetry, err, s.ctx.Err())
 	}
 	v, err := decodeNodeVerdict(f.Result, sender.OriginVerify)
 	if err != nil {

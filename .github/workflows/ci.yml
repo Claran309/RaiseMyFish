@@ -43,7 +43,7 @@ jobs:
         with:
           node-version: "24"
       - name: 直播协议离线测试
-        run: node --test tools/bili-whale/protocol.test.mjs
+        run: node --test tools/bili-whale/protocol.test.mjs tools/bili-whale/sender.test.mjs
       - name: 测试（含竞态检测）
         run: go test -race -cover ./...
 
