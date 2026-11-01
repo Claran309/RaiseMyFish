@@ -78,6 +78,8 @@ type Options struct {
 	ScanInterval time.Duration
 	// Source 覆盖 memory_sources 的来源 id；为空时按候选类型推导。
 	Source string
+	// Now 注入时钟，仅测试需要；为空时用 time.Now。
+	Now func() time.Time
 }
 
 // Stats 是一轮扫描的统计，交给上层打日志/日报。
@@ -260,7 +262,7 @@ func (w *Worker) buildRecord(ev event.Event, c memory.Candidate) store.MemoryRec
 			Confidence: c.Confidence,
 			Private:    ev.Private,
 			EventIDs:   []string{ev.ID},
-			ValidFrom:  ev.At,
+			ValidFrom:  w.validFrom(ev.At),
 		},
 		Source: source,
 		Kind:   storeKind(c.Kind),
@@ -268,6 +270,27 @@ func (w *Worker) buildRecord(ev event.Event, c memory.Candidate) store.MemoryRec
 		// Body 留空：摘要已经够召回用，不把完整正文写进记忆库
 		Body: "",
 	}
+}
+
+// validFrom 返回记录的有效期起点：取事件时间，但**绝不晚于当前时间**。
+//
+// 为什么要兜底：memory_records 的有效性查询是 `valid_from <= now()`，
+// 一旦事件时间在未来（时钟漂移、预置数据、跨机同步），写进去的记录会立刻不可见，
+// 表现成「提炼明明成功、召回却永远为空」这种很难查的静默故障。
+func (w *Worker) validFrom(at time.Time) time.Time {
+	now := w.now()
+	if at.After(now) {
+		return now
+	}
+	return at
+}
+
+// now 返回当前时间；测试可注入 clock 让断言稳定。
+func (w *Worker) now() time.Time {
+	if w.opts.Now != nil {
+		return w.opts.Now()
+	}
+	return time.Now()
 }
 
 // saveIfAdvanced 只在水位真的前进时才写盘，避免空转时反复覆盖文件。

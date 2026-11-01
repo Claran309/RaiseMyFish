@@ -17,7 +17,10 @@ import (
 )
 
 // baseTime 是所有用例的基准时刻，避免用 time.Now() 让断言漂移。
-var baseTime = time.Date(2026, 11, 1, 18, 0, 0, 0, time.UTC)
+//
+// 必须取一个**确实在过去**的时间：0.9d 起 worker 会把 valid_from 夹到 now，
+// 用未来时刻做基准会让「原样保留事件时间」的断言失效。
+var baseTime = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
 // mkEvent 造一条已完成事件。
 func mkEvent(id string, at time.Time, text, fromName string, private bool, ch event.Channel, session string) event.Event {
@@ -533,5 +536,61 @@ func TestRecordIDStableAndDistinct(t *testing.T) {
 	// 拼接歧义：分隔符必须挡住 「a|b|c」 与 「ab||c」 撞车
 	if recordID("a", "b", "c") == recordID("ab", "", "c") {
 		t.Error("分隔符不足以区分拼接歧义")
+	}
+}
+
+// TestValidFromClampedToNow 未来时间的事件必须把 valid_from 夹到「现在」。
+//
+// 否则记录会永远落在 `valid_from <= now()` 之外，表现为「提炼成功但召回为空」。
+func TestValidFromClampedToNow(t *testing.T) {
+	fixed := baseTime.Add(24 * time.Hour) // 注入的「现在」
+	future := fixed.Add(2 * time.Hour)    // 事件时间在未来
+
+	src := &fakeSource{events: []event.Event{
+		mkEvent("live:1:8001", future, "我保证明天带话", "路人甲", false, event.ChLive, "1"),
+	}}
+	repo := &fakeRepo{}
+
+	w := newWorker(t, src, repo, NewMemoryWatermark(), Options{Now: func() time.Time { return fixed }})
+	if _, err := w.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	recs := repo.all()
+	if len(recs) != 1 {
+		t.Fatalf("记录数 = %d，期望 1", len(recs))
+	}
+	if !recs[0].ValidFrom.Equal(fixed) {
+		t.Errorf("ValidFrom = %v，期望被夹到 now=%v", recs[0].ValidFrom, fixed)
+	}
+
+	// 过去时间原样保留，不该被改成 now
+	past := fixed.Add(-time.Hour)
+	src2 := &fakeSource{events: []event.Event{
+		mkEvent("live:1:8002", past, "我保证明天带话", "路人甲", false, event.ChLive, "1"),
+	}}
+	repo2 := &fakeRepo{}
+	w2 := newWorker(t, src2, repo2, NewMemoryWatermark(), Options{Now: func() time.Time { return fixed }})
+	if _, err := w2.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if got := repo2.all()[0].ValidFrom; !got.Equal(past) {
+		t.Errorf("过去的 ValidFrom = %v，期望原样保留 %v", got, past)
+	}
+}
+
+// TestValidFromDefaultClock 不注入时钟时走 time.Now，未来事件同样不会写出未来有效期。
+func TestValidFromDefaultClock(t *testing.T) {
+	future := time.Now().Add(6 * time.Hour)
+	src := &fakeSource{events: []event.Event{
+		mkEvent("live:1:8003", future, "我保证明天带话", "路人甲", false, event.ChLive, "1"),
+	}}
+	repo := &fakeRepo{}
+
+	if _, err := newWorker(t, src, repo, NewMemoryWatermark(), Options{}).RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	rec := repo.all()[0]
+	if rec.ValidFrom.After(time.Now()) {
+		t.Errorf("ValidFrom = %v 仍在未来，会被 valid_from <= now() 过滤掉", rec.ValidFrom)
 	}
 }

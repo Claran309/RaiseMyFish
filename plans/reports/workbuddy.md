@@ -535,3 +535,115 @@ go test -race  → cc1.exe: sorry, unimplemented: 64-bit mode not compiled in
 - **是。** 本轮写入结束，只新增上表 5 个文件（`internal/database/` 3 个、`internal/memory/` 2 个）；未执行 git 命令、未提交、未 push。
 - 交 DSH 逐条验收：DoneSource 游标/limit/只取 done + Reader 公开读不到私密三段；
   race 一项按「环境阻塞」处理，等主人给出 mingw-w64 路径后补跑。
+
+---
+
+## 0.9d 交接 · FactSource + 时钟漂移修正（2026-11-01，Asia/Shanghai）
+
+- 任务：0.9d。允许写 `store` / `database` / `memory`；未改 `contracts/`、未改迁移、未加依赖。
+- 获派与实际修改路径：
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/store/memory.go` | 修改（新增 `FactSource`） | `C30FC0EB85085E51C41123D22BA56661846C3A15D9E7D6124C5750BD74728736` | 2507 |
+| `internal/database/memories.go` | 修改（实现 `Facts`） | `434BFA343BDF21EE60FCE5008A2E8407F75CA1A4E25B2CD18637D1EC257EDA4B` | 8487 |
+| `internal/database/facts_integration_test.go` | 新增 | `1219543D3DFDFC547E112C4EEE3939B787D636B3CACA1F398150B4BC6F824EBE` | 5021 |
+| `internal/database/worker_integration_test.go` | 新增 | `BDAC06487E2667CDEFDD8DE0375E7353920A4605235B63A2C0371B8B4C3A3100` | 2046 |
+| `internal/memory/extractworker/worker.go` | 修改（valid_from 夹取 + 注入时钟） | `B49080A23417DD685A9558D0918E9EC5E8443141B07FACBA0AECC6D5C5A9B42B` | 10677 |
+| `internal/memory/extractworker/worker_test.go` | 修改（新增夹取用例） | `EDDB6E74B8EA12FEF3647653E4949CB63BC9DE7714C9BE000BB7AC066142483D` | 20133 |
+
+### ⚠️ 需要 DSH 确认的关键决策：事实没有独立表
+
+迁移里**没有 facts 表**（`0001_init.sql` 只有 events / tasks / memory_sources / memory_records / llm_usage / send_log / dlq）。加表就是改迁移，按「除非必要先报」白酱没有动。
+
+实际做法：**事实复用 `memory_records` 里 `kind='fact'` 的行**，投影成 `memory.Fact`：
+
+| Fact 字段 | 来源列 |
+|---|---|
+| `Key` | `title`（如「存粮」） |
+| `Value` | `summary` |
+| `Channel` / `Session` / `Private` | 同名列 |
+| `SourceID` | `event_ids[0]`，缺失时退回 `source`（契约允许「事件ID或可信探测器名」） |
+| `At` | `valid_from`（观测时间） |
+
+好处：零迁移、不会出现「记录说一套、事实表说另一套」。代价：事实与摘要共表，靠 `kind` 区分。
+**如果 DSH 认为事实必须有独立表（带 key 唯一约束、独立时效），这就是一个迁移批次，请裁决。**
+
+SQL 过滤：`kind='fact'` + `valid_to IS NULL` + `NOT archived` + `valid_from <= now()` + `channel/session 非空`（契约要求事实必须有可核对范围，缺列按「未观测」省略）+ 与 Records 相同的一套私密规则（公开视角 `NOT private`，且 `channel<>'dm' OR private`）。
+
+排序：SQL 按 `title, valid_from, id`，返回前再用 `slices.SortStableFunc` 精确排成契约要求的 **Key → At → SourceID**。
+
+### store 接口选择
+
+新增**独立**的 `store.FactSource`，没有并进 `MemoryRepo`：
+并进去会让 `internal/memory/extractworker` 的 fakeRepo、以及未来任何 MemoryRepo 假实现都要多实现一个方法，而事实查询只有 `SharedState` 需要。
+`database.MemoryRepo` 同时满足 `store.FactSource` 与 `memory.FactSource`，两边都有编译期断言；集成测试里 `memory.NewReader(memRepo, memRepo, …)` 直接可用。
+
+### 时钟漂移兜底
+
+- `extractworker.Options` 新增 `Now func() time.Time`（为空用 `time.Now`），便于测试注入。
+- `buildRecord` 用 `validFrom(ev.At)`：`ev.At` 晚于 now 时取 now，否则原样保留。
+- 理由写在注释里：有效性别是 `valid_from <= now()`，未来时间会让记录「写得进去、召不回来」，是典型的静默故障。
+
+### 测试
+
+单元（`internal/memory/extractworker`）：
+`TestValidFromClampedToNow`（注入时钟：未来事件被夹到 now、过去时间原样保留）、
+`TestValidFromDefaultClock`（不注入时钟时也不会写出未来有效期）。
+
+真实 PG 集成（`-tags=integration`）：
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestFactsRealPostgres/公开范围只给公开事实` | 未来生效、已归档、已失效、非 `fact` 类型全部不返回；只回「存粮」 |
+| `.../私密范围可读本会话私密事实` | 私密事实在本会话私密范围内可见，字段完整 |
+| `.../limit 生效` / `.../非法参数被拒` | limit 与 scope 校验 |
+| `.../可直接作为 Reader 的事实来源` | `NewReader(repo, repo, …)` 的 `Shared` 拿到同一批事实 |
+| `TestWorkerFutureEventRecordVisible` | **端到端**：未来 `at` 的 done 事件 → worker 落库 → `Records` 能召回（证明夹取真的生效） |
+
+命令与结果：
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l internal/memory internal/database internal/store` | 无输出 |
+| `go build ./...` / `go vet ./...` / `go vet -tags=integration ./internal/database/...` | 均通过 |
+| `go test ./... -count=1` | 21 个包全绿 |
+| `go test -tags=integration ./internal/database/... -count=1` | **ok 44.690s**（含 0.1/0.2/0.9c 既有集成用例） |
+| `golangci-lint v2.15.0 run ./internal/memory/... ./internal/database/... ./internal/store/...` | 0 issues |
+| `golangci-lint ... --build-tags integration ./internal/database/...` | 0 issues |
+
+### 过程里发现并修掉的三个问题
+
+1. **旧用例被新逻辑打中**：`worker_test.go` 的 `baseTime` 原本是 `2026-11-01 18:00 UTC`，对当前时钟来说**是未来**，加了夹取后 `TestRunOnceInsertsCandidate` 立刻失败。把基准时刻改成 `2026-01-01`（确定在过去），并在注释里写明原因——这条正好反向证明夹取生效了。
+2. **float32 精度**：`importance` 在 PG 里是 `REAL`，0.9 读回来是 `0.8999999761581421`，精确比较会失败；改成 `math.Abs(x-0.9) <= 1e-6`。
+3. 集成测试里三个文件误带了未使用的 `context` 导入，`go vet -tags=integration` 才发现（不带标签时这些文件不参与编译），已清理。
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| 往 `memory_records` 写 `kind='fact'` 的生产代码 | 现在没有任何路径产生事实（worker 只出 promise/preference）。事实的**采集**（如余额探测）没有派发，白酱不臆造 |
+| `cmd/` 装配（worker + Reader 接线） | `cmd/` 不在本批范围 |
+| Brain 消费 `SharedState` | 0.6 侧接线，不在本批 |
+| race | 仍阻塞，见下 |
+
+### race：依旧是**环境阻塞**
+
+```
+gcc --version → gcc.exe (MinGW.org GCC-6.3.0-1) 6.3.0
+go test -race → cc1.exe: sorry, unimplemented: 64-bit mode not compiled in
+```
+
+PATH 上的 `gcc` 还是 32 位 MinGW.org；上一批已全盘排查过没有 mingw-w64，`wsl.exe` 也在安全策略黑名单。**请主人给出 mingw-w64 的 bin 路径**，白酱前置 PATH 后补跑 `go test -race ./internal/memory/... ./internal/database/... ./internal/store/...`。当前按**未验证**记。
+
+### 风险 / 需 DSH 裁决
+
+1. **事实复用 `memory_records` 是否可接受**（见上，最重要）。
+2. **`SourceID` 语义**：优先取 `event_ids[0]`，没有事件来源时退回 `source`（来源字典 id）。如果要求「事实必须有事件级可追溯」，那么无 `event_ids` 的事实行应当直接省略——现在是放行的，请裁决。
+3. **`channel/session` 缺失的事实被省略**：契约说「未观测的事实省略」，所以白酱在 SQL 层直接过滤掉，不报错也不补默认值。
+4. **`validFrom` 夹到 now 会丢失原始事件时间**：记录里没有单独的 `observed_at` 列，夹取后无法还原「这条其实是提前记的」。要保留真实时间就得加列（迁移），本批没做。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，改动仅上表 6 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 逐条验收：事实查询的公开/私密隔离与有效性过滤、`kind='fact'` 映射是否正确、未来时间事件端到端可读、以及第 1 条「事实复用 memory_records」是否认可。

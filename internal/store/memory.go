@@ -50,3 +50,16 @@ func (r MemoryRecord) Validate() error {
 	}
 	return nil
 }
+
+// FactSource 按范围查询当前有效的共享事实（0.9d）。
+//
+// 刻意不并进 MemoryRepo：并进去会让所有既有 fake 与实现都要多实现一个方法，
+// 而事实查询是可选能力（Brain 的 SharedState 用得上，提炼 worker 用不上）。
+// 隐私过滤必须在实现的 SQL 层完成，不能靠上层自觉。
+//
+// 该接口与 memory.FactSource 结构一致：database.MemoryRepo 同时满足两者，
+// 装配层把它传给 memory.NewReader 即可直接当事实来源用。
+type FactSource interface {
+	// Facts 返回 scope 可见的、当前有效的事实，顺序为 Key → At → SourceID 升序。
+	Facts(ctx context.Context, scope memory.Scope, limit int) ([]memory.Fact, error)
+}

@@ -473,3 +473,13 @@
   2. FactSource PG 实现：**接纳为 0.9d**——扩展 MemoryRepo 事实查询（走 store 接口，不造第二套）
 - race：本机无 64 位 mingw-w64、WSL 被拦；需装工具链或放行 WSL（主人决定）。
 - 结论：**0.9c 验收通过**（race 未验证）。
+
+## 0.9d FactSource + 时钟漂移独立验收（2026-11-01 20:05）
+
+- 交付：`internal/store/memory.go` FactSource、`internal/database/memories.go` Facts、集成测试、worker 时钟夹取。
+- 独立执行：全仓通过；集成测试 PASS：`TestFactsRealPostgres`、`TestReaderRecallRealPostgres`、`TestWorkerFutureEventRecordVisible`（未来事件端到端可召回）。
+- **DSH 裁决它的两个设计问题**：
+  1. 事实独立表 vs 复用 `memory_records kind='fact'`：**裁决复用**（零迁移、少一套模型；P2 正式化时评估独立表 + key 唯一约束，docs/09 已有规划）
+  2. `valid_from` 夹到 now 丢原始事件时间：**裁决不加 observed_at 列**——原始时间在 `events.at`，通过 `event_ids` 可追溯；P2 再补
+  3. 顺带：`kind='fact'` 暂无写入方（事实采集未派发）→ 接受，P2/后续再做
+- 结论：**0.9d 验收通过**；**0.9 记忆最小版（a/b/c/d）闭环**（race 未验证）。

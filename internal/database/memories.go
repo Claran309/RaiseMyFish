@@ -8,11 +8,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"gorm.io/gorm"
+	"slices"
+	"strings"
 	"time"
 )
 
 // MemoryRepo 执行范围受限的持久化读写，不实现提炼/Reader编排。
 type MemoryRepo struct{ db *gorm.DB }
+
+// 编译期断言：事实查询同时满足 store 与 memory 两侧的窄接口。
+var (
+	_ store.FactSource  = (*MemoryRepo)(nil)
+	_ memory.FactSource = (*MemoryRepo)(nil)
+)
 
 // NewMemoryRepo 复用infra连接。
 func NewMemoryRepo(db *gorm.DB) (*MemoryRepo, error) {
@@ -110,6 +118,90 @@ func (r *MemoryRepo) Records(ctx context.Context, s memory.Scope, limit int) ([]
 		return nil, &safeError{"记忆摘要存量数据无效", err}
 	}
 	return result, nil
+}
+
+// Facts 返回 scope 可见的当前有效共享事实（0.9d）。
+//
+// 事实没有独立表：复用 memory_records 里 kind='fact' 的记录——
+// Key=title、Value=summary、SourceID=event_ids[0]（缺失时退回 source）、At=valid_from。
+// 这样不需要新迁移，也不会出现第二套事实存储与记录不一致。
+//
+// 缺少 channel/session 的行按契约「未观测的事实省略」处理，直接不返回；
+// 返回前用 memory.SharedState.Validate 再核一遍范围与字段。
+func (r *MemoryRepo) Facts(ctx context.Context, s memory.Scope, limit int) ([]memory.Fact, error) {
+	if err := validateRecall(ctx, s, limit); err != nil {
+		return nil, err
+	}
+
+	query := r.db.WithContext(ctx).Table("memory_records").
+		Where("kind = ?", "fact").
+		Where("valid_to IS NULL AND NOT archived AND valid_from <= now()").
+		Where("channel IS NOT NULL AND channel <> '' AND session IS NOT NULL AND session <> ''")
+	if s.Private {
+		query = query.Where("(NOT private OR (private AND channel=? AND session=?))", s.Channel, s.Session)
+	} else {
+		query = query.Where("NOT private")
+	}
+	// 即使旧数据被错误降密，也不允许 DM 行进入公开视角
+	query = query.Where("(channel <> 'dm' OR private)")
+
+	var rows []struct {
+		Title     string
+		Summary   string
+		Channel   event.Channel
+		Session   string
+		Private   bool
+		ValidFrom time.Time
+		Source    string
+		IDs       json.RawMessage
+	}
+	err := query.
+		Select("title, summary, channel, session, private, valid_from, source, to_json(event_ids) AS ids").
+		Order("title ASC, valid_from ASC, id ASC").
+		Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, &safeError{"查询共享事实失败", err}
+	}
+
+	facts := make([]memory.Fact, 0, len(rows))
+	for _, row := range rows {
+		sourceID := strings.TrimSpace(row.Source)
+		if len(row.IDs) > 0 {
+			var ids []string
+			if err := json.Unmarshal(row.IDs, &ids); err != nil {
+				return nil, &safeError{"读取事实来源失败", err}
+			}
+			if len(ids) > 0 && strings.TrimSpace(ids[0]) != "" {
+				sourceID = ids[0]
+			}
+		}
+		facts = append(facts, memory.Fact{
+			Key:      row.Title,
+			Value:    row.Summary,
+			Channel:  row.Channel,
+			Session:  row.Session,
+			Private:  row.Private,
+			SourceID: sourceID,
+			At:       row.ValidFrom,
+		})
+	}
+
+	// 契约要求顺序为 Key → At → SourceID；SQL 已按前两列排，这里补最后一列保证确定
+	slices.SortStableFunc(facts, func(a, b memory.Fact) int {
+		if c := strings.Compare(a.Key, b.Key); c != 0 {
+			return c
+		}
+		if c := a.At.Compare(b.At); c != 0 {
+			return c
+		}
+		return strings.Compare(a.SourceID, b.SourceID)
+	})
+
+	if err := (memory.SharedState{Scope: s, Facts: facts}).Validate(); err != nil {
+		return nil, &safeError{"共享事实存量数据无效", err}
+	}
+	return facts, nil
 }
 
 func validateRecall(ctx context.Context, s memory.Scope, limit int) error {
