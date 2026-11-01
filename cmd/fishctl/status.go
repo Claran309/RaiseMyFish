@@ -1,11 +1,11 @@
 package main
 
-// 本文件把仓库统计与通道心跳渲染进 `fishctl status`（0.10c）。
+// 本文件把仓库统计与通道心跳渲染进 `fishctl status`（0.10c/0.10d）。
 //
 // 边界：
-//   - 只消费接口，不写 SQL、不改 repository 实现（真实统计实现属 0.10d）；
-//   - 渲染完全交给 internal/observe 的纯函数（Render / Check），本文件只做装配；
-//   - 未装配统计来源时保持 0.1 的既有输出不变（不新增字段、不改语义）。
+//   - 统计查询在 internal/database（stats.go），本文件只做装配与渲染；
+//   - 渲染完全交给 internal/observe 的纯函数（Render / Check）；
+//   - 没有数据库时保持 0.1 的既有输出不变（不新增字段、不改语义）。
 
 import (
 	"context"
@@ -13,36 +13,24 @@ import (
 	"fmt"
 	"time"
 
+	"RaiseMyFish/internal/database"
+	"RaiseMyFish/internal/infra"
 	"RaiseMyFish/internal/observe"
 )
 
 // DefaultStatsWindow 是 `fishctl status` 的默认统计窗口。
 const DefaultStatsWindow = 24 * time.Hour
 
-// WindowCounts 是统计窗口内的计数汇总。
-//
-// 字段与 observe.Snapshot 对齐，但刻意独立：repository 不需要知道渲染细节。
-type WindowCounts struct {
-	// Received / Replied / Skipped / Failed 是窗口内的总量。
-	Received int
-	Replied  int
-	Skipped  int
-	Failed   int
-	// CostUSD 为 nil 表示费用未知（不能当成 0）。
-	CostUSD *float64
-	// Channels 是按通道的细分。
-	Channels map[string]observe.ChannelStat
-}
-
-// StatsSource 是 status 依赖的最小统计接口。
-//
-// 实现方（repository 层）负责 SQL 统计与隐私口径；本文件只调用。
+// StatsSource 是 status 依赖的最小统计接口，由 database.Stats 实现。
 type StatsSource interface {
 	// Counts 返回 [from, to) 窗口内的计数。
-	Counts(ctx context.Context, from, to time.Time) (WindowCounts, error)
-	// LastSeen 返回各通道最后一次事件时间；从未收到事件的通道给零值。
+	Counts(ctx context.Context, from, to time.Time) (database.WindowCounts, error)
+	// LastSeen 返回各通道最后一次收到事件的时间；从未收到事件的通道不出现。
 	LastSeen(ctx context.Context) (map[string]time.Time, error)
 }
+
+// 编译期断言：真实聚合实现必须满足本文件依赖的接口。
+var _ StatsSource = (*database.Stats)(nil)
 
 // StatusStats 是渲染后的统计片段，作为 `stats` 字段并入 status 的 JSON 输出。
 type StatusStats struct {
@@ -57,10 +45,25 @@ func (s StatusStats) empty() bool {
 	return s.Report == "" && len(s.HeartbeatWarnings) == 0
 }
 
+// newStatsSource 从已建立的基础设施装配真实统计来源。
+//
+// resources 为 nil（数据库没连上）时返回 nil 且不报错：
+// 此时 status 的主错误已经由 probeErr 报了，不需要再叠一条。
+func newStatsSource(resources *infra.Resources) (StatsSource, error) {
+	if resources == nil || resources.DB == nil {
+		return nil, nil
+	}
+	stats, err := database.NewStats(resources.DB)
+	if err != nil {
+		return nil, fmt.Errorf("装配统计来源失败：%w", err)
+	}
+	return stats, nil
+}
+
 // collectStats 读取统计与心跳并渲染。
 //
-// src 为 nil 表示「统计来源尚未装配」：返回零值、不报错，
-// 这样 status 的输出与 0.1 完全一致（新增字段不出现）。
+// src 为 nil 表示「统计来源未装配」：返回零值、不报错，
+// 这样 status 的输出与之前完全一致（新增字段不出现）。
 // 真正的查询错误必须向上抛，不能吞成「没有数据」。
 func collectStats(ctx context.Context, src StatsSource, now time.Time, window time.Duration) (StatusStats, error) {
 	if src == nil {
@@ -94,13 +97,30 @@ func collectStats(ctx context.Context, src StatsSource, now time.Time, window ti
 		Skipped:     counts.Skipped,
 		Failed:      counts.Failed,
 		CostUSD:     counts.CostUSD,
-		Channels:    counts.Channels,
+		Channels:    toChannelStats(counts.Channels),
 	}
 
 	return StatusStats{
 		Report:            observe.Render(snapshot),
 		HeartbeatWarnings: formatHeartbeat(observe.Check(now, lastSeen)),
 	}, nil
+}
+
+// toChannelStats 把存储层的通道计数转成渲染层的类型（两边刻意不共用同一个结构）。
+func toChannelStats(in map[string]database.ChannelCounts) map[string]observe.ChannelStat {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]observe.ChannelStat, len(in))
+	for name, c := range in {
+		out[name] = observe.ChannelStat{
+			Received: c.Received,
+			Replied:  c.Replied,
+			Skipped:  c.Skipped,
+			Failed:   c.Failed,
+		}
+	}
+	return out
 }
 
 // formatHeartbeat 把告警转成一行一条的文本；没有告警时返回 nil（JSON 里不出现空数组）。

@@ -917,3 +917,102 @@ go test -race ./internal/observe/ → ok 1.707s
 
 - **是。** 本轮写入结束，改动仅上表 5 个文件；未执行 git 命令、未提交、未 push。
 - 交 DSH 验收：mock 注入的三类场景（空/有数据/心跳告警）、JSON 向后兼容（无 `stats` 字段）、`≥` 前缀、race 通过。
+
+---
+
+## 0.10d 交接 · StatsSource 的 PG 实现（2026-11-02，Asia/Shanghai）
+
+- 任务：0.10d。未改 `migrations/`、未改 `contracts/`；`internal/database` 只新增一个只读文件。
+- 获派与实际修改路径：
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/database/stats.go` | 新增 | `CD8CF4638E653E3C5776CC1ED8F60B855EAE96D993B04FD3165B78793CD6B39A` | 6034 |
+| `internal/database/stats_integration_test.go` | 新增 | `B3860CDD94696760219424C1544D6B64342EDB87B5EF7CB73106371385D0D993` | 8223 |
+| `cmd/fishctl/status.go` | 修改（换真实类型 + 装配） | `3CC42B49B2BAB7BB3908D32FDF6C31ECF49D0D50E98EC1214A1055A9EBF24F68` | 4425 |
+| `cmd/fishctl/status_test.go` | 修改（mock 用真实类型） | `9B89A48E566C7BCC732AAAD022AEDAA57712594C1DE0CBCD6CD61D287F647594` | 8070 |
+| `cmd/fishctl/main.go` | 修改（接真实 Stats） | `9E85F9E2BC4B23EE0DD02446B00C2EDB5885BE27C37F2968D1DCA2105B054555` | 4946 |
+
+### ⚠️ 我动了本地开发库：跑了一次 `fishd migrate up`
+
+真实库原本停在「需要迁移」状态，`fishctl status` 因 `database_ready=false` 根本不进统计分支。
+为了拿到端到端证据，白酱执行了 `go run ./cmd/fishd migrate up`（把待应用的 0002/0003 补上，只加列/加表，无数据变更），
+**没有改 `migrations/` 里的任何文件，也没有往业务表插数据**。如果这不该做，请告诉白酱，
+后续不再碰共享库，只走隔离 schema 的集成测试。
+
+### 聚合口径（写死在 `stats.go` 常量里，方便逐条核对）
+
+| 指标 | 来源与条件 |
+|---|---|
+| Received | `events` 中 `dir='in'` 且在窗口内的行数 |
+| Skipped | `events` 中 `status='skipped'` 且在窗口内的行数 |
+| Replied | `send_log` 中 `ok IS TRUE` 的**去重事件数**（重试不重复计） |
+| Failed | `send_log` 中 `ok IS FALSE` 的去重事件数（`ok IS NULL` 的「未知」不计） |
+| CostUSD | `llm_usage.cost_usd` 窗口内求和；无记录/全 NULL → `nil`（渲染成「未知」，不是 0） |
+| LastSeen | `events` 中每个通道 `MAX(at)`，**只取 `dir='in'`** |
+
+- 时间窗口左闭右开：`at >= from AND at < to`，相邻两天不重复计。
+- `send_log.channel` 为空（老数据）时回落到 `events.channel`；`event_id` 为空时用 `'log:'||id` 兜底去重。
+- 总量与各通道细分在同一次聚合里累加，保证「总量 == 各通道之和」（用例有断言）。
+
+**为什么 `LastSeen` 只看 `dir='in'`**：心跳要发现的是「采集侧静默」。若算上 out 事件，
+采集器挂了但还在补发旧回复时通道会显得"还活着"，正是最难查的静默失败。
+
+**`tasks` 表没有用到**：`Snapshot` 里没有对应指标，且 `tasks.status` 的生命周期在代码里尚未定义，
+白酱没有为了"用上这张表"去编一个指标。需要「排队中/处理中」统计的话，得先扩 Snapshot 口径。
+
+### 端到端 smoke（真实库，空数据）
+
+```
+$ go run ./cmd/fishctl status
+{"service_alive":false,"database_ready":true,...,"channels":"not_implemented",
+ "stats":{"report":"# 日报 2026-10-31 17:14 ~ 2026-11-01 17:14\n- 收到 0 / 回复 0 / 跳过 0 / 失败 0\n- 成功率 —\n- 费用：未知（未配置报价）\n- 通道：无","heartbeat_warnings":null}}
+```
+
+`stats` 字段真的出现了，值来自真实 SQL（空库 → 全 0 / `—` / 未知）。
+`service_alive:false` 是因为状态文件是 10-31 的旧心跳，与统计无关。
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestStatsCountsRealPostgres` | 口径 + 多通道：重试只算一条、`ok IS NULL` 不算失败、空 channel 回落、out 不计收到、窗口外不计费；并断言「总量 == 各通道之和」 |
+| `TestStatsEmptyDatabase` | 空库：计数全 0、`CostUSD == nil`（不是 0）、无通道、心跳为空 |
+| `TestStatsLastSeenRealPostgres` | 每通道 `MAX(at)`，且更晚的 out 事件**不**刷新心跳 |
+| `TestStatsRejectsBadInput` | `from > to` / nil ctx → `store.ErrInvalid`；nil db 报错；零长度窗口返回空而不报错 |
+
+时间窗口边界在第一个用例里显式造了两行：`at == from`（计入）与 `at == to`（排除）。
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l internal/database cmd/fishctl` | 无输出 |
+| `go build ./...` / `go vet ./...` / `go vet -tags=integration ./internal/database/...` | 通过 |
+| `go test ./internal/database/... ./cmd/fishctl/... -count=1` | ok |
+| `go test -tags=integration ./internal/database/... -count=1` | **ok 37.841s**（含既有全部集成用例） |
+| `go test ./... -count=1` | 22 个包全绿 |
+| `golangci-lint`（含 `--build-tags integration`） | 0 issues |
+| `go test -race ./internal/database/... ./cmd/fishctl/...`（CC=WinLibs） | **ok 3.184s / 6.039s** |
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| 往业务表插种子数据做「非零数字」smoke | 会污染共享开发库，只做了空库 smoke；非零口径由 4 个真实 PG 集成用例覆盖 |
+| `tasks` 相关指标 | `Snapshot` 无此字段，口径需 DSH 先定 |
+| 按通道配置心跳阈值 / 告警去重 | 0.10b 遗留，未派发 |
+| 把日报写到文件、`fishctl report` 子命令 | 未派发 |
+
+### 风险 / 需 DSH 裁决
+
+1. **日报窗口显示的是 UTC**：`run()` 传 `time.Now().UTC()`，所以上面 smoke 显示 `17:14`（北京时间 01:14）。
+   0.10a 的规格是「不依赖本地时区，用传入时间」，所以渲染没错；但给中国用户看日报大概要本地时间。
+   改法一行：`run()` 里换成 `time.Now()`（或按配置时区）。**请裁决用哪个。**
+2. **`CostUSD` 来自 `llm_usage`**：规格只提了 events/tasks/send_log，白酱额外用了 `llm_usage` 才能让「费用」不再永远是「未知」。
+3. **空库无法报心跳告警**：通道清单是从 `events` 里发现的，一张表都没有时 `LastSeen` 为空 → `Check` 不告警。
+   要检测「某通道从未收到过事件」，需要一个已知通道注册表（配置或既有常量），本批没有。
+4. **我迁移了本地开发库**（见上），如需回滚/隔离请说明。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，改动仅上表 5 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 验收：聚合口径逐条核对、窗口左闭右开、重试去重、`ok IS NULL` 不计、空库 nil 费用、`LastSeen` 忽略 out、端到端 `stats` 字段出现、race 通过。

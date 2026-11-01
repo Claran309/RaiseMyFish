@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/infra"
-	"RaiseMyFish/internal/observe"
 )
 
 // statNow 是固定的「当前时间」，避免用例依赖真实时钟。
@@ -21,7 +21,7 @@ var statNow = time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
 
 // mockStats 是注入用的统计来源，记录收到的窗口参数。
 type mockStats struct {
-	counts    WindowCounts
+	counts    database.WindowCounts
 	lastSeen  map[string]time.Time
 	countsErr error
 	lastErr   error
@@ -31,11 +31,11 @@ type mockStats struct {
 	lastCalls      int
 }
 
-func (m *mockStats) Counts(_ context.Context, from, to time.Time) (WindowCounts, error) {
+func (m *mockStats) Counts(_ context.Context, from, to time.Time) (database.WindowCounts, error) {
 	m.countCalls++
 	m.gotFrom, m.gotTo = from, to
 	if m.countsErr != nil {
-		return WindowCounts{}, m.countsErr
+		return database.WindowCounts{}, m.countsErr
 	}
 	return m.counts, nil
 }
@@ -54,10 +54,10 @@ func floatPtr(v float64) *float64 { return &v }
 // TestCollectStatsWithData 有数据：日报三段齐全，心跳告警按通道排序。
 func TestCollectStatsWithData(t *testing.T) {
 	src := &mockStats{
-		counts: WindowCounts{
+		counts: database.WindowCounts{
 			Received: 8, Replied: 6, Skipped: 1, Failed: 1,
 			CostUSD:  floatPtr(0.02),
-			Channels: map[string]observe.ChannelStat{"live": {Received: 8, Replied: 6, Skipped: 1, Failed: 1}},
+			Channels: map[string]database.ChannelCounts{"live": {Received: 8, Replied: 6, Skipped: 1, Failed: 1}},
 		},
 		lastSeen: map[string]time.Time{
 			"live":    statNow.Add(-5 * time.Minute),  // 正常
@@ -104,7 +104,7 @@ func TestCollectStatsWithData(t *testing.T) {
 // TestCollectStatsEmptyData 空数据：不 panic、不伪造数值。
 func TestCollectStatsEmptyData(t *testing.T) {
 	src := &mockStats{
-		counts:   WindowCounts{}, // 全 0，费用 nil
+		counts:   database.WindowCounts{}, // 全 0，费用 nil
 		lastSeen: map[string]time.Time{},
 	}
 

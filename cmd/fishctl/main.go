@@ -67,11 +67,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		probeErr = database.Ready(probe, resources.DB)
 		ready = probeErr == nil
 	}
-	// 统计来源尚未装配（真实 repository 实现属 0.10d）。显式置 nil 而不是留空，
-	// 是为了让「看起来接好了其实没接」一眼可见：collectStats(nil) 返回零值，
-	// status 的输出与 0.1 完全一致，不新增字段。
-	var statsSource StatsSource
-	stats, statsErr := collectStats(probe, statsSource, time.Now().UTC(), DefaultStatsWindow)
+	// 数据库就绪时才装配统计来源；未就绪时 statsSource 为 nil，
+	// collectStats 返回零值 → status 输出与之前完全一致（不出现 stats 字段）。
+	var (
+		stats    StatusStats
+		statsErr error
+	)
+	if ready {
+		src, initErr := newStatsSource(resources)
+		stats, statsErr = collectStats(probe, src, time.Now(), DefaultStatsWindow) // 日报窗口用本地时间（给用户看）；存活判断仍用 UTC
+		statsErr = errors.Join(initErr, statsErr)
+	}
 	return errors.Join(
 		printStatus(cfg.Runtime.StateFile, time.Duration(cfg.Runtime.StaleSeconds)*time.Second, ready, stdout, stats),
 		statsErr,

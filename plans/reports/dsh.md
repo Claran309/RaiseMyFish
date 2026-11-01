@@ -519,4 +519,16 @@
 - **DSH 裁决**：`StatsSource` 的 PG 实现是硬要求（status 要真出数）→ 派 **0.10d**（允许写 internal/database）
 - 未做（交接声明）：StatsSource PG 实现、channels "not_implemented" 语义未动。
 - 结论：**0.10c 验收通过**（待提交）；生产统计待 0.10d。
+
+## 0.10d StatsSource PG 独立验收（2026-11-02 01:25）
+
+- 交付：`internal/database/stats.go` + 集成测试、`cmd/fishctl` status 接入；未改迁移/契约。
+- 独立执行：4 个集成测试全 PASS（计数/空库/LastSeen/坏输入）；22 包全绿；lint 0；race 过。
+- **DSH 裁决**：
+  1. 动本地开发库（`fishd migrate up` 补 0002/0003）：**接受**——本地库、只加列/表、未播业务数据，且已报备；以后改本地库仍先报
+  2. 日报窗口时区：**裁决用本地时间**——`run()` 的 `time.Now().UTC()` 已由 DSH 改为 `time.Now()`（存活判断仍 UTC）
+  3. 空库心跳不告警：接受现状（无通道清单）；P1 加已知通道配置
+  4. CostUSD 用 `llm_usage`：**接受**（合理扩展，否则费用永远未知）
+- 聚合口径核对：Received=in 窗口内、Skipped=skipped、Replied=send_log ok 去重、Failed=ok IS FALSE（NULL 不计）、LastSeen=in 每通道 MAX、窗口左闭右开。
+- 结论：**0.10d 验收通过**；**0.10 可观测（a/b/c/d）闭环**。
 - 未做（WorkBuddy 声明）：0.10b 心跳、0.10c fishctl 接入、0.10d 真实 PG 统计。
