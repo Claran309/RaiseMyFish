@@ -1,0 +1,10 @@
+{
+  "package": "dsh-bili-whale",
+  "version": "0.4.5",
+  "license": "MIT",
+  "collector_source": "tools/commands/danmaku-await.mjs",
+  "collector_sha256": "8d9ca3e838ff3ad99584f6b8169360e87b42cf83c3f33f5c0613dfbeba03b5e3",
+  "sender_future_source": "tools/commands/danmaku.mjs",
+  "sender_sha256": "119d0ef000968f3746fee071c31bc502b421b2a785ef50b17060839b29013b1c",
+  "license_sha256": "9b7d848cea82a129d5c26e8714d2f261a6723a16220cd229786a812569859366"
+}

@@ -1,4 +1,4 @@
-// fishd 装配Phase0.1基础设施；业务通道尚未实现。
+// fishd装配基础设施与可选live采集；模型消费和发送尚未接入。
 package main
 
 import (
@@ -14,6 +14,7 @@ import (
 
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
+	eventbus "RaiseMyFish/internal/event/bus"
 	"RaiseMyFish/internal/infra"
 	"go.uber.org/zap"
 )
@@ -95,6 +96,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
+	liveCollector, err := buildLive(cfg, logger)
+	if err != nil {
+		return err
+	}
 	if checkAll {
 		return printCheckDiagnostic(cfg, routes, knowledgeRuntime, stdout)
 	}
@@ -108,7 +113,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		defer stop()
 		return resources.Ping(probe)
 	}
-	return serve(ctx, cfg.Runtime.StateFile, time.Duration(cfg.Runtime.HeartbeatSeconds)*time.Second, logger, check)
+	serveRuntime := func(ctx context.Context) error {
+		return serve(ctx, cfg.Runtime.StateFile, time.Duration(cfg.Runtime.HeartbeatSeconds)*time.Second, logger, check)
+	}
+	if liveCollector == nil {
+		return serveRuntime(ctx)
+	}
+	events, err := database.NewEventRepo(resources.DB)
+	if err != nil {
+		return err
+	}
+	bus, err := eventbus.New(events, 0)
+	if err != nil {
+		return err
+	}
+	return serveWithCollector(ctx, liveCollector, bus, timeout, logger, serveRuntime)
 }
 
 // serve 不启动额外后台goroutine；所有探活有超时，取消后更新状态再释放连接。
@@ -123,7 +142,7 @@ func serve(ctx context.Context, path string, interval time.Duration, logger *zap
 	if err := infra.WriteStatus(path, state); err != nil {
 		return err
 	}
-	logger.Info("fishd基础设施已启动，业务通道关闭", zap.String("action", "start"), zap.Int("pid", state.PID))
+	logger.Info("fishd基础设施已启动", zap.String("action", "start"), zap.Int("pid", state.PID))
 	defer func() {
 		state.State = "stopped"
 		state.UpdatedAt = time.Now().UTC()

@@ -15,12 +15,13 @@ import (
 
 // Config 是当前阶段实际装配的配置。
 type Config struct {
-	Database  Database  `toml:"db"`
-	Log       Log       `toml:"log"`
-	Runtime   Runtime   `toml:"runtime"`
-	Channels  Channels  `toml:"channels"`
-	LLM       LLM       `toml:"llm"`
-	Knowledge Knowledge `toml:"knowledge"`
+	Database  Database   `toml:"db"`
+	Log       Log        `toml:"log"`
+	Runtime   Runtime    `toml:"runtime"`
+	Channels  Channels   `toml:"channels"`
+	LLM       LLM        `toml:"llm"`
+	Knowledge Knowledge  `toml:"knowledge"`
+	Collector Collectors `toml:"collector"`
 }
 
 // Database 的连接串只从环境/本地dotenv读取，不能序列化输出。
@@ -43,7 +44,7 @@ type Runtime struct {
 	StaleSeconds     int    `toml:"stale_seconds"`
 }
 
-// Channel 是通道开关；当前尚未装配业务通道，开启会明确报错。
+// Channel 是通道开关；当前仅live采集可启用，其它通道仍拒绝开启。
 type Channel struct {
 	Enabled bool `toml:"enabled"`
 }
@@ -72,6 +73,7 @@ func Load(path, envPath string) (Config, error) {
 		Runtime:   Runtime{StateFile: "data/fishd-status.json", HeartbeatSeconds: 5, StaleSeconds: 20},
 		LLM:       defaultLLM(),
 		Knowledge: defaultKnowledge(),
+		Collector: Collectors{Live: defaultLiveCollector()},
 	}
 	if path != "" {
 		data, err := os.ReadFile(path)
@@ -106,6 +108,7 @@ func Load(path, envPath string) (Config, error) {
 		}
 	}
 	cfg.LLM.resolveEnvironment(lookup)
+	cfg.Collector.Live.resolveEnvironment(lookup, cfg.Channels.Live.Enabled)
 	if err := cfg.Validate(); err != nil {
 		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
 	}
@@ -130,8 +133,11 @@ func (c Config) Validate() error {
 	if c.Runtime.HeartbeatSeconds < 1 || c.Runtime.HeartbeatSeconds > 300 || c.Runtime.StaleSeconds <= 2*c.Runtime.HeartbeatSeconds || c.Runtime.StaleSeconds > 3600 {
 		return errors.New("心跳周期需为1至300秒，过期阈值需大于两倍周期且不超过3600秒")
 	}
-	if c.Channels.Live.Enabled || c.Channels.Comment.Enabled || c.Channels.DM.Enabled || c.Channels.QQ.Enabled {
-		return errors.New("当前尚未装配业务通道，请关闭通道开关")
+	if c.Channels.Comment.Enabled || c.Channels.DM.Enabled || c.Channels.QQ.Enabled {
+		return errors.New("评论/私信/QQ尚未装配，请关闭对应通道开关")
+	}
+	if err := c.Collector.Live.Validate(c.Channels.Live.Enabled); err != nil {
+		return err
 	}
 	if err := c.Knowledge.Validate(); err != nil {
 		return err

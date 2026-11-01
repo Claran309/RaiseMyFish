@@ -403,3 +403,18 @@
   会话锁、PG 每日配额（按任务数、重启不重置）；无真实模型调用。
 - 结论：**0.4 验收通过**（待 Codex 提交）。
 - 边界：每日配额不宣称实际发送数；发送限流与补偿衔接留 0.8。
+
+## 0.5 直播采集独立验收（2026-11-01 13:10）
+
+- 交付：`tools/bili-whale/`（移植 dsh-bili-whale@0.4.5 MIT，源哈希 `8d9ca3e8…`，保留 LICENSE）、
+  `internal/collector/`（bridge/collector/live）、`cmd/fishd/live.go`、config live 开关、CI Node 测试。
+- 独立执行：
+  - Go 测试通过（collector/fishd/config）；Node `node --test` 17 项 0 失败
+  - 集成测试逐条 PASS：`TestCollectorNodeToRealPostgresBus`（真实 Node 合成流→PG 去重）、
+    `TestLiveCheckDoesNotStartProcessOrCallPlatform`（check 不启动子进程）、`TestFishdLiveIngestUsesConfiguredChildAndStops`、
+    `TestLivePausedDoesNotStopInfrastructure`、`TestBuildLiveDisabledDoesNotStartNode`（默认关闭不启动）
+  - live 单元 9 项：稳定 ID、Health、退避、取消、环境隔离（不继承 DB/LLM 凭据）、输出上限、错误分类
+- 核对：WS 只走单连接（wss + 心跳 30s + WBI/包头/解压保留），重连交 Go 指数退避；
+  凭据仅 `FISH_BILI_COOKIE`/`_FILE`；默认 `[channels.live] enabled=false`
+- 结论：**0.5 验收通过**（待 Codex 提交）。
+- 未验证（交接声明）：真实房间 WS 稳定性/稳定 ID 字段/断线行为留 0.11；不宣称满足 P0 两小时门槛。

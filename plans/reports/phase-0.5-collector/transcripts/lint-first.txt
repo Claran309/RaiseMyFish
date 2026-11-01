@@ -1,0 +1,31 @@
+cmd\fishd\live_test.go:44:7: Error return value is not checked (errcheck)
+	case <-done:
+	     ^
+internal\collector\bridge.go:51:29: Error return value is not checked (errcheck)
+	stop := func() { cancel(); <-finished }
+	                           ^
+internal\collector\live\live_test.go:183:2: Error return value is not checked (errcheck)
+	<-finished
+	^
+internal\collector\live\live_test.go:192:7: Error return value is not checked (errcheck)
+	case <-finished:
+	     ^
+internal\collector\live\live_test.go:234:2: Error return value is not checked (errcheck)
+	<-done
+	^
+internal\collector\live\live_test.go:251:3: Error return value is not checked (errcheck)
+		<-finished
+		^
+internal\collector\live\live_test.go:255:3: Error return value is not checked (errcheck)
+		<-finished
+		^
+internal\collector\live\live_test.go:69:10: G204: Subprocess launched with a potential tainted input or cmd arguments (gosec)
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestLiveChildHelper")
+		       ^
+internal\collector\live\process.go:46:9: G204: Subprocess launched with a potential tainted input or cmd arguments (gosec)
+	cmd := exec.CommandContext(ctx, o.NodePath, o.ScriptPath, "--room", o.RoomID, "--self-id", o.SelfID, "--http-timeout-ms", strconv.FormatInt(o.HTTPTimeout.Milliseconds(), 10), "--connect-timeout-ms", strconv.FormatInt(o.ConnectTimeout.Milliseconds(), 10), "--heartbeat-ms", strconv.FormatInt(o.Heartbeat.Milliseconds(), 10), "--idle-ms", strconv.FormatInt(o.IdleTimeout.Milliseconds(), 10), "--host-index", strconv.Itoa(c.Health().Reconnects))
+	       ^
+9 issues:
+* errcheck: 7
+* gosec: 2
+exit status 1

@@ -1,0 +1,8 @@
+=== RUN   TestCollectorNodeToRealPostgresBus
+--- PASS: TestCollectorNodeToRealPostgresBus (0.67s)
+PASS
+ok  	RaiseMyFish/internal/database	0.919s
+=== RUN   TestLiveCheckDoesNotStartProcessOrCallPlatform
+--- PASS: TestLiveCheckDoesNotStartProcessOrCallPlatform (0.86s)
+PASS
+ok  	RaiseMyFish/cmd/fishd	1.054s

@@ -12,7 +12,7 @@ state_file = "data/fishd-status.json"
 heartbeat_seconds = 5
 stale_seconds = 20
 
-# 0.1只有基础设施，未实现通道不得启用。
+# live仅采集到Bus，默认关闭；其余业务通道未实现。
 [channels.live]
 enabled = false
 [channels.comment]
@@ -21,6 +21,22 @@ enabled = false
 enabled = false
 [channels.qq]
 enabled = false
+
+# 启用live前需明确房间与自身UID；Cookie仅从环境或显式文件读取。
+[collector.live]
+room_id = ""
+self_id = ""
+node_path = "node"
+script_path = "tools/bili-whale/danmaku-await.mjs"
+http_timeout_ms = 10000
+connect_timeout_ms = 10000
+heartbeat_ms = 30000
+idle_ms = 90000
+startup_ms = 45000
+backoff_min_ms = 1000
+backoff_max_ms = 60000
+stable_after_ms = 30000
+max_failures = 8
 
 # 只装配Brain与无调用诊断；通道仍必须关闭。
 [llm]

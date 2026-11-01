@@ -1,0 +1,17 @@
+?   	RaiseMyFish/internal/collector	[no test files]
+=== RUN   TestNormalizeStableIdentityAndSafety
+--- PASS: TestNormalizeStableIdentityAndSafety (0.00s)
+=== RUN   TestLiveChildHelper
+--- PASS: TestLiveChildHelper (0.00s)
+=== RUN   TestProcessMessagesHealthAndCancellation
+--- PASS: TestProcessMessagesHealthAndCancellation (0.32s)
+=== RUN   TestReconnectBackoffBoundAndAuthPause
+--- PASS: TestReconnectBackoffBoundAndAuthPause (0.15s)
+=== RUN   TestMalformedOutputDoesNotLeakAndBlockedOutputCancels
+--- PASS: TestMalformedOutputDoesNotLeakAndBlockedOutputCancels (0.05s)
+=== RUN   TestSubprocessEnvironmentOmitsOtherSecrets
+--- PASS: TestSubprocessEnvironmentOmitsOtherSecrets (0.01s)
+=== RUN   TestHealthConcurrentReads
+--- PASS: TestHealthConcurrentReads (0.00s)
+PASS
+ok  	RaiseMyFish/internal/collector/live	1.500s

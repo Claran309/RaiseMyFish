@@ -39,6 +39,11 @@ jobs:
           cache: true
       - name: go vet
         run: go vet ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: 直播协议离线测试
+        run: node --test tools/bili-whale/protocol.test.mjs
       - name: 测试（含竞态检测）
         run: go test -race -cover ./...
 
@@ -78,6 +83,9 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - name: 集成测试（独立schema，失败不跳过）
         env:
           FISH_TEST_DSN: postgres://fish:fish@127.0.0.1:5432/raisemyfish_test?sslmode=disable

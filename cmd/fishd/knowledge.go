@@ -70,8 +70,9 @@ func printCheckDiagnostic(cfg config.Config, routes map[string]brain.Brain, k kn
 		ProviderCalled            bool                `json:"provider_called"`
 		UsageWritten              bool                `json:"usage_written"`
 		Knowledge                 knowledgeDiagnostic `json:"knowledge"`
+		LiveCollector             liveDiagnostic      `json:"live_collector"`
 		BusinessPipelineConnected bool                `json:"business_pipeline_connected"`
-	}{Database: "ready", LLMEnabled: cfg.LLM.Enabled, BrainRoutes: len(routes), Knowledge: k.Diagnostic}
+	}{Database: "ready", LLMEnabled: cfg.LLM.Enabled, BrainRoutes: len(routes), Knowledge: k.Diagnostic, LiveCollector: liveDiagnostic{Enabled: cfg.Channels.Live.Enabled, Configured: cfg.Channels.Live.Enabled}}
 	if err := json.NewEncoder(out).Encode(result); err != nil {
 		return fmt.Errorf("输出装配诊断：%w", err)
 	}

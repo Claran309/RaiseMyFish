@@ -1,0 +1,5 @@
+--- FAIL: TestNodeOutputLimitReachesRuneTruncation (0.41s)
+    live_test.go:249: Node合法大小输出在Go扫描层丢失 直播采集异常（exhausted）
+FAIL
+FAIL	RaiseMyFish/internal/collector/live	1.414s
+FAIL

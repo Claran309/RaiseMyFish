@@ -1,0 +1,5 @@
+--- FAIL: TestPublishAndCollectorShutdownErrorsBothRemain (0.00s)
+    bridge_test.go:104: 持久化失败收尾丢失错误链 采集事件持久化失败，已停止采集
+FAIL
+FAIL	RaiseMyFish/internal/collector	0.813s
+FAIL

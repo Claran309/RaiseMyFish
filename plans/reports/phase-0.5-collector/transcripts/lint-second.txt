@@ -1,0 +1,6 @@
+internal\collector\live\live_test.go:70:29: G702: Command injection via taint analysis (gosec)
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestLiveChildHelper")
+		                          ^
+1 issues:
+* gosec: 1
+exit status 1

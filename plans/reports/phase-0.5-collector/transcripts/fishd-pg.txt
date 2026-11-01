@@ -1,0 +1,11 @@
+=== RUN   TestLiveCheckDoesNotStartProcessOrCallPlatform
+--- PASS: TestLiveCheckDoesNotStartProcessOrCallPlatform (0.56s)
+=== RUN   TestFishdLiveIngestUsesConfiguredChildAndStops
+{"level":"info","ts":"2026-11-01T12:35:20.708+0800","msg":"Brain装配检查完成，未消费事件","action":"brain_setup","routes":0}
+{"level":"info","ts":"2026-11-01T12:35:20.708+0800","msg":"知识装配检查完成，未接入事件消费","action":"knowledge_setup","enabled":false,"assembled":false,"entries":0,"revision":""}
+{"level":"info","ts":"2026-11-01T12:35:20.708+0800","msg":"已装配直播采集到事件总线，未启动模型消费或发送","action":"collector_bus_start"}
+{"level":"info","ts":"2026-11-01T12:35:20.803+0800","msg":"fishd基础设施已启动","action":"start","pid":15828}
+{"level":"info","ts":"2026-11-01T12:35:20.821+0800","msg":"fishd已停止","action":"stop"}
+--- PASS: TestFishdLiveIngestUsesConfiguredChildAndStops (0.60s)
+PASS
+ok  	RaiseMyFish/cmd/fishd	1.405s

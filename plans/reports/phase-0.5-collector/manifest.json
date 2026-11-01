@@ -1,0 +1,462 @@
+{
+  "baseline_commit": "bb702778719ef3ed2aa026972b0dcb54616e9480",
+  "created_utc": "2026-11-01T04:53:58.1434120Z",
+  "status": "awaiting_dsh_acceptance",
+  "files": [
+    {
+      "path": ".env.example",
+      "sha256": "75dfc50e134d76d0f1e9705020f3cab47290338244aab0a80cd4854b2041e264",
+      "bytes": 797,
+      "role": "delivery"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "1214ec44180ede30bd333fd8ea6b437d128fbbfcf0c5f74904c7354424354883",
+      "bytes": 2467,
+      "role": "delivery"
+    },
+    {
+      "path": "config/fishd.toml",
+      "sha256": "c23b0a1875f0a6da02b41590257b01595c9fb85300a67d114f4f98db394474a1",
+      "bytes": 1793,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/config/config.go",
+      "sha256": "b5291c8674eb1302506a55aa38c0d03448cb87f3303fe825c4895f822a18b9ca",
+      "bytes": 4762,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/config/live.go",
+      "sha256": "5851c2918a8e1aa17ade45697914ac27b2600d37638d4a4acb37340d18a9ae49",
+      "bytes": 2874,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/config/live_test.go",
+      "sha256": "190f8622efc2d986e27c1b5fdc7b2deafd7ef4b7dd1f55e699eecd7f4656ca9f",
+      "bytes": 2184,
+      "role": "delivery"
+    },
+    {
+      "path": "cmd/fishd/main.go",
+      "sha256": "8dffa227262bf6a49e0cc56a176049502d001f26e028704fdd7eaa72034a0e3d",
+      "bytes": 5616,
+      "role": "delivery"
+    },
+    {
+      "path": "cmd/fishd/knowledge.go",
+      "sha256": "45a291097c9dcdbe6f282fa5b861b1dcb490752f85da6155c5a3bed60d3a1556",
+      "bytes": 2969,
+      "role": "delivery"
+    },
+    {
+      "path": "cmd/fishd/live.go",
+      "sha256": "8e0fe6e834e778c40069eb108bc6ad0aa903ee899f445cbc629c1d5910a6f7b3",
+      "bytes": 2147,
+      "role": "delivery"
+    },
+    {
+      "path": "cmd/fishd/live_test.go",
+      "sha256": "a6c69b869792185247411fbc54768561361178c167e2b72d084d16a47cadf197",
+      "bytes": 1682,
+      "role": "delivery"
+    },
+    {
+      "path": "cmd/fishd/live_check_integration_test.go",
+      "sha256": "fa07cf80f5e3ce11e2d50290e3a2e730e8c6f11ec446ec3f3311211329c42258",
+      "bytes": 4686,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/collector/collector.go",
+      "sha256": "905888904e943e431d01564589f491faa5eace9cc37e023b4e16710ceb9cc7c6",
+      "bytes": 725,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/collector/bridge.go",
+      "sha256": "364b468c2aa2d52cfc34ed61be7709f378b0bc106a02352b8781b8ed25de6b7d",
+      "bytes": 2455,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/collector/bridge_test.go",
+      "sha256": "b1e54b2266212407d7ebfa30547dbf19fbaee4ac7041b4db94be347532efaa36",
+      "bytes": 2786,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/collector/live/types.go",
+      "sha256": "defe0497a45c5ea5e75cf00b843e5a820337ac48e7bdf19a390684d17ab01009",
+      "bytes": 2890,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/collector/live/normalize.go",
+      "sha256": "f54a5b22669941d41b2a4702eabc0dd35f93ddbb922afbbf41f912c066c04fca",
+      "bytes": 2262,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/collector/live/process.go",
+      "sha256": "347cff23385327025b4047ec76240b4c6e0c982a758c37dfa8f094f96e2c3f66",
+      "bytes": 6782,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/collector/live/live_test.go",
+      "sha256": "3635828204d1f5acb4bc03cf125b3b49a85aaf76d343fa593635d69b4e14dddd",
+      "bytes": 9168,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/collector/live/testdata/stream.mjs",
+      "sha256": "18517d3e85516e3d5b0eb2c7db4b9fd28582847637251fb7567ced96ccf5aed3",
+      "bytes": 720,
+      "role": "delivery"
+    },
+    {
+      "path": "internal/database/collector_integration_test.go",
+      "sha256": "d784f3d1c018ae782db20bb749d1ea66a887d41b407c6ba018e35bf8e538d511",
+      "bytes": 2100,
+      "role": "delivery"
+    },
+    {
+      "path": "tools/bili-whale/protocol.mjs",
+      "sha256": "868c1b9b220289420c7da95d9debeb75d935a0b3743508f579d530f5a0f9fc4c",
+      "bytes": 6153,
+      "role": "delivery"
+    },
+    {
+      "path": "tools/bili-whale/danmaku-await.mjs",
+      "sha256": "71740818041a7fee1e89a5c57385dd4cfd0e6916490b1229c70f145dd9e8c326",
+      "bytes": 13646,
+      "role": "delivery"
+    },
+    {
+      "path": "tools/bili-whale/protocol.test.mjs",
+      "sha256": "2083a2973aecea3010789f42e59a5d0bd4b0cbec8147855cf9169ffb80ce51be",
+      "bytes": 18935,
+      "role": "delivery"
+    },
+    {
+      "path": "tools/bili-whale/LICENSE",
+      "sha256": "9b7d848cea82a129d5c26e8714d2f261a6723a16220cd229786a812569859366",
+      "bytes": 1066,
+      "role": "delivery"
+    },
+    {
+      "path": "tools/bili-whale/ADAPTATION.md",
+      "sha256": "9343255477c9a82c14e5da108bef63a41b8a1badfc89aa20a0d74c137ce6d55c",
+      "bytes": 4749,
+      "role": "delivery"
+    },
+    {
+      "path": "plans/phase-0.5-collector-dispatch.md",
+      "sha256": "f0c2a28fc867cb50eb1994edd0b09e474982bf38e658996dbd96a350e842b4d4",
+      "bytes": 4145,
+      "role": "delivery"
+    },
+    {
+      "path": "docs/update/2026-11-01-1430-直播采集子进程与总线接入.md",
+      "sha256": "2d5d91e37c4b4bea5db07ea50ffafc90c2e2615ad533fcd3eb24dfd2fccb6282",
+      "bytes": 7697,
+      "role": "delivery"
+    },
+    {
+      "path": "contracts/collector.md",
+      "sha256": "5902441cc01a377edc01dae6553eb10bda5d57becbd0556294a98597cadd5a24",
+      "bytes": 1859,
+      "role": "baseline"
+    },
+    {
+      "path": "contracts/event.md",
+      "sha256": "df7f2a66a3dbd9edb41018981bc933e88f28040ebce9e5dccc8732235a878e9d",
+      "bytes": 9697,
+      "role": "baseline"
+    },
+    {
+      "path": "contracts/sender.md",
+      "sha256": "62ccf9b9488a532ca61b3df61b215fc8dac7be29a255cb53cb8d4923b987a8f3",
+      "bytes": 1914,
+      "role": "baseline"
+    },
+    {
+      "path": "contracts/memory.md",
+      "sha256": "5854f205a796cc28abdd9ddf6d91d2b6d5220e41bae658c3746251e1f732ef77",
+      "bytes": 6845,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/event/types.go",
+      "sha256": "363604ba318f8fdf7b93ce49bc0d5894292eae338a8246f31294b145677c1182",
+      "bytes": 1576,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/event/bus.go",
+      "sha256": "cc889dcdf5217fa3d80d79765c63651712a38f6effdc45dd151eb5dd6794a448",
+      "bytes": 1188,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/event/bus/bus.go",
+      "sha256": "12248f3339a4f62053f9e2a0014f2c94161d3dac088d133b879bacc0239b23ee",
+      "bytes": 3051,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/store/event.go",
+      "sha256": "a7dd68d5d0cf68016438b035c6e197815f416e44f4796bd8b32153c203b0345b",
+      "bytes": 2464,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/store/queue.go",
+      "sha256": "fdca774277c214830889b8d91ef5907ca9b532a4ad77d1229434628333a18961",
+      "bytes": 736,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/store/task.go",
+      "sha256": "8b4a551a4c6e1d38cdc92b9b59d7f9e012fb720ca0044e0bed8b1e5f86e4392c",
+      "bytes": 1041,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/database.go",
+      "sha256": "046e51f9f0504b9022fa12e572ee32cb52045fdec10b4143858f51d16968801c",
+      "bytes": 2218,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/migration.go",
+      "sha256": "d6106985fc4932eee3216e9cf00ded3449dbe2da2fbdc5e57d4d5f0b339e71d2",
+      "bytes": 4085,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/events.go",
+      "sha256": "c86e74508e2d7601767dd9ecb7673077a4be370ad15a1df3a8214aaeadfc4a9a",
+      "bytes": 3919,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/queue.go",
+      "sha256": "7b1a2c0b6837a58998ad1112b15932b266e12f477aabbd298cf62019563396c9",
+      "bytes": 8519,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/database/tasks.go",
+      "sha256": "3e0a6af70f05efe3dc2a3cd99a2b80c51d99061feaf2d088e0be5e93ecbceeab",
+      "bytes": 3338,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/scheduler/types.go",
+      "sha256": "7ee9470d70c5a23985c7de2d71e6b700ffd521546af2579bb80d240deeaeb783",
+      "bytes": 2860,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/scheduler/run.go",
+      "sha256": "e41dfcc5d1de9989cd81300014306e6cc23fb9bc3204913c2497ab02b2b214e9",
+      "bytes": 5249,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/scheduler/scheduler.go",
+      "sha256": "fd9491b8efa234f771a0c4764c0166b99bdfc9894723860849c979b92dfe8484",
+      "bytes": 11076,
+      "role": "baseline"
+    },
+    {
+      "path": "migrations/0001_init.sql",
+      "sha256": "0a60002251a155ed5d5137e4df65936b394ff4b198b4ae6893090cc34d68fb0a",
+      "bytes": 2813,
+      "role": "baseline"
+    },
+    {
+      "path": "migrations/seed.sql",
+      "sha256": "f451f634dca551fab36f875caa35b1050df1886ed58ef6d984021d2cf0dded36",
+      "bytes": 383,
+      "role": "baseline"
+    },
+    {
+      "path": "migrations/0002_event_leases.sql",
+      "sha256": "2d3e486dfb2adbc2260ed375405f156f2138d2e988a4a222eba1567c2b44dad8",
+      "bytes": 1458,
+      "role": "baseline"
+    },
+    {
+      "path": "go.mod",
+      "sha256": "32661778af4f3d115e1b0261a6ea415f04188a4e1ef68fb56cb5735abf4ad7c1",
+      "bytes": 720,
+      "role": "baseline"
+    },
+    {
+      "path": "go.sum",
+      "sha256": "5e93d840b7b202c2f722c7e7a590e844dd1ebaedcc8f9df534479f5d6db63b8c",
+      "bytes": 4227,
+      "role": "baseline"
+    },
+    {
+      "path": "personas/dafeiyu/meta.yaml",
+      "sha256": "2476cef1f67ab7592602ce8c647aca530eeed19979ec5e5db2d30f13a6adbe02",
+      "bytes": 734,
+      "role": "baseline"
+    },
+    {
+      "path": "personas/dafeiyu/rules.md",
+      "sha256": "2e7597587dee25ce15e7fa2546cea0eeec6a870917d7c77a17e75c4d449dd171",
+      "bytes": 6955,
+      "role": "baseline"
+    },
+    {
+      "path": "internal/personaeval/score_v5.go",
+      "sha256": "4e1a7066df7b0845c013edc102231bb970b63a1cf8b2b6f3e1bea009f497f5cb",
+      "bytes": 7645,
+      "role": "baseline"
+    }
+  ],
+  "evidence_files": [
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/first-go.txt",
+      "sha256": "5a4adf240f43cc89a93290add73beec04afa64f2b8fc303e28cb637be975bc32",
+      "bytes": 819
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/fishd-pg.txt",
+      "sha256": "6f4c4bcd843739ccc3303b80e54fe272162c4f4f3e6c7101c7595d3a6efa99eb",
+      "bytes": 988
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/green-config-go.txt",
+      "sha256": "855f0c3ba749dbaf38ffb29f653f6fb871a08c424488b693d293bc0f4d202b03",
+      "bytes": 165
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/green-line-limit.txt",
+      "sha256": "4ba83a0a14be57032a852058ef1fcd097517aade962e82ff523918498b60fbb3",
+      "bytes": 48
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/green-retry-kind.txt",
+      "sha256": "17864f075a833ea189cdfc2d63d54e6a867a371b94580404a0a7f118b7aba518",
+      "bytes": 165
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/green-shutdown-chain.txt",
+      "sha256": "3d7429cc5438cd9eb2292ba1f3d46ca9d39098d208de24bd469396a1e6ac1c46",
+      "bytes": 125
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/integration.txt",
+      "sha256": "2323ece0dfb30451c65af24e738beab4468ffff802b64b0703fae90670519f47",
+      "bytes": 845
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/lint-first.txt",
+      "sha256": "9380d15a5dac224eb2802d8f26511648454cce6c3a13e1ac9e38fa0384f9b67a",
+      "bytes": 1621
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/lint-second.txt",
+      "sha256": "8b606566bb9ebe2f810391370e70af422de04a59662328a0187695b29c0eae5e",
+      "bytes": 239
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/lint.txt",
+      "sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "bytes": 10
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/measured-coverage.txt",
+      "sha256": "1d55f0972ffc4839dec68fa7f7a733ff7939e4f957f1ea8d717d97031c601ab2",
+      "bytes": 358
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/node.txt",
+      "sha256": "def8c620dfdf3b63b97c97816c11701283b1a3307af26ef4ab7f38b310a39391",
+      "bytes": 1556
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/race.txt",
+      "sha256": "27816b7c426d24ccab51ff1d7ecbd16dabcdfff82b8072b5d3b4a3cdedcedf79",
+      "bytes": 1101
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/red-config.txt",
+      "sha256": "a5ba199afc8eddfd811c7ad238e9653f421e73c4146ad9fb6de75a2a2318ee70",
+      "bytes": 540
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/red-go.txt",
+      "sha256": "513a2b16f091ec0ae1a5f4070fbfc3a62638007590b7abbb5193c298a63e2cb9",
+      "bytes": 845
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/red-line-limit.txt",
+      "sha256": "8a29711a654eb7332e2e8afe1a441d069775850a34e506d2b3c8cab4f3ffb4cb",
+      "bytes": 216
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/red-node.txt",
+      "sha256": "33ef8026f3f01a1596a96941c21ffddf69f11bd2af25176e26ec652a99a742b8",
+      "bytes": 1400
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/red-retry-kind.txt",
+      "sha256": "e301206d94904658006054803b4534f57bec7b81abcd74e9f7b1b8427793a2b6",
+      "bytes": 213
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/red-shutdown-chain.txt",
+      "sha256": "f687bfcb3a7cfed2db00e0cc34c3bcc29f9f8bf559eecf9b807a37b4690c1654",
+      "bytes": 226
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/targeted-pg.txt",
+      "sha256": "3d4683233a9a57c1f73d8e73d347ef2df4e236a0f5565c4687a430aa50243553",
+      "bytes": 306
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/transcripts/unit.txt",
+      "sha256": "53d8aba18d8045e6ca53f66bf8fe606fd7f085f4da1f3c1173a9aa56ae423c6b",
+      "bytes": 844
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/analysis.md",
+      "sha256": "e4af9bb3746cc6078a8f90b65628d24e9068139afd1cf186fa09774b663ec832",
+      "bytes": 4417
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/verify.ps1",
+      "sha256": "cbae58a8556fbc5f350d67cf9990c7f97efdaa02d5f55205dbabe7f103736bb0",
+      "bytes": 1889
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/verification.json",
+      "sha256": "e97a892b85ff2758a491e29f96fb248797d617425382db45b43f34381c377753",
+      "bytes": 1450
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/source-reference.json",
+      "sha256": "52d15215419226f723a569f1b550a867172a5b347c09aee42665d770ea2c8955",
+      "bytes": 465
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/profile.cover",
+      "sha256": "b824e8f08cf942ba1ea48d077ef48dec02561f1f6b1090394694b5f3aa1e8dfa",
+      "bytes": 40401
+    },
+    {
+      "path": "plans/reports/phase-0.5-collector/.gitattributes",
+      "sha256": "cf08baffd683a5ee3d5cd8d792ac4f25676354fb4dd0f635b70d38af705a7ab0",
+      "bytes": 66
+    }
+  ]
+}

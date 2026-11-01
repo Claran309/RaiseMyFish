@@ -1,0 +1,56 @@
+{
+  "model_calls": 0,
+  "platform_calls": 0,
+  "node_tests_passed": 17,
+  "engineering_passed": true,
+  "dsh_accepted": false,
+  "live_default_enabled": false,
+  "real_room_verified": false,
+  "offline_lossless_claimed": false,
+  "coverage": {
+    "collector": 73.1,
+    "live": 79.8,
+    "config": 92.0,
+    "fishd": 83.1,
+    "database": 88.7
+  },
+  "checks": [
+    {
+      "command": "node --test tools/bili-whale/protocol.test.mjs",
+      "exit_code": 0
+    },
+    {
+      "command": "node --check tools/bili-whale/protocol.mjs",
+      "exit_code": 0
+    },
+    {
+      "command": "node --check tools/bili-whale/danmaku-await.mjs",
+      "exit_code": 0
+    },
+    {
+      "command": "go test ./... -count=1",
+      "exit_code": 0
+    },
+    {
+      "command": "go test -tags=integration ./... -count=1",
+      "exit_code": 0
+    },
+    {
+      "command": "go vet ./...",
+      "exit_code": 0
+    },
+    {
+      "command": "go build ./...",
+      "exit_code": 0
+    },
+    {
+      "command": "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run --build-tags integration",
+      "exit_code": 0
+    },
+    {
+      "command": "WSL: CGO_ENABLED=1 /usr/local/go/bin/go test -race ./... -count=1",
+      "exit_code": 0
+    }
+  ],
+  "review": "内部规格及质量复核通过，不代替DSH；Node身份/时间RED摘要在助手历史，主线程独立复跑最终全集"
+}

@@ -1,0 +1,5 @@
+--- FAIL: TestRetryableChildClassificationIsPreserved (0.35s)
+    live_test.go:270: 可重试限流被误归网络中断 直播采集异常（exhausted）
+FAIL
+FAIL	RaiseMyFish/internal/collector/live	1.381s
+FAIL

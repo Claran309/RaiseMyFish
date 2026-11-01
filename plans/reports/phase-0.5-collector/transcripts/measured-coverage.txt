@@ -1,0 +1,5 @@
+ok  	RaiseMyFish/internal/collector	1.061s	coverage: 73.1% of statements
+ok  	RaiseMyFish/internal/collector/live	1.956s	coverage: 79.8% of statements
+ok  	RaiseMyFish/internal/config	0.727s	coverage: 92.0% of statements
+ok  	RaiseMyFish/cmd/fishd	3.759s	coverage: 83.1% of statements
+ok  	RaiseMyFish/internal/database	14.603s	coverage: 88.7% of statements

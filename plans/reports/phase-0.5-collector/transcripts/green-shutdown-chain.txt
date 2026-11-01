@@ -1,0 +1,3 @@
+ok  	RaiseMyFish/internal/collector	0.829s
+ok  	RaiseMyFish/internal/collector/live	1.624s
+ok  	RaiseMyFish/cmd/fishd	0.378s

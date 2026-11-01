@@ -1,0 +1,9 @@
+# RaiseMyFish/internal/config [RaiseMyFish/internal/config.test]
+internal\config\live_test.go:12:128: cfg.Collector undefined (type Config has no field or method Collector)
+internal\config\live_test.go:14:115: cfg.Collector undefined (type Config has no field or method Collector)
+FAIL	RaiseMyFish/internal/config [build failed]
+# RaiseMyFish/cmd/fishd [RaiseMyFish/cmd/fishd.test]
+cmd\fishd\live_test.go:21:18: undefined: serveWithCollector
+cmd\fishd\live_test.go:24:87: undefined: buildLive
+FAIL	RaiseMyFish/cmd/fishd [build failed]
+FAIL
