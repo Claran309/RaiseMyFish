@@ -1,4 +1,4 @@
-// Package memory 定义P0只读上下文与纯校验，不实现召回查询或提炼。
+// Package memory 定义P0只读上下文、纯校验与规则版提炼（0.9a）；不实现召回查询、worker 或语义理解。
 package memory
 
 import (

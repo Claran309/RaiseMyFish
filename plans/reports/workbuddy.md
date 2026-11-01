@@ -237,3 +237,76 @@ Windows 侧（仓库内，`RaiseMyFish` 模块）：
 
 - **是。** 本轮写入已结束，`go.mod`/`go.sum`/`cmd`/`infra`/`database`/迁移/`contracts`/协作看板/其他 Agent 报告/人格正文/eval 数据均未触碰；未执行任何 git 命令、未提交、未 push。
 - 交 DSH 验收范围：上述 6 个文件（5 个 Go + 1 个 yaml 注释改动），按 `contracts/persona.md` §5 逐条独立复核；`.workbuddy/persona-eval-draft-comm-005/` 里的 4 份草稿**不属于**本次交付，请勿计入 0.7b 验收。
+
+---
+
+## 0.9a 交接 · 提炼规则纯函数（2026-11-01，Asia/Shanghai）
+
+- 任务/子任务：0.9a（`plans/phase-0.9-workbuddy-dispatch.md` 本批唯一任务）。
+- 前置：按协调令 §0 的临时分工，Codex 长期下线，白酱按 DSH 精确规格实现薄任务。
+- 获派与实际修改路径（等于获派范围）：
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/memory/extract.go` | 新增 | `4fba3314e3663c9705ba0d8294204e9063577a5add1b064452c70595c7c45724` | 7955 |
+| `internal/memory/extract_test.go` | 新增 | `80bb20329c7ff6fed6d518342e317941f7aacbe26560ff6c9fb4c9a2058c85a2` | 12855 |
+
+未触碰：`internal/database/`、`internal/sender/`、`cmd/`、`contracts/`、`go.mod`/`go.sum`、其他 Agent 报告、协作看板。未调用模型、未连 PG、未新增依赖、未实现 worker。
+
+### 导出符号与派发单对照
+
+| 派发单 | 实现 | 说明 |
+|---|---|---|
+| `type Candidate`（Kind/Title/Summary/Importance/Confidence） | 一致 | 字段名与顺序一致 |
+| `func Extract(ev Event, opts ExtractOptions) []Candidate` | 一致 | 见下条 Event 说明 |
+| `type ExtractOptions{OwnerName, IsFirstNick}` | 一致 | 未额外加字段（理由见风险 1） |
+| `ev Event` | `type Event = event.Event`（类型别名） | **实现选择**：`contracts/memory.md` 明确 Event 字段/枚举唯一真源是 `contracts/event.md`，故用别名而非复制字段，避免出现第二套事件模型；签名文本与派发单完全一致，且可直接消费总线事件 |
+| 规则权重 0.9 / 0.8 / 0.4 | 一致 | 另有 Confidence：承诺 0.95、主人 0.9、首次 0.9 |
+| 额外导出 `KindPromise` / `KindPreference` / `KindFirstSeen` / `KindFact` | 新增常量 | 只是把派发单注释里的四个取值显式化，供 0.9b 落库时引用；未改任何签名 |
+
+### 规则与过滤实现
+
+- 顺序固定：承诺 → 主人相关 → 首次出现（多规则命中就返回多条，不合并；合并属 0.9b 去重策略）。
+- 承诺触发词严格照抄四个：`我答应` / `我保证` / `一定` / `包在我身上`，未扩同义词。
+- 主人相关：文本含「主人」**或** `FromName == OwnerName`（`OwnerName` 为空时不做昵称判定，避免空串匹配所有人）。
+- 首次出现：`IsFirstNick && FromName 非空`；摘要带昵称，便于 worker 落库辨识。
+- 过滤：`Private=true` fail-closed（见风险 1）／空文本／纯符号（`unicode.IsLetter`、`IsDigit` 都不成立的，如 `？？？`、`。。。`、`——`、`🙂🙂`）／超过 4000 字（按 rune）。
+- 截断一律按 rune，超长时用「…」占最后一位：Title ≤60（含「承诺：」等前缀）、Summary ≤200，总长不会溢出。
+
+### 测试命令与结果
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l internal/memory/` | 无输出（已格式化获派文件） |
+| `go build ./...` | 通过 |
+| `go vet ./...` | 通过 |
+| `go test ./internal/memory/ -count=1` | **ok**（新增 13 个顶层测试 + 21 个子测试全 PASS） |
+| `go test ./internal/memory/ -cover` | 覆盖率 **91.9%** |
+| `go test ./... -count=1` | 全仓通过（brain/collector/config/database/event/infra/knowledge/event·bus/persona/personaeval/scheduler/sender/store 均 ok） |
+| `golangci-lint v2.15.0 run ./internal/memory/...` | **0 issues** |
+| WSL `CGO_ENABLED=1 go test -race ./internal/memory/` | **通过**（`ok RaiseMyFish/internal/memory 1.014s`）；Windows 原生 `-race` 仍因本机 mingw32 gcc 不可用，未当作通过 |
+
+用例覆盖（派发单要求的最低项全有）：承诺 4 个正例 + 3 个反例；主人（文本命中 / 昵称命中，各带反例，含 `OwnerName` 为空的反例）；首次出现（正例 + `IsFirstNick=false` + 昵称为空两个反例）；默认不提炼；空文本 / 纯符号（9 种）/ 私密；超长（4000 字可提炼、4001 字返回空）；中文截断（断言长度正好 60/200、以「…」收尾、且截断结果必须是原文的**字符前缀**，证明没在字符中间切断）；多规则顺序；权重数值。
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| 提炼 worker（定时扫描 done 事件 → 写 `memory_records`、幂等） | 属 0.9b，本批明确不放行 |
+| 召回装配（Recent 滑窗 / CrossChannel） | 属 0.9c |
+| 真实 PG 验证、幂等/隐私隔离测试 | 属 0.9b/0.9d；本批不连 PG |
+| 模型调用 / 语义理解 | 派发单明令禁止；本实现只有关键词规则 |
+| 改 `internal/memory/context.go` 的包注释 | 该注释写「不实现召回查询或提炼」，现在已过时；但本批只允许新增两个文件，故**未改**，请 DSH 顺手修一行 |
+
+### 风险 / 需 DSH 裁决
+
+1. **私密事件 fail-closed 的后果（重要）**：派发单要求「不提炼带 private 标记且调用方未授权的事件」，但 `ExtractOptions` 只有两个字段，无法表达「已授权」。实现按字面取最保守解释：`Private=true` 一律不提炼。副作用是 **DM 场景永远不会产出「主人相关」候选**（契约规定 dm 必须 private）。若 0.9b 需要提炼私密会话，请在下一批给 `ExtractOptions` 增加显式授权字段（如 `AllowPrivate bool`）并明确授权来源，白酱不自行发明隐私策略。
+2. **「承诺」的 `一定` 触发词很宽**：`今天一定很热` 也会被判承诺（Importance 0.9）。按派发单原样实现，未自行收紧；是否加「一定+动词」之类约束请裁决。
+3. **多规则命中会产出多条**：一条「我答应主人带话」首次出现时会产出 3 条候选（promise/preference/first_seen）。派发单说「返回按此顺序排列」，理解为允许并存；若期望一条事件只留最高优先级那条，需明确。
+4. **`Kind` 用裸 string**：与派发单一致，未改成自定义类型（改类型属接口变更）。
+5. **流程说明**：本批是「先写实现 + 边界测试再跑」，非严格先红后绿；测试首轮即全绿，无隐藏修复（lint 首轮报 1 处 `gosec G602` 误报，已改用 `slices.Equal` 消除）。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，仅新增上述 2 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 逐条验收：按 `plans/phase-0.9-workbuddy-dispatch.md`「DSH 验收标准」1–5 项复核，重点是 rune 截断与四条规则的正反例。

@@ -434,3 +434,16 @@
   - `send_log`（ON CONFLICT attempt_id）+ `out` 事件（`live:out:{room}:{id}`）原子记账
 - 结论：**0.8 验收通过**（待 Codex 提交/push）。
 - 边界：默认发送关闭，未调用真实 B站；真实房间发送留 0.11。
+
+## 0.9a 提炼规则独立验收（2026-11-01 18:50）
+
+- 交付：`internal/memory/extract.go`（7955 字节）+ `extract_test.go`（12855 字节）；未越界。
+- 独立执行：`go test ./internal/memory/` 15 个顶层测试全 PASS；覆盖率 91.9%；全仓通过。
+- 核对：四条规则（承诺/主人相关/首次出现/默认不提炼）与权重符合派发单；
+  fail-closed（Private 不提炼）；runе 截断（Title≤60/Summary≤200/超长 4000 不提炼）；符号过滤；多规则返回多条不合并。
+- **DSH 裁决三个空档**：
+  1. 私密授权：0.9a 保持 fail-closed；0.9b 若要提炼私密会话，加 `AllowPrivate bool` 显式授权字段（默认 false）
+  2. 「一定」太宽（一定很热 → 承诺 0.9）：0.9a 按派发单原样保留；0.9b 收紧为「一定+动词」组合（帮/给/做到/带/发）
+  3. 多规则多条：保留多条候选（承诺+主人+首次各有价值），worker 按 kind 分别落库
+- 顺手修正：`internal/memory/context.go` 包注释过时（「不实现提炼」）已更新（DSH 一行）。
+- 结论：**0.9a 验收通过**（待提交）。
