@@ -80,7 +80,8 @@ func resolveRoutes(policies map[event.Channel]scheduler.ChannelPolicy, routes ma
 // 「租约已释放且状态落到 done/skipped/dead/retry」，未结清会直接返回 ErrUnsettled 并终止消费循环。
 // 结清用的都是契约里已有的边（queued→replying→sent→done、replying→dead、retry 走 Defer），不新增状态。
 //
-// Deliver 置 nil：Generate 内部已经调用 Sender 投递，恢复路径走 Verify。
+// Generate / Deliver / Verify 三个 handler 都必须设置：scheduler.launch 按 claim 的 stage 分派，
+// 任一为 nil 都会在对应阶段裸奔调用。
 func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration) (scheduler.Workers, error) {
 	if snd == nil {
 		return scheduler.Workers{}, errors.New("发送器不能为 nil")
@@ -151,9 +152,12 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 		return scheduler.Result{Replied: res.OK}, nil
 	}
 
-	verify := func(ctx context.Context, w scheduler.Work) (scheduler.Result, error) {
+	// deliver 与 verify 是同一件事：事件已经投递出去，只需要 Resume 核验并结清。
+	// 两者都必须显式设置——scheduler 在 stage=deliver 时会直接调 Workers.Deliver，
+	// 留 nil 就是一次裸奔调用（panic），事件也永远结不清。
+	resumeAndSettle := func(ctx context.Context, w scheduler.Work) (scheduler.Result, error) {
 		// 失败结清只能从 queued 出发：契约里没有 sent→dead 这条边
-		// （verify 阶段领取时状态本来就是 queued）。
+		// （deliver/verify 阶段领取时状态本来就是 queued）。
 		from := []event.Status{event.StatusQueued}
 
 		res, err := snd.Resume(ctx, w.Claim)
@@ -169,7 +173,11 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 		return scheduler.Result{Replied: res.OK}, nil
 	}
 
-	return scheduler.Workers{Generate: generate, Verify: verify}, nil
+	return scheduler.Workers{
+		Generate: generate,
+		Deliver:  resumeAndSettle,
+		Verify:   resumeAndSettle,
+	}, nil
 }
 
 // settleDelivered 把「已投递」的事件收尾：核验通过就 done，否则交回 retry 让 verify 阶段接手。

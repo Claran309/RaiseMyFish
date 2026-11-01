@@ -105,11 +105,8 @@ func TestGenerateCallsBrainThenSender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
-	if workers.Generate == nil || workers.Verify == nil {
-		t.Fatal("Generate/Verify 不能为空")
-	}
-	if workers.Deliver != nil {
-		t.Error("Deliver 应为 nil（Generate 内已投递）")
+	if workers.Generate == nil || workers.Verify == nil || workers.Deliver == nil {
+		t.Fatal("Generate/Deliver/Verify 三个 handler 都不能为空（stage 分派会裸奔）")
 	}
 
 	claim := liveClaim("live:30308220:1")
@@ -654,5 +651,67 @@ func TestQueuedToSentEdgeIsIllegal(t *testing.T) {
 	// 规范里若把两个 from 一起传，同样会被拒（逐条校验）
 	if err := store.ValidateTransition([]event.Status{event.StatusReplying, event.StatusQueued}, event.StatusSent); err == nil {
 		t.Fatal("含 queued 的 from 集合仍应被拒")
+	}
+}
+
+// TestDeliverStageIsHandled deliver 阶段领取的事件必须有 handler，且要能结清。
+//
+// 为什么单列一条：scheduler.launch 在 stage=deliver 时直接调 workers.Deliver，
+// 为 nil 就是一次裸奔调用（panic），事件也永远结不清。
+func TestDeliverStageIsHandled(t *testing.T) {
+	const id = "live:30308220:9101"
+	bus := newFakeBus(id)
+	snd := &fakeSender{resumeResult: sender.Result{OK: true, Verified: true}}
+	workers := newSettleWorkers(t, &fakeBrain{}, snd, bus)
+
+	if workers.Deliver == nil {
+		t.Fatal("Deliver handler 不能为 nil：deliver 阶段的事件会裸奔 panic")
+	}
+
+	claim := liveClaim(id)
+	claim.Stage = event.StageDeliver
+	if _, err := workers.Deliver(context.Background(), scheduler.Work{Claim: claim}); err != nil {
+		t.Fatalf("Deliver 失败：%v", err)
+	}
+	if snd.resumeCalls != 1 {
+		t.Errorf("deliver 阶段应走 Resume，实际调用 %d 次", snd.resumeCalls)
+	}
+	if snd.sendCalls != 0 {
+		t.Errorf("deliver 阶段不应重新投递，实际 Send %d 次", snd.sendCalls)
+	}
+	if got := bus.finalStatus(id); got != event.StatusDone {
+		t.Errorf("最终状态 = %q，期望 done", got)
+	}
+}
+
+// TestDeliverStageSettlesFailure deliver 阶段失败同样要结清，不能留中间态。
+func TestDeliverStageSettlesFailure(t *testing.T) {
+	const id = "live:30308220:9102"
+	bus := newFakeBus(id)
+	workers := newSettleWorkers(t, &fakeBrain{}, &fakeSender{resumeErr: &sender.Error{Kind: sender.KindDead, Settled: false}}, bus)
+
+	claim := liveClaim(id)
+	claim.Stage = event.StageDeliver
+	if _, err := workers.Deliver(context.Background(), scheduler.Work{Claim: claim}); err == nil {
+		t.Fatal("Resume 失败时应返回错误")
+	}
+	if got := bus.finalStatus(id); got != event.StatusDead {
+		t.Errorf("最终状态 = %q，期望 dead", got)
+	}
+}
+
+// TestDeliverStageRetriesOnRetryable deliver 可重试失败 → retry（Defer 交回）。
+func TestDeliverStageRetriesOnRetryable(t *testing.T) {
+	const id = "live:30308220:9103"
+	bus := newFakeBus(id)
+	workers := newSettleWorkers(t, &fakeBrain{}, &fakeSender{resumeErr: &sender.Error{Kind: sender.KindRetry, Settled: false}}, bus)
+
+	claim := liveClaim(id)
+	claim.Stage = event.StageDeliver
+	if _, err := workers.Deliver(context.Background(), scheduler.Work{Claim: claim}); err == nil {
+		t.Fatal("Resume 失败时应返回错误")
+	}
+	if got := bus.finalStatus(id); got != event.StatusRetry {
+		t.Errorf("最终状态 = %q，期望 retry", got)
 	}
 }

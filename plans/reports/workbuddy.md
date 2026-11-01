@@ -1316,3 +1316,78 @@ want (persona.Pack, map[event.Channel]brain.Brain, sender.Sender)
 
 - **是。** 本轮写入结束，改动仅上表 2 个文件；未执行 git 命令、未提交、未 push。
 - 交 DSH 验收后可重开 0.11 冒烟。
+
+---
+
+## 修复批次 · Deliver handler 补齐（2026-11-02，Asia/Shanghai）
+
+- 背景：0.11 冒烟第二个 bug——`Workers.Deliver` 留 nil，`stage=deliver` 的事件被领取时直接裸奔调用。
+- 获派与实际修改路径：
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `cmd/fishd/serve.go` | 修改（补 Deliver，抽 `resumeAndSettle`） | `2F323A88B24587BC281F808B91258827C65E3C67B030E010F2B3CC75DB397017` | 13281 |
+| `cmd/fishd/serve_test.go` | 修改（3 个新用例 + 改旧断言） | `454392BF4E99347E97D6AFF792915F66E293CA82E932E3C6ED24E32933E022D3` | 26756 |
+
+未改 `scheduler`/`sender` 内部语义、未改 `contracts/`。
+
+### 变更
+
+- `Generate` / `Deliver` / `Verify` 三个 handler **全部设置**。删掉了原来「Deliver 置 nil」的写法。
+- `deliver` 与 `verify` 语义本来就是同一件事（事件已投递，只需 Resume 核验后结清），
+  所以抽成一个 `resumeAndSettle` 闭包，同时赋给 `Deliver` 和 `Verify`——避免两份逻辑各自漂移。
+- 结清规则沿用上一批（不新增状态）：
+  - Resume 成功 + 核验通过 → `Mark({queued,sent}→done)`
+  - Resume 成功 + 未核验 → `Defer` → retry
+  - Resume 失败 `KindRetry` → `Defer` → retry
+  - Resume 失败其它 Kind → `Mark(queued→dead)`
+
+`scheduler.launch` 是按 claim 的 `stage` 分派 handler 的（schedule/generate→Generate，deliver→Deliver，
+verify→Verify），任一为 nil 都会在对应阶段空指针。
+
+### 测试（先红后绿，红得很彻底）
+
+先写测试，未改实现时：
+
+```
+--- FAIL: TestDeliverStageIsHandled  Deliver handler 不能为 nil：deliver 阶段的事件会裸奔 panic
+--- FAIL: TestDeliverStageSettlesFailure
+panic: runtime error: invalid memory address or nil pointer dereference
+        RaiseMyFish/cmd/fishd.TestDeliverStageSettlesFailure ... serve_test.go:698
+```
+
+即——**不是断言没过，是真的复现了冒烟里的那次 nil panic**。
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestDeliverStageIsHandled` | Deliver 非 nil；stage=deliver 调用后走 Resume（Send 调用次数为 0）、事件结清为 done |
+| `TestDeliverStageSettlesFailure` | deliver 阶段 Resume 失败（dead 类）→ 结清为 dead |
+| `TestDeliverStageRetriesOnRetryable` | deliver 阶段 Resume 失败（retry 类）→ 结清为 retry |
+| `TestGenerateCallsBrainThenSender`（改） | 三个 handler 都非 nil（原来断言「Deliver 应为 nil」，已翻过来） |
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l cmd/fishd` | 无输出 |
+| `go build ./...` / `go vet ./cmd/fishd/...` | 通过 |
+| `go test ./cmd/fishd/` | ok（17 个顶层用例全 PASS） |
+| `go test ./... -count=1` | 22 个包全绿 |
+| `golangci-lint run ./cmd/fishd/...` | 0 issues |
+| `go test -race ./cmd/fishd/...`（CC=WinLibs） | **ok 5.480s** |
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| 真实冒烟 | 等 DSH 验收后重开 |
+| deliver 阶段重新生成（Brain 调用） | 语义就是「已投递、只等核验」，不应重新生成；用例断言 `Send==0` 钉住 |
+
+### 风险 / 需 DSH 裁决
+
+1. **Deliver 与 Verify 共用一个实现**：两者语义一致，共用能避免漂移；若以后 deliver 需要差异化
+   （比如不同的重试次数），拆成两个闭包即可。
+2. **deliver 阶段失败同样置 dead/retry**：与 verify 一致；如果希望 deliver 失败一律重试，改一行。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，改动仅上表 2 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 验收后可重开 0.11 冒烟。
