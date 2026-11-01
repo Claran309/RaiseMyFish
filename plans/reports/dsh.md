@@ -491,3 +491,11 @@
 - 用法：`CC="<路径>" go test -race ./...`（PATH 里旧 MinGW 是 32 位，不能直接用）；已写入 docs/testing.md。
 - 验证：全仓 `go test -race ./...` **11 包全过**。
 - 0.9b/0.9c/0.9d 此前「race 未验证」项已补验通过；后续任务 race 可按此命令验证。
+
+## 0.10a 日报渲染独立验收（2026-11-02 00:25）
+
+- 交付：`internal/observe/report.go`（4563）+ `report_test.go`（7719）；无越界。
+- 独立执行：`go test ./internal/observe/` 8 个测试全 PASS；覆盖率 **100%**；race 通过（用新装 64 位 gcc）。
+- **DSH 裁决成功率分歧**：公式 = `回复 / (收到 - 跳过)`；85/(120-30)=94.4%。派发单示例「78.7%」是本鱼笔误、作废；WorkBuddy 按规则文字实现正确。`report.go` 注释示例已由 DSH 改为 94.4%。
+- 结论：**0.10a 验收通过**（待提交）。
+- 未做（WorkBuddy 声明）：0.10b 心跳、0.10c fishctl 接入、0.10d 真实 PG 统计。
