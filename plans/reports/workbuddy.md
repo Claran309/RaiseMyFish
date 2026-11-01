@@ -1016,3 +1016,303 @@ $ go run ./cmd/fishctl status
 
 - **是。** 本轮写入结束，改动仅上表 5 个文件；未执行 git 命令、未提交、未 push。
 - 交 DSH 验收：聚合口径逐条核对、窗口左闭右开、重试去重、`ok IS NULL` 不计、空库 nil 费用、`LastSeen` 忽略 out、端到端 `stats` 字段出现、race 通过。
+
+---
+
+## 0.11 交接 · fishd 消费循环装配（2026-11-02，Asia/Shanghai）
+
+- 任务：0.11 消费循环（Claim → Scheduler → Brain → Sender）。未改 `contracts/`、迁移、人格/知识/评测、其他 internal 模块。
+- 获派与实际修改路径：
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/config/scheduler.go` | 新增 | `BE6907A6F28EF519F4BAD5C4EAF8FAFBA2B8146ED681A9D71F3A3FF25B4B2A05` | 4928 |
+| `internal/config/scheduler_test.go` | 新增 | `E88CFF9714950052BA9618F06ABA5D808A51A57706D7C34EBB4EDC074A0ABAC9` | 4432 |
+| `internal/config/config.go` | 修改（加 `Scheduler` 字段 + 校验） | `4BA26E7AFD2408D417F3FE65F6268A1FB30E3CEC9F62D71C497581F84708C64F` | 5065 |
+| `config/fishd.toml` | 修改（加 `[scheduler]`） | `B014101EA05B040384107779C1C52B07F7C2D97421E4E2FAE9BF74D288E9BE1C` | 2292 |
+| `cmd/fishd/serve.go` | 新增 | `5D4490BA52181B611030CBA76BB2D5EBB5BB2195B4C36E8BCD62BE88261B54FF` | 8142 |
+| `cmd/fishd/serve_test.go` | 新增 | `18DB47A1753FCE85552AF587B2999F0DB4FF5EBC04D7FEBB62D58558BEAB0DCC` | 13252 |
+| `cmd/fishd/main.go` | 修改（接消费循环） | `37F0C1A78B0D176E362FA523394331CC0F4B9A0FF0BC1C62DD281C493AE7959D` | 6357 |
+
+`internal/config/config.go` 动了两处：`Config` 加 `Scheduler *Scheduler` 字段、`Validate` 调 `Scheduler.Validate()`。
+字段必须加在 `Config` 里（TOML 解码目标），所以这一行无法只写在 scheduler.go 内。
+
+### 配置（`[scheduler]`）
+
+- 类型与字段名按派发单；`Channels map[event.Channel]ChannelPolicy` 已实测能被 go-toml 正确解码（`[scheduler.channels.live]` → key 是 `event.ChLive`）。
+- **整段缺失 = nil = 只采集**，行为与 0.11 之前完全一致。
+- 段内省略的字段用 `ApplyDefaults` 补：并发 4 / 待处理 64 / 批次 8 / 轮询 500ms / 重试 5s / 操作超时 10s / worker 超时 30s；通道 `min_runes` 缺省 2。
+- 校验：并发 1–100、pending ≥ concurrent（且 ≤10000）、批次 1–100、四个时间参数必须为正、至少一个通道、通道枚举合法、`brain` 非空、`rate_per_minute` 有限且 >0、`burst ≥1`、`daily_quota ≥1`、`cooldown_ms`/`min_runes`/`repeat_window_ms` 不为负。
+- `fishd.toml` 按派发单加了 `[scheduler]` 与 `[scheduler.channels.live]`（brain="default"、6/2/200/10000/2）。
+  因为文件里 `[llm] enabled = false`，所以默认仍是「只采集」。
+
+### 消费循环装配（`cmd/fishd/serve.go`）
+
+- `buildSchedulerOptions`：配置 → `scheduler.Options`，`CooldownMS`/`RepeatWindowMS` 换算成 `time.Duration`；
+  `Public/Private` 按通道语义填（live/comment 公开、dm 私密）——`scheduler` 的 ACL 靠它们放行，不填会导致全部事件被拒。
+- `resolveRoutes`：配置里的 `brain` 路由名必须能在已装配的 `routes` 里找到，否则构造期报错（运行期不静默丢事件）。
+- `buildConsumeWorkers`：
+  - `Generate`：`w.Task == nil` → 直接报错（**不伪造任务**）；组 `brain.ContextInput{Event, Persona, Memory, Shared, Knowledge: nil}`；
+    `Memory`/`Shared` 只带 Scope、**不带任何数据**（不伪造记忆）；调 `Brain.Reply` → `Sender.Send` → `Result{Replied: res.OK}`；错误一律原样上抛。
+  - 发送时**显式带上 `sender.Reply.Scope`**：`sender.Reply.Validate` 要求 Scope 与事件通道/会话一致，只传 Text 会被拒（派发单示例省略了它，这里按接口要求补上）。
+  - `Verify`：只调 `Sender.Resume`，不重新生成。
+  - `Deliver` 置 nil（Generate 内已投递）。
+- `buildSender`：复用 `[collector.live]` 的 node 路径/脚本/凭据与 `self_id`，`CooldownMS` 作为 `sender.Policy.MinInterval`。
+- `withScheduler`：调度循环与 `serve()` 主循环并行，任一返回就整体收敛；外部取消算正常停止。
+- `main.go`：`consumeEnabled`（有 `[scheduler]` + 有路由 + live 通道开启）为真才建 bus/装配；
+  装配成功打 `action=consume_loop_start`（含并发/批次/通道数）；否则保持原来的「只采集」。
+
+### 测试
+
+`cmd/fishd/serve_test.go`（mock Brain/Sender 跑链路，不调模型）：
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestGenerateCallsBrainThenSender` | Claim→Generate→Sender→Result：Brain 收到的 Task/Event/Scope 正确；Memory/Shared 为空且 Scope 正确；Knowledge 为 nil；Sender 收到正文与 Scope；`Result.Replied=true` |
+| `TestGenerateRejectsMissingTask` | Task 为 nil 报错（不伪造任务） |
+| `TestGenerateRejectsUnknownChannel` | 通道无路由报错 |
+| `TestGeneratePropagatesErrors` | Brain / Sender 错误都透传 |
+| `TestVerifyUsesResume` | Verify 只调 Resume，不调 Brain、不调 Send |
+| `TestBuildConsumeWorkersRejectsNilSender` | 依赖缺失构造期失败 |
+| `TestBuildSchedulerOptionsMapping` | 配置→参数映射（含公/私密语义、时长换算、ID 列表透传） |
+| `TestResolveRoutesRejectsMissingRoute` | 缺路由报错 |
+| `TestConsumeEnabledSwitch` | 三个开关缺一不可 |
+| `TestSchedulerAcceptsAssembledWorkers` | mock bus/repo 下 `scheduler.New` 接受这套 worker |
+
+`internal/config/scheduler_test.go`：默认值补齐、显式值不被覆盖、整段缺失为 nil、10 个非法配置全部被拒、nil 配置不 panic。
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l internal/config cmd/fishd` | 无输出 |
+| `go build ./...` | 通过 |
+| `go vet ./internal/config/... ./cmd/fishd/...` | 通过 |
+| `go test ./internal/config/... ./cmd/fishd/... -count=1` | ok（新增 15 个顶层用例全 PASS） |
+| `go test ./... -count=1` | 22 个包全绿 |
+| `golangci-lint v2.15.0 run ./internal/config/... ./cmd/fishd/...` | 0 issues |
+| `go test -race ./internal/config/... ./cmd/fishd/...`（CC=WinLibs） | **ok 22.766s / 7.431s** |
+| `go run ./cmd/fishd --config <临时配置> check` | `{"llm_enabled":false,"brain_routes":0,"provider_called":false,...}`，退出码 0 |
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| 真实联调（真模型 + 真直播间） | 派发单写明「本批可只用 mock；真实联调归 0.11 冒烟」 |
+| 独立 `[sender]` 配置段 | 规格没给；发送沿用 `[collector.live]` 的 node 配置 |
+| Presence / 知识注入 / 记忆召回 | 派发单明令后续批次 |
+| 改 `fishd.toml` 打开 `[llm] enabled` | 会真的产生模型调用与真实发送，需主人明确授权 |
+
+### 风险 / 需 DSH 裁决
+
+1. **发送脚本复用了采集的 node 配置**（`script_path = tools/bili-whale/danmaku-await.mjs`）：真正发弹幕的脚本参数未必一致。
+   建议下一批给 `[sender]` 独立段，或确认 `danmaku-await.mjs --action send` 可用。
+2. **`sender.Reply.Scope` 与派发单示例不一致**：示例只写 `{Text: ...}`，但 `Validate` 要求 Scope，
+   不补会 100% 被拒。白酱按接口补了，请确认。
+3. **`fishd check` 在仓库默认配置下跑不起来**：`[channels.live] enabled=true` 但本机 `.env` 没有 B 站 Cookie，
+   采集配置校验直接失败（与本次改动无关）。上面那条 check 结果是拿一份「live 关闭」的临时配置跑的。
+4. **流程说明**：本批是「先写实现、后补测试」，不是派发单要求的先红后绿——装配类改动依赖真实签名，
+   白酱先对齐接口再补测试，测试首轮全绿、无隐藏修复。
+5. 一次 `go test ./...` 里 `internal/event` 报过 **瞬时 build failed**（该包不在本批改动范围），
+   单独重跑与全仓重跑均通过；判断是 `-race`（CGO）与普通测试并行时同一 build cache 的瞬时冲突。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，改动仅上表 7 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 验收：mock 链路、配置校验拒绝、`consumeEnabled` 三开关、`scheduler.New` 接受装配、`fishd check` 无模型调用、race 通过。
+
+---
+
+## 修复批次 · `[sender]` 独立配置（2026-11-02，Asia/Shanghai）
+
+- 目的：修掉 0.11 留下的「发送沿用了采集脚本 `danmaku-await.mjs`」这个坑。
+- 获派与实际修改路径：
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/config/sender.go` | 新增 | `5530F50F99BC85046F990B0B5BC0D41C1398D9704A826B7A14A1F3EF3D55F66C` | 2690 |
+| `internal/config/sender_test.go` | 新增 | `457E9CD35A974520DC1C0DC943E9650D4829BACE4DD4C0D95D88E45DE3F3139A` | 4183 |
+| `internal/config/config.go` | 修改（加 `Sender` 字段 + 校验） | `3A501839A7793935D4EE8160A0C99E86240B88CC842040537515845738D3E768` | 5286 |
+| `config/fishd.toml` | 修改（加 `[sender]`） | `95272021A761996FAA6C2D58ACE01C8F4158AEEECCF3763F1448CD31EBFC5B98` | 2645 |
+| `cmd/fishd/serve.go` | 修改（改用 `cfg.Sender`） | `ADCF3108B9B41DC6EA137867DF81AE255EEF83592552A71A0C9D459B081095C4` | 9014 |
+| `cmd/fishd/serve_test.go` | 修改（补 3 个用例） | `BB999FA3C15AB68F5B6A03CB24F852BA4225C950BB41ABAE64F79207DCAB0976` | 16107 |
+
+### 设计要点
+
+- `Sender` 结构：`node_path` / `script_path` / `self_id` / `http_timeout_ms`。
+  `[sender]` 缺失 → `nil` → 未配置发送（`buildSender` 会明确报错，不静默退回采集脚本）。
+- 默认值：`node_path="node"`、`script_path="tools/bili-whale/danmaku.mjs"`、`http_timeout_ms=35000`；只补零值。
+- 校验：`script_path` / `node_path` 非空、路径不含控制字符、`http_timeout_ms` 在 1–600 秒、`self_id` 填了就必须是正数 UID（全零拒绝）。
+- **凭据仍复用采集侧**（`Cookie`/`CookieFile` 只从 `[collector.live]` 的环境解析里来）：同一个账号没必要配两遍。
+  `[sender].self_id` 留空时也回落到采集侧的 UID。
+- `serve.go` 抽出纯函数 `resolveSenderWiring(cfg, minInterval)`，把「配置 → NodeOptions/Options」独立出来，
+  这样单测能直接断言「到底传了什么」，不用去黑盒里翻。
+- `buildSender` 只用 `cfg.Sender` 与 `cfg.Scheduler`（取 `CooldownMS` 当 `MinInterval`），**不再读 `Collector.Live.ScriptPath/NodePath/HTTPTimeoutMS`**。
+
+`fishd.toml` 新增：
+
+```toml
+[sender]
+node_path = "node"
+script_path = "tools/bili-whale/danmaku.mjs"
+self_id = "3747574135655903"
+http_timeout_ms = 35000
+```
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestSenderDefaultsFilled` | 只写 script_path → 补齐 node_path / 35000 |
+| `TestSenderAbsentIsNil` | 缺 `[sender]` → nil |
+| `TestSenderExplicitValuesKept` | 显式值不被覆盖，**且不污染 `[collector.live]` 的脚本** |
+| `TestSenderValidationRejects` | 超时过小/过大、`self_id` 非数字、全零 → 全部被拒 |
+| `TestSenderValidateDirect` | 直接调 Validate：script_path 空、node_path 空、控制字符、self_id 留空合法 |
+| `TestResolveSenderWiringUsesSenderSection` | **发送脚本取 `danmaku.mjs` 而不是采集的 `danmaku-await.mjs`**；node 路径/超时/self_id 都来自 `[sender]`；Cookie 来自采集侧；`MinInterval` 透传；参数能被 `NewNodeTransport` 接受 |
+| `TestResolveSenderWiringSelfIDFallback` | `[sender].self_id` 留空 → 回落采集侧 UID |
+| `TestResolveSenderWiringRequiresSenderSection` | 缺 `[sender]` → 明确报错 |
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l internal/config cmd/fishd` | 无输出 |
+| `go build ./...` / `go vet ./internal/config/... ./cmd/fishd/...` | 通过 |
+| `go test ./internal/config/... ./cmd/fishd/... -count=1` | ok（新增 8 个用例全 PASS） |
+| `go test ./... -count=1` | 22 个包全绿 |
+| `golangci-lint v2.15.0 run ./internal/config/... ./cmd/fishd/...` | 0 issues |
+| `go test -race ./internal/config/... ./cmd/fishd/...`（CC=WinLibs） | **ok 22.135s / 6.564s** |
+| `go run ./cmd/fishd --config <临时配置> check` | 退出码 0，`[sender]` 段能正常解析校验 |
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| 真实发送冒烟 | 等 DSH 验收后按计划开；本批只做配置拆分 |
+| `[sender]` 里配独立 Cookie | 同一账号凭据只解析一处，避免两处不一致；如需按通道分离再改 |
+| 发送侧 `enabled` 开关 | 目前沿用 `[channels.live].enabled`，没新增第二个开关 |
+
+### 风险 / 需 DSH 裁决
+
+1. **`[sender].self_id` 与 `[collector.live].self_id` 两个来源**：现在优先用 `[sender]`，留空回落采集侧。
+   两处写不同值时以发送为准，可能让人困惑；要不要干脆只留一处？
+2. **`http_timeout_ms` 默认 35000** 是照 `NodeTransport` 的默认值定的（发送要等平台回执），不是 spec 给的数，请确认。
+3. **凭据仍在 `[collector.live]`**：如果冒烟时发现发送与采集用了不同 Cookie，需要把凭据也拆出来。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，改动仅上表 6 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 验收后可开 0.11 冒烟。
+
+---
+
+## 修复批次 · 消费循环事件结清（2026-11-02，Asia/Shanghai）
+
+- 背景：0.11 冒烟发现 Generate/Verify 从不结清事件，事件卡在中间态。
+- 获派与实际修改路径：
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `cmd/fishd/serve.go` | 修改（Generate/Verify 加结清） | `550B28D373516B81D550687D7FC5512AB2ED5802CF0AC849C358B37227C026CD` | 12860 |
+| `cmd/fishd/serve_test.go` | 修改（假总线改成有状态 + 8 个新用例） | `1FC6BCBD4DAA7B25ECBE2FED35054D3BD5AB689A78B99FD78DDB6A378BA80654` | 24308 |
+
+未改 `contracts/`、未改 `scheduler`/`sender` 内部语义。
+
+### ⚠️ 派发单给的结清写法在当前契约下**跑不通**（有测试固化证据）
+
+派发单要求：`Mark(ctx, claim, []Status{StatusReplying, StatusQueued}, StatusSent)`。实测不成立，原因有两条：
+
+1. `store.ValidateTransition` 是**逐条**校验 from 集合：`queued → sent` 不在契约状态机里
+   （`queued` 只能去 replying/retry/dead/skipped/done）。含 queued 的 from 集合必然被拒。
+2. 即便只传 `{Replying}` 也不行：`MarkClaim` 在 `to=Sent` 时要求**当前行**已经是 `replying`
+   且 `stage=generate`，而调度器交给 worker 的事件状态是 `queued`（`scheduler.go` 的准入后确认就要求 status==queued）。
+
+证据用例 `TestQueuedToSentEdgeIsIllegal` 直接把这条钉住了：只要状态机不改，这个写法就永远返回错误。
+
+所以白酱按**契约里已有的边**做了三步，没有新增状态、没有改 scheduler/sender：
+
+```
+queued → replying（进入执行中）
+       → sent（投递完成，Mark 会把 stage 推到 verify）
+       → done（核验通过，释放租约）
+```
+
+### 另一个同样的坑：`sent → dead` 也不合法
+
+`sent` 只能去 `done`/`retry`。所以 Verify 失败时不能从 `{Queued, Sent}` 置 dead，
+只能从 `queued` 出发（verify 阶段被领取时状态本来就是 queued）。
+
+### 为什么不能停在 `sent` 就返回
+
+`scheduler.ownSettlement` 要求：状态 ∈ {done, skipped, dead, retry} **且**租约已释放（owner 空、version+1）。
+而 `MarkClaim` 只有 done/skipped/dead 会 `releaseLease`；`Mark(retry)` 只延长租约。
+所以：
+
+- 失败重试必须走 **`bus.Defer`**（`DeferClaim` 会置 retry 并释放租约），不能用 `Mark(retry)`；
+- 成功路径必须以 **done** 收尾。
+
+不停在 sent / 不结清，`complete()` 就会返回 `ErrUnsettled`，整个消费循环直接退出——这正是冒烟里看到的症状。
+
+### 实际结清矩阵
+
+| 阶段 | 情形 | 结清方式 |
+|---|---|---|
+| Generate | 进入执行 | `Mark(queued→replying)` |
+| Generate | 生成失败 | `Mark(replying→dead)`，错误上抛 |
+| Generate | 发送 `KindRetry` | `Defer(now+RetryDelay)` → retry |
+| Generate | 发送 dead/auth/input/skipped/uncertain | `Mark(replying→dead)` |
+| Generate | 发送成功 | `Mark(replying→sent)`；核验通过再 `Mark({queued,sent}→done)`，未通过 `Defer` |
+| Verify | Resume 成功且核验通过 | `Mark({queued,sent}→done)` |
+| Verify | Resume 成功但未核验 | `Defer` → retry |
+| Verify | Resume 失败 `KindRetry` | `Defer` → retry |
+| Verify | Resume 失败其它 Kind | `Mark(queued→dead)` |
+
+`uncertain`（可能已经发出去了）刻意置 dead 而不是重投：宁可停下来让人看，也不要重复发弹幕。
+
+### 测试（先红后绿）
+
+先写测试，签名未改时 `go vet` 直接红：
+```
+cmd\fishd\serve_test.go:104 too many arguments in call to buildConsumeWorkers
+want (persona.Pack, map[event.Channel]brain.Brain, sender.Sender)
+```
+
+假总线刻意复用 `store.ValidateTransition`：**它和生产 MarkClaim 过的是同一层校验**，
+所以「状态边写错」在单测里就会暴露，不会出现「mock 绿、生产挂」。
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestGenerateSettlesToDoneOnSuccess` | 结清序列 = `[replying, sent, done]`，最终 done |
+| `TestGenerateSettlesUnverifiedToRetry` | 未核验 → retry + Defer |
+| `TestGenerateSettlesBySenderKind` | retry→retry、dead/auth→dead（3 个子用例） |
+| `TestGenerateSettlesBrainFailure` | 生成失败也结清为 dead，错误原样上抛 |
+| `TestVerifySettlesToDone` | 恢复成功 → done |
+| `TestVerifySettlesFailureByKind` | 恢复失败 → dead |
+| `TestQueuedToSentEdgeIsIllegal` | 固化「派发单那个写法不可能成立」 |
+| `TestBuildConsumeWorkersRejectsNilSender` | 补：bus 为 nil、retryDelay≤0 也要构造期报错 |
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l cmd/fishd` | 无输出 |
+| `go build ./...` / `go vet ./cmd/fishd/...` | 通过 |
+| `go test ./cmd/fishd/` | ok（14 个顶层用例全 PASS） |
+| `go test ./... -count=1` | 22 个包全绿 |
+| `golangci-lint run ./cmd/fishd/...` | 0 issues |
+| `go test -race ./cmd/fishd/...`（CC=WinLibs） | **ok 6.336s** |
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| 真实冒烟 | 等 DSH 验收后重开 |
+| 改 `store.ValidateTransition` 增加 queued→sent | 那是改契约状态机，禁区 |
+| Verify 阶段的 §"sent 直接置 dead" | 状态机不允许，已改为只从 queued 出发 |
+
+### 风险 / 需 DSH 裁决
+
+1. **结清流程与派发单描述不同**（见上），请确认这个三步方案；若坚持一次 Mark 到 sent，
+   必须放宽 `store.ValidateTransition` 与 `MarkClaim` 的 stage 条件——那是契约变更。
+2. **生成失败置 dead**：规格只说「错误原样返回」。但不结清会把循环带崩，所以白酱补了这个终态；
+   如果希望生成失败走 retry，改成 `Defer` 即可（一行）。
+3. **`uncertain` 置 dead**：避免重复发弹幕，代价是偶发网络抖动会丢一次回复。若更怕漏回，可改 retry。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，改动仅上表 2 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 验收后可重开 0.11 冒烟。

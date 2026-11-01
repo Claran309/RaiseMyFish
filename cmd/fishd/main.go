@@ -116,7 +116,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	serveRuntime := func(ctx context.Context) error {
 		return serve(ctx, cfg.Runtime.StateFile, time.Duration(cfg.Runtime.HeartbeatSeconds)*time.Second, logger, check)
 	}
-	if liveCollector == nil {
+	// 消费循环：只有 [scheduler] 存在、有 Brain 路由且 live 通道开启时才装配；
+	// 否则保持「只采集」的现状。
+	wantConsume := consumeEnabled(cfg, routes)
+	if liveCollector == nil && !wantConsume {
 		return serveRuntime(ctx)
 	}
 	events, err := database.NewEventRepo(resources.DB)
@@ -127,7 +130,25 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
-	return serveWithCollector(ctx, liveCollector, bus, timeout, logger, serveRuntime)
+	consume, err := buildConsume(cfg, resources, routes, pack, bus, logger)
+	if err != nil {
+		return err
+	}
+	if consume != nil {
+		logger.Info("消费循环装配完成",
+			zap.String("action", "consume_loop_start"),
+			zap.Int("concurrency", cfg.Scheduler.MaxConcurrent),
+			zap.Int("claim_batch", cfg.Scheduler.ClaimBatch),
+			zap.Int("channels", len(cfg.Scheduler.Channels)),
+		)
+	}
+	servePipeline := func(ctx context.Context) error {
+		return withScheduler(ctx, consume, logger, serveRuntime)
+	}
+	if liveCollector == nil {
+		return servePipeline(ctx)
+	}
+	return serveWithCollector(ctx, liveCollector, bus, timeout, logger, servePipeline)
 }
 
 // serve 不启动额外后台goroutine；所有探活有超时，取消后更新状态再释放连接。

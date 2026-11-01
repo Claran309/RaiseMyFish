@@ -12,9 +12,9 @@ state_file = "data/fishd-status.json"
 heartbeat_seconds = 5
 stale_seconds = 20
 
-# live仅采集到Bus，默认关闭；其余业务通道未实现。
+# live仅采集到Bus；0.11冒烟临时开启（30分钟）
 [channels.live]
-enabled = false
+enabled = true
 [channels.comment]
 enabled = false
 [channels.dm]
@@ -24,8 +24,8 @@ enabled = false
 
 # 启用live前需明确房间与自身UID；Cookie仅从环境或显式文件读取。
 [collector.live]
-room_id = ""
-self_id = ""
+room_id = "30308220"
+self_id = "3747574135655903"
 node_path = "node"
 script_path = "tools/bili-whale/danmaku-await.mjs"
 http_timeout_ms = 10000
@@ -38,9 +38,17 @@ backoff_max_ms = 60000
 stable_after_ms = 30000
 max_failures = 8
 
+# 弹幕发送通道：与采集脚本分开——采集是 danmaku-await.mjs（长连监听），
+# 发送是 danmaku.mjs（一次性 POST）。凭据复用 [collector.live] 解析到的 FISH_BILI_COOKIE（同一账号）。
+[sender]
+node_path = "node"
+script_path = "tools/bili-whale/danmaku.mjs"
+self_id = "3747574135655903"
+http_timeout_ms = 35000
+
 # 只装配Brain与无调用诊断；通道仍必须关闭。
 [llm]
-enabled = false
+enabled = true
 persona_dir = "personas/dafeiyu"
 max_prompt_tokens = 8192
 max_reply_tokens = 128
@@ -71,3 +79,22 @@ live = "deepseek:deepseek-chat"
 enabled = false
 dir = "personas/dafeiyu/knowledge"
 budget_percent = 10
+
+# 消费循环（Claim → Scheduler → Brain → Sender）。
+# 整段缺失表示「只采集不回复」；这里保留默认值，实际是否回复还取决于 [llm] enabled 与路由。
+[scheduler]
+max_concurrent = 4
+max_pending = 64
+claim_batch = 8
+poll_interval_ms = 500
+retry_delay_ms = 5000
+operation_timeout_ms = 10000
+worker_timeout_ms = 30000
+
+[scheduler.channels.live]
+brain = "default"
+rate_per_minute = 6
+burst = 2
+daily_quota = 200
+cooldown_ms = 10000
+min_runes = 2

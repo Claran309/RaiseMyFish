@@ -22,6 +22,10 @@ type Config struct {
 	LLM       LLM        `toml:"llm"`
 	Knowledge Knowledge  `toml:"knowledge"`
 	Collector Collectors `toml:"collector"`
+	// Scheduler 为 nil 表示「不接消费循环」，只采集。
+	Scheduler *Scheduler `toml:"scheduler"`
+	// Sender 为 nil 表示「未配置发送」。
+	Sender *Sender `toml:"sender"`
 }
 
 // Database 的连接串只从环境/本地dotenv读取，不能序列化输出。
@@ -84,6 +88,10 @@ func Load(path, envPath string) (Config, error) {
 			return cfg, &safeError{"TOML配置格式或字段错误", err}
 		}
 	}
+	// [scheduler] 段存在才补默认值；整段缺失时保持 nil，等价于「只采集」。
+	cfg.Scheduler.ApplyDefaults()
+	// [sender] 同理：缺失即未配置发送。
+	cfg.Sender.ApplyDefaults()
 	local := map[string]string{}
 	if envPath != "" {
 		values, err := godotenv.Read(envPath)
@@ -140,6 +148,12 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Knowledge.Validate(); err != nil {
+		return err
+	}
+	if err := c.Scheduler.Validate(); err != nil {
+		return err
+	}
+	if err := c.Sender.Validate(); err != nil {
 		return err
 	}
 	return c.LLM.Validate()

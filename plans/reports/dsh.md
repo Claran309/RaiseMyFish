@@ -532,3 +532,16 @@
 - 聚合口径核对：Received=in 窗口内、Skipped=skipped、Replied=send_log ok 去重、Failed=ok IS FALSE（NULL 不计）、LastSeen=in 每通道 MAX、窗口左闭右开。
 - 结论：**0.10d 验收通过**；**0.10 可观测（a/b/c/d）闭环**。
 - 未做（WorkBuddy 声明）：0.10b 心跳、0.10c fishctl 接入、0.10d 真实 PG 统计。
+
+## 0.11 集成装配与结清修复独立验收（2026-11-02 02:10）
+
+- 0.11 装配交付：config/scheduler.go、cmd/fishd/serve.go、main.go、fishd.toml [scheduler]；15 个新测试 22 包全绿。
+- **冒烟抓到真 bug**：收到弹幕、LLM 回复成功，但 `调度工作回执失败`（handler 未结清事件）→ 消费循环退出。
+- 修复交付：Generate/Verify 按契约合法边结清 `queued→replying→sent→done`；失败 dead；retry 走 `bus.Defer`。
+  - WorkBuddy 指出**本鱼派发单写错**：`[{Replying,Queued}]→Sent` 与 `sent→dead` 都非法（ValidateTransition 逐条校验）——按契约实现正确，**DSH 认错**。
+- 独立执行：`cmd/fishd` 14 个顶层用例 PASS；22 包全绿；lint 0；race 6.3s。
+- **DSH 裁决**：
+  1. 结清流程按契约合法边（非派发单写法）：**接受**，不改 ValidateTransition/MarkClaim 契约
+  2. 生成失败置 dead：**接受**（循环不崩优先；P0 少重试）
+  3. uncertain 置 dead：**接受**（怕重复发弹幕；丢一次优于重复）
+- 结论：**0.11 装配与结清修复验收通过**（待提交）；**真实冒烟待主人开播**。
