@@ -742,3 +742,84 @@ PATH 上的 `gcc` 还是 32 位 MinGW.org；上一批已全盘排查过没有 mi
 
 结论：0.10a 不存在第二份实现，仍是上面那一版；**仍待 DSH 按五条标准验收**，
 其中「成功率公式 94.4% 还是示例的 78.7%」这一条分歧仍未裁决，白酱保持不动等结论。
+
+---
+
+## 0.10b 交接 · 心跳检测（2026-11-02，Asia/Shanghai）
+
+- 任务：0.10b。未改 `database/`、`sender/`、`cmd/`、`contracts/`；不调模型/PG、不加依赖。
+- 获派与实际修改路径：
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/observe/heartbeat.go` | 新增 | `E7C8984AC588D083CE2803556EAB44D72E5C7EDC73CB09564898A244EBF87378` | 2823 |
+| `internal/observe/heartbeat_test.go` | 新增 | `24D51154E2C0BC9B0C5035BEFF2171F7D0BC5A92CDBA16D8BAF570C9D0056A34` | 5504 |
+
+### race 工具链就绪（本批起每批都带 race）
+
+按主人给的路径设置 `CC` 后可用：
+
+```
+CC="C:\Users\Claran\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin\gcc.exe"
+gcc --version → gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r3) 16.2.0
+go test -race ./internal/observe/ → ok 1.707s
+```
+
+这份 race 结果同时覆盖了 0.10a 的 `report.go`（同在 `internal/observe` 包），上一批遗留的「race 环境阻塞」**就此关闭**。
+
+### 实现要点
+
+- `SilenceThreshold = 30 * time.Minute` 导出常量，来源 `plans/phase-0.md`。
+- `Check(now, lastSeen)`：`now` 由调用方注入，**函数内不读系统时钟**；`slices.Sort` 保证告警按通道名升序（map 遍历顺序随机，不排序就违反确定性）。
+- `Warning{Channel, LastSeen, Silent}` 带 `String()`，可直接进日志。
+- 语义约定写了 4 条并都有用例：
+  1. **严格「超过」**才告警：正好 30 分钟不告警；
+  2. **零值 LastSeen** = 从未收到事件 → 直接告警且不做时长计算（`time.Time{}` 是公元 1 年，硬算 `now.Sub` 会溢出成垃圾值）；
+  3. **未来 LastSeen**（对端时钟快）静默时长为负 → 不告警；
+  4. 空 map / nil map → 返回 nil。
+- 不阻塞、不开 goroutine、不 panic。
+
+### 边界用例
+
+| 场景 | 覆盖 |
+|---|---|
+| 刚好 30 分钟 | `TestCheckThresholdBoundary/正好30分钟` → 不告警 |
+| 29 分 59 秒 / 30 分 1 秒 / 两小时 / 刚有事件 | 同表 5 个子用例 |
+| 多通道部分超时 | `TestCheckPartialTimeout`：4 通道 2 超时，按 comment→qq 升序 |
+| 空 map / nil map / 零值 now | `TestCheckEmptyAndNilMap` |
+| 零值 lastSeen | `TestCheckZeroLastSeen`：告警 + `Silent==0` + 文案「从未收到事件」 |
+| 未来时间（时钟漂移） | `TestCheckFutureLastSeen`：+1h / +24h 都不告警 |
+| 时钟注入固定值 | `TestCheckDeterministic`：连跑 21 次全等；把 now 推后 2 分钟恰好从 3 条变 4 条（证明用的是注入值） |
+| 文案 | `TestWarningString`：含通道名、分钟数、最后事件时间；不足 1 分钟按秒 |
+
+### 测试命令与结果
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l internal/observe` | 无输出 |
+| `go vet ./internal/observe/...` | 通过 |
+| `go build ./...` | 通过 |
+| `go test ./internal/observe/` | **ok**，7 个顶层测试 + 12 个子测试全 PASS |
+| `go test ./internal/observe/ -cover` | 覆盖率 **100.0%** |
+| `go test ./... -count=1` | 22 个包全绿 |
+| `golangci-lint v2.15.0 run ./internal/observe/...` | 0 issues |
+| `CC=<WinLibs> go test -race ./internal/observe/` | **ok 1.707s** |
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| 把 `Check` 接进 `fishctl status`、读 repository 的真实 lastSeen | 属 0.10c；`cmd/` 与 repository 统计不在本批范围 |
+| 真实 PG 统计口径验证 | 属 0.10d |
+| 告警去重/冷却（同一通道不要每轮都喊） | 规格没要求，属额外策略，不自行发明 |
+
+### 风险 / 需 DSH 裁决
+
+1. **零值 `LastSeen` 直接告警**：如果上游习惯用零值表示「该通道本窗口没数据但也不该报警」，这里会误报。白酱的取舍是「已知通道却从未收到事件 = 真的有问题」。
+2. **阈值写死 30 分钟**：没有做成可配置。若要按通道配置（直播 30 分钟、评论 6 小时之类），需要加参数。
+3. **`Silent` 以整分钟显示**：`int(d.Minutes())` 截断，30 分 1 秒显示「30 分钟」，可能让人误以为没超时（但告警本身已经发出）。若要更精确可改成「30 分 1 秒」。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，只新增上表 2 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 验收：阈值边界（严格大于）、零值/未来时间语义、排序确定性、race 通过。
