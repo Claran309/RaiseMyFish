@@ -483,3 +483,11 @@
   2. `valid_from` 夹到 now 丢原始事件时间：**裁决不加 observed_at 列**——原始时间在 `events.at`，通过 `event_ids` 可追溯；P2 再补
   3. 顺带：`kind='fact'` 暂无写入方（事实采集未派发）→ 接受，P2/后续再做
 - 结论：**0.9d 验收通过**；**0.9 记忆最小版（a/b/c/d）闭环**（race 未验证）。
+
+## race 工具链补齐（2026-11-01 23:20）
+
+- 主人批准安装 mingw-w64；winget 装 WinLibs GCC 16.2.0（x86_64-ucrt-posix-seh）。
+- 路径：`C:\Users\Claran\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin\gcc.exe`
+- 用法：`CC="<路径>" go test -race ./...`（PATH 里旧 MinGW 是 32 位，不能直接用）；已写入 docs/testing.md。
+- 验证：全仓 `go test -race ./...` **11 包全过**。
+- 0.9b/0.9c/0.9d 此前「race 未验证」项已补验通过；后续任务 race 可按此命令验证。

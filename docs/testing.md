@@ -1,6 +1,10 @@
 # 测试策略
 
 > 原则：**没有测试的功能视为未完成。** 核心链路必须有集成测试。
+>
+> **race 工具链（2026-11-01 起可用）**：本机已装 WinLibs GCC 16.2.0（x86_64-ucrt-posix-seh）：
+> `C:\Users\Claran\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin\gcc.exe`
+> 用法：`CC="<上述路径>" go test -race ./...`（PATH 里的旧 MinGW 是 32 位，不能直接用）。
 
 ## 1. 测试金字塔
 
