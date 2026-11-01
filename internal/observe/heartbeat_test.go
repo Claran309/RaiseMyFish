@@ -150,15 +150,21 @@ func TestWarningString(t *testing.T) {
 		Silent:   50 * time.Minute,
 	}
 	got := w.String()
-	for _, want := range []string{"live", "50 分钟", "2026-11-01 23:10"} {
+	for _, want := range []string{"live", "≥50 分钟", "2026-11-01 23:10"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("文案 %q 缺少 %q", got, want)
 		}
 	}
 
-	// 不足一分钟按秒显示
+	// 不足一分钟按秒显示，同样带「≥」（截断值是下界）
 	short := Warning{Channel: "dm", LastSeen: hbNow.Add(-45 * time.Second), Silent: 45 * time.Second}
-	if got := short.String(); !strings.Contains(got, "45 秒") {
+	if got := short.String(); !strings.Contains(got, "≥45 秒") {
 		t.Errorf("短时长文案不符：%q", got)
+	}
+
+	// 截断不能让「30 分 1 秒」看起来像没超阈值
+	edge := Warning{Channel: "qq", LastSeen: hbNow.Add(-30*time.Minute - time.Second), Silent: 30*time.Minute + time.Second}
+	if got := edge.String(); !strings.Contains(got, "≥30 分钟") {
+		t.Errorf("边界文案不符：%q", got)
 	}
 }

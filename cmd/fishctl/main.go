@@ -67,18 +67,37 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		probeErr = database.Ready(probe, resources.DB)
 		ready = probeErr == nil
 	}
-	return errors.Join(printStatus(cfg.Runtime.StateFile, time.Duration(cfg.Runtime.StaleSeconds)*time.Second, ready, stdout), probeErr)
+	// 统计来源尚未装配（真实 repository 实现属 0.10d）。显式置 nil 而不是留空，
+	// 是为了让「看起来接好了其实没接」一眼可见：collectStats(nil) 返回零值，
+	// status 的输出与 0.1 完全一致，不新增字段。
+	var statsSource StatsSource
+	stats, statsErr := collectStats(probe, statsSource, time.Now().UTC(), DefaultStatsWindow)
+	return errors.Join(
+		printStatus(cfg.Runtime.StateFile, time.Duration(cfg.Runtime.StaleSeconds)*time.Second, ready, stdout, stats),
+		statsErr,
+		probeErr,
+	)
 }
 
-func printStatus(path string, ttl time.Duration, databaseReady bool, out io.Writer) error {
+// printStatus 输出机器可读的健康摘要。
+//
+// stats 为可选参数：传了且非空时追加 `stats` 字段；不传时输出与 0.1 逐字节一致，
+// 避免影响既有的状态解析方。
+func printStatus(path string, ttl time.Duration, databaseReady bool, out io.Writer, stats ...StatusStats) error {
 	state, readErr := infra.ReadStatus(path)
 	alive := readErr == nil && state.Alive(time.Now().UTC(), ttl) && databaseReady
+	var extra *StatusStats
+	if len(stats) > 0 && !stats[0].empty() {
+		snapshot := stats[0]
+		extra = &snapshot
+	}
 	summary := struct {
 		ServiceAlive  bool         `json:"service_alive"`
 		DatabaseReady bool         `json:"database_ready"`
 		Service       infra.Status `json:"service"`
 		Channels      string       `json:"channels"`
-	}{alive, databaseReady, state, "not_implemented"}
+		Stats         *StatusStats `json:"stats,omitempty"`
+	}{alive, databaseReady, state, "not_implemented", extra}
 	if err := json.NewEncoder(out).Encode(summary); err != nil {
 		return fmt.Errorf("输出状态摘要：%w", err)
 	}

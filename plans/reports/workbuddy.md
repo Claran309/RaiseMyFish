@@ -823,3 +823,97 @@ go test -race ./internal/observe/ → ok 1.707s
 
 - **是。** 本轮写入结束，只新增上表 2 个文件；未执行 git 命令、未提交、未 push。
 - 交 DSH 验收：阈值边界（严格大于）、零值/未来时间语义、排序确定性、race 通过。
+
+---
+
+## 0.10c 交接 · fishctl status 接入（2026-11-02，Asia/Shanghai）
+
+- 任务：0.10c。允许写 `cmd/fishctl/`；未改 `internal/database` 逻辑（一行没动）、未改 `contracts/`。
+- 获派与实际修改路径：
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `cmd/fishctl/status.go` | 新增 | `0F4A2B543108860C70FE6426554EDC2427315FD90DD8E622509B6C4CF2116F3C` | 3773 |
+| `cmd/fishctl/status_test.go` | 新增 | `E8B5AFD360F06014594849087ED6A63CEB68FEBC4C0DFBBF345692A585617C4E` | 8021 |
+| `cmd/fishctl/main.go` | 修改 | `340ABADBD525334C307FDFA3025462B6F5E0CBA6A431D8867E451A878946EF3A` | 4914 |
+| `internal/observe/heartbeat.go` | 修改（`≥` 前缀） | `6E888553F6F6459DE81D42B5B5E9EA41D6F3E107603620CEC280F2929C8C8D88` | 2996 |
+| `internal/observe/heartbeat_test.go` | 修改（补 `≥` 断言） | `6BD2474A5D31B1C72F527271D5563216C2A5F2FE9CDE457681EA9B34F5DE2853` | 5853 |
+
+### ⚠️ 必须先说清楚：还没有真正的统计实现，生产输出保持不变
+
+仓库里**没有任何聚合统计接口**（`store` 下的 Event/Task/Delivery/Queue/Scheduler/Memory/Usage 全部是点查，没有 count/sum）。
+本批按「只调接口、不改 database 逻辑」的约束，做法是：
+
+- 在 `cmd/fishctl/status.go` 定义**消费侧窄接口** `StatsSource{Counts(ctx, from, to); LastSeen(ctx)}`；
+- `collectStats` 负责读 → 组装 `observe.Snapshot` → `observe.Render` + `observe.Check`；
+- `run()` 里 `var statsSource StatsSource` **显式置 nil** 并注释原因：`collectStats(nil)` 返回零值，
+  `status` 的 JSON 与 0.1 **逐字节一致**（不新增 `stats` 字段）。
+
+也就是说：**代码路径打通了、mock 测过了，但真实数据源还没有**。
+要让它真正出数，需要一个 `StatsSource` 的 PG 实现（count 事件/任务/发送 + 每通道 last_seen），
+属 `internal/database` 范围、0.10d 或另行派发。白酱没有越界去写。
+
+### 输出契约
+
+- `printStatus` 改成变参：`printStatus(path, ttl, databaseReady, out, stats ...StatusStats)`。
+  既有 4 参调用**照常编译**（0.1 的测试一字未改）。
+- 只有传入且非空时才追加：
+  ```json
+  "stats": {"report": "# 日报 …（多行，JSON 内转义）", "heartbeat_warnings": ["通道 live 已静默 ≥45 分钟（最后事件 …）"]}
+  ```
+- `channels` 字段仍是 `not_implemented`（那是平台通道状态，不等于心跳，本批没动它）。
+
+### `≥` 前缀
+
+按 DSH 要求加在选择处：改的是 `internal/observe` 的 `formatSilent`（`Warning.String()` 是 Silent 的唯一展示点，
+放在 fishctl 里重写会造成两套格式）。语义上也更准确：时长按整分/整秒**截断**，真实值只会更大，
+`30 分 1 秒` 现在显示 `≥30 分钟`，不会让人误以为「正好 30 分钟、还没超阈值」。
+**这是本批唯一一处越过 `cmd/fishctl/` 的改动**，请 DSH 确认可以接受；`heartbeat_test.go` 同步补了断言。
+
+### 测试（mock repository 注入）
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestCollectStatsWithData` | 有数据：日报三段（收到/成功率/费用/通道）齐全；窗口默认 24h 且 `from/to` 参数正确；2 个静默通道按名排序且含 `≥` |
+| `TestCollectStatsEmptyData` | 空数据：成功率 `—`、费用「未知」、通道「无」，且**断言不出现 `$0`** |
+| `TestCollectStatsNilSource` | 未装配来源 → 零值不报错；nil ctx → 明确报错 |
+| `TestCollectStatsErrors` | Counts / LastSeen 失败都透传（`errors.Is`） |
+| `TestCollectStatsCanceledContext` | 取消保留 `context.Canceled`，且**不发起查询** |
+| `TestPrintStatusWithStats` | 有统计：JSON 能解回 `stats.report` 与 `heartbeat_warnings`，告警含 `≥` |
+| `TestPrintStatusWithoutStats` | 不传 / 传空 → 输出**不含 `stats` 字段**，既有 `service_alive` 仍在 |
+
+命令与结果：
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l cmd/fishctl internal/observe` | 无输出 |
+| `go build ./...` / `go vet ./cmd/fishctl/... ./internal/observe/...` | 通过 |
+| `go test ./cmd/fishctl/... ./internal/observe/... -count=1` | **ok** |
+| `go test ./... -count=1` | 22 个包全绿 |
+| `golangci-lint v2.15.0 run ./cmd/fishctl/... ./internal/observe/...` | 0 issues |
+| `go test -race ./cmd/fishctl/ ./internal/observe/`（CC=WinLibs 64 位） | **ok 5.420s / 1.468s** |
+
+覆盖率：`status.go` 三个函数 **empty / collectStats / formatHeartbeat 均 100%**，`printStatus` 91.7%
+（未覆盖的那条是 JSON 编码失败分支）；`cmd/fishctl` 包整体 46.9%（`run`/`tail` 占大头，属 0.1 既有代码）。
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| `StatsSource` 的 PG 实现（事件/任务/发送计数 + 每通道 last_seen） | 属 `internal/database`，本批明令「不改 database 逻辑」；这是让它真正出数的前置条件 |
+| 把 `statsSource` 装配进 `run()` | 没有实现可装配，显式置 nil 并注释，避免「看起来接好了」 |
+| `channels` 字段改成真实通道健康 | 0.1 验收过的字段语义，改它需要 DSH 决定 |
+| 真实 PG 统计口径验证 | 属 0.10d |
+
+### 风险 / 需 DSH 裁决
+
+1. **「接入」但无数据源**（最重要）：现在 `fishctl status` 的真实输出与 0.1 完全一样，统计只有 mock 能跑。
+   若验收要求「跑起来就能看到统计」，本批达不到，需要先派 `internal/database` 的统计实现。
+2. **改了 `internal/observe/heartbeat.go`**：见上「`≥` 前缀」，这是唯一越过 `cmd/fishctl/` 的改动。
+3. **JSON 里塞多行日报**：`report` 字段含换行（JSON 已转义）。如果希望 status 保持「单行机器可读」，
+   可以考虑只输出摘要数字、把完整日报留给 `0.10c+` 的 `report` 子命令。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，改动仅上表 5 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 验收：mock 注入的三类场景（空/有数据/心跳告警）、JSON 向后兼容（无 `stats` 字段）、`≥` 前缀、race 通过。

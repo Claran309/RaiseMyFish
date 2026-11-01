@@ -508,4 +508,15 @@
   2. 阈值写死 30 分钟：**接受**（P0 最小版；P1 需要按通道配置时再扩，不提前做）
   3. Silent 截断整分钟（30 分 1 秒显示「30 分钟」）：接受现状（告警已发出）；**0.10c 显示加「≥」消歧义**
 - 结论：**0.10b 验收通过**（待提交）。
+
+## 0.10c fishctl status 独立验收（2026-11-02 01:10）
+
+- 交付：`cmd/fishctl/status.go` + 测试、`main.go` 变参、`heartbeat.go`（≥ 前缀）；无越界到 database。
+- 独立执行：`cmd/fishctl` + `observe` 测试通过；全仓 22 包通过；lint 0。
+- **DSH 点头两处实现选择**：
+  1. ≥ 前缀放 `internal/observe/formatSilent`：✅（Silent 唯一展示点，不搞两套格式）
+  2. `printStatus` 变参向后兼容：✅（0.1 测试未改，非空统计才追加 stats）
+- **DSH 裁决**：`StatsSource` 的 PG 实现是硬要求（status 要真出数）→ 派 **0.10d**（允许写 internal/database）
+- 未做（交接声明）：StatsSource PG 实现、channels "not_implemented" 语义未动。
+- 结论：**0.10c 验收通过**（待提交）；生产统计待 0.10d。
 - 未做（WorkBuddy 声明）：0.10b 心跳、0.10c fishctl 接入、0.10d 真实 PG 统计。

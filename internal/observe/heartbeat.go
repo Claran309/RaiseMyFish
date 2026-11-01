@@ -76,10 +76,13 @@ func Check(now time.Time, lastSeen map[string]time.Time) []Warning {
 	return warnings
 }
 
-// formatSilent 把静默时长写成人看得懂的形式：不足 1 分钟按秒，否则按整分钟。
+// formatSilent 把静默时长写成人看得懂的形式。
+//
+// 一律带「≥」：时长按整分钟/整秒**截断**，真实值只会更大（30 分 1 秒显示「≥30 分钟」），
+// 加前缀才不会让人误以为「正好 30 分钟、还没超阈值」。
 func formatSilent(d time.Duration) string {
 	if d < time.Minute {
-		return fmt.Sprintf("%d 秒", int(d.Seconds()))
+		return fmt.Sprintf("≥%d 秒", int(d.Seconds()))
 	}
-	return fmt.Sprintf("%d 分钟", int(d.Minutes()))
+	return fmt.Sprintf("≥%d 分钟", int(d.Minutes()))
 }
