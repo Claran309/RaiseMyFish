@@ -29,7 +29,7 @@ func ValidateEvent(e event.Event) error {
 	if len(e.Meta) > 0 && !json.Valid(e.Meta) {
 		return fmt.Errorf("事件Meta不是JSON：%w", ErrInvalid)
 	}
-	if (e.Dir == event.DirIn && e.Status != event.StatusPending) || (e.Dir == event.DirOut && e.Status != event.StatusDone && e.Status != event.StatusRetry && e.Status != event.StatusDead) {
+	if (e.Dir == event.DirIn && e.Status != event.StatusPending) || (e.Dir == event.DirOut && e.Status != event.StatusDone && e.Status != event.StatusRetry && e.Status != event.StatusDead && e.Status != event.StatusSkipped) {
 		return fmt.Errorf("事件初始状态错误：%w", ErrInvalid)
 	}
 	return nil

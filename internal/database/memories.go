@@ -50,7 +50,7 @@ func (r *MemoryRepo) Recent(ctx context.Context, s memory.Scope, limit int) ([]m
 	if err := validateRecall(ctx, s, limit); err != nil {
 		return nil, err
 	}
-	query := r.db.WithContext(ctx).Table("events").Where("channel=? AND session=?", s.Channel, s.Session)
+	query := r.db.WithContext(ctx).Table("events").Where("channel=? AND session=?", s.Channel, s.Session).Where("(dir <> 'out' OR status='done')")
 	if !s.Private {
 		query = query.Where("NOT private")
 	}
@@ -64,7 +64,7 @@ func (r *MemoryRepo) CrossChannel(ctx context.Context, s memory.Scope, limit int
 	if err := validateRecall(ctx, s, limit); err != nil {
 		return nil, err
 	}
-	query := r.db.WithContext(ctx).Table("events").Where("channel <> ? AND channel <> 'dm' AND NOT private", s.Channel)
+	query := r.db.WithContext(ctx).Table("events").Where("channel <> ? AND channel <> 'dm' AND NOT private", s.Channel).Where("(dir <> 'out' OR status='done')")
 	return recallMessages(query, s, limit, true)
 }
 

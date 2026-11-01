@@ -28,6 +28,9 @@ func (s *Scheduler) launch(parent context.Context, work Work) {
 	s.active[work.Claim.Event.ID] = job
 	s.sessions[session(work.Claim.Event)] = work.Claim.Event.ID
 	handler := s.workers.Generate
+	if work.Claim.Stage == event.StageDeliver {
+		handler = s.workers.Deliver
+	}
 	if work.Claim.Stage == event.StageVerify {
 		handler = s.workers.Verify
 	}

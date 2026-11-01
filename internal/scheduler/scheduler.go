@@ -149,7 +149,7 @@ func (s *Scheduler) task(ctx context.Context, c event.Claim) (*store.Task, error
 	return &t, nil
 }
 func (s *Scheduler) add(ctx context.Context, c event.Claim) error {
-	if c.Event.ID == "" || c.Event.Status != event.StatusQueued || c.Event.Dir != event.DirIn || c.Lease.Owner == "" || c.Lease.Version < 1 || (c.Stage != event.StageSchedule && c.Stage != event.StageGenerate && c.Stage != event.StageVerify) {
+	if c.Event.ID == "" || c.Event.Status != event.StatusQueued || c.Event.Dir != event.DirIn || c.Lease.Owner == "" || c.Lease.Version < 1 || (c.Stage != event.StageSchedule && c.Stage != event.StageGenerate && c.Stage != event.StageDeliver && c.Stage != event.StageVerify) {
 		return store.ErrInvalid
 	}
 	if active := s.active[c.Event.ID]; active != nil {
@@ -177,7 +177,7 @@ func (s *Scheduler) add(ctx context.Context, c event.Claim) error {
 	if c.Stage == event.StageVerify {
 		item.priority = 0
 	}
-	if c.Stage == event.StageGenerate {
+	if c.Stage == event.StageGenerate || c.Stage == event.StageDeliver {
 		t, err := s.task(ctx, c)
 		if err != nil {
 			return err
@@ -355,7 +355,10 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 		if policy.RepeatWindow > 0 {
 			s.repeats[repetition(c.Event)] = now.Add(policy.RepeatWindow)
 		}
-	case event.StageGenerate:
+	case event.StageGenerate, event.StageDeliver:
+		if c.Stage == event.StageDeliver && s.workers.Deliver == nil {
+			return store.ErrInvalid
+		}
 		task, err = s.task(ctx, c)
 		if err != nil {
 			return err

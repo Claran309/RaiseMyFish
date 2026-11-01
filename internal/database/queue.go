@@ -214,10 +214,10 @@ func (r *EventRepo) RecoverExpired(ctx context.Context, limit int) (int, error) 
  AND lease_owner IS NOT NULL AND lease_until<=clock_timestamp()
  ORDER BY lease_until,id LIMIT ? FOR UPDATE SKIP LOCKED
  ) UPDATE events e SET
- status=CASE WHEN e.status='sent' OR (e.status='replying' AND e.stage<>'generate') THEN 'retry' ELSE 'queued' END,
- stage=CASE WHEN e.status='sent' OR (e.status='replying' AND e.stage<>'generate') THEN 'verify' ELSE e.stage END,
+ status=CASE WHEN e.status='sent' OR (e.status='replying' AND e.stage NOT IN ('generate','deliver')) THEN 'retry' ELSE 'queued' END,
+ stage=CASE WHEN e.status='sent' OR (e.status='replying' AND e.stage NOT IN ('generate','deliver')) THEN 'verify' ELSE e.stage END,
  status_changed_at=CASE WHEN e.status='queued' THEN e.status_changed_at ELSE clock_timestamp() END,
- retry_at=CASE WHEN e.status='sent' OR (e.status='replying' AND e.stage<>'generate') THEN clock_timestamp() ELSE NULL END,
+ retry_at=CASE WHEN e.status='sent' OR (e.status='replying' AND e.stage NOT IN ('generate','deliver')) THEN clock_timestamp() ELSE NULL END,
  lease_owner=NULL,lease_until=NULL,lease_version=e.lease_version+1
  FROM picked p WHERE e.id=p.id`, limit)
 	if result.Error != nil {

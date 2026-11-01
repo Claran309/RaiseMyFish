@@ -76,6 +76,7 @@ type Stage string
 const (
     StageSchedule Stage = "schedule" // 首次过滤/延期，尚未创建Task
     StageGenerate Stage = "generate" // 已有唯一Task，生成分支
+    StageDeliver  Stage = "deliver"  // 已持久化回复，允许经发送repository投递
     StageVerify   Stage = "verify"   // 核验/记账补偿，禁止重新生成或投递
 )
 type Lease struct {
@@ -153,6 +154,14 @@ retry    → queued | dead
 - Recover以SKIP LOCKED有界操作并使旧租约失效，续租中的活跃worker不受重启影响。到期retry可直接Claim，未来retry不提前取；pending直接Claim。
 
 Recover恢复sent/verify后同样不能重发。0.3只交付持久化分流，没有模型/平台I/O；0.8前还需定义**外部投递之前**持久化发送意图、回执与未知结果的补偿（P0-G03），否则禁止启用真实发送。本契约不能证明“平台已收但尚未标sent”的窗口已闭合。
+
+### P0-SEND-1增量（主人2026-11-01批准，裁决P0-G03）
+
+0.8按sender.md专用repository实现发送意图：generate→deliver固定回复；投递前arm→verify并写未知审计；只有not_posted/可信否定回执才允许verify→deliver。未知结果保持verify，不重新生成或POST。普通Bus.Mark不开放这些发送专用跨阶段操作。
+
+replying/deliver过期恢复queued/deliver；replying/verify仍为retry/verify。Scheduler的deliver分支读取已有Task并调用独立Deliver回调，缺回调明确失败，绝不转Generate。ready/deliver失败延期保留deliver；结果与输入done/retry/dead/skipped及租约释放原子提交。
+
+out键为`live:out:{canonical_room}:{attempt_id}`，attempt_id为持久化随机ID，不冒充平台MsgID；实际MsgID另存。out允许done/retry/dead/skipped；只有done是已核验的发言事实。out.At为本地尝试/投递可观测时间，Meta明确at_kind；不伪造平台发生时间。未知结果耗尽核验时输入可dead停止自动处理，out仍retry并带unknown_manual标记。
 
 非法迁移必须返回错误（防状态错乱）。
 

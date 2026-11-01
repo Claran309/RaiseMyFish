@@ -12,6 +12,7 @@ type Stage string
 const (
 	StageSchedule Stage = "schedule"
 	StageGenerate Stage = "generate"
+	StageDeliver  Stage = "deliver"
 	StageVerify   Stage = "verify"
 )
 

@@ -111,6 +111,8 @@ DTO校验是额外防线，不能替代查询层过滤或证明SQL实现已通�
 
 ## 5. 0.6与0.9职责
 
+P0-SEND-1（主人2026-11-01批准）查询增量：Recent/CrossChannel的out行必须status=done。retry/dead/skipped out只是尝试审计，不能当作本鱼已经说过的话；查询层SQL过滤，不能靠prompt。memory不写send_log/out，发送repository仍是唯一写入责任，公开/私密Scope不放宽。
+
 0.6可以创建上述DTO和纯校验及对应测试，让ContextInput可编译并拒绝范围不符输入；需要时只创建event.md中已有的Event/枚举类型，不实现总线或状态迁移。Brain.Reply消费显式ContextInput，不直接读SQL/账本/旧人设文件；worker通过注入接口准备数据。
 
 Reader实际查询、提炼、游标恢复与共享事实采集留0.9；不提供会吞错的生产空Reader，不添加全局记忆缓存。空/假Reader仅用于mock测试或明确未装配的开发路径，当前fishd业务通道仍关闭。

@@ -841,3 +841,26 @@ func TestExternalReclaimBeforeCompletionIsNotUnsettled(t *testing.T) {
 	}
 	s.stopTimers()
 }
+
+func TestDeliverRecoveryNeverRegenerates(t *testing.T) {
+	s, b, r, clock := fixture(t)
+	generated := 0
+	delivered := make(chan struct{}, 1)
+	s.workers.Generate = func(context.Context, Work) (Result, error) { generated++; return Result{}, nil }
+	s.workers.Deliver = func(ctx context.Context, w Work) (Result, error) {
+		delivered <- struct{}{}
+		return Result{}, b.Mark(ctx, w.Claim, nil, event.StatusDone)
+	}
+	c := claimFor("live:r:delivery", "r", "😄", clock.Now())
+	c.Stage = event.StageDeliver
+	r.tasks[c.Event.ID] = store.Task{ID: "old-task", EventID: c.Event.ID, Channel: c.Event.Channel, Session: c.Event.Session, Brain: "openai", Priority: 2, CreatedAt: clock.Now()}
+	r.limited = true
+	b.add(c)
+	if err := s.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	drainDone(t, s)
+	if len(delivered) != 1 || generated != 0 || len(r.admitted) != 0 {
+		t.Fatal("deliver恢复走了生成或重复准入")
+	}
+}

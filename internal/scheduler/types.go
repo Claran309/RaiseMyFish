@@ -73,6 +73,7 @@ type Handler func(context.Context, Work) (Result, error)
 // Workers分离生成/核验，避免恢复时误进生成器。
 type Workers struct {
 	Generate Handler
+	Deliver  Handler
 	Verify   Handler
 }
 
