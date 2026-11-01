@@ -432,3 +432,106 @@ DSH 点名的四类用例都有：幂等（`TestRunOnceIdempotent`，两次零�
 - **是。** 本轮写入结束，只改了上表 5 个文件；未执行 git 命令、未提交、未 push。
 - 交 DSH 逐条验收：四类点名用例 + 幂等主键语义 + 水位推进/出错不越过 + kind 映射回归；
   race 一项请按「环境阻塞」处理，不要当通过。
+
+---
+
+## 0.9c 交接 · PG DoneSource + 召回装配（2026-11-01，Asia/Shanghai）
+
+- 任务：0.9c。允许写 `internal/database/` 与 `internal/memory/`；未改 `contracts/`、未改迁移、未加依赖。
+- 获派与实际修改路径：
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/database/donesource.go` | 新增 | `7EAC80D451BD1ED1A2F7B57012E5F4E4AE76036CBE7FA1BCCE553AB20C3AC03E` | 2237 |
+| `internal/database/donesource_integration_test.go` | 新增 | `A94694C6E5DE0F2C232F6B74428F0286DD9EC0962B10C80854857DFEA4036418` | 5518 |
+| `internal/database/reader_integration_test.go` | 新增 | `66A5F77169BE74F007638D7DE13470EBB049503A8CE3ED0A09E615B1AC986AC9` | 5125 |
+| `internal/memory/reader.go` | 新增 | `A288333FE13D7F0A774608FA7BB03E45748228AACF9DF44D6ED24688C17FDE3B` | 6075 |
+| `internal/memory/reader_test.go` | 新增 | `F19353AD6FA64C663461A4F0FA9F6F4C55407794268624E511EDEEAD3944D7BB` | 9616 |
+
+### DoneSource（`internal/database/donesource.go`）
+
+- 实现 `extractworker.DoneSource`，`var _ extractworker.DoneSource = (*DoneSourceRepo)(nil)` 编译期断言；**没有新造接口**。
+- 游标：`WHERE status='done' AND (at, id) > (?, ?)`，与 worker 的 `(At, ID)` 排序键完全一致——用**行值比较**而不是 `at > ? OR (at = ? AND id > ?)` 手写拆解，避免同 `at` 事件漏读/重读。
+- 排序 `ORDER BY at ASC, id ASC` + `LIMIT ?`；`limit` 必须在 `[1, 500]`，否则 `store.ErrInvalid`；`ctx` 为 nil 或已取消按既有仓库惯例处理。
+- **不在这里做隐私过滤**：私密事件照样被扫描，是否提炼由 worker 的 `AllowPrivate` 定（隐私判断集中一处，不散落）。
+- 复用同包已有的 `eventRow` / `row.event()`，不复制字段映射；错误统一包成 `safeError`（不回显 SQL 参数）。
+
+### Reader 装配（`internal/memory/reader.go`）
+
+- `memory` 不能 import `internal/store`（store 已经 import memory，会成环），所以定义**窄接口** `RecordSource`（Recent / CrossChannel / Records）与可选的 `FactSource`；`store.MemoryRepo` 在结构上直接满足——`NewReader(memRepo, ...)` 在集成测试里编译通过即为证据。
+- `Recall`：ValidateScope → Recent → CrossChannel → Records → `Context.Validate()` 二次校验 → 返回。任一段失败**立即报错**，不返回「半份记忆 + nil error」。
+- 二次校验是额外防线：即使 repository 的 SQL 有疏漏，私密记录/同通道 CrossChannel 混进来也会被判错而不是喂给 Brain（有单测用假 source 造泄漏）。
+- 窗口：默认 Recent 20 / Cross 10 / Records 10 / Facts 10，统一夹在 `[1, 100]`（与 repository 的 limit 约束一致），`Limits()` 暴露实际生效值。
+- `Shared`：未注入 `FactSource` 时返回 `Scope` 正确、`Facts` 为 nil 的**显式空状态**——「没有事实来源」≠「查询失败」，后者仍必须报错。
+
+### 测试
+
+单元（无 PG，`internal/memory/reader_test.go`，10 个顶层测试）：
+正常装配与 limit 下发、默认值/夹取、非法 Scope 且不触发查询、三段错误分别透传、ctx 取消、
+公开范围读到私密记录必须报错、CrossChannel 混同通道必须报错、Shared 无/有事实源、
+事实越界与事实查询失败、nil source。
+
+真实 PG 集成（`-tags=integration`）：
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestDoneSourceListsOnlyDone` | 只返回 done（pending 行不出现）、按 (at,id) 升序、私密事件也在扫描结果里 |
+| `TestDoneSourceCursorAndLimit` | 分页不重不漏、同 `at` 靠 `id` 继续、翻页到空、游标之后续扫 |
+| `TestDoneSourceRejectsBadInput` | limit 0/-1/501 → ErrInvalid；nil ctx → ErrInvalid；取消 → context.Canceled；nil db → 报错 |
+| `TestReaderRecallRealPostgres` | 公开范围读不到私密（Recent / CrossChannel / Records 三段都查）、私密范围能读本会话、窗口上限生效 |
+
+命令与结果：
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l internal/memory internal/database` | 无输出 |
+| `go build ./...` | 通过 |
+| `go vet ./...` / `go vet -tags=integration ./...` | 均通过 |
+| `go test ./... -count=1` | 21 个包全绿 |
+| `go test -tags=integration ./internal/database/... -count=1` | **ok 36.997s**（含既有 0.1/0.2 集成用例，未被破坏） |
+| `golangci-lint v2.15.0 run ./internal/memory/... ./internal/database/...` | 0 issues |
+| `golangci-lint ... --build-tags integration ./internal/database/...` | 0 issues |
+| `go test -race` | **仍阻塞**（见下） |
+
+### 开发过程里发现并修掉的两个真问题
+
+1. **私密摘要读不到**：集成测试首轮 `mem_priv` 没返回，原因是测试把 `valid_from` 写成了 `now()+1s`，被 `valid_from <= now()` 的有效性过滤挡掉。改成过去时刻后通过——这条也说明「记录写入时间必须在过去」是个容易踩的坑。
+2. **gofmt/vet 噪音**：`publicMessage` 的第二参数写成 `string` 而非 `event.Channel`，编译失败；`seedDoneEvents` 返回未被使用的 `time.Time` 触发 `unparam`。都已修。
+
+### race：仍然是**环境阻塞**，不是通过
+
+主人说已装 64 位 gcc，但本会话实测到的还是 32 位：
+
+```
+gcc --version  → gcc.exe (MinGW.org GCC-6.3.0-1) 6.3.0
+where gcc      → C:\Users\Claran\Downloads\MinGW\bin\gcc.exe
+go test -race  → cc1.exe: sorry, unimplemented: 64-bit mode not compiled in
+```
+
+已排查但**未找到** mingw-w64：`C:\mingw64`、`C:\msys64\mingw64`、`C:\Program Files\mingw-w64`、`C:\ProgramData\mingw64`、`C:\TDM-GCC-64`、`C:\tools\mingw64`、`where x86_64-w64-mingw32-gcc`、`C:\` 与 `D:\` 的 gcc.exe 递归（深度 2~3）、scoop/choco/winget 目录，全部没有；`.workbuddy` 里也没有。
+`wsl.exe` 仍被安全策略拦着（上一批就报过）。
+
+**请主人给一下 mingw-w64 的安装路径**（例如 `C:\mingw64\bin`），白酱把该目录前置到 PATH 再跑 `go test -race ./internal/memory/... ./internal/database/...`，就能补上这条证据。当前状态：**未验证，不计入通过**。
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| `FactSource` 的 PG 实现 | 既有 `store.MemoryRepo` 没有事实查询方法；要加就得改 repository 接口，属 DSH/契约范围，本批不伪造 |
+| `cmd/` 装配（启动 worker + Reader、给水位路径） | `cmd/` 不在本批可写范围 |
+| Brain 接 `Reader` | 0.6 的消费方接线，不在本批 |
+| 0.9d 的提炼幂等/滑窗回归组合测试 | 下一批 |
+| 真实模型相关 | 属 0.7c，与记忆无关 |
+
+### 风险 / 需 DSH 裁决
+
+1. **`DoneSource` 是否该同时过滤 `dir`**：当前只按 `status=done`。若 DSH 认为只该提炼「出向」事件，需要加 `dir='out'` 条件——但 in 事件也可能走到 done，白酱按「完成即可提炼」保持了宽口径。
+2. **`memory_records` 的 `valid_from` 语义**：worker 用事件时间做 `valid_from`，若事件时间在未来（时钟漂移/预置数据），记录会被 `valid_from <= now()` 挡掉。这条要不要在 worker 里用 `min(ev.At, now())` 兜一下，请裁决。
+3. **`Shared` 的空事实**：现在没有事实来源时返回 nil `Facts`。若 DSH 认为「被问到存粮却拿到空」比「报错」更危险，可以改成未装配时直接报错——目前按契约 §2「nil slice 是正常空数据」处理。
+4. **`RecordSource` 是新增导出接口**：不是「新造存储接口」，只是让 memory 描述自己需要什么（否则无法复用 MemoryRepo）。若认为这也算接口扩散，可以改为在 `store` 侧定义后反向注入。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，只新增上表 5 个文件（`internal/database/` 3 个、`internal/memory/` 2 个）；未执行 git 命令、未提交、未 push。
+- 交 DSH 逐条验收：DoneSource 游标/limit/只取 done + Reader 公开读不到私密三段；
+  race 一项按「环境阻塞」处理，等主人给出 mingw-w64 路径后补跑。

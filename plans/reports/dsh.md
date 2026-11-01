@@ -461,3 +461,15 @@
   4. memory_sources 无陌生人互动 → 接受现状（owner_interaction）
 - **race 阻塞**：Windows 原生 ccl 64 位不可用、WSL 被安全策略拦。需主人放行 `wsl.exe`（安全中心→命令安全）或装 64 位 gcc；在补上前不宣称 race 通过。
 - 结论：**0.9b 验收通过**（race 未验证，如实记录）。
+
+## 0.9c PG DoneSource + Reader 独立验收（2026-11-01 19:55）
+
+- 交付：`internal/database/donesource.go` + 集成测试、`internal/memory/reader.go` + 测试；无契约/迁移/依赖改动。
+- 独立执行：`go test ./internal/memory/...` 通过；集成测试逐条 PASS：
+  `TestDoneSourceListsOnlyDone`、`TestDoneSourceCursorAndLimit`、`TestDoneSourceRejectsBadInput`、`TestReaderRecallRealPostgres`
+- 核对：编译期断言 `var _ extractworker.DoneSource = (*DoneSourceRepo)(nil)`；游标 (at,id) 行值比较；Reader 用窄接口避免循环依赖；Recall 跑 Context.Validate 第二道防线。
+- **DSH 裁决它报的两点**：
+  1. 时钟漂移（事件时间未来 → 记录立即可见性）：**接受** `valid_from = min(ev.At, now())` 兜底，0.9d 落地
+  2. FactSource PG 实现：**接纳为 0.9d**——扩展 MemoryRepo 事实查询（走 store 接口，不造第二套）
+- race：本机无 64 位 mingw-w64、WSL 被拦；需装工具链或放行 WSL（主人决定）。
+- 结论：**0.9c 验收通过**（race 未验证）。
