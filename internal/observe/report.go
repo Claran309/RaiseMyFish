@@ -93,6 +93,14 @@ func renderRate(s Snapshot) string {
 		return "—"
 	}
 	rate := float64(s.Replied) / float64(denominator) * 100
+	// 防御：回复数的统计口径与「收到-跳过」不完全同源时（跨窗口、历史遗留行），
+	// 分子可能大于分母。成功率超过 100% 只会让人怀疑日报本身，这里夹到 [0,100]。
+	if rate > 100 {
+		rate = 100
+	}
+	if rate < 0 {
+		rate = 0
+	}
 	return strconv.FormatFloat(rate, 'f', 1, 64) + "%"
 }
 

@@ -27,10 +27,15 @@ type Options struct {
 	SelfID         string
 	MinInterval    time.Duration
 	CleanupTimeout time.Duration
+	// VerifyAttempts 是单次核验流程内最多查几次 history（只读，不产生投递）。
+	VerifyAttempts int
+	// VerifyInterval 是两次核验之间的等待；B站弹幕进 history 有延迟，
+	// 背靠背连查等于只查一次。为 0 表示不等待（仅测试用）。
+	VerifyInterval time.Duration
 }
 
 func DefaultOptions() Options {
-	return Options{MinInterval: 10 * time.Second, CleanupTimeout: 5 * time.Second}
+	return Options{MinInterval: 10 * time.Second, CleanupTimeout: 5 * time.Second, VerifyAttempts: 3, VerifyInterval: 1500 * time.Millisecond}
 }
 
 type Service struct {
@@ -54,7 +59,7 @@ func nilValue(v any) bool {
 	return false
 }
 func New(repo store.DeliveryRepo, transport Transport, o Options, log *zap.Logger) (*Service, error) {
-	if nilValue(repo) || nilValue(transport) || !sender.ValidActor(o.SelfID) || o.MinInterval <= 0 || o.CleanupTimeout <= 0 || log == nil {
+	if nilValue(repo) || nilValue(transport) || !sender.ValidActor(o.SelfID) || o.MinInterval <= 0 || o.CleanupTimeout <= 0 || o.VerifyAttempts < 1 || o.VerifyInterval < 0 || log == nil {
 		return nil, &sender.Error{Kind: sender.KindInput}
 	}
 	return &Service{repo: repo, transport: transport, options: o, log: log, limiter: rate.NewLimiter(rate.Every(o.MinInterval), 1)}, nil
@@ -126,6 +131,45 @@ func keepCause(err, cause error) error {
 	}
 	return &sender.Error{Kind: sender.KindUncertain, Cause: errors.Join(err, cause)}
 }
+
+// verifyLoop 在只读核验上做有界重试。
+//
+// 为什么需要（2026-11-02 冒烟根因）：3 条 unknown_manual 全是 `verify_count=3` 用尽、
+// `evidence=none`、`msg_id` 为空——核验次数确实用完了，但三次**背靠背**查完（整个
+// attempt 从 armed 到落库只花了约 1 秒）。而 gethistory 只返回房间最近一屏，
+// 弹幕从发出到进 history 有 1~3 秒延迟，连查三次等于只查一次。
+// 这里改成「有间隔地查几次」，把有效核验窗口从 ~0 秒拉到 ~3 秒。
+//
+// 安全性：只调 transport.Verify（只读 history），全程不会重新 POST。
+func (s *Service) verifyLoop(ctx context.Context, a sender.Attempt) (sender.Verdict, error) {
+	attempts := s.options.VerifyAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	var last sender.Verdict
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 && s.options.VerifyInterval > 0 {
+			timer := time.NewTimer(s.options.VerifyInterval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return last, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		v, err := s.transport.Verify(ctx, a)
+		last, lastErr = v, err
+		if err == nil && v.Verified {
+			return v, nil
+		}
+		if ctx.Err() != nil {
+			return last, ctx.Err()
+		}
+	}
+	return last, lastErr
+}
+
 func (s *Service) process(ctx context.Context, c event.Claim, a sender.Attempt) (sender.Result, error) {
 	if a.ActorID != s.options.SelfID || a.EventID != c.Event.ID || a.RoomID != c.Event.Session {
 		return sender.Result{}, &sender.Error{Kind: sender.KindInput}
@@ -141,10 +185,14 @@ func (s *Service) process(ctx context.Context, c event.Claim, a sender.Attempt) 
 		}
 	}
 	if a.State != sender.StateReady {
-		v, err := s.transport.Verify(ctx, a)
+		v, err := s.verifyLoop(ctx, a)
 		transportErr := err
 		v.Origin = sender.OriginVerify
-		if err != nil {
+		switch {
+		case err != nil && ctx.Err() != nil:
+			// 调用方预算耗尽，区别于「查了但没有」：方便把 manual 的原因分开看
+			v = sender.Verdict{Outcome: sender.OutcomeUnknown, ErrorKind: "timeout", Evidence: "none", Origin: sender.OriginVerify}
+		case err != nil:
 			v = sender.Verdict{Outcome: sender.OutcomeUnknown, ErrorKind: "network", Evidence: "none", Origin: sender.OriginVerify}
 			var typed *sender.Error
 			if errors.As(err, &typed) && typed.Kind == sender.KindAuth {

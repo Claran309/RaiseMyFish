@@ -99,7 +99,8 @@ func TestRenderRateBoundaries(t *testing.T) {
 		{"没有事件", 0, 0, 0, "- 成功率 —"},
 		{"跳过多于收到", 3, 1, 5, "- 成功率 —"},
 		{"四舍五入到一位", 3, 1, 0, "- 成功率 33.3%"},
-		{"回复多于分母", 5, 7, 0, "- 成功率 140.0%"},
+		// 0.11 补丁：回复数可能因口径不同源超过分母，渲染层夹到 100%（原来照实显示 140%）
+		{"回复多于分母(夹到100%)", 5, 7, 0, "- 成功率 100.0%"},
 	}
 
 	for _, tc := range cases {
@@ -211,5 +212,24 @@ func TestRenderNoTrailingNewline(t *testing.T) {
 	out := Render(Snapshot{WindowStart: windowStart, WindowEnd: windowEnd})
 	if strings.HasSuffix(out, "\n") {
 		t.Errorf("输出不应以换行结尾：%q", out)
+	}
+}
+
+// TestRenderRateClamped 矛盾数据下成功率必须 ≤100%。
+//
+// 现场数据：收到 159 / 回复 18 / 跳过 144 → 分母 15，原样算会得到 120%。
+func TestRenderRateClamped(t *testing.T) {
+	out := Render(Snapshot{Received: 159, Replied: 18, Skipped: 144})
+	if !strings.Contains(out, "- 成功率 100.0%") {
+		t.Errorf("期望夹到 100.0%%：\n%s", out)
+	}
+	if strings.Contains(out, "120.0%") {
+		t.Errorf("出现了超过 100%% 的成功率：\n%s", out)
+	}
+
+	// 极端：回复远超分母
+	extreme := Render(Snapshot{Received: 3, Replied: 300, Skipped: 0})
+	if !strings.Contains(extreme, "- 成功率 100.0%") {
+		t.Errorf("极端数据也应夹到 100.0%%：\n%s", extreme)
 	}
 }

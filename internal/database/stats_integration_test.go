@@ -76,7 +76,7 @@ func TestStatsCountsRealPostgres(t *testing.T) {
 	seedSend(t, db, "live:r:2", "", boolPtr(false), from.Add(21*time.Minute))
 	// 结果未知（ok IS NULL）既不算回复也不算失败
 	seedSend(t, db, "comment:c:1", "comment", nil, from.Add(32*time.Minute))
-	// 窗口外的回复不计
+	// 窗口内的入向事件、发送时刻在窗口外：新口径按**事件时间**归属，仍算这条被回复了
 	seedSend(t, db, "live:r:left", "live", boolPtr(true), from.Add(-time.Minute))
 
 	// 费用：窗口内 0.01+0.02，窗口外 9.99 不计
@@ -96,8 +96,8 @@ func TestStatsCountsRealPostgres(t *testing.T) {
 	if got.Skipped != 1 {
 		t.Errorf("Skipped = %d，期望 1", got.Skipped)
 	}
-	if got.Replied != 2 {
-		t.Errorf("Replied = %d，期望 2（重试去重、ok 为 NULL 不计）", got.Replied)
+	if got.Replied != 3 {
+		t.Errorf("Replied = %d，期望 3（按事件时间归属：live:r:1 去重 1 条、comment:c:1、live:r:left）", got.Replied)
 	}
 	if got.Failed != 1 {
 		t.Errorf("Failed = %d，期望 1", got.Failed)
@@ -114,7 +114,7 @@ func TestStatsCountsRealPostgres(t *testing.T) {
 	if !ok {
 		t.Fatalf("缺少 live 通道：%+v", got.Channels)
 	}
-	if live.Received != 3 || live.Skipped != 1 || live.Replied != 1 || live.Failed != 1 {
+	if live.Received != 3 || live.Skipped != 1 || live.Replied != 2 || live.Failed != 1 {
 		t.Errorf("live 细分不符：%+v", live)
 	}
 	comment, ok := got.Channels["comment"]
@@ -133,6 +133,47 @@ func TestStatsCountsRealPostgres(t *testing.T) {
 	if sumReceived != got.Received || sumReplied != got.Replied {
 		t.Errorf("总量与细分不一致：received %d/%d replied %d/%d",
 			got.Received, sumReceived, got.Replied, sumReplied)
+	}
+}
+
+// TestStatsRepliedOnlyCountsInWindowInbound 回复数只算「窗口内入向事件」的发送记录。
+//
+// 复现 bug：窗口外的事件、出向事件的 send_log 也曾被算进 Replied，
+// 导致「回复 18 > 收到-跳过 15」，成功率爆百。
+func TestStatsRepliedOnlyCountsInWindowInbound(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	stats, err := NewStats(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	from := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+
+	// 窗口内的入向事件（应计入）
+	seedEvent(t, db, "live:r:in1", "live", "in", "done", from.Add(10*time.Minute))
+	// 窗口外的入向事件（发送记录在窗口内，也不能算）
+	seedEvent(t, db, "live:r:early", "live", "in", "done", from.Add(-time.Hour))
+	// 出向事件（我们自己的回复行，不能算「回复了别人」）
+	seedEvent(t, db, "live:r:out", "live", "out", "done", from.Add(20*time.Minute))
+
+	for _, id := range []string{"live:r:in1", "live:r:early", "live:r:out"} {
+		seedSend(t, db, id, "live", boolPtr(true), from.Add(30*time.Minute))
+	}
+
+	got, err := stats.Counts(ctx, from, to)
+	if err != nil {
+		t.Fatalf("Counts 失败：%v", err)
+	}
+	if got.Replied != 1 {
+		t.Errorf("Replied = %d，期望 1（只算窗口内 dir=in 的事件）", got.Replied)
+	}
+	if got.Received != 1 {
+		t.Errorf("Received = %d，期望 1", got.Received)
+	}
+	// 关键不变式：回复数不超过「收到-跳过」
+	if got.Replied > got.Received-got.Skipped {
+		t.Errorf("Replied %d > Received-Skipped %d，成功率会爆百", got.Replied, got.Received-got.Skipped)
 	}
 }
 

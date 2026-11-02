@@ -50,7 +50,10 @@ func (r *fakeRepo) Settle(_ context.Context, _ event.Claim, _ string, v sender.V
 type fakeTransport struct {
 	opened, posted, verified, closed int
 	verdict                          sender.Verdict
-	postErr                          error
+	// verdicts 按调用顺序返回；用完后回落到 verdict。
+	verdicts  []sender.Verdict
+	verifyErr error
+	postErr   error
 }
 
 func (f *fakeTransport) Open(context.Context, sender.Attempt) (Session, error) {
@@ -58,8 +61,12 @@ func (f *fakeTransport) Open(context.Context, sender.Attempt) (Session, error) {
 	return &fakeSession{f: f}, nil
 }
 func (f *fakeTransport) Verify(context.Context, sender.Attempt) (sender.Verdict, error) {
+	index := f.verified
 	f.verified++
-	return f.verdict, nil
+	if index < len(f.verdicts) {
+		return f.verdicts[index], f.verifyErr
+	}
+	return f.verdict, f.verifyErr
 }
 
 type fakeSession struct{ f *fakeTransport }
@@ -77,6 +84,8 @@ func fixture(t *testing.T) (*Service, *fakeRepo, *fakeTransport, event.Claim, se
 	o := DefaultOptions()
 	o.Enabled = true
 	o.SelfID = "8"
+	// 单测不等待重试间隔，避免用例变慢；需要测间隔的用例自己改回去
+	o.VerifyInterval = 0
 	s, err := New(r, f, o, zap.NewNop())
 	if err != nil {
 		t.Fatal(err)
@@ -170,5 +179,81 @@ func TestTransportCauseRemainsBehindSafeError(t *testing.T) {
 	_, err := s.Send(context.Background(), c, p)
 	if !errors.Is(err, cause) || strings.Contains(err.Error(), "canary") {
 		t.Fatal("运输原因链丢失或泄漏", err)
+	}
+}
+
+// unconfirmed 是「查了 history 但没有自己那条」的核验结果（脚本里的默认未知原因）。
+var unconfirmed = sender.Verdict{Outcome: sender.OutcomeUnknown, ErrorKind: "unconfirmed", Evidence: "none"}
+
+// TestVerifyRetriesUntilHistoryCatchesUp 前两次没查到、第三次查到 → 算成功，且全程不重投。
+func TestVerifyRetriesUntilHistoryCatchesUp(t *testing.T) {
+	s, r, f, c, _ := fixture(t)
+	r.a.State = sender.StateUnknown
+	c.Stage = event.StageVerify
+	f.verdicts = []sender.Verdict{
+		unconfirmed,
+		unconfirmed,
+		{Outcome: sender.OutcomeAccepted, Verified: true, MsgID: "platform-1", Evidence: "history_id"},
+	}
+
+	res, err := s.Resume(context.Background(), c)
+	if err != nil || !res.Verified {
+		t.Fatalf("第三次查到却未成功：%v / %+v", err, res)
+	}
+	if f.verified != 3 {
+		t.Errorf("核验次数 = %d，期望 3", f.verified)
+	}
+	if f.posted != 0 || f.opened != 0 {
+		t.Errorf("核验过程中重新投递了：posted=%d opened=%d", f.posted, f.opened)
+	}
+}
+
+// TestVerifyExhaustedKeepsUnconfirmed 三次都没查到 → 保留 unknown 且原因分类为 unconfirmed。
+func TestVerifyExhaustedKeepsUnconfirmed(t *testing.T) {
+	s, r, f, c, _ := fixture(t)
+	r.a.State = sender.StateUnknown
+	c.Stage = event.StageVerify
+	f.verdict = unconfirmed
+
+	_, err := s.Resume(context.Background(), c)
+	if err == nil {
+		t.Fatal("未核验成功应返回错误")
+	}
+	if f.verified != s.options.VerifyAttempts {
+		t.Errorf("核验次数 = %d，期望 %d", f.verified, s.options.VerifyAttempts)
+	}
+	if r.settled != 1 {
+		t.Errorf("结算次数 = %d，期望 1", r.settled)
+	}
+	if r.last.Outcome != sender.OutcomeUnknown || r.last.ErrorKind != "unconfirmed" {
+		t.Errorf("结算结果 = %+v，期望 unknown/unconfirmed", r.last)
+	}
+	if f.posted != 0 {
+		t.Errorf("核验失败后重新投递了：posted=%d", f.posted)
+	}
+}
+
+// TestVerifyTimeoutClassified 预算耗尽与「查了没有」要分开：前者记为 timeout。
+func TestVerifyTimeoutClassified(t *testing.T) {
+	s, r, f, c, _ := fixture(t)
+	r.a.State = sender.StateUnknown
+	c.Stage = event.StageVerify
+	f.verdict = unconfirmed
+	s.options.VerifyInterval = 200 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	if _, err := s.Resume(ctx, c); err == nil {
+		t.Fatal("超时也应有错误返回")
+	}
+	if r.settled != 1 {
+		t.Errorf("结算次数 = %d，期望 1", r.settled)
+	}
+	if r.last.ErrorKind != "timeout" {
+		t.Errorf("原因 = %q，期望 timeout", r.last.ErrorKind)
+	}
+	if f.posted != 0 {
+		t.Errorf("超时后重新投递了：posted=%d", f.posted)
 	}
 }

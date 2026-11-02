@@ -1391,3 +1391,98 @@ panic: runtime error: invalid memory address or nil pointer dereference
 
 - **是。** 本轮写入结束，改动仅上表 2 个文件；未执行 git 命令、未提交、未 push。
 - 交 DSH 验收后可重开 0.11 冒烟。
+
+---
+
+## 0.11 补丁批次 1 · 统计口径 + 核验 unknown（2026-11-02，Asia/Shanghai）
+
+- 只修 bug，不接新功能；未改 `contracts`、未碰人格/知识、全程 mock（不调真实模型/B站）。
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/database/stats.go` | 改 Replied 口径 | `DB1252FBD03F523AA45B11AB887BBB149377551E2F203DD8B991E1810C6B6ED9` | 6331 |
+| `internal/database/stats_integration_test.go` | 新增口径用例 + 对齐旧断言 | `553B5932F8C8F7F0012B07E545CD54C65D461EA813F84CDC120E2AF9C4406C5C` | 9954 |
+| `internal/observe/report.go` | 成功率 clamp | `6000B18148DD7135DE9DB502F5A916F57E79C0F2C20768D66C7EC605416197D6` | 4848 |
+| `internal/observe/report_test.go` | clamp 用例 | `4AFFEA8B908D334946FC065FBE15F5BCA82DE30689419D4AA5A623E760E8CBAB` | 8553 |
+| `internal/sender/live/live.go` | 核验有界重试 + 原因分类 | `DAC67D61186E01D856B7B2383ED2C4D392209498A782C231CCA2B605A61EE65C` | 9357 |
+| `internal/sender/live/live_test.go` | 3 个核验用例 | `897CA3E5B845BF201682CFC86C8D00D15B7590E688DEA79E2FFFB704001D2D89` | 9681 |
+
+### Bug 1 · 统计口径导致成功率爆百
+
+**改法**：`Replied` 从「send_log 按发送时间过滤」改成「**窗口内 `dir='in'` 事件**的 send_log ok 去重数」
+（`send_log JOIN events`，按 `e.at` 过滤 + `e.dir='in'`）。
+
+**渲染层防御**：`renderRate` 把结果夹到 `[0,100]`，矛盾数据下最多显示 `100.0%`。
+
+**证据**：`TestStatsRepliedOnlyCountsInWindowInbound`（窗口外事件、出向事件的发送记录都不再计入，
+并断言 `Replied <= Received-Skipped`）；`TestRenderRateClamped` 用现场数据 **159/18/144**
+（分母 15，原样算 120%）断言输出 `100.0%` 且不含 `120.0%`。
+
+### Bug 2 · 3 条 unknown_manual 的真实原因（查的是主库真实数据）
+
+仓库里 3 条 `manual/unknown_manual` 的现场（`send_attempts` + `send_log` + `events`）：
+
+| 字段 | 值 |
+|---|---|
+| state / error_kind | `manual` / `unknown_manual` |
+| `verify_count` | **3**（等于 `MaxVerifications`，已用尽） |
+| `evidence` / `msg_id` | `none` / 空 |
+| `number` | 1（都是首次尝试） |
+| `armed_at` → `send_log.at` | 同一条 attempt 从 arm 到落库只隔 **约 1.6 秒** |
+| 事件终态 | `status=dead` `stage=verify` |
+
+全库分布：`accepted 144` / `skipped(duplicate_window) 6` / `manual(unknown_manual) 3`。
+
+**根因**：核验次数是够的，**间隔不够**。`process` 在 `a.State != ready` 的分支里只调一次
+`transport.Verify`，调度器把事件立刻重新排队，三次核验**背靠背**跑完（整个 attempt 约 1.6 秒）。
+`danmaku.mjs` 的 `verifyOnce` 只请求一次 `gethistory`，而该接口只返回房间**最近一屏**，
+弹幕从发出到进 history 有 1~3 秒延迟——连查三次实际等于只查一次，`verify_count` 被白白耗尽 → manual。
+
+**修法**（`sender/live`）：新增 `Options.VerifyAttempts`（默认 3）与 `Options.VerifyInterval`（默认 1.5s），
+用 `verifyLoop` 做**有间隔**的有界重试，把有效核验窗口从 ~0 秒拉到 ~3 秒以上；
+任一命中 `Verified` 立即返回。**全程只调 `transport.Verify`（只读 history），不会重新 POST**。
+
+**原因分类**（都落在 `sender.SafeCode` 白名单内，没新增码）：
+`timeout`（调用方预算耗尽）/ `network`（子进程或网络错误）/ `unconfirmed`（查了但没有）/
+`protocol`（回执不合法）/ `auth`。无法确认时按 `unknown` 保留，不会被伪造成成功或失败。
+
+**测试**（`internal/sender/live`，mock transport）：
+- `TestVerifyRetriesUntilHistoryCatchesUp`：前两次没查到、第三次查到 → 成功；`Verify` 调 3 次，`posted==0`、`opened==0`
+- `TestVerifyExhaustedKeepsUnconfirmed`：三次都没查到 → 结算 `unknown/unconfirmed`，不重投
+- `TestVerifyTimeoutClassified`：预算耗尽 → 原因记为 `timeout`
+
+### 测试结果
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l internal/observe internal/database internal/sender/live` | 无输出 |
+| `go build ./...` / `go vet`（三包） | 通过 |
+| `go test ./internal/observe/ ./internal/sender/live/` | ok |
+| `go test -tags=integration ./internal/database/... -count=1` | **ok 39.735s**（含既有全部集成用例） |
+| `go test ./... -count=1` | 22 个包全绿 |
+| `golangci-lint`（三包） | 0 issues |
+| `go test -race ./internal/observe/ ./internal/sender/live/` | **ok 1.471s / 3.475s** |
+
+排查用的临时诊断文件 `internal/database/zz_diag_test.go` 已删除（核对过不存在）。
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| `Failed` 口径同步改成按事件时间 | 本批只说修 `Replied`；`Failed` 仍按 send_log 时间。**同类不一致，建议下批一起改**（改法与 Replied 完全对称） |
+| 调大 `gethistory` 的返回窗口 | 该接口无可靠的窗口参数；靠时间维度重试更稳 |
+| 提高 `MaxVerifications` | 属于策略调整（`sender.Policy`），与「有间隔重试」重复；先加间隔看效果 |
+| 真实 B 站复现 | 明令用 mock |
+
+### 风险 / 需 DSH 裁决
+
+1. **`VerifyInterval=1.5s × 3` 让单个 verify 最多占约 3s**：worker 超时是 30s，够用；
+   若直播间很热闹、history 顶得更快，可能还要再放宽。
+2. **`Replied` 改按事件时间归属**：窗口内收到、窗口外才发出去的事件也会算进「本窗口已回复」。
+   这是「统计这一批输入的去向」的口径；若希望按发送时间算，需要另立指标。
+3. **`Failed` 仍是发送时间口径**（见上），两者并存时可能出现「收到 0 / 失败 5」。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，改动仅上表 6 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 验收后可重开冒烟。

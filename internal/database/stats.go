@@ -50,19 +50,23 @@ func NewStats(db *gorm.DB) (*Stats, error) {
 //
 //	Received = events 里 dir='in' 的事件数（本窗口收到了多少条待处理输入）
 //	Skipped  = events 里 status='skipped' 的事件数（主动不回复）
-//	Replied  = send_log 里 ok IS TRUE 的去重事件数（真发出去多少条）
+//	Replied  = 窗口内 dir='in' 事件中，send_log.ok IS TRUE 的去重事件数
 //	Failed   = send_log 里 ok IS FALSE 的去重事件数（明确失败；ok 为 NULL 的"未知"不计）
 //	CostUSD  = llm_usage.cost_usd 求和（没有记录或全为 NULL → nil = 未知）
 //
 // 用去重事件数而不是尝试次数：同一条回复重试多次不该把「回复数」算多。
 // 老数据的 send_log.channel 可能为空，回落到 events.channel。
 const (
+	// sentRowsSQL 只统计「窗口内的入向事件」：必须 join events 且按**事件时间**过滤。
+	//
+	// 修 bug：原先按 send_log.at 过滤、且不要求 e.dir='in'，会把窗口外事件、
+	// 出向事件的发送记录都算进回复数，出现「回复 > 收到-跳过」，成功率爆百。
 	sentRowsSQL = `
 SELECT COALESCE(NULLIF(l.channel, ''), e.channel, '') AS channel,
-       COUNT(DISTINCT COALESCE(l.event_id, 'log:' || l.id::text)) AS n
+       COUNT(DISTINCT l.event_id) AS n
 FROM send_log l
-LEFT JOIN events e ON e.id = l.event_id
-WHERE l.ok IS TRUE AND l.at >= ? AND l.at < ?
+JOIN events e ON e.id = l.event_id
+WHERE l.ok IS TRUE AND e.dir = 'in' AND e.at >= ? AND e.at < ?
 GROUP BY 1`
 
 	failedRowsSQL = `
