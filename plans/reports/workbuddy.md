@@ -1672,3 +1672,63 @@ timeout_ms = 8000
 
 - **是。** 本轮写入结束，改动仅上表 11 个文件；未执行 git 命令、未提交、未 push。
 - 交 DSH 验收。
+
+---
+
+## 修复批次 · ReAct token 记账（2026-11-02，Asia/Shanghai）
+
+- 背景：上一批 ReAct 的 `providerLLM.Complete` 只返回文本、不写 `llm_usage`，日报费用偏低。
+- 改动仅 2 个文件：
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `cmd/fishd/serve.go` | 修改（记账） | `E9CD42F7C31C39E12D3EFF46B568C4590D65787DF6420D42E44D9756BA03C66C` | 35316 |
+| `cmd/fishd/serve_test.go` | 修改（7 个记账用例） | `92EBB9C8C5136C7DF3B99F2B1E691C03CFE762171C2FA49D1115E701532B24B5` | 82686 |
+
+### 改动
+
+- `buildReasoningLLM(cfg, usage, log)` 现在接收 `store.UsageRepo`，返回 `reasoningModel` 蓝图
+  （client / model / maxTokens / temperature / 可选单价 / 账本）。
+- 每次事件由工厂派生 `providerLLM{blueprint, channel: scope.Channel, log}`——
+  账本行的 `Channel` 就是**这条弹幕**的通道，不是写死的 live。
+- `Complete` 里 Chat 之后写 `store.Usage{At, Channel, Model, InputTokens, OutputTokens, CostUSD, Milliseconds, OK}`，
+  与 `internal/brain/brain.go` 同口径：
+  - **失败调用也记**（`OK=false`）：否则「模型一直挂」在账本里完全看不见；
+  - `CostUSD` 只有 token 与报价齐全时才计算（同 brain 的 `cost()`），否则 `nil` 而不是编 0；
+  - 负数/越界 token 视为未知（nil），不污染账本。
+- **记账失败只记 warn 日志，绝不上抛**：ReAct 是增强能力，不能因为账本写不进去就让弹幕收不到回复。
+- 记账用 `context.WithoutCancel(ctx)` + 2 秒上限：ReAct 预算耗尽时父 ctx 已取消，
+  但账该记还得记；2 秒上限保证不会把 8 秒预算拖成 10 秒。
+
+### 测试（mock usage repo + mock provider，共 7 个）
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestProviderLLMRecordsUsage` | 每次 Chat 后 1 行；通道/模型/token/OK/At/Milliseconds 正确；无报价时 CostUSD=nil；请求参数（模型/长度/角色）正确 |
+| `TestProviderLLMRecordsFailedCall` | Chat 报错 → 仍记 1 行且 `OK=false`，错误原样上抛 |
+| `TestProviderLLMRecordsEveryCall` | 3 次调用 → 3 行（多步 ReAct 不漏记） |
+| `TestProviderLLMUsageFailureDoesNotBlock` | 账本写入失败 → 仍返回正文、无 error |
+| `TestProviderLLMNilUsageRepo` | 没有账本 → 不 panic，照常返回 |
+| `TestProviderLLMCostWithPrices` | 配了报价 → 算出 2.5 USD（1M in ×0.5 + 1M out ×2.0） |
+| `TestProviderLLMRejectsDirtyTokens` | 负数 token → 记为 nil，正常值保留 |
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l`（改动文件） | 无输出 |
+| `go build ./...` / `go vet ./...` | 通过 |
+| `go test ./cmd/fishd/ -run TestProviderLLM` | ok（7/7 PASS） |
+| `go test ./... -count=1` | 27 个包全绿 |
+| `go test -race ./cmd/fishd/...` | **ok 2.017s** |
+| `golangci-lint run ./cmd/fishd/...` | 新增代码 0 issues；仍有 2 条**与本批无关**的历史问题（见下） |
+
+### 未做项 / 遗留
+
+| 项 | 说明 |
+|---|---|
+| `cmd/fishd/main_test.go:63` errcheck、`memory_test.go:31` QF1001 | 不是本批文件，仍未动；请 DSH/Codex 处置 |
+| ReAct 记账的 `Model` 字段 | 记的是**模型名**（`deepseek-chat`），Brain 记的是 `b.Name()`（brain 名）。两者口径略有差异，若要日报按模型聚合，建议统一 |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，改动仅上表 2 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 验收。

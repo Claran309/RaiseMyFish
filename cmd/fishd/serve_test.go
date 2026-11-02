@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -1850,5 +1851,209 @@ func TestReactFailureFallsBackToSingleStep(t *testing.T) {
 	}
 	if engine.calls != 1 || snd.gotReply.Text != "单步兜底" {
 		t.Errorf("未回落单步：brain=%d text=%q", engine.calls, snd.gotReply.Text)
+	}
+}
+
+// ---------- ReAct 记账 ----------
+
+// fakeUsageRepo 记录写入账本的行。
+type fakeUsageRepo struct {
+	mu   sync.Mutex
+	rows []store.Usage
+	err  error
+}
+
+func (f *fakeUsageRepo) RecordUsage(_ context.Context, u store.Usage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rows = append(f.rows, u)
+	return f.err
+}
+
+func (f *fakeUsageRepo) snapshot() []store.Usage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]store.Usage(nil), f.rows...)
+}
+
+// fakeChatProvider 是 provider.Provider 的假实现。
+type fakeChatProvider struct {
+	resp   provider.Response
+	err    error
+	calls  int
+	gotReq provider.Request
+}
+
+func (f *fakeChatProvider) Name() string { return "fake-provider" }
+
+func (f *fakeChatProvider) Chat(_ context.Context, r provider.Request) (provider.Response, error) {
+	f.calls++
+	f.gotReq = r
+	return f.resp, f.err
+}
+
+func intPtr(v int) *int { return &v }
+
+// newTestProviderLLM 造一个带假账本/假 provider 的适配器。
+func newTestProviderLLM(p *fakeChatProvider, repo store.UsageRepo) *providerLLM {
+	return &providerLLM{
+		blueprint: &reasoningModel{
+			client: p, model: "deepseek-chat", maxTokens: 128, temperature: 0.3, usage: repo,
+		},
+		channel: event.ChLive,
+		log:     zap.NewNop(),
+	}
+}
+
+// TestProviderLLMRecordsUsage 每次 Chat 后写一行 llm_usage（含 token/OK/模型/通道）。
+func TestProviderLLMRecordsUsage(t *testing.T) {
+	prov := &fakeChatProvider{resp: provider.Response{
+		Text:  `{"thought":"t","action":"final","final":"好"}`,
+		Usage: provider.Usage{InputTokens: intPtr(120), OutputTokens: intPtr(30)},
+	}}
+	repo := &fakeUsageRepo{}
+	llm := newTestProviderLLM(prov, repo)
+
+	if _, err := llm.Complete(context.Background(), "sys", "user"); err != nil {
+		t.Fatalf("Complete 失败：%v", err)
+	}
+
+	rows := repo.snapshot()
+	if len(rows) != 1 {
+		t.Fatalf("账本行数 = %d，期望 1", len(rows))
+	}
+	row := rows[0]
+	if row.Channel != event.ChLive || row.Model != "deepseek-chat" {
+		t.Errorf("通道/模型不符：%+v", row)
+	}
+	if row.InputTokens == nil || *row.InputTokens != 120 || row.OutputTokens == nil || *row.OutputTokens != 30 {
+		t.Errorf("token 不符：%+v", row)
+	}
+	if !row.OK {
+		t.Error("成功调用应记 OK=true")
+	}
+	if row.At.IsZero() || row.Milliseconds < 0 {
+		t.Errorf("时间字段不符：%+v", row)
+	}
+	// 没配报价时费用必须是 nil（未知），不能编 0
+	if row.CostUSD != nil {
+		t.Errorf("未配报价时 CostUSD 应为 nil，实际 %v", *row.CostUSD)
+	}
+	// 请求本身也要符合预期：贴了模型名、限制了长度
+	if prov.gotReq.Model != "deepseek-chat" || prov.gotReq.MaxTokens != 128 {
+		t.Errorf("请求参数不符：%+v", prov.gotReq)
+	}
+	if len(prov.gotReq.Messages) != 2 || prov.gotReq.Messages[0].Role != "system" || prov.gotReq.Messages[1].Role != "user" {
+		t.Errorf("消息角色不符：%+v", prov.gotReq.Messages)
+	}
+}
+
+// TestProviderLLMRecordsFailedCall 失败的 Chat 也要记账（OK=false），否则模型挂掉在账本里看不见。
+func TestProviderLLMRecordsFailedCall(t *testing.T) {
+	boom := errors.New("provider down")
+	prov := &fakeChatProvider{err: boom}
+	repo := &fakeUsageRepo{}
+	llm := newTestProviderLLM(prov, repo)
+
+	if _, err := llm.Complete(context.Background(), "sys", "user"); !errors.Is(err, boom) {
+		t.Fatalf("错误未透传：%v", err)
+	}
+	rows := repo.snapshot()
+	if len(rows) != 1 || rows[0].OK {
+		t.Fatalf("失败调用应记 OK=false：%+v", rows)
+	}
+}
+
+// TestProviderLLMRecordsEveryCall ReAct 多步 = 多次 Chat = 多行账本。
+func TestProviderLLMRecordsEveryCall(t *testing.T) {
+	prov := &fakeChatProvider{resp: provider.Response{
+		Text:  `{"thought":"t","action":"final","final":"好"}`,
+		Usage: provider.Usage{InputTokens: intPtr(10), OutputTokens: intPtr(5)},
+	}}
+	repo := &fakeUsageRepo{}
+	llm := newTestProviderLLM(prov, repo)
+
+	for i := 0; i < 3; i++ {
+		if _, err := llm.Complete(context.Background(), "sys", "user"); err != nil {
+			t.Fatalf("第 %d 次失败：%v", i+1, err)
+		}
+	}
+	if got := len(repo.snapshot()); got != 3 {
+		t.Errorf("账本行数 = %d，期望 3（每次 Chat 一行）", got)
+	}
+}
+
+// TestProviderLLMUsageFailureDoesNotBlock 记账失败只记日志，回复照常返回。
+func TestProviderLLMUsageFailureDoesNotBlock(t *testing.T) {
+	prov := &fakeChatProvider{resp: provider.Response{Text: "回复正文"}}
+	repo := &fakeUsageRepo{err: errors.New("账本写不进去")}
+	llm := newTestProviderLLM(prov, repo)
+
+	got, err := llm.Complete(context.Background(), "sys", "user")
+	if err != nil {
+		t.Fatalf("记账失败不应影响回复：%v", err)
+	}
+	if got != "回复正文" {
+		t.Errorf("正文 = %q", got)
+	}
+}
+
+// TestProviderLLMNilUsageRepo 没有账本时不 panic，照常返回文本。
+func TestProviderLLMNilUsageRepo(t *testing.T) {
+	prov := &fakeChatProvider{resp: provider.Response{Text: "ok"}}
+	llm := newTestProviderLLM(prov, nil)
+
+	got, err := llm.Complete(context.Background(), "sys", "user")
+	if err != nil || got != "ok" {
+		t.Fatalf("无账本时应正常工作：%q / %v", got, err)
+	}
+}
+
+// TestProviderLLMCostWithPrices 配了报价就算费用（与 Brain 同口径：÷1e6）。
+func TestProviderLLMCostWithPrices(t *testing.T) {
+	in, out := 0.5, 2.0 // 每百万 token 的美元单价
+	prov := &fakeChatProvider{resp: provider.Response{
+		Text:  "ok",
+		Usage: provider.Usage{InputTokens: intPtr(1_000_000), OutputTokens: intPtr(1_000_000)},
+	}}
+	repo := &fakeUsageRepo{}
+	llm := &providerLLM{
+		blueprint: &reasoningModel{client: prov, model: "m", maxTokens: 8, usage: repo, inUSD: &in, outUSD: &out},
+		channel:   event.ChLive,
+		log:       zap.NewNop(),
+	}
+	if _, err := llm.Complete(context.Background(), "s", "u"); err != nil {
+		t.Fatal(err)
+	}
+	rows := repo.snapshot()
+	if len(rows) != 1 || rows[0].CostUSD == nil {
+		t.Fatalf("应算出费用：%+v", rows)
+	}
+	if want := 2.5; math.Abs(*rows[0].CostUSD-want) > 1e-9 {
+		t.Errorf("费用 = %v，期望 %v", *rows[0].CostUSD, want)
+	}
+}
+
+// TestProviderLLMRejectsDirtyTokens 负数 token 记为未知，不污染账本。
+func TestProviderLLMRejectsDirtyTokens(t *testing.T) {
+	prov := &fakeChatProvider{resp: provider.Response{
+		Text:  "ok",
+		Usage: provider.Usage{InputTokens: intPtr(-5), OutputTokens: intPtr(3)},
+	}}
+	repo := &fakeUsageRepo{}
+	llm := newTestProviderLLM(prov, repo)
+
+	if _, err := llm.Complete(context.Background(), "s", "u"); err != nil {
+		t.Fatal(err)
+	}
+	rows := repo.snapshot()
+	if len(rows) != 1 {
+		t.Fatalf("应有 1 行：%+v", rows)
+	}
+	if rows[0].InputTokens != nil {
+		t.Errorf("负数 token 应为 nil，实际 %d", *rows[0].InputTokens)
+	}
+	if rows[0].OutputTokens == nil || *rows[0].OutputTokens != 3 {
+		t.Errorf("正常 token 应保留：%+v", rows[0])
 	}
 }

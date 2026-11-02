@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
 	senderlive "RaiseMyFish/internal/sender/live"
+	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
 )
 
@@ -562,16 +564,16 @@ func runReact(ctx context.Context, factory reactFactory, scope memory.Scope, pac
 // buildReasonerFactory 装配 ReAct：模型走主路由，工具走记忆/知识/状态/历史。
 //
 // 返回 nil 表示不启用（配置关闭、没模型、或一个工具都装不起来）——此时 serve 仍走单步。
-func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, hist reasoning.HistorySearcher, log *zap.Logger) (reactFactory, error) {
+func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, hist reasoning.HistorySearcher, usage store.UsageRepo, log *zap.Logger) (reactFactory, error) {
 	if !cfg.Reasoning.Enabled {
 		log.Info("ReAct 未启用（配置关闭）", zap.String("action", "react_disabled"))
 		return nil, nil
 	}
-	llm, err := buildReasoningLLM(cfg, log)
+	blueprint, err := buildReasoningLLM(cfg, usage, log)
 	if err != nil {
 		return nil, err
 	}
-	if llm == nil {
+	if blueprint == nil {
 		log.Info("ReAct 未启用（没有可用模型路由）", zap.String("action", "react_disabled"))
 		return nil, nil
 	}
@@ -595,6 +597,8 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 		if err != nil {
 			return nil, err
 		}
+		// 每次事件派生一个适配器：账本行里的通道就是这条弹幕的通道
+		llm := &providerLLM{blueprint: blueprint, channel: scope.Channel, log: log}
 		return reasoning.New(llm, box, opts, log)
 	}, nil
 }
@@ -721,7 +725,7 @@ func (p *providerLLM) cost(u provider.Usage) *float64 {
 	if u.InputTokens == nil || u.OutputTokens == nil || p.blueprint.inUSD == nil || p.blueprint.outUSD == nil {
 		return nil
 	}
-	v := math.Round((float64(*u.InputTokens)**p.blueprint.inUSD+float64(*u.OutputTokens)**p.blueprint.outUSD)) / 1e6
+	v := math.Round((float64(*u.InputTokens)**p.blueprint.inUSD + float64(*u.OutputTokens)**p.blueprint.outUSD)) / 1e6
 	return &v
 }
 
@@ -731,27 +735,6 @@ func validTokens(n *int) *int {
 		return nil
 	}
 	return n
-}
-
-// providerLLM 把 provider.Provider 适配成 reasoning.LLM。
-type providerLLM struct {
-	client      provider.Provider
-	model       string
-	maxTokens   int
-	temperature float64
-}
-
-func (p *providerLLM) Complete(ctx context.Context, system, user string) (string, error) {
-	resp, err := p.client.Chat(ctx, provider.Request{
-		Model:       p.model,
-		Messages:    []provider.Message{{Role: "system", Content: system}, {Role: "user", Content: user}},
-		MaxTokens:   p.maxTokens,
-		Temperature: p.temperature,
-	})
-	if err != nil {
-		return "", err
-	}
-	return resp.Text, nil
 }
 
 // settleDelivered 把「已投递」的事件收尾：核验通过就 done，否则交回 retry 让 verify 阶段接手。
@@ -885,7 +868,12 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, err
 	}
-	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, log)
+	// ReAct 的 token 也要进 llm_usage，否则日报费用偏低
+	usageRepo, err := database.NewUsageRepo(resources.DB)
+	if err != nil {
+		return nil, fmt.Errorf("装配用量账本失败：%w", err)
+	}
+	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, usageRepo, log)
 	if err != nil {
 		return nil, err
 	}
