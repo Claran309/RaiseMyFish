@@ -24,6 +24,7 @@ import (
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/presence"
+	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
 	senderlive "RaiseMyFish/internal/sender/live"
@@ -1583,7 +1584,7 @@ func TestGenerateLogsFullErrorChain(t *testing.T) {
 	const id = "live:30308220:9406"
 	core, logs := observer.New(zap.ErrorLevel)
 	engine := &fakeBrain{err: &brain.Error{Kind: brain.KindBudget, Cause: errors.New("prompt超出预算")}}
-	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, &fakeSender{}, newFakeBus(id), time.Second, nil, nil, nil, nil, zap.New(core))
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, &fakeSender{}, newFakeBus(id), time.Second, nil, nil, nil, nil, nil, zap.New(core))
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -1702,3 +1703,152 @@ func TestGeneratePresenceSkipsSendingWhenNotOK(t *testing.T) {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+// ---------- C 档 ReAct 接入 ----------
+
+// fakeReactLLM 是 ReAct 用的假模型：按脚本回放，并记录调用次数。
+type fakeReactLLM struct {
+	replies []string
+	calls   int
+}
+
+func (f *fakeReactLLM) Complete(_ context.Context, _, _ string) (string, error) {
+	idx := f.calls
+	f.calls++
+	if idx < len(f.replies) {
+		return f.replies[idx], nil
+	}
+	return `{"thought":"没了","action":"final","final":"好"}`, nil
+}
+
+// newFakeReactFactory 造一个记录调用次数的 ReAct 工厂。
+func newFakeReactFactory(t *testing.T, llm *fakeReactLLM) (reactFactory, *int) {
+	t.Helper()
+	calls := 0
+	box, err := reasoning.NewToolbox(reasoning.Tool{
+		Name: reasoning.ToolHistory, Desc: "测试工具",
+		Run: func(context.Context, string) (string, error) { return "弹幕一", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory := func(_ memory.Scope) (*reasoning.Agent, error) {
+		calls++
+		return reasoning.New(llm, box, reasoning.Options{MaxSteps: 3, Timeout: 2 * time.Second}, zap.NewNop())
+	}
+	return factory, &calls
+}
+
+// TestShouldUseReActOnlyForFactQuestions 只有需要查事实才走多步。
+func TestShouldUseReActOnlyForFactQuestions(t *testing.T) {
+	cases := []struct {
+		text string
+		want bool
+	}{
+		{"晚安", false},
+		{"哈哈哈", false},
+		{"刚才那个梗是什么意思", true}, // 命中记忆 + 知识线索
+		{"上次我说想吃啥", true},    // 只命中记忆
+		{"何意味", true},        // 只命中知识
+	}
+	for _, tc := range cases {
+		got := shouldUseReAct(reasoning.Decide(tc.text))
+		if got != tc.want {
+			t.Errorf("%q → %v，期望 %v", tc.text, got, tc.want)
+		}
+	}
+}
+
+// TestSimpleMessageSkipsReAct 简单弹幕不进 ReAct，保持单步（延迟 1 秒级）。
+func TestSimpleMessageSkipsReAct(t *testing.T) {
+	const id = "live:30308220:9301"
+	bus := newFakeBus(id)
+	engine := &fakeBrain{reply: brain.Reply{Text: "单步回复"}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+	llm := &fakeReactLLM{}
+	factory, calls := newFakeReactFactory(t, llm)
+
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, nil, factory, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	claim := liveClaim(id) // 正文是「主播好」，不含任何召回线索
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
+		t.Fatalf("Generate 失败：%v", err)
+	}
+
+	if *calls != 0 || llm.calls != 0 {
+		t.Errorf("简单弹幕不应进 ReAct：factory=%d llm=%d", *calls, llm.calls)
+	}
+	if engine.calls != 1 {
+		t.Errorf("应走单步生成 1 次，实际 %d", engine.calls)
+	}
+	if snd.gotReply.Text != "单步回复" {
+		t.Errorf("发送正文 = %q", snd.gotReply.Text)
+	}
+}
+
+// TestComplexMessageUsesReAct 需要查事实的弹幕走 ReAct，回复由 ReAct 产出。
+func TestComplexMessageUsesReAct(t *testing.T) {
+	const id = "live:30308220:9302"
+	bus := newFakeBus(id)
+	engine := &fakeBrain{reply: brain.Reply{Text: "不该被调用"}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+	llm := &fakeReactLLM{replies: []string{
+		`{"thought":"查历史","action":"history","args":"5"}`,
+		`{"thought":"够了","action":"final","final":"刚才在聊吃鱼"}`,
+	}}
+	factory, calls := newFakeReactFactory(t, llm)
+
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, nil, factory, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	claim := liveClaim(id)
+	claim.Event.Text = "刚才那个梗是什么意思"
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
+		t.Fatalf("Generate 失败：%v", err)
+	}
+
+	if *calls != 1 {
+		t.Errorf("ReAct 工厂调用 %d 次，期望 1", *calls)
+	}
+	if llm.calls != 2 {
+		t.Errorf("ReAct 模型调用 %d 次，期望 2（一次工具 + 一次 final）", llm.calls)
+	}
+	if engine.calls != 0 {
+		t.Errorf("走 ReAct 时不应再调单步 Brain，实际 %d 次", engine.calls)
+	}
+	if snd.gotReply.Text != "刚才在聊吃鱼" {
+		t.Errorf("发送正文 = %q，期望 ReAct 的 final", snd.gotReply.Text)
+	}
+}
+
+// TestReactFailureFallsBackToSingleStep ReAct 出错时回落单步，不阻塞回复。
+func TestReactFailureFallsBackToSingleStep(t *testing.T) {
+	const id = "live:30308220:9303"
+	bus := newFakeBus(id)
+	engine := &fakeBrain{reply: brain.Reply{Text: "单步兜底"}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+
+	// 工厂直接报错，模拟工具装配失败
+	factory := reactFactory(func(memory.Scope) (*reasoning.Agent, error) {
+		return nil, errors.New("工具装配失败")
+	})
+
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, nil, factory, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	claim := liveClaim(id)
+	claim.Event.Text = "上次说的那个"
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
+		t.Fatalf("Generate 失败：%v", err)
+	}
+	if engine.calls != 1 || snd.gotReply.Text != "单步兜底" {
+		t.Errorf("未回落单步：brain=%d text=%q", engine.calls, snd.gotReply.Text)
+	}
+}

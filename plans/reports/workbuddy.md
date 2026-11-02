@@ -1565,3 +1565,110 @@ panic: runtime error: invalid memory address or nil pointer dereference
 
 - **是。** 本轮写入结束，改动仅上表 5 个文件；未执行 git 命令、未提交、未 push。
 - 交 DSH 验收。
+
+---
+
+## C 档 · ReAct 思考链（2026-11-02，Asia/Shanghai）
+
+按 `plans/phase-0.16-react.md` 实现。未改 contracts、未碰调度/发送/人格/知识库内部语义、未调真实模型、未执行 git。
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/reasoning/tools.go` | 新增（四工具） | `D8AC6E5AEF5918CE79811159ACFCC15856506F88A181A69A279CADE56ACECF16` | 7504 |
+| `internal/reasoning/agent.go` | 新增（ReAct 循环） | `93E6B642E3EF035A95DD776107F37A19400FADC0ADE6F7A6D91BCF66B761613E` | 8305 |
+| `internal/reasoning/tools_test.go` | 新增 | `3EA36AED0EAAD6AE5370E7A16931C7555C6DEA411433DAE9724160E3C419E7A9` | 7430 |
+| `internal/reasoning/agent_test.go` | 新增 | `35BDFE3CDDB1EAAA527D873356B07F66CE253E27FB81CD8E2636E504909BC230` | 9499 |
+| `internal/config/reasoning.go` | 新增 | `574A48DC254193404552C44ACEDE6AA458AEB669395530D71573F4A3D8BDD48F` | 1619 |
+| `internal/config/reasoning_test.go` | 新增 | `A49756F161B0DDC0D6D4D62C68C8BA03335C8E889CE8C5CC3B8B5745D441B525` | 1994 |
+| `internal/config/config.go` | 修改（加字段/默认/校验） | `9198FA5789ABF2123D53646865F084C47D49A538E216C9BA06495F3600BD98F2` | 7947 |
+| `config/fishd.toml` | 修改（加 `[reasoning]`） | `31804465D0708DC1E3FF411C4F66202DAEE00AC97414129F8DD8A6294E8CF24E` | 6705 |
+| `internal/database/events_recent.go` | 新增（history 只读查询） | `CD81A149CAD4807C7BA96B20FBB05FC884BF9B34C1F727C2AED07F45BF1F3274` | 1267 |
+| `cmd/fishd/serve.go` | 修改（接入 ReAct） | `D9110193E16148E5BD600D45450E73AAF61AB839D56449EBAD445EC6FE7FA781` | 32067 |
+| `cmd/fishd/serve_test.go` | 修改（4 个接入用例） | `42CE76D731AFFFEDF924438196EE0AA753A9F5CA996612DAD29928E16881EC75` | 75982 |
+
+### 配置
+
+```toml
+[reasoning]
+enabled = true      # 默认开；只有 [llm] 也启用且路由存在时才真正装配
+max_steps = 3
+timeout_ms = 8000
+```
+
+校验：`max_steps` 1–10、`timeout_ms` 1000–10000（硬顶 10 秒，派发单要求「不能变成 30 秒」）。
+
+### 预算与降级
+
+| 情形 | 行为 |
+|---|---|
+| 正常 | 最多 3 步：工具 → 观察 → … → `action=final` |
+| 步数耗尽 | `Degraded=true, Reason=steps`，用已有观察再要一次回复 |
+| 总超时 8s | `Reason=timeout`，**不再调模型**（避免 8 秒变 16 秒），返回空文本让调用方回落单步 |
+| 解析失败 | `Reason=parse`，同上降级生成 |
+| 模型报错 | `Reason=llm_error`，降级 |
+| `final` 没给正文 | `Reason=empty` |
+| 工具不存在/执行失败 | 不终止循环，转成一条「工具失败：…」观察喂回模型 |
+
+降级后若仍无文本，`serve.go` 回落单步 `engine.Reply`，弹幕不会被卡住。
+
+### 工具
+
+| 工具 | 来源 | 说明 |
+|---|---|---|
+| `memory_search` | `memory.Reader.Recall` | 按事件 Scope 查最近消息 + 摘要 |
+| `knowledge_search` | `knowledge.Reader.Recall` | args 当查询词（整句或关键词） |
+| `presence` | `presence.Table.Summary` | 当前在做什么；空表给「没有进行中的状态」 |
+| `history` | `Database.EventRepo.RecentEvents` | 本会话最近 `dir='in'` 事件，条数 1–20（默认 10） |
+
+单条观察上限 400 rune，超出裁剪——避免下一轮 prompt 被撑爆。
+
+### 触发（serve.go）
+
+- `shouldUseReAct(decision)` = `NeedMemory || NeedKnowledge`，即两段式第一段判为「要查事实」；
+- 简单弹幕（打招呼/复读/纯情绪）**不进 ReAct**，仍走单步，延迟维持 1 秒级；
+- **工具按事件 Scope 现造**：`reactFactory(scope)` 每次事件构造一个 Agent。
+  原因是 worker 并发，共享一个可变 Scope 会串会话（数据竞争 + 隐私越界）；
+- 日志：`action=react` + `steps` / `tools_used` / `degraded` / `degrade_reason` / `latency_ms`。
+
+### 测试
+
+`internal/reasoning`（mock LLM，20 个用例）：
+工具调用后 final、步数耗尽降级、超时降级（并断言降级耗时 < 500ms 且不再调模型）、解析失败降级、
+未知工具转观察、模型报错降级、JSON 容错（代码块/前后废话）、预算参数校验、默认 3 步 8 秒；
+工具侧：四工具装配、nil 依赖跳过、Scope 透传、空结果文案、条数解析、输出裁剪、未知工具报错、错误透传。
+
+`cmd/fishd`（4 个接入用例）：
+简单弹幕不进 ReAct（工厂调用 0 次、Brain 调 1 次）、复杂弹幕走 ReAct（工厂 1 次、模型 2 次、Brain 0 次、
+发送正文=ReAct final）、ReAct 出错回落单步、`shouldUseReAct` 判定表。
+
+`internal/config`：默认开启/显式关闭/预算非法被拒。
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l`（改动文件） | 无输出 |
+| `go build ./...` / `go vet ./...` | 通过 |
+| `go test ./internal/reasoning/ ./internal/config/ ./cmd/fishd/` | ok |
+| `go test ./... -count=1` | **27 个包全绿** |
+| `golangci-lint run ./internal/reasoning/... ./internal/config/... ./internal/database/...` | 0 issues |
+| `go test -race ./internal/reasoning/... ./cmd/fishd/... ./internal/config/...` | **ok 1.872s / 1.862s / 2.892s** |
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| ReAct 调用的用量记账 | `provider.Chat` 的 Usage 只有 brain 内部写 `llm_usage`；ReAct 走独立适配器，token **没有计入账本**——这是真缺口，建议下一批补 |
+| 真实模型联调 | 明令用 mock |
+| 同事件内记忆/知识「预召回」与 ReAct 工具查重 | 现在两者都跑（预召回喂 ContextInput 供单步兜底用），有重复开销，可优化 |
+| `internal/brain/types.go` 的改动 | 该文件已有 `State`/`Tools`，本批不需要动 |
+
+### 风险 / 需 DSH 裁决
+
+1. **ReAct 的 token 不进 `llm_usage`**：日报里的费用会偏低。要记账需要把 usage repo 传进适配器并复用 brain 的写入逻辑。
+2. **`history` 查询新增在 `internal/database/events_recent.go`**：派发单允许路径没列 database，但 history 工具必须有数据源；只做只读 SELECT（`channel+session+dir='in'`，limit≤50），未改表、未加迁移。
+3. **`cmd/fishd` 包有 2 条与本批无关的 lint 问题**：`main_test.go:63`（errcheck `<-done`）、`memory_test.go:31`（QF1001 De Morgan）。这两个文件不属本批改动范围，白酱没有动别人的文件，请 DSH/Codex 处置。
+4. **`fishd check` 本机跑不起来**：dev 配置里 gift/watch 段要求 B 站凭据（环境变量缺失），与本次改动无关；配置解析已由 `internal/config` 用例覆盖。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，改动仅上表 11 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 验收。

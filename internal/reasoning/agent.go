@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"go.uber.org/zap"
 )
@@ -173,14 +172,15 @@ func (a *Agent) degrade(ctx context.Context, in Input, observations, used []stri
 
 	// 超时已经把预算花光：不再调用模型，避免把 8 秒拖成 16 秒
 	if ctx.Err() != nil {
-		return result, nil
+		return result, nil //nolint:nilerr // 超时是预期内的降级路径，不是要上抛的错误
 	}
 
 	system := a.systemPrompt(in) + "\n现在不要再调用工具，直接给出最终回复。"
 	out, err := a.llm.Complete(ctx, system, a.userPrompt(in, observations))
 	result.Steps = steps + 1
 	if err != nil {
-		return result, nil
+		// 降级本身失败不向上抛：调用方会回落单步生成，这里报错只会多一条噪音
+		return result, nil //nolint:nilerr // 有意吞掉：降级失败交给调用方兜底
 	}
 	// 降级那次模型仍可能回 JSON，尽量把正文捞出来
 	if decision, perr := ParseStep(out); perr == nil {
@@ -258,12 +258,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-// clipRunes 供调用方在日志里裁剪正文（不含正文全文）。
-func clipRunes(s string, max int) string {
-	if max <= 0 || utf8.RuneCountInString(s) <= max {
-		return s
-	}
-	return string([]rune(s)[:max]) + "…"
 }
