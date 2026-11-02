@@ -160,14 +160,45 @@ func TestGenerateCallsBrainThenSender(t *testing.T) {
 	}
 }
 
-// TestGenerateRejectsMissingTask 没有 Task 就报错，不伪造任务。
-func TestGenerateRejectsMissingTask(t *testing.T) {
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, nil, nil, zap.NewNop())
+// TestGenerateDefersScheduleWithoutTask schedule 阶段可能没有 Task；此时交回调度器，不能让消费循环退出。
+func TestGenerateDefersScheduleWithoutTask(t *testing.T) {
+	engine := &fakeBrain{}
+	snd := &fakeSender{}
+	claim := liveClaim("live:1:1")
+	claim.Stage = event.StageSchedule
+	bus := newFakeBus(claim.Event.ID)
+
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
-	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim("live:1:1")}); err == nil {
-		t.Fatal("Task 为 nil 时应报错")
+
+	before := time.Now()
+	got, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim})
+	if err != nil {
+		t.Fatalf("Task 为 nil 时应交回调度而不是报错：%v", err)
+	}
+	if got != (scheduler.Result{}) {
+		t.Errorf("Result = %+v，期望零值", got)
+	}
+	if engine.calls != 0 || snd.sendCalls != 0 {
+		t.Errorf("不应调用 Brain/Sender：brain=%d sender=%d", engine.calls, snd.sendCalls)
+	}
+
+	bus.mu.Lock()
+	until, deferred := bus.defers[claim.Event.ID]
+	bus.mu.Unlock()
+	if !deferred {
+		t.Fatal("应调用 Defer 交回调度器")
+	}
+	if until.Before(before.Add(time.Second)) {
+		t.Errorf("Defer 期限 %v 早于 now+retryDelay（before=%v）", until, before)
+	}
+	if status := bus.finalStatus(claim.Event.ID); status != event.StatusRetry {
+		t.Errorf("事件状态 = %s，期望 retry", status)
+	}
+	if tos := bus.markTos(); len(tos) != 0 {
+		t.Errorf("不应经过 Mark 状态迁移：%v", tos)
 	}
 }
 

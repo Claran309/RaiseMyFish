@@ -127,6 +127,48 @@ func TestFileQuotaConcurrentReservations(t *testing.T) {
 	}
 }
 
+// TestFileQuotaConcurrentReservationsRepeated 多轮复跑 10 实例并发预占。
+// Windows 上锁文件高频创建/删除会瞬时返回 Access Denied；旧实现把它当致命错误，
+// 单轮测试约十分之一概率失败，多轮可稳定覆盖该竞争窗口。
+func TestFileQuotaConcurrentReservationsRepeated(t *testing.T) {
+	const (
+		rounds = 20
+		limit  = 5
+	)
+	for round := 0; round < rounds; round++ {
+		path := filepath.Join(t.TempDir(), "gift-ledger.json")
+		var success, limited int32
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			quota, err := NewFileQuota(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wg.Add(1)
+			go func(round int) {
+				defer wg.Done()
+				err := quota.Reserve("2026-11-02", 1, limit)
+				var typed *Error
+				switch {
+				case err == nil:
+					atomic.AddInt32(&success, 1)
+				case errors.As(err, &typed) && typed.Message == "送礼超过每日限额":
+					atomic.AddInt32(&limited, 1)
+				default:
+					t.Errorf("第 %d 轮意外错误：%v", round, err)
+				}
+			}(round)
+		}
+		wg.Wait()
+		if success != limit || limited != 10-limit {
+			t.Fatalf("第 %d 轮并发额度失效：success=%d limited=%d", round, success, limited)
+		}
+		if ledger := readLedger(t, path); ledger.Used != limit {
+			t.Fatalf("第 %d 轮账本 used = %d，期望 %d", round, ledger.Used, limit)
+		}
+	}
+}
+
 func TestNewFileQuotaRejectsBadPath(t *testing.T) {
 	for _, path := range []string{"", "  ", "a\nb"} {
 		if _, err := NewFileQuota(path); err == nil {

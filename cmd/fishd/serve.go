@@ -157,9 +157,12 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 	}
 
 	generate := func(ctx context.Context, w scheduler.Work) (scheduler.Result, error) {
-		// 没有 Task 说明调度器给错了阶段；这里拒绝而不是造一个假任务
+		// schedule 阶段可能因配额/冷却没有 Task；交回调度器，不能让未结清事件带崩消费循环。
 		if w.Task == nil {
-			return scheduler.Result{}, errors.New("调度工作缺少任务，拒绝生成回复")
+			if err := bus.Defer(ctx, w.Claim, time.Now().Add(retryDelay)); err != nil {
+				return scheduler.Result{}, fmt.Errorf("交回调度重试失败：%w", err)
+			}
+			return scheduler.Result{}, nil
 		}
 		ev := w.Claim.Event
 		engine, ok := byChannel[ev.Channel]

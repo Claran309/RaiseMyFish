@@ -143,27 +143,49 @@ func (q *FileQuota) save(ledger quotaLedger) (result error) {
 }
 
 // lock 用排他创建锁文件实现跨进程互斥；只清理超过安全窗口的崩溃遗留锁。
+//
+// Windows 在锁文件高频创建/删除期间会瞬时返回 ERROR_ACCESS_DENIED（映射为 fs.ErrPermission），
+// 这是文件系统竞争而非权限故障，必须继续等待，否则并发预占会被误判为锁超时。
 func (q *FileQuota) lock() (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(q.path), 0700); err != nil {
 		return nil, err
 	}
 	lockPath := q.path + ".lock"
 	deadline := time.Now().Add(quotaLockWait)
+	var lastErr error
 	for {
 		file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err == nil {
 			_ = file.Close()
-			return func() { _ = os.Remove(lockPath) }, nil
+			return func() { removeLockFile(lockPath) }, nil
 		}
-		if !errors.Is(err, fs.ErrExist) {
+		if !lockContended(err) {
 			return nil, err
 		}
+		lastErr = err
 		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > quotaLockStale {
 			_ = os.Remove(lockPath)
 			continue
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("额度账本锁等待超过%v", quotaLockWait)
+			return nil, fmt.Errorf("额度账本锁等待超过%v：%w", quotaLockWait, lastErr)
+		}
+		time.Sleep(quotaLockPoll)
+	}
+}
+
+// lockContended 判断错误是否属于可重试的锁竞争。
+func lockContended(err error) bool {
+	return errors.Is(err, fs.ErrExist) || errors.Is(err, fs.ErrPermission)
+}
+
+// removeLockFile 删除锁文件；Windows 句柄或过滤驱动未及时释放时会短暂拒绝，
+// 重试后仍失败就保留锁文件，交给 stale 清理兜底。
+func removeLockFile(path string) {
+	for attempt := 0; attempt < 5; attempt++ {
+		err := os.Remove(path)
+		if err == nil || errors.Is(err, fs.ErrNotExist) {
+			return
 		}
 		time.Sleep(quotaLockPoll)
 	}
