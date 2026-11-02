@@ -647,4 +647,12 @@
 - 独立执行：全仓测试通过；集成（database 56s + gift）通过；新文件齐全。
 - **DSH 裁决未做项**：watch 首触发在第一个 interval 后（接受）、screen 模式未实现（接受）、Presence 内存态+心跳快照（接受）、gift 仅手动 CLI（接受，禁止自动送）、status 最多滞后一个心跳（接受）。
 - 结论：**接线收尾两批验收通过**（待提交）；**P0 无「包级完成未接线」尾巴**；剩最终冒烟（开播：弹幕+看直播+送礼+记忆）。
+
+## P0 全面自检（2026-11-02 19:45）
+
+- 全仓测试全绿；race 全过；fishd 七件套装配齐全；fishctl 命令齐全（status/tail/persona eval/memory/gift）。
+- **记忆提炼真实跑通**：`记忆提炼已启动` → `scanned 288 / extracted 7 / inserted 7 / skipped 281` → `memory_records` 7 条 preference。
+- **fishctl 修复验收**：`LoadForCLI` 跳过 live 校验（fishd 仍严格）；`fishctl memory stats` 真实输出 `{"counts":{"preference":7},"total":7}`；status 正常。
+- **静默检测真实工作**：status 输出「通道 live 已静默 ≥245 分钟（最后事件 2026-11-02 15:38）」。
+- 结论：**P0 代码层全绿**；剩最终冒烟（开播：看直播+送礼真跑）。
 - 结论：**0.13b-2 验收通过**（待提交）；**P0 剩真实冒烟**（需主人开播：弹幕+看直播+送礼）。
