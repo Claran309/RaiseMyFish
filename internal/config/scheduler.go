@@ -29,7 +29,7 @@ type Scheduler struct {
 
 // ChannelPolicy 是单通道的准入策略；ID 只来自可信配置，不从消息正文推断。
 //
-// ReplyOnlyMention 用指针区分「未写」与「显式 false」：live 通道未写时默认 true。
+// ReplyOnlyMention / ReplyMentionBack 用指针区分「未写」与「显式 false」：live 通道未写时默认 true。
 type ChannelPolicy struct {
 	Brain            string   `toml:"brain"`
 	RatePerMinute    float64  `toml:"rate_per_minute"`
@@ -39,6 +39,8 @@ type ChannelPolicy struct {
 	MinRunes         int      `toml:"min_runes"`
 	RepeatWindowMS   int      `toml:"repeat_window_ms"`
 	ReplyOnlyMention *bool    `toml:"reply_only_mention"`
+	ReplyMentionBack *bool    `toml:"reply_mention_back"`
+	MaxReplyRunes    int      `toml:"max_reply_runes"`
 	SelfNames        []string `toml:"self_names"`
 	OwnerIDs         []string `toml:"owner_ids"`
 	SelfIDs          []string `toml:"self_ids"`
@@ -53,6 +55,7 @@ const (
 	defaultRetryDelayMS       = 5000
 	defaultOperationTimeoutMS = 10000
 	defaultWorkerTimeoutMS    = 30000
+	defaultMaxReplyRunes      = 40
 )
 
 // DefaultScheduler 返回一份可直接使用的默认调度配置。
@@ -103,6 +106,14 @@ func (s *Scheduler) ApplyDefaults() {
 		if p.ReplyOnlyMention == nil && ch == event.ChLive {
 			enabled := true
 			p.ReplyOnlyMention = &enabled
+		}
+		// live 默认在被结构化 @ 时回带 @对方；长度上限按 B站弹幕 40 字兜底。
+		if p.ReplyMentionBack == nil && ch == event.ChLive {
+			enabled := true
+			p.ReplyMentionBack = &enabled
+		}
+		if p.MaxReplyRunes == 0 && ch == event.ChLive {
+			p.MaxReplyRunes = defaultMaxReplyRunes
 		}
 		for i, name := range p.SelfNames {
 			p.SelfNames[i] = strings.TrimSpace(name)
@@ -162,6 +173,12 @@ func (s *Scheduler) Validate() error {
 		}
 		if p.MinRunes < 0 || p.RepeatWindowMS < 0 {
 			return fmt.Errorf("通道 %s 的 min_runes/repeat_window_ms 不能为负", ch)
+		}
+		if p.MaxReplyRunes < 0 || p.MaxReplyRunes > defaultMaxReplyRunes {
+			return fmt.Errorf("通道 %s 的 max_reply_runes 需在1至%d之间", ch, defaultMaxReplyRunes)
+		}
+		if p.ReplyMentionBack != nil && *p.ReplyMentionBack && ch != event.ChLive {
+			return fmt.Errorf("通道 %s 不支持 reply_mention_back（只对 live 生效）", ch)
 		}
 		if p.ReplyOnlyMention != nil && *p.ReplyOnlyMention {
 			if ch != event.ChLive {

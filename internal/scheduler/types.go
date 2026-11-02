@@ -32,6 +32,8 @@ type ChannelPolicy struct {
 	MinRunes         int
 	RepeatWindow     time.Duration
 	ReplyOnlyMention bool
+	ReplyMentionBack bool
+	MaxReplyRunes    int
 	SelfNames        []string
 	OwnerIDs         []string
 	SelfIDs          []string
@@ -57,7 +59,7 @@ type Options struct {
 
 // DefaultOptions 使用单进程P0保守参数，调用New本身不会启用生产通道。
 func DefaultOptions() Options {
-	return Options{MaxConcurrent: 4, MaxPending: 100, ClaimBatch: 32, PollInterval: time.Second, RetryDelay: time.Second, OperationTimeout: 5 * time.Second, WorkerTimeout: 2 * time.Minute, Location: time.UTC, Channels: map[event.Channel]ChannelPolicy{event.ChLive: {Public: true, Brain: "openai", RatePerMinute: 6, Burst: 1, DailyQuota: 300, Cooldown: 15 * time.Second, MinRunes: 2, RepeatWindow: time.Minute}}}
+	return Options{MaxConcurrent: 4, MaxPending: 100, ClaimBatch: 32, PollInterval: time.Second, RetryDelay: time.Second, OperationTimeout: 5 * time.Second, WorkerTimeout: 2 * time.Minute, Location: time.UTC, Channels: map[event.Channel]ChannelPolicy{event.ChLive: {Public: true, Brain: "openai", RatePerMinute: 6, Burst: 1, DailyQuota: 300, Cooldown: 15 * time.Second, MinRunes: 2, RepeatWindow: time.Minute, ReplyMentionBack: true, MaxReplyRunes: 40}}}
 }
 
 // Work中generate有已有Task；verify无Task，不能借此创建生成任务。

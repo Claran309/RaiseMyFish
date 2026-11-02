@@ -63,8 +63,30 @@ func TestSchedulerDefaultsFilled(t *testing.T) {
 	if p.ReplyOnlyMention == nil || !*p.ReplyOnlyMention {
 		t.Errorf("live 未写 reply_only_mention 时应默认 true：%+v", p)
 	}
+	if p.ReplyMentionBack == nil || !*p.ReplyMentionBack {
+		t.Errorf("live 未写 reply_mention_back 时应默认 true：%+v", p)
+	}
+	if p.MaxReplyRunes != 40 {
+		t.Errorf("live 未写 max_reply_runes 时应默认 40，实际 %d", p.MaxReplyRunes)
+	}
 	if len(p.SelfNames) != 2 || p.SelfNames[0] != "大肥鱼" {
 		t.Errorf("self_names 解析错误：%+v", p.SelfNames)
+	}
+}
+
+// TestSchedulerMentionBackExplicitValues 显式关闭/自定义上限不被默认值覆盖。
+func TestSchedulerMentionBackExplicitValues(t *testing.T) {
+	body := "[scheduler.channels.live]\nbrain='default'\nrate_per_minute=6\nburst=1\ndaily_quota=10\nreply_mention_back=false\nmax_reply_runes=30\n"
+	cfg, err := loadWithScheduler(t, body)
+	if err != nil {
+		t.Fatalf("加载失败：%v", err)
+	}
+	p := cfg.Scheduler.Channels[event.ChLive]
+	if p.ReplyMentionBack == nil || *p.ReplyMentionBack {
+		t.Fatalf("显式 false 被覆盖：%+v", p.ReplyMentionBack)
+	}
+	if p.MaxReplyRunes != 30 {
+		t.Fatalf("显式 max_reply_runes 被覆盖：%d", p.MaxReplyRunes)
 	}
 }
 
@@ -125,6 +147,9 @@ func TestSchedulerValidationRejects(t *testing.T) {
 		{"mention缺名字", "[scheduler.channels.live]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nreply_only_mention = true\n", "self_names"},
 		{"mention名字含@", "[scheduler.channels.live]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nself_names = [\"@鱼\"]\n", "self_names"},
 		{"mention用于非live", "[scheduler.channels.comment]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nreply_only_mention = true\nself_names = [\"大肥鱼\"]\n", "reply_only_mention"},
+		{"mention回带用于非live", "[scheduler.channels.comment]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nreply_mention_back = true\n", "reply_mention_back"},
+		{"回复上限超40", "[scheduler.channels.live]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nmax_reply_runes = 41\n", "max_reply_runes"},
+		{"回复上限为负", "[scheduler.channels.live]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nmax_reply_runes = -1\n", "max_reply_runes"},
 	}
 
 	for _, tc := range cases {

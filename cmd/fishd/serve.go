@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/config"
@@ -57,6 +59,8 @@ func buildSchedulerOptions(c *config.Scheduler) scheduler.Options {
 			RepeatWindow:  time.Duration(p.RepeatWindowMS) * time.Millisecond,
 			// 指针只用于配置层区分「未写」；进入调度后就是确定的布尔策略。
 			ReplyOnlyMention: p.ReplyOnlyMention != nil && *p.ReplyOnlyMention,
+			ReplyMentionBack: p.ReplyMentionBack != nil && *p.ReplyMentionBack,
+			MaxReplyRunes:    p.MaxReplyRunes,
 			SelfNames:        p.SelfNames,
 			OwnerIDs:         p.OwnerIDs,
 			SelfIDs:          p.SelfIDs,
@@ -134,6 +138,51 @@ func brainStateSource(table *presence.Table, watch config.Watch) func(time.Time)
 	}
 }
 
+// maxLiveReplyRunes 是 B站弹幕的兜底上限；配置为 0 时使用。
+const maxLiveReplyRunes = 40
+
+// formatReplyText 给 live 回复加 @ 前缀并按 rune 截断；其他通道原样返回。
+//
+// 触发 @ 前缀的条件由 scheduler.MentionBackTarget 决定（live + 开关 + 结构化 @ 命中）。
+// 前缀 "@昵称 " 也计入 max_reply_runes；昵称本身过长导致没有正文字数时跳过前缀，
+// 避免发送一条只有 @ 的空弹幕。
+func formatReplyText(ev event.Event, text string, policy scheduler.ChannelPolicy) string {
+	if ev.Channel != event.ChLive {
+		return text
+	}
+	maxRunes := policy.MaxReplyRunes
+	if maxRunes <= 0 {
+		maxRunes = maxLiveReplyRunes
+	}
+	if target, ok := scheduler.MentionBackTarget(ev, policy); ok && !hasMentionPrefix(text) {
+		prefix := "@" + target + " "
+		if budget := maxRunes - utf8.RuneCountInString(prefix); budget > 0 {
+			return prefix + truncateRunes(text, budget)
+		}
+	}
+	return truncateRunes(text, maxRunes)
+}
+
+// hasMentionPrefix 判断正文是否已以 @/＠ 开头，避免重复加前缀。
+func hasMentionPrefix(text string) bool {
+	for _, r := range strings.TrimLeftFunc(text, unicode.IsSpace) {
+		return r == '@' || r == '＠'
+	}
+	return false
+}
+
+// truncateRunes 按 rune 截断，保证不会切坏 UTF-8。
+func truncateRunes(text string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit])
+}
+
 // buildConsumeWorkers 组装 Generate / Verify 两个 worker。
 //
 // 两个 handler 都必须**结清事件**再返回：scheduler 在 complete() 里用 ownSettlement 检查
@@ -142,7 +191,7 @@ func brainStateSource(table *presence.Table, watch config.Watch) func(time.Time)
 //
 // Generate / Deliver / Verify 三个 handler 都必须设置：scheduler.launch 按 claim 的 stage 分派，
 // 任一为 nil 都会在对应阶段裸奔调用。
-func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, pres *presence.Table, state func(time.Time) string, log *zap.Logger) (scheduler.Workers, error) {
+func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, pres *presence.Table, state func(time.Time) string, log *zap.Logger) (scheduler.Workers, error) {
 	if snd == nil {
 		return scheduler.Workers{}, errors.New("发送器不能为 nil")
 	}
@@ -233,7 +282,7 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 		}
 
 		// Scope 必须显式带上：sender.Reply.Validate 要求与事件通道/会话一致
-		res, err := snd.Send(ctx, w.Claim, sender.Reply{Text: reply.Text, Scope: scope})
+		res, err := snd.Send(ctx, w.Claim, sender.Reply{Text: formatReplyText(ev, reply.Text, live), Scope: scope})
 		if err != nil {
 			if settleErr := settleFailure(ctx, bus, w.Claim, err, []event.Status{event.StatusReplying}, retryDelay); settleErr != nil {
 				return scheduler.Result{}, errors.Join(err, settleErr)
@@ -524,7 +573,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, err
 	}
-	workers, err := buildConsumeWorkers(pack, byChannel, snd, bus, options.RetryDelay, memReader, know, pres, brainStateSource(pres, cfg.Watch), log)
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, pres, brainStateSource(pres, cfg.Watch), log)
 	if err != nil {
 		return nil, err
 	}

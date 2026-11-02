@@ -163,6 +163,57 @@ func TestMentionMatcher(t *testing.T) {
 	}
 }
 
+func TestMentionBackTarget(t *testing.T) {
+	policy := ChannelPolicy{ReplyMentionBack: true, SelfNames: []string{"大肥鱼"}, SelfIDs: []string{"3747574135655903"}}
+	base := claimFor("live:r:1", "r", "宝宝，摸摸你的尾巴", time.Now()).Event
+	base.FromName = "路人"
+
+	ev := base
+	ev.Meta = json.RawMessage(`{"reply_to_id":"3747574135655903","reply_to_name":"小黑"}`)
+	if got, ok := MentionBackTarget(ev, policy); !ok || got != "小黑" {
+		t.Errorf("结构化 ID 命中时应优先 reply_to_name，实际 (%q,%v)", got, ok)
+	}
+
+	ev = base
+	ev.Meta = json.RawMessage(`{"reply_to_name":"大肥鱼"}`)
+	if got, ok := MentionBackTarget(ev, policy); !ok || got != "路人" {
+		t.Errorf("reply_to_name 为空时应回落到 FromName，实际 (%q,%v)", got, ok)
+	}
+
+	ev = base
+	ev.FromName = ""
+	ev.Meta = json.RawMessage(`{"reply_to_id":"3747574135655903"}`)
+	if got, ok := MentionBackTarget(ev, policy); ok {
+		t.Errorf("空昵称不应加 @ 前缀，实际 (%q,%v)", got, ok)
+	}
+
+	ev = base
+	ev.Meta = json.RawMessage(`{"reply_to_id":"3706975560927413","reply_to_name":"别人"}`)
+	if _, ok := MentionBackTarget(ev, policy); ok {
+		t.Error("回复别人的弹幕不应触发 @ 回带")
+	}
+
+	ev = base
+	ev.Channel = event.ChComment
+	ev.Meta = json.RawMessage(`{"reply_to_id":"3747574135655903","reply_to_name":"小黑"}`)
+	if _, ok := MentionBackTarget(ev, policy); ok {
+		t.Error("@ 回带只应对 live 生效")
+	}
+
+	ev = base
+	ev.Meta = json.RawMessage(`{"reply_to_id":"3747574135655903","reply_to_name":"小\n黑"}`)
+	if _, ok := MentionBackTarget(ev, policy); ok {
+		t.Error("含控制字符的昵称不应触发 @ 回带")
+	}
+
+	policy.ReplyMentionBack = false
+	ev = base
+	ev.Meta = json.RawMessage(`{"reply_to_id":"3747574135655903","reply_to_name":"小黑"}`)
+	if _, ok := MentionBackTarget(ev, policy); ok {
+		t.Error("关闭 reply_mention_back 后不应触发")
+	}
+}
+
 func TestSchedulerReplyOnlyMentionSkipsBeforeAdmission(t *testing.T) {
 	s, b, r, clock := fixture(t)
 	live := s.policies[event.ChLive]

@@ -49,17 +49,28 @@ func containsMention(text string, names []string) bool {
 	return false
 }
 
+// replyMeta 是采集器写入的结构化回复目标；损坏的 Meta 按无目标处理。
+type replyMeta struct {
+	ReplyToID   string `json:"reply_to_id"`
+	ReplyToName string `json:"reply_to_name"`
+}
+
+func structuredReply(e event.Event) (replyMeta, bool) {
+	if len(e.Meta) == 0 {
+		return replyMeta{}, false
+	}
+	var meta replyMeta
+	if json.Unmarshal(e.Meta, &meta) != nil {
+		return replyMeta{}, false
+	}
+	return meta, true
+}
+
 // structuredMention 匹配 B站「回复/@」弹幕：正文可能没有 @，目标在 Meta 的结构化字段里。
 // UID 优先（不受改名影响）；名字只做完整名忽略大小写比较，避免子串误命中。
 func structuredMention(e event.Event, p ChannelPolicy) bool {
-	if len(e.Meta) == 0 {
-		return false
-	}
-	var meta struct {
-		ReplyToID   string `json:"reply_to_id"`
-		ReplyToName string `json:"reply_to_name"`
-	}
-	if json.Unmarshal(e.Meta, &meta) != nil {
+	meta, ok := structuredReply(e)
+	if !ok {
 		return false
 	}
 	if meta.ReplyToID != "" && inList(meta.ReplyToID, p.SelfIDs) {
@@ -76,6 +87,24 @@ func structuredMention(e event.Event, p ChannelPolicy) bool {
 		}
 	}
 	return false
+}
+
+// MentionBackTarget 返回 live 回复要 @ 的昵称。
+// 仅在 live、开启 ReplyMentionBack 且事件是结构化 @ 自己时生效；
+// 昵称优先 Meta.reply_to_name，缺失时回落到发送者 FromName；空昵称或含控制字符返回 false。
+func MentionBackTarget(e event.Event, p ChannelPolicy) (string, bool) {
+	if e.Channel != event.ChLive || !p.ReplyMentionBack || !structuredMention(e, p) {
+		return "", false
+	}
+	meta, _ := structuredReply(e)
+	name := strings.TrimSpace(meta.ReplyToName)
+	if name == "" {
+		name = strings.TrimSpace(e.FromName)
+	}
+	if name == "" || !utf8.ValidString(name) || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return "", false
+	}
+	return name, true
 }
 
 // mentionMiss 只对 live 生效：开启后未 @ 自己的弹幕在准入前跳过，不进入 LLM。
