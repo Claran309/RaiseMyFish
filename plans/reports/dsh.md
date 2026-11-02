@@ -617,3 +617,12 @@
   1. replying 单键（同通道并发先结束的协程会清掉仍在生成的状态）→ **接受**（P0 最小；引用计数留后续）
   2. Summary 未暴露到 fishctl status/HTTP → **接受**（本批规格内）
 - 结论：**0.13a 验收通过**（待提交）；**P0 剩 0.13b 送礼 → 真实冒烟收尾**。
+
+## 0.13b 送礼独立验收（2026-11-02 18:45）
+
+- 交付：`tools/bili-whale/gift.mjs`（移植 dsh-bili-whale@0.4.5，默认 dry-run、`--go` 才真送）+ 9 个 Node 测试 + `internal/gift/`（子进程封装/额度/失败分类）+ `[gift]` 配置（enabled=false、real=false）。
+- 独立执行：Node 9/9；Go 全 27 包绿；race 通过；覆盖率 gift 94.8%/config 92.4%；集成测试通过（dry-run + 5 个 Node 替身）。
+- 核对：三层默认 dry-run（配置/Go 默认/Node 无 --go）；真送需 enabled+real+cookie 且 `--go`；只 POST 一次；预检失败 retryable、POST 后失败 fatal。
+- **DSH 裁决**：额度仅进程内存（重启重置）→ **接受**（P0 最小；持久账本留后续）。
+- 真实送礼：**待主人开播**（当前直播间 live_status=0）；本鱼已确认礼物列表（100 gold=1 电池：晃悠悠 30244 等）。
+- 结论：**0.13b 验收通过**（待提交）；**P0 剩真实冒烟（弹幕+看直播+送礼）**。

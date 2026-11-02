@@ -95,6 +95,19 @@ ffprobe_path = "ffprobe"
 temp_dir = "" # 留空使用系统临时目录
 llm_route = "default"
 
+# 送礼（0.13b）：默认关闭且默认 dry-run——不读凭据、不调用平台API、不扣电池。
+# 只有 enabled=true 且 real=true 才会真实赠送；凭据只从 FISH_BILI_COOKIE/_FILE 读取。
+# daily_limit 按礼物数量计（不是次数），跨本地自然日重置；真实送礼要求 num <= daily_limit。
+[gift]
+enabled = false
+real = false
+gift_id = "31036" # 小花花：直购礼物，price=100（1电池）
+num = 1
+daily_limit = 1
+node_path = "node"
+script_path = "tools/bili-whale/gift.mjs"
+timeout_ms = 30000
+
 # 消费循环（Claim → Scheduler → Brain → Sender）。
 # 整段缺失表示「只采集不回复」；这里保留默认值，实际是否回复还取决于 [llm] enabled 与路由。
 [scheduler]

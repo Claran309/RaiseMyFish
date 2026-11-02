@@ -22,6 +22,7 @@ type Config struct {
 	LLM       LLM        `toml:"llm"`
 	Knowledge Knowledge  `toml:"knowledge"`
 	Watch     Watch      `toml:"watch"`
+	Gift      Gift       `toml:"gift"`
 	Collector Collectors `toml:"collector"`
 	// Scheduler 为 nil 表示「不接消费循环」，只采集。
 	Scheduler *Scheduler `toml:"scheduler"`
@@ -79,6 +80,7 @@ func Load(path, envPath string) (Config, error) {
 		LLM:       defaultLLM(),
 		Knowledge: defaultKnowledge(),
 		Watch:     defaultWatch(),
+		Gift:      defaultGift(),
 		Collector: Collectors{Live: defaultLiveCollector()},
 	}
 	if path != "" {
@@ -120,6 +122,7 @@ func Load(path, envPath string) (Config, error) {
 	cfg.LLM.resolveEnvironment(lookup)
 	cfg.Collector.Live.resolveEnvironment(lookup, cfg.Channels.Live.Enabled)
 	cfg.Watch.resolveEnvironment(lookup, cfg.Watch.Enabled)
+	cfg.Gift.resolveEnvironment(lookup, cfg.Gift.Enabled)
 	if err := cfg.Validate(); err != nil {
 		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
 	}
@@ -160,6 +163,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Watch.Validate(); err != nil {
+		return err
+	}
+	if err := c.Gift.Validate(); err != nil {
 		return err
 	}
 	if err := c.LLM.Validate(); err != nil {

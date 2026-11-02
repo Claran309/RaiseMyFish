@@ -56,3 +56,57 @@ node --test tools/bili-whale/protocol.test.mjs
 测试使用合成包、可注入 fetch/WS、临时测试凭据文件和虚拟时钟，不连接真实平台。覆盖稳定 ID/大整数、分帧粘包、压缩和资源上限、凭据来源/泄露、目标限制、认证、自过滤/重复消息、常驻连接、握手/心跳超时、关闭/错误、取消与输出背压。
 
 本轮没有真实平台监听/长连接验证；实际房间是否持续提供可用稳定 ID、平台节点行为和离线漏消息情况需后续独立验证。WS 不补回进程离线期间的弹幕，不声称已达到全 Phase 0 的两小时与离线不漏门槛。
+
+---
+
+# 送礼移植说明（0.13b）
+
+源文件仍是 `dsh-bili-whale@0.4.5` 的一部分，MIT，Copyright (c) 2026 ALTERSSSS；完整许可证见同目录 [LICENSE](LICENSE)。
+
+- 本机源路径：`C:/Users/Claran/.dsh/profiles/desktop/node_modules/dsh-bili-whale/tools/commands/gift.mjs`
+- 源文件 SHA-256：`36269f19346b396115cde1ed78b4fbd7e74650e92f3a0399785bd105a0208831`
+- 移植日期：2026-11-02。
+- 移植入口：`tools/bili-whale/gift.mjs`（当前 SHA-256：`a5591a959a940ee1e53718325fdcdcf31eeb7d81162e9e89ae681c6ac0cd79ac`）。
+
+保留上游的礼物面板直购校验（`bag_gift=0`）、价格上限 `price <= 100`（1 电池）、`sendGoldMultiUser` 表单字段与 `code=0` 判定；礼物固定按 ID 选择，不再按「小花花 / 人气票」名称白名单。删除 DSH 凭据文件、房间/礼物白名单、本地账本、宿主日志与交互确认；凭据只从 `FISH_BILI_COOKIE` / `FISH_BILI_COOKIE_FILE` 读取。每日限额改由 Go 父进程在内存中计数（按礼物数量），Node 脚本本身不持久化状态。
+
+## 运行与参数
+
+```powershell
+node tools/bili-whale/gift.mjs --room 123 --gift-id 31036 --num 1
+```
+
+| 参数 | 必填 | 含义 |
+|---|---|---|
+| `--room` | 是 | 直播间房间号（十进制） |
+| `--gift-id` | 是 | 礼物 ID（十进制） |
+| `--num` | 是 | 数量，1..100 |
+| `--dry-run` | 否 | 默认行为；只输出将发送的帧，不读凭据、不发 HTTP |
+| `--go` | 否 | 显式真实送礼；与 `--dry-run` 互斥 |
+
+默认 dry-run 是安全要求；Go 侧只有配置 `[gift] real=true` 才会传 `--go`。
+
+## stdout 协议
+
+只写一行 JSON，`protocol: 1`；stderr 始终为空，平台原始报文、Cookie 与 CSRF 不进入输出。
+
+| type | 字段 |
+|---|---|
+| `sent` | `protocol`、`type`、`gift_id`、`num` |
+| `error` | `protocol`、`type`、`kind`（`retryable` / `fatal`）、`message` |
+
+- 参数/凭据/直购/价格/登录态失败为 `fatal`，不 POST。
+- 房间、礼物面板、nav 的网络、超时、5xx、坏 JSON 为 `retryable`，未 POST。
+- POST 一旦发出，网络异常、超时、5xx、坏 JSON、非零 `code` 全部为 `fatal`，避免对可能已扣费的请求自动重试。
+- 退出码：成功 `0`，可重试错误 `1`，不可重试错误 `2`。
+
+## 离线验证与限制
+
+```powershell
+node --test tools/bili-whale/gift.test.mjs
+go test ./internal/gift/
+```
+
+Node 测试用注入的 fetch、合成房间/礼物面板/登录响应与临时环境凭据，不连接真实平台，也不发出真实 POST。Go 测试用测试二进制充当 Node 替身，覆盖环境隔离、超时/取消、JSONL 严格解析、额度预占/释放与并发上限。
+
+本轮未做真实送礼（按派发单要求），真送链路需主人在验收时显式开启 `[gift] enabled=true, real=true` 并单独验证；平台也可能调整礼物面板字段或风控参数，届时以实际返回为准。
