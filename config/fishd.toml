@@ -108,7 +108,8 @@ llm_route = "default"
 [proactive]
 enabled = false
 interval_seconds = 20
-max_per_hour = 6
+send_gap_seconds = 30 # 两次主动发送的最小间隔；间隔内跳过（reason=gap）
+max_per_hour = 60 # 20s 间隔 = 理论 180/小时；上限 60 兜底防刷屏
 min_change_percent = 5
 
 # 送礼（0.13b）：默认关闭且默认 dry-run——不读凭据、不调用平台API、不扣电池。
@@ -154,5 +155,8 @@ daily_quota = 200
 cooldown_ms = 10000
 min_runes = 2
 # 只回复 @ 鱼的弹幕；未 @ 的在 schedule 阶段直接 skipped，不调 LLM。
+# B站回复/@弹幕正文可能没有 @，采集器会把 reply_mid/reply_uname 写入事件 Meta，
+# 这里用 self_ids（最可靠，不受改名影响）与 self_names 共同匹配。
 reply_only_mention = true
 self_names = ["大肥鱼", "Claranの大肥鱼"]
+self_ids = ["3747574135655903"]

@@ -3,6 +3,7 @@ package scheduler
 import (
 	"container/heap"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -129,9 +130,27 @@ func TestMentionMatcher(t *testing.T) {
 		}
 	}
 	live := claimFor("live:r:1", "r", "今天天气不错", time.Now())
-	policy := ChannelPolicy{ReplyOnlyMention: true, SelfNames: names}
+	policy := ChannelPolicy{ReplyOnlyMention: true, SelfNames: names, SelfIDs: []string{"3747574135655903"}}
 	if !mentionMiss(live.Event, policy) {
 		t.Error("live 未 @ 应命中过滤")
+	}
+	// 真实B站回复/@弹幕：正文没有 @，目标只在 Meta 的结构化字段里。
+	structured := live.Event
+	structured.Meta = json.RawMessage(`{"reply_to_id":"3747574135655903","reply_to_name":"Claranの大肥鱼"}`)
+	if mentionMiss(structured, policy) {
+		t.Error("结构化回复目标UID命中时不应过滤")
+	}
+	structured.Meta = json.RawMessage(`{"reply_to_name":"大肥鱼"}`)
+	if mentionMiss(structured, policy) {
+		t.Error("结构化回复目标名字命中时不应过滤")
+	}
+	structured.Meta = json.RawMessage(`{"reply_to_id":"3706975560927413","reply_to_name":"不吃白饭的大肥鱼459"}`)
+	if !mentionMiss(structured, policy) {
+		t.Error("回复别人的弹幕不应命中")
+	}
+	structured.Meta = json.RawMessage(`not-json`)
+	if !mentionMiss(structured, policy) {
+		t.Error("损坏的 Meta 不应命中")
 	}
 	comment := live.Event
 	comment.Channel = event.ChComment
@@ -149,15 +168,18 @@ func TestSchedulerReplyOnlyMentionSkipsBeforeAdmission(t *testing.T) {
 	live := s.policies[event.ChLive]
 	live.ReplyOnlyMention = true
 	live.SelfNames = []string{"大肥鱼"}
+	live.SelfIDs = []string{"3747574135655903"}
 	s.policies[event.ChComment] = &policyState{
 		ChannelPolicy: ChannelPolicy{Public: true, Brain: "openai", RatePerMinute: 60, Burst: 10, DailyQuota: 100, MinRunes: 2},
 		limiter:       rate.NewLimiter(rate.Limit(1), 10),
 	}
 	hit := claimFor("live:r:hit", "r", "@大肥鱼 在吗", clock.Now())
+	structured := claimFor("live:s:hit", "s", "宝宝，摸摸你的尾巴[dog]", clock.Now())
+	structured.Event.Meta = json.RawMessage(`{"reply_to_id":"3747574135655903","reply_to_name":"Claranの大肥鱼"}`)
 	miss := claimFor("live:x:miss", "x", "今天天气真不错", clock.Now())
 	comment := claimFor("comment:c:1", "c", "普通评论", clock.Now())
 	comment.Event.Channel = event.ChComment
-	b.add(hit, miss, comment)
+	b.add(hit, structured, miss, comment)
 	if err := s.cycle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -165,12 +187,13 @@ func TestSchedulerReplyOnlyMentionSkipsBeforeAdmission(t *testing.T) {
 		t.Fatal("未 @ 的 live 弹幕未在准入前跳过")
 	}
 	admitted := strings.Join(r.admitted, ",")
-	if !strings.Contains(admitted, hit.Event.ID) || !strings.Contains(admitted, comment.Event.ID) {
-		t.Fatalf("@命中或其他通道被误拦：%v", r.admitted)
+	if !strings.Contains(admitted, hit.Event.ID) || !strings.Contains(admitted, structured.Event.ID) || !strings.Contains(admitted, comment.Event.ID) {
+		t.Fatalf("@命中、结构化回复命中或其他通道被误拦：%v", r.admitted)
 	}
 	if strings.Contains(admitted, miss.Event.ID) {
 		t.Fatal("未 @ 的弹幕进入了 Admit")
 	}
+	drainDone(t, s)
 	drainDone(t, s)
 	drainDone(t, s)
 }

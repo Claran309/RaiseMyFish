@@ -114,15 +114,50 @@ func TestRunnerSendsOnFirstFrame(t *testing.T) {
 	}
 }
 
+func TestRunnerSkipsWithinSendGap(t *testing.T) {
+	snapshot := &fakeSnapshotter{paths: []string{frameFile(t, 0), frameFile(t, 255), frameFile(t, 128)}}
+	describer := &fakeDescriber{texts: []string{"第一条", "第二条"}}
+	snd := &fakeProactiveSender{result: sender.Result{OK: true, Verified: true}}
+	runner := testRunner(t, snapshot, describer, snd, 6, 5)
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	runner.now = func() time.Time { return now }
+
+	if result, err := runner.RunOnce(context.Background()); err != nil || !result.Sent {
+		t.Fatalf("首帧应发送：%+v err=%v", result, err)
+	}
+	now = now.Add(10 * time.Second)
+	result, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Sent || result.Reason != ReasonGap {
+		t.Fatalf("30秒内第二次发送应跳过且 reason=gap：%+v", result)
+	}
+	if snapshot.calls != 1 || describer.calls != 1 || len(snd.texts) != 1 {
+		t.Fatalf("间隔内不应截帧/读帧/发送：snapshot=%d describer=%d sent=%v", snapshot.calls, describer.calls, snd.texts)
+	}
+	now = now.Add(20 * time.Second) // 距上次发送恰好30秒
+	result, err = runner.RunOnce(context.Background())
+	if err != nil || !result.Sent {
+		t.Fatalf("满30秒应恢复发送：%+v err=%v", result, err)
+	}
+	if len(snd.texts) != 2 || snd.texts[1] != "第二条" {
+		t.Fatalf("恢复后发送内容不符：%v", snd.texts)
+	}
+}
+
 func TestRunnerSkipsUnchangedFrame(t *testing.T) {
 	snapshot := &fakeSnapshotter{paths: []string{frameFile(t, 0), frameFile(t, 0)}}
 	describer := &fakeDescriber{texts: []string{"第一条"}}
 	snd := &fakeProactiveSender{result: sender.Result{OK: true, Verified: true}}
 	runner := testRunner(t, snapshot, describer, snd, 6, 5)
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	runner.now = func() time.Time { return now }
 
 	if result, err := runner.RunOnce(context.Background()); err != nil || !result.Sent {
 		t.Fatalf("首帧应发送：%+v err=%v", result, err)
 	}
+	now = now.Add(30 * time.Second)
 	result, err := runner.RunOnce(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -140,10 +175,13 @@ func TestRunnerSkipsSimilarText(t *testing.T) {
 	describer := &fakeDescriber{texts: []string{"鱼鱼好可爱", "鱼鱼好可爱！"}}
 	snd := &fakeProactiveSender{result: sender.Result{OK: true, Verified: true}}
 	runner := testRunner(t, snapshot, describer, snd, 6, 5)
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	runner.now = func() time.Time { return now }
 
 	if _, err := runner.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	now = now.Add(30 * time.Second)
 	result, err := runner.RunOnce(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -161,10 +199,13 @@ func TestRunnerSkipsOverLimit(t *testing.T) {
 	describer := &fakeDescriber{texts: []string{"第一条"}}
 	snd := &fakeProactiveSender{result: sender.Result{OK: true, Verified: true}}
 	runner := testRunner(t, snapshot, describer, snd, 1, 5)
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	runner.now = func() time.Time { return now }
 
 	if _, err := runner.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	now = now.Add(30 * time.Second)
 	result, err := runner.RunOnce(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -213,5 +254,18 @@ func TestNewRunnerRejectsInvalidOptions(t *testing.T) {
 	}
 	if _, err := New(snapshot, describer, snd, Options{MaxPerHour: 6, MinChangePercent: 101}); err == nil {
 		t.Error("min_change_percent 非法应报错")
+	}
+	if _, err := New(snapshot, describer, snd, Options{MaxPerHour: 6, SendGap: -time.Second}); err == nil {
+		t.Error("负的 send_gap 应报错")
+	}
+	if _, err := New(snapshot, describer, snd, Options{MaxPerHour: 6, SendGap: time.Hour + time.Second}); err == nil {
+		t.Error("超上限的 send_gap 应报错")
+	}
+	runner, err := New(snapshot, describer, snd, Options{MaxPerHour: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.limiter.gap != DefaultSendGap {
+		t.Fatalf("未配置 send_gap 时应使用默认30秒：%v", runner.limiter.gap)
 	}
 }

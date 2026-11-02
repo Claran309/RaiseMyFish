@@ -33,6 +33,50 @@ test('平台稳定ID/时间与大整数保留，不回放nonce或拼接内容ID'
   assert.equal(normalizeMessage(info(), '99', '8').msg_id, normalizeMessage(info(), '99', '8').msg_id)
 })
 
+test('回复/@弹幕从extra提取结构化目标且不改写正文', () => {
+  // 真实抓帧形状：cmd仍是DANMU_MSG，info[1]没有@，目标只在extra里。
+  const replied = info('platform-id-reply', '7', '宝宝，摸摸你的尾巴[dog]')
+  replied.info[0][15].extra = JSON.stringify({
+    id_str: 'platform-id-reply',
+    reply_mid: 3706975560927413,
+    reply_uname: '不吃白饭的大肥鱼459',
+    reply_uinfo: { uid: 3706975560927413, base: { name: '不吃白饭的大肥鱼459' } },
+    show_reply: true,
+    reply_type_enum: 1,
+  })
+  const hit = normalizeMessage(replied, '99', '8')
+  assert.equal(hit.text, '宝宝，摸摸你的尾巴[dog]')
+  assert.equal(hit.reply_to_id, '3706975560927413')
+  assert.equal(hit.reply_to_name, '不吃白饭的大肥鱼459')
+
+  const big = info('platform-id-big')
+  big.info[0][15].extra = '{"id_str":"platform-id-big","reply_mid":900719925474099312345,"reply_uname":"鱼"}'
+  assert.equal(normalizeMessage(big, '99', '8').reply_to_id, '900719925474099312345')
+
+  const fallback = info('platform-id-fallback')
+  fallback.info[0][15].extra = JSON.stringify({ id_str: 'platform-id-fallback', reply_mid: 42, reply_uinfo: { base: { name: '  大鱼  ' } } })
+  const nameOnly = normalizeMessage(fallback, '99', '8')
+  assert.equal(nameOnly.reply_to_id, '42')
+  assert.equal(nameOnly.reply_to_name, '大鱼')
+
+  for (const extra of [
+    { id_str: 'platform-id-empty', reply_mid: 0, reply_uname: '' },
+    { id_str: 'platform-id-bad', reply_mid: [7], reply_uname: true },
+    { id_str: 'platform-id-space', reply_uname: '   ' },
+    { id_str: 'platform-id-long', reply_uname: 'x'.repeat(129) },
+    { id_str: 'platform-id-control', reply_uname: 'line\nbreak' },
+    { id_str: 'platform-id-surrogate', reply_uname: '\ud800' },
+  ]) {
+    const message = info()
+    message.info[0][15].extra = JSON.stringify(extra)
+    const result = normalizeMessage(message, '99', '8')
+    assert.equal(result.msg_id, extra.id_str)
+    assert.equal(result.text, '你好鱼鱼')
+    assert.equal(result.reply_to_id, undefined)
+    assert.equal(result.reply_to_name, undefined)
+  }
+})
+
 test('分帧/粘包、zlib/brotli与长度上限', () => {
   const inner = packet(5, JSON.stringify(info()))
   for (const [version, compress] of [[2, zlib.deflateSync], [3, zlib.brotliCompressSync]]) {

@@ -23,6 +23,7 @@ const (
 	MaxDanmakuRunes         = 15
 	DefaultMaxPerHour       = 6
 	DefaultMinChangePercent = 5
+	DefaultSendGap          = 30 * time.Second
 	recentLimit             = 20
 )
 
@@ -31,6 +32,7 @@ const (
 	ReasonNoChange = "no_change"
 	ReasonSimilar  = "similar"
 	ReasonLimited  = "limited"
+	ReasonGap      = "gap"
 )
 
 // Snapshotter 截取当前直播画面，返回本次临时文件路径；调用方负责删除。
@@ -52,6 +54,7 @@ type Sender interface {
 type Options struct {
 	MaxPerHour       int
 	MinChangePercent float64
+	SendGap          time.Duration
 	Prompt           string
 	Logger           *zap.Logger
 	Now              func() time.Time
@@ -89,6 +92,13 @@ func New(snapshot Snapshotter, describer Describer, snd Sender, opts Options) (*
 	if math.IsNaN(opts.MinChangePercent) || math.IsInf(opts.MinChangePercent, 0) || opts.MinChangePercent < 0 || opts.MinChangePercent > 100 {
 		return nil, errors.New("主动弹幕 min_change_percent 必须在0至100之间")
 	}
+	gap := opts.SendGap
+	if gap == 0 {
+		gap = DefaultSendGap
+	}
+	if gap < 0 || gap > time.Hour {
+		return nil, errors.New("主动弹幕 send_gap 必须在0至3600秒之间")
+	}
 	prompt := opts.Prompt
 	if prompt == "" {
 		prompt = DefaultPrompt
@@ -109,7 +119,7 @@ func New(snapshot Snapshotter, describer Describer, snd Sender, opts Options) (*
 		now:       now,
 		minChange: opts.MinChangePercent,
 		prompt:    prompt,
-		limiter:   newLimiter(opts.MaxPerHour, time.Hour),
+		limiter:   newLimiter(opts.MaxPerHour, time.Hour, gap),
 		recent:    newRecent(recentLimit),
 	}, nil
 }
@@ -122,8 +132,8 @@ func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	if !r.limiter.Allow(r.now()) {
-		return Result{Reason: ReasonLimited}, r.skip(ReasonLimited, 0)
+	if reason := r.limiter.Check(r.now()); reason != "" {
+		return Result{Reason: reason}, r.skip(reason, 0)
 	}
 
 	path, err := r.snapshot.Snapshot(ctx)

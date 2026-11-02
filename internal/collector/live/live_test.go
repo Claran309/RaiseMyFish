@@ -48,6 +48,43 @@ func TestNormalizeStableIdentityAndSafety(t *testing.T) {
 	}
 }
 
+func TestNormalizeStructuredReplyMention(t *testing.T) {
+	frame := wireFrame{Protocol: 1, Type: "event", RoomID: "99", MsgID: "reply-1", FromID: "7", FromName: "布衣哒", Text: "宝宝，摸摸你的尾巴[dog]", ReplyToID: "3706975560927413", ReplyToName: "不吃白饭的大肥鱼459", At: "2026-11-01T08:00:00Z"}
+	ev, keep, err := normalize(frame, "99", "8")
+	if err != nil || !keep {
+		t.Fatal("结构化回复帧被拒绝", err)
+	}
+	if ev.Text != frame.Text {
+		t.Fatal("解析回复目标时改写了正文")
+	}
+	var meta struct {
+		ReplyToID   string `json:"reply_to_id"`
+		ReplyToName string `json:"reply_to_name"`
+	}
+	if err := json.Unmarshal(ev.Meta, &meta); err != nil || meta.ReplyToID != frame.ReplyToID || meta.ReplyToName != frame.ReplyToName {
+		t.Fatalf("结构化回复目标未入库：%+v err=%v", meta, err)
+	}
+	onlyName := frame
+	onlyName.ReplyToID = ""
+	onlyName.ReplyToName = " 大肥鱼 "
+	ev, keep, err = normalize(onlyName, "99", "8")
+	if err != nil || !keep || !strings.Contains(string(ev.Meta), `"reply_to_name":"大肥鱼"`) || strings.Contains(string(ev.Meta), `"reply_to_id"`) {
+		t.Fatalf("仅名字的回复目标处理错误：%s err=%v", ev.Meta, err)
+	}
+	for _, mutate := range []func(*wireFrame){
+		func(f *wireFrame) { f.ReplyToID = "bad:id" },
+		func(f *wireFrame) { f.ReplyToID = "0" },
+		func(f *wireFrame) { f.ReplyToName = "line\nbreak" },
+		func(f *wireFrame) { f.ReplyToName = strings.Repeat("鱼", 129) },
+	} {
+		bad := frame
+		mutate(&bad)
+		if _, _, err := normalize(bad, "99", "8"); err == nil {
+			t.Fatal("非法结构化回复目标未拒绝")
+		}
+	}
+}
+
 func helperOptions() Options {
 	o := DefaultOptions()
 	o.RoomID = "1"
@@ -96,6 +133,12 @@ func TestLiveChildHelper(t *testing.T) {
 		os.Exit(11)
 	}
 	fmt.Println(`{"protocol":1,"type":"ready","room_id":"99","self_id":"8"}`)
+	if mode == "reply" {
+		data, _ := json.Marshal(wireFrame{Protocol: 1, Type: "event", RoomID: "99", MsgID: "reply", FromID: "7", FromName: "观众", Text: "宝宝，摸摸你的尾巴[dog]", ReplyToID: "3747574135655903", ReplyToName: "Claranの大肥鱼", At: "2026-11-01T08:00:00Z"})
+		fmt.Println(string(data))
+		time.Sleep(10 * time.Second)
+		os.Exit(0)
+	}
 	if mode == "long" {
 		data, _ := json.Marshal(wireFrame{Protocol: 1, Type: "event", RoomID: "99", MsgID: "long", FromID: "7", FromName: "观众", Text: strings.Repeat("a", 600000), At: "2026-11-01T08:00:00Z"})
 		fmt.Println(string(data))
@@ -148,6 +191,40 @@ func TestProcessMessagesHealthAndCancellation(t *testing.T) {
 	}
 	if c.Health().OK {
 		t.Fatal("退出仍显示健康")
+	}
+}
+
+func TestProcessStructuredReplyFrame(t *testing.T) {
+	c := newHelper(t, "reply")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan event.Event, 1)
+	errc := make(chan error, 4)
+	finished := make(chan error, 1)
+	go func() { finished <- c.Start(ctx, out, errc) }()
+	select {
+	case ev := <-out:
+		var meta struct {
+			ReplyToID   string `json:"reply_to_id"`
+			ReplyToName string `json:"reply_to_name"`
+		}
+		if err := json.Unmarshal(ev.Meta, &meta); err != nil || meta.ReplyToID != "3747574135655903" || meta.ReplyToName != "Claranの大肥鱼" {
+			cancel()
+			t.Fatalf("子进程协议的结构化回复未进入Meta：%+v err=%v", meta, err)
+		}
+		if ev.Text != "宝宝，摸摸你的尾巴[dog]" {
+			cancel()
+			t.Fatalf("正文被改写：%q", ev.Text)
+		}
+		cancel()
+		if err := <-finished; err != nil {
+			t.Fatal(err)
+		}
+	case err := <-finished:
+		t.Fatal("子进程提前退出", err)
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("未收到结构化回复事件")
 	}
 }
 

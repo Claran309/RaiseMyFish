@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"strings"
 	"time"
 	"unicode"
@@ -48,9 +49,38 @@ func containsMention(text string, names []string) bool {
 	return false
 }
 
+// structuredMention 匹配 B站「回复/@」弹幕：正文可能没有 @，目标在 Meta 的结构化字段里。
+// UID 优先（不受改名影响）；名字只做完整名忽略大小写比较，避免子串误命中。
+func structuredMention(e event.Event, p ChannelPolicy) bool {
+	if len(e.Meta) == 0 {
+		return false
+	}
+	var meta struct {
+		ReplyToID   string `json:"reply_to_id"`
+		ReplyToName string `json:"reply_to_name"`
+	}
+	if json.Unmarshal(e.Meta, &meta) != nil {
+		return false
+	}
+	if meta.ReplyToID != "" && inList(meta.ReplyToID, p.SelfIDs) {
+		return true
+	}
+	name := strings.TrimSpace(meta.ReplyToName)
+	if name == "" {
+		return false
+	}
+	for _, self := range p.SelfNames {
+		self = strings.TrimSpace(self)
+		if self != "" && strings.EqualFold(name, self) {
+			return true
+		}
+	}
+	return false
+}
+
 // mentionMiss 只对 live 生效：开启后未 @ 自己的弹幕在准入前跳过，不进入 LLM。
 func mentionMiss(e event.Event, p ChannelPolicy) bool {
-	return e.Channel == event.ChLive && p.ReplyOnlyMention && !containsMention(e.Text, p.SelfNames)
+	return e.Channel == event.ChLive && p.ReplyOnlyMention && !containsMention(e.Text, p.SelfNames) && !structuredMention(e, p)
 }
 
 func noiseReason(e event.Event, p ChannelPolicy) string {

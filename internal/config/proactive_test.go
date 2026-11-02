@@ -30,18 +30,18 @@ func TestProactiveDefaultsOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Proactive.Enabled || cfg.Proactive.IntervalSeconds != 20 || cfg.Proactive.MaxPerHour != 6 || cfg.Proactive.MinChangePercent != 5 {
+	if cfg.Proactive.Enabled || cfg.Proactive.IntervalSeconds != 20 || cfg.Proactive.SendGapSeconds != 30 || cfg.Proactive.MaxPerHour != 6 || cfg.Proactive.MinChangePercent != 5 {
 		t.Fatalf("主动弹幕默认值不符：%+v", cfg.Proactive)
 	}
 }
 
 func TestProactiveEnabledResolvesWatchStream(t *testing.T) {
-	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = true\ninterval_seconds = 30\nmax_per_hour = 8\nmin_change_percent = 7.5\n"
+	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = true\ninterval_seconds = 30\nsend_gap_seconds = 45\nmax_per_hour = 8\nmin_change_percent = 7.5\n"
 	cfg, err := loadProactive(t, body)
 	if err != nil {
 		t.Fatalf("合法主动弹幕配置被拒绝：%v", err)
 	}
-	if !cfg.Proactive.Enabled || cfg.Proactive.IntervalSeconds != 30 || cfg.Proactive.MaxPerHour != 8 || cfg.Proactive.MinChangePercent != 7.5 {
+	if !cfg.Proactive.Enabled || cfg.Proactive.IntervalSeconds != 30 || cfg.Proactive.SendGapSeconds != 45 || cfg.Proactive.MaxPerHour != 8 || cfg.Proactive.MinChangePercent != 7.5 {
 		t.Fatalf("主动弹幕显式值未生效：%+v", cfg.Proactive)
 	}
 	// [watch] 未启用，但主动弹幕复用同一套截帧配置，凭据仍需解析。
@@ -68,6 +68,8 @@ func TestProactiveValidationRejects(t *testing.T) {
 	}{
 		{"间隔过短", "\n[proactive]\nenabled = true\ninterval_seconds = 4\n"},
 		{"间隔过长", "\n[proactive]\nenabled = true\ninterval_seconds = 3601\n"},
+		{"发送间隔为0", "\n[proactive]\nenabled = true\nsend_gap_seconds = 0\n"},
+		{"发送间隔过长", "\n[proactive]\nenabled = true\nsend_gap_seconds = 3601\n"},
 		{"每小时为0", "\n[proactive]\nenabled = true\nmax_per_hour = 0\n"},
 		{"每小时超限", "\n[proactive]\nenabled = true\nmax_per_hour = 61\n"},
 		{"变化阈值为负", "\n[proactive]\nenabled = true\nmin_change_percent = -1\n"},
@@ -84,7 +86,7 @@ func TestProactiveValidationRejects(t *testing.T) {
 }
 
 func TestProactiveDisabledIgnoresInvalidRange(t *testing.T) {
-	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = false\ninterval_seconds = 1\nmax_per_hour = 0\n"
+	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = false\ninterval_seconds = 1\nsend_gap_seconds = 0\nmax_per_hour = 0\n"
 	cfg, err := loadProactive(t, body)
 	if err != nil {
 		t.Fatalf("关闭状态不应校验运行参数：%v", err)

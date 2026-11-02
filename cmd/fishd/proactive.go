@@ -67,6 +67,7 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, logger 
 	return proactive.New(recorder, describer, psender, proactive.Options{
 		MaxPerHour:       cfg.Proactive.MaxPerHour,
 		MinChangePercent: cfg.Proactive.MinChangePercent,
+		SendGap:          time.Duration(cfg.Proactive.SendGapSeconds) * time.Second,
 		Logger:           logger,
 	})
 }
@@ -127,6 +128,7 @@ func startProactive(ctx context.Context, cfg config.Config, resources *infra.Res
 	logger.Info("主动弹幕已启动",
 		zap.String("action", "proactive"),
 		zap.Int("interval_seconds", cfg.Proactive.IntervalSeconds),
+		zap.Int("send_gap_seconds", cfg.Proactive.SendGapSeconds),
 		zap.Int("max_per_hour", cfg.Proactive.MaxPerHour),
 		zap.Float64("min_change_percent", cfg.Proactive.MinChangePercent),
 	)

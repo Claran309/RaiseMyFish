@@ -93,6 +93,22 @@ function stableID(value) {
   return /^[A-Za-z0-9_-]{1,128}$/.test(String(value ?? '')) ? String(value) : null
 }
 
+// B站回复/@仍是DANMU_MSG，正文未必带「@名字」；回复目标在 extra 的结构化字段里。
+// 只提取可信的目标，异常值按「没有回复目标」处理，不影响弹幕本身入库。
+function replyTarget(extra) {
+  if (!extra || typeof extra !== 'object') return {}
+  const target = {}
+  const id = decimalID(extra.reply_mid)
+  if (id) target.reply_to_id = id
+  let name = extra.reply_uname
+  if (typeof name !== 'string' || name.trim() === '') name = extra.reply_uinfo?.base?.name
+  if (typeof name !== 'string') return target
+  name = name.trim()
+  if (name === '' || [...name].length > 128 || /[\u0000-\u001f\u007f]/.test(name) || !name.isWellFormed()) return target
+  target.reply_to_name = name
+  return target
+}
+
 export function normalizeMessage(message, room, selfId) {
   if (!/^DANMU_MSG(?::|$)/.test(String(message?.cmd ?? ''))) return null
   const info = message.info
@@ -112,7 +128,7 @@ export function normalizeMessage(message, room, selfId) {
   const date = new Date(timestamp)
   if (!Number.isSafeInteger(timestamp) || !Number.isFinite(date.getTime())) throw failure('missing_timestamp')
   if (typeof info?.[1] !== 'string' || typeof info?.[2]?.[1] !== 'string') throw failure('invalid_message')
-  return { room_id: room, msg_id: id, from_id: uid, from_name: info[2][1], text: info[1], at: date.toISOString() }
+  return { room_id: room, msg_id: id, from_id: uid, from_name: info[2][1], text: info[1], at: date.toISOString(), ...replyTarget(extra) }
 }
 
 export function wbiQuery(room, raw, seconds = Math.round(Date.now() / 1000)) {
