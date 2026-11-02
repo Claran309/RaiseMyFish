@@ -39,7 +39,9 @@ type ContextInput struct {
 	Memory    memory.Context
 	Shared    memory.SharedState
 	Knowledge *knowledge.Context
-	Tools     []Tool
+	// State 是当前状态摘要（如正在看谁的直播）；空表示不注入 prompt。
+	State string
+	Tools []Tool
 }
 
 // Reply 不包含原始prompt或模型凭据。

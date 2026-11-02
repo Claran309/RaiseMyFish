@@ -28,7 +28,7 @@ type Watch struct {
 }
 
 var watchEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-var watchRoomPattern = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
+var watchRoomPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
 
 func defaultWatch() Watch {
 	return Watch{
@@ -54,7 +54,7 @@ func (w *Watch) resolveEnvironment(lookup func(string) (string, bool), enabled b
 
 // validateIdentity 校验状态注入字段；即使看直播关闭也要校验，因为它们会进入 Brain prompt。
 func (w Watch) validateIdentity() error {
-	if w.CurrentRoom != "" && !watchRoomPattern.MatchString(w.CurrentRoom) {
+	if w.CurrentRoom != "" && (!watchRoomPattern.MatchString(w.CurrentRoom) || strings.Trim(w.CurrentRoom, "0") == "") {
 		return errors.New("看直播 current_room 必须是1至20位数字房间号")
 	}
 	name := strings.TrimSpace(w.StreamerName)

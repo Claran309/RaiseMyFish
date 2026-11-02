@@ -77,6 +77,60 @@ func resolveRoutes(policies map[event.Channel]scheduler.ChannelPolicy, routes ma
 	return byChannel, nil
 }
 
+// validBrainRoom 只接受数字房间号，避免把事件里的异常会话值原样写进 prompt。
+func validBrainRoom(room string) bool {
+	if len(room) == 0 || len(room) > 20 {
+		return false
+	}
+	for _, r := range room {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return strings.Trim(room, "0") != ""
+}
+
+// brainState 生成注入 Brain 的当前状态摘要。
+// Presence 的实时 watching 优先；没有 watching 时用 [watch] 配置兜底。
+func brainState(active []presence.State, watch config.Watch) string {
+	room, name := strings.TrimSpace(watch.CurrentRoom), strings.TrimSpace(watch.StreamerName)
+	watchingRoom := ""
+	// Active 按 Since 升序；同一时刻只保留一个房间，取最新的一条。
+	for i := len(active) - 1; i >= 0; i-- {
+		if active[i].Kind != presence.KindWatching {
+			continue
+		}
+		if detail := strings.TrimSpace(active[i].Detail); validBrainRoom(detail) {
+			watchingRoom = detail
+			break
+		}
+	}
+	if watchingRoom != "" {
+		// 配置的主播名只在房间匹配（或未配置房间）时使用，避免串台。
+		if name != "" && (room == "" || room == watchingRoom) {
+			return fmt.Sprintf("你正在看%s（房间 %s）的直播，你在她弹幕区发弹幕", name, watchingRoom)
+		}
+		return fmt.Sprintf("你正在看房间 %s 的直播，你在其弹幕区发弹幕", watchingRoom)
+	}
+	if room == "" {
+		return ""
+	}
+	if name != "" {
+		return fmt.Sprintf("你正在看%s（房间 %s）的直播", name, room)
+	}
+	return fmt.Sprintf("你正在看房间 %s 的直播", room)
+}
+
+// brainStateSource 返回按时间读取 Presence 的状态摘要函数；table 为空时只用配置兜底。
+func brainStateSource(table *presence.Table, watch config.Watch) func(time.Time) string {
+	return func(now time.Time) string {
+		if table == nil {
+			return brainState(nil, watch)
+		}
+		return brainState(table.Active(now), watch)
+	}
+}
+
 // buildConsumeWorkers 组装 Generate / Verify 两个 worker。
 //
 // 两个 handler 都必须**结清事件**再返回：scheduler 在 complete() 里用 ownSettlement 检查
@@ -85,7 +139,7 @@ func resolveRoutes(policies map[event.Channel]scheduler.ChannelPolicy, routes ma
 //
 // Generate / Deliver / Verify 三个 handler 都必须设置：scheduler.launch 按 claim 的 stage 分派，
 // 任一为 nil 都会在对应阶段裸奔调用。
-func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, pres *presence.Table, log *zap.Logger) (scheduler.Workers, error) {
+func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, pres *presence.Table, state func(time.Time) string, log *zap.Logger) (scheduler.Workers, error) {
 	if snd == nil {
 		return scheduler.Workers{}, errors.New("发送器不能为 nil")
 	}
@@ -148,12 +202,17 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 			knowCtx = recallKnowledge(ctx, know, ev, log)
 		}
 
+		stateText := ""
+		if state != nil {
+			stateText = state(time.Now())
+		}
 		input := brain.ContextInput{
 			Event:     ev,
 			Persona:   pack,
 			Memory:    memCtx,
 			Shared:    shared,
 			Knowledge: knowCtx,
+			State:     stateText,
 		}
 		task := brain.Task{ID: w.Task.ID, EventID: w.Task.EventID, Channel: w.Task.Channel, Session: w.Task.Session}
 
@@ -395,7 +454,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, err
 	}
-	workers, err := buildConsumeWorkers(pack, byChannel, snd, bus, options.RetryDelay, memReader, know, pres, log)
+	workers, err := buildConsumeWorkers(pack, byChannel, snd, bus, options.RetryDelay, memReader, know, pres, brainStateSource(pres, cfg.Watch), log)
 	if err != nil {
 		return nil, err
 	}

@@ -103,6 +103,61 @@ func TestBaselineSceneAssemblyDataCannotForgeInstructionSections(t *testing.T) {
 	}
 }
 
+func TestStateInjectedIntoPrompt(t *testing.T) {
+	_, in := fixture()
+	in.State = "你正在看娇娇（房间 1992099976）的直播，你在她弹幕区发弹幕"
+	messages, err := buildMessages(context.Background(), in, 32768)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("消息数量 = %d，期望 2", len(messages))
+	}
+	user := messages[1].Content
+	if strings.Count(user, "[当前状态]") != 1 || !strings.Contains(user, in.State) {
+		t.Fatalf("状态摘要未注入 user prompt：%q", user)
+	}
+	// 状态行位于资料与当前事件之间，模型能先看到「自己在干什么」。
+	start := strings.Index(user, "[当前状态]")
+	if start < strings.Index(user, "</context>") || start > strings.Index(user, "<event>") {
+		t.Fatal("状态行位置不在 context 与 event 之间")
+	}
+	if strings.Contains(messages[0].Content, "娇娇") {
+		t.Fatal("动态状态不应进入静态 system prompt")
+	}
+}
+
+func TestEmptyStateOmitsPromptLine(t *testing.T) {
+	for _, state := range []string{"", "   "} {
+		_, in := fixture()
+		in.State = state
+		messages, err := buildMessages(context.Background(), in, 32768)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(messages[1].Content, "[当前状态]") {
+			t.Fatalf("空状态不应注入 prompt：state=%q", state)
+		}
+	}
+}
+
+func TestStateIncludedOnKnowledgePath(t *testing.T) {
+	_, in := fixture()
+	in.State = "你在看娇娇（房间 1992099976）的直播"
+	in = withKnowledge(in, knowledgeItem("k1", "主播资料"))
+	messages, err := buildMessages(context.Background(), in, 32768)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := messages[1].Content
+	if !strings.Contains(user, "[当前状态] "+in.State) {
+		t.Fatal("知识路径丢失状态摘要")
+	}
+	if !strings.Contains(user, "主播资料") {
+		t.Fatal("知识路径丢失知识条目")
+	}
+}
+
 func TestBaselineSceneAssemblyBudgetRetainsInstructionAndInput(t *testing.T) {
 	_, in := fixture()
 	in.Persona.Contexts["live"] = strings.Repeat("场景须完整保留", 20)

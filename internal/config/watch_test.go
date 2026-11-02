@@ -53,6 +53,42 @@ func TestWatchDefaultsOff(t *testing.T) {
 	if cfg.Watch.Cookie != "" {
 		t.Fatal("未启用时不应解析凭据")
 	}
+	if cfg.Watch.CurrentRoom != "" || cfg.Watch.StreamerName != "" {
+		t.Fatalf("状态注入默认应为空：%+v", cfg.Watch)
+	}
+}
+
+func TestWatchIdentityConfig(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	cfg, err := loadWatchConfig(t, "[watch]\ncurrent_room = \"1992099976\"\nstreamer_name = \"娇娇\"\n")
+	if err != nil {
+		t.Fatalf("合法状态注入配置被拒绝：%v", err)
+	}
+	if cfg.Watch.CurrentRoom != "1992099976" || cfg.Watch.StreamerName != "娇娇" {
+		t.Fatalf("状态注入配置未生效：%+v", cfg.Watch)
+	}
+}
+
+func TestWatchIdentityConfigValidation(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"房间非数字", "[watch]\ncurrent_room = \"room-1\"\n"},
+		{"房间全零", "[watch]\ncurrent_room = \"000\"\n"},
+		{"房间过长", "[watch]\ncurrent_room = \"123456789012345678901\"\n"},
+		{"主播名含换行", "[watch]\nstreamer_name = \"娇\\n娇\"\n"},
+		{"主播名含标签", "[watch]\nstreamer_name = \"<娇娇>\"\n"},
+		{"主播名过长", "[watch]\nstreamer_name = \"" + strings.Repeat("鱼", 33) + "\"\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := loadWatchConfig(t, tc.body); err == nil {
+				t.Fatal("非法状态注入配置未被拒绝")
+			}
+		})
+	}
 }
 
 func TestWatchEnabledResolvesCookiePrivately(t *testing.T) {
