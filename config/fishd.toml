@@ -80,6 +80,21 @@ enabled = false
 dir = "personas/dafeiyu/knowledge"
 budget_percent = 10
 
+# 看直播（0.12 MVP）：录一段 → 抽帧 → 视觉描述 + ASR 转写；默认关闭。
+# 启用需同时启用 [llm]，并从 cookie_env 指向的环境变量读取 B站凭据。
+[watch]
+enabled = false
+source = "stream"
+seconds = 10
+frames = 4
+asr_url = "http://127.0.0.1:8077/v1/audio/transcriptions"
+stream_quality = "origin" # origin/bluray/ultra/high/smooth
+cookie_env = "FISH_BILI_COOKIE"
+ffmpeg_path = "ffmpeg"
+ffprobe_path = "ffprobe"
+temp_dir = "" # 留空使用系统临时目录
+llm_route = "default"
+
 # 消费循环（Claim → Scheduler → Brain → Sender）。
 # 整段缺失表示「只采集不回复」；这里保留默认值，实际是否回复还取决于 [llm] enabled 与路由。
 [scheduler]

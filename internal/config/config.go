@@ -21,6 +21,7 @@ type Config struct {
 	Channels  Channels   `toml:"channels"`
 	LLM       LLM        `toml:"llm"`
 	Knowledge Knowledge  `toml:"knowledge"`
+	Watch     Watch      `toml:"watch"`
 	Collector Collectors `toml:"collector"`
 	// Scheduler 为 nil 表示「不接消费循环」，只采集。
 	Scheduler *Scheduler `toml:"scheduler"`
@@ -77,6 +78,7 @@ func Load(path, envPath string) (Config, error) {
 		Runtime:   Runtime{StateFile: "data/fishd-status.json", HeartbeatSeconds: 5, StaleSeconds: 20},
 		LLM:       defaultLLM(),
 		Knowledge: defaultKnowledge(),
+		Watch:     defaultWatch(),
 		Collector: Collectors{Live: defaultLiveCollector()},
 	}
 	if path != "" {
@@ -117,6 +119,7 @@ func Load(path, envPath string) (Config, error) {
 	}
 	cfg.LLM.resolveEnvironment(lookup)
 	cfg.Collector.Live.resolveEnvironment(lookup, cfg.Channels.Live.Enabled)
+	cfg.Watch.resolveEnvironment(lookup, cfg.Watch.Enabled)
 	if err := cfg.Validate(); err != nil {
 		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
 	}
@@ -156,5 +159,19 @@ func (c Config) Validate() error {
 	if err := c.Sender.Validate(); err != nil {
 		return err
 	}
-	return c.LLM.Validate()
+	if err := c.Watch.Validate(); err != nil {
+		return err
+	}
+	if err := c.LLM.Validate(); err != nil {
+		return err
+	}
+	if c.Watch.Enabled {
+		if !c.LLM.Enabled {
+			return errors.New("看直播启用需要先启用LLM")
+		}
+		if _, _, _, err := c.LLM.Resolve(c.Watch.LLMRoute); err != nil {
+			return errors.New("看直播的视觉模型路由不可用")
+		}
+	}
+	return nil
 }

@@ -598,3 +598,12 @@
 - 3 条 unknown_manual：无外部证据（本地无回执、B站 gethistory 只留最近 10 条覆盖不到凌晨），**按规则永久保留 unknown，不补写**。
 - **DSH 裁决**：dev.ps1 重写**验收通过**（已验证项）；未验证项如实记录；unknown 保留**接受**。
 - 结论：**0.11 收尾验收通过**（待提交）；**P0 剩 0.12/0.13/Presence**。
+
+## 0.12 看直播独立验收（2026-11-02 17:25）
+
+- 交付：`internal/watch/`（Recorder/Framer/Describer/Transcriber/Pipeline/亮度检测）+ `[watch]` 配置；8 测试 + 1000 行。
+- 独立执行：25 包全绿；watch/config 测试通过；race 通过；vet 无告警；覆盖率 84.2%/91.9%。
+- **DSH 核出并修复的契约错误**：Qoder 假定 ASR 是 `POST /transcribe`，实际本机服务是 OpenAI 兼容 `POST /v1/audio/transcriptions`（multipart file/model/language/response_format，响应 `{"text"}`）——已修复并加「仅返回 transcript 视为不兼容」用例。
+- 核对：失败降级 7 类（录制/抽帧/亮度/视觉/无音轨/ASR/ctx 取消）不阻塞弹幕闭环；cookie 脱敏；配置校验（asr_url 本机 HTTP、路由存在、llm 启用）。
+- 未做（交接声明）：未接入 cmd/fishd（周期触发留 0.13）、未真实冒烟（留验收时）、model/language/response_format 未做成配置项。
+- 结论：**0.12 验收通过**（待提交）；**真实冒烟待主人开播 + ASR 服务**。
