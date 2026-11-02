@@ -13,6 +13,7 @@ import (
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 type testTimer struct{ stopped atomic.Bool }
@@ -107,6 +108,89 @@ func TestFiveGatesRulesAndPriority(t *testing.T) {
 	if priority(ev, policy) != 2 {
 		t.Fatal("普通优先级错误")
 	}
+}
+
+func TestMentionMatcher(t *testing.T) {
+	names := []string{"大肥鱼", "Claranの大肥鱼"}
+	for _, test := range []struct {
+		text string
+		want bool
+	}{
+		{"你好 @大肥鱼", true},
+		{"你好＠大肥鱼", true},
+		{"@ 大肥鱼 在吗", true},
+		{"@Claranの大肥鱼 在吗", true},
+		{"@claranの大肥鱼 在吗", true},
+		{"大肥鱼你好", false},
+		{"@别人 你好", false},
+	} {
+		if got := containsMention(test.text, names); got != test.want {
+			t.Errorf("containsMention(%q)=%v，期望 %v", test.text, got, test.want)
+		}
+	}
+	live := claimFor("live:r:1", "r", "今天天气不错", time.Now())
+	policy := ChannelPolicy{ReplyOnlyMention: true, SelfNames: names}
+	if !mentionMiss(live.Event, policy) {
+		t.Error("live 未 @ 应命中过滤")
+	}
+	comment := live.Event
+	comment.Channel = event.ChComment
+	if mentionMiss(comment, policy) {
+		t.Error("mention 过滤不应影响其他通道")
+	}
+	policy.ReplyOnlyMention = false
+	if mentionMiss(live.Event, policy) {
+		t.Error("关闭配置后不应过滤")
+	}
+}
+
+func TestSchedulerReplyOnlyMentionSkipsBeforeAdmission(t *testing.T) {
+	s, b, r, clock := fixture(t)
+	live := s.policies[event.ChLive]
+	live.ReplyOnlyMention = true
+	live.SelfNames = []string{"大肥鱼"}
+	s.policies[event.ChComment] = &policyState{
+		ChannelPolicy: ChannelPolicy{Public: true, Brain: "openai", RatePerMinute: 60, Burst: 10, DailyQuota: 100, MinRunes: 2},
+		limiter:       rate.NewLimiter(rate.Limit(1), 10),
+	}
+	hit := claimFor("live:r:hit", "r", "@大肥鱼 在吗", clock.Now())
+	miss := claimFor("live:x:miss", "x", "今天天气真不错", clock.Now())
+	comment := claimFor("comment:c:1", "c", "普通评论", clock.Now())
+	comment.Event.Channel = event.ChComment
+	b.add(hit, miss, comment)
+	if err := s.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if b.marked(miss.Event.ID) != event.StatusSkipped {
+		t.Fatal("未 @ 的 live 弹幕未在准入前跳过")
+	}
+	admitted := strings.Join(r.admitted, ",")
+	if !strings.Contains(admitted, hit.Event.ID) || !strings.Contains(admitted, comment.Event.ID) {
+		t.Fatalf("@命中或其他通道被误拦：%v", r.admitted)
+	}
+	if strings.Contains(admitted, miss.Event.ID) {
+		t.Fatal("未 @ 的弹幕进入了 Admit")
+	}
+	drainDone(t, s)
+	drainDone(t, s)
+}
+
+func TestSchedulerReplyOnlyMentionCanBeDisabled(t *testing.T) {
+	s, b, r, clock := fixture(t)
+	p := s.policies[event.ChLive]
+	p.ReplyOnlyMention = false
+	p.SelfNames = []string{"大肥鱼"}
+	a := claimFor("live:a:1", "a", "今天天气不错", clock.Now())
+	c := claimFor("live:c:1", "c", "还没有 @", clock.Now())
+	b.add(a, c)
+	if err := s.cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.admitted) != 2 {
+		t.Fatalf("关闭 mention 过滤后应全部准入：%v", r.admitted)
+	}
+	drainDone(t, s)
+	drainDone(t, s)
 }
 
 func TestPriorityHeapStable(t *testing.T) {

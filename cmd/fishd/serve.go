@@ -55,8 +55,11 @@ func buildSchedulerOptions(c *config.Scheduler) scheduler.Options {
 			Cooldown:      time.Duration(p.CooldownMS) * time.Millisecond,
 			MinRunes:      p.MinRunes,
 			RepeatWindow:  time.Duration(p.RepeatWindowMS) * time.Millisecond,
-			OwnerIDs:      p.OwnerIDs,
-			SelfIDs:       p.SelfIDs,
+			// 指针只用于配置层区分「未写」；进入调度后就是确定的布尔策略。
+			ReplyOnlyMention: p.ReplyOnlyMention != nil && *p.ReplyOnlyMention,
+			SelfNames:        p.SelfNames,
+			OwnerIDs:         p.OwnerIDs,
+			SelfIDs:          p.SelfIDs,
 		}
 	}
 	return o

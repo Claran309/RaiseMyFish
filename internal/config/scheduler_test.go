@@ -30,6 +30,7 @@ brain = "default"
 rate_per_minute = 6
 burst = 2
 daily_quota = 200
+self_names = ["大肥鱼", "Claranの大肥鱼"]
 `
 
 // TestSchedulerDefaultsFilled 段内省略的字段用默认值补齐。
@@ -58,6 +59,25 @@ func TestSchedulerDefaultsFilled(t *testing.T) {
 	}
 	if p.MinRunes != 2 {
 		t.Errorf("min_runes 默认应为 2，实际 %d", p.MinRunes)
+	}
+	if p.ReplyOnlyMention == nil || !*p.ReplyOnlyMention {
+		t.Errorf("live 未写 reply_only_mention 时应默认 true：%+v", p)
+	}
+	if len(p.SelfNames) != 2 || p.SelfNames[0] != "大肥鱼" {
+		t.Errorf("self_names 解析错误：%+v", p.SelfNames)
+	}
+}
+
+// TestSchedulerReplyOnlyMentionExplicitFalse 显式关闭后不再要求 self_names。
+func TestSchedulerReplyOnlyMentionExplicitFalse(t *testing.T) {
+	body := "[scheduler.channels.live]\nbrain='default'\nrate_per_minute=6\nburst=1\ndaily_quota=10\nreply_only_mention=false\n"
+	cfg, err := loadWithScheduler(t, body)
+	if err != nil {
+		t.Fatalf("显式关闭不应要求 self_names：%v", err)
+	}
+	p := cfg.Scheduler.Channels[event.ChLive]
+	if p.ReplyOnlyMention == nil || *p.ReplyOnlyMention {
+		t.Fatalf("显式 false 被覆盖：%+v", p.ReplyOnlyMention)
 	}
 }
 
@@ -102,6 +122,9 @@ func TestSchedulerValidationRejects(t *testing.T) {
 		{"burst 为 0", "[scheduler.channels.live]\nbrain = \"default\"\nrate_per_minute = 6\ndaily_quota = 10\n", "burst"},
 		{"quota 为 0", "[scheduler.channels.live]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\n", "daily_quota"},
 		{"未知通道", "[scheduler.channels.telegram]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\n", "通道"},
+		{"mention缺名字", "[scheduler.channels.live]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nreply_only_mention = true\n", "self_names"},
+		{"mention名字含@", "[scheduler.channels.live]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nself_names = [\"@鱼\"]\n", "self_names"},
+		{"mention用于非live", "[scheduler.channels.comment]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nreply_only_mention = true\nself_names = [\"大肥鱼\"]\n", "reply_only_mention"},
 	}
 
 	for _, tc := range cases {

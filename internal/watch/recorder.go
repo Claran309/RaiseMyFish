@@ -21,6 +21,8 @@ const (
 	maxPlayInfoBytes   = 2 << 20
 	// 录制在目标秒数之外多给的收尾时间；超时由 ctx 终止 ffmpeg。
 	recordGraceSeconds = 30
+	// 主动弹幕只截一帧；直播流首包可能较慢，仍由 ctx 强制收敛。
+	snapshotTimeout = 15 * time.Second
 )
 
 var streamRoomID = regexp.MustCompile(`^[0-9]{1,128}$`)
@@ -147,6 +149,48 @@ func (r *StreamRecorder) Record(ctx context.Context, seconds int) (string, error
 	if err != nil || info.Size() == 0 {
 		os.Remove(path)
 		return "", errors.New("录制直播流失败：输出文件为空")
+	}
+	return path, nil
+}
+
+// Snapshot 从当前直播流抽 1 张 JPG，返回临时文件路径；调用方负责删除。
+// 与 Record 复用同一套地址解析和 ffmpeg 参数，任何一步失败都不返回占位文件。
+func (r *StreamRecorder) Snapshot(ctx context.Context) (string, error) {
+	streamURL, err := r.streamURL(ctx)
+	if err != nil {
+		return "", err
+	}
+	file, err := os.CreateTemp(r.tempDir, "fish-proactive-*.jpg")
+	if err != nil {
+		return "", fmt.Errorf("创建截帧临时文件失败：%w", err)
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("创建截帧临时文件失败：%w", err)
+	}
+	headers := "Cookie: " + r.cookie + "\r\n" +
+		"Referer: https://live.bilibili.com/" + r.roomID + "\r\n" +
+		"User-Agent: " + watchUserAgent
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-headers", headers,
+		"-i", streamURL,
+		"-frames:v", "1",
+		"-vf", "scale=960:-2",
+		"-q:v", "2",
+		path,
+	}
+	snapCtx, cancel := context.WithTimeout(ctx, snapshotTimeout)
+	defer cancel()
+	if _, err := r.cmd.Run(snapCtx, r.ffmpegPath, args...); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("截取直播画面失败：%w", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Size() == 0 {
+		os.Remove(path)
+		return "", errors.New("截取直播画面失败：输出文件为空")
 	}
 	return path, nil
 }

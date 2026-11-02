@@ -88,6 +88,7 @@ func New(bus event.Bus, repo store.SchedulerRepo, o Options, workers Workers, lo
 		if p.MinRunes == 0 {
 			p.MinRunes = 2
 		}
+		p.SelfNames = append([]string(nil), p.SelfNames...)
 		p.OwnerIDs = append([]string(nil), p.OwnerIDs...)
 		p.SelfIDs = append([]string(nil), p.SelfIDs...)
 		p.BotIDs = append([]string(nil), p.BotIDs...)
@@ -309,7 +310,9 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 	}
 	now := s.clock.Now()
 	if c.Stage == event.StageSchedule {
-		if noiseReason(c.Event, policy.ChannelPolicy) != "" || s.repeats[repetition(c.Event)].After(now) {
+		// 未 @ 鱼的 live 弹幕在准入前跳过：这是唯一合法的 queued→skipped 阶段，
+		// 放在这里也保证不进 Admit、不生成 Task、不调用模型。
+		if noiseReason(c.Event, policy.ChannelPolicy) != "" || mentionMiss(c.Event, policy.ChannelPolicy) || s.repeats[repetition(c.Event)].After(now) {
 			return s.skip(ctx, c)
 		}
 	}

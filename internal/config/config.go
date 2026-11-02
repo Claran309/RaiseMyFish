@@ -22,6 +22,7 @@ type Config struct {
 	LLM       LLM        `toml:"llm"`
 	Knowledge Knowledge  `toml:"knowledge"`
 	Watch     Watch      `toml:"watch"`
+	Proactive Proactive  `toml:"proactive"`
 	Gift      Gift       `toml:"gift"`
 	Memory    Memory     `toml:"memory"`
 	Collector Collectors `toml:"collector"`
@@ -93,6 +94,7 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 		LLM:       defaultLLM(),
 		Knowledge: defaultKnowledge(),
 		Watch:     defaultWatch(),
+		Proactive: defaultProactive(),
 		Gift:      defaultGift(),
 		Memory:    defaultMemory(),
 		Collector: Collectors{Live: defaultLiveCollector()},
@@ -135,7 +137,8 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 	}
 	cfg.LLM.resolveEnvironment(lookup)
 	cfg.Collector.Live.resolveEnvironment(lookup, cfg.Channels.Live.Enabled)
-	cfg.Watch.resolveEnvironment(lookup, cfg.Watch.Enabled)
+	// 主动弹幕复用看直播的截帧与视觉模型，因此也需要解析同一份凭据。
+	cfg.Watch.resolveEnvironment(lookup, cfg.Watch.Enabled || cfg.Proactive.Enabled)
 	cfg.Gift.resolveEnvironment(lookup, cfg.Gift.Enabled)
 	if err := cfg.validate(strictLive); err != nil {
 		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
@@ -184,6 +187,9 @@ func (c Config) validate(strictLive bool) error {
 	if err := c.Watch.Validate(); err != nil {
 		return err
 	}
+	if err := c.Proactive.Validate(); err != nil {
+		return err
+	}
 	if err := c.Gift.Validate(); err != nil {
 		return err
 	}
@@ -199,6 +205,24 @@ func (c Config) validate(strictLive bool) error {
 		}
 		if _, _, _, err := c.LLM.Resolve(c.Watch.LLMRoute); err != nil {
 			return errors.New("看直播的视觉模型路由不可用")
+		}
+	}
+	if c.Proactive.Enabled {
+		if !c.LLM.Enabled {
+			return errors.New("主动弹幕启用需要先启用LLM")
+		}
+		if _, _, _, err := c.LLM.Resolve(c.Watch.LLMRoute); err != nil {
+			return errors.New("主动弹幕的视觉模型路由不可用")
+		}
+		if !c.Channels.Live.Enabled {
+			return errors.New("主动弹幕启用需要开启live采集")
+		}
+		if c.Sender == nil {
+			return errors.New("主动弹幕启用需要配置[sender]")
+		}
+		// 截帧与看直播复用同一套流地址/清晰度/ffmpeg/凭据配置。
+		if err := c.Watch.validateStream(); err != nil {
+			return err
 		}
 	}
 	return nil

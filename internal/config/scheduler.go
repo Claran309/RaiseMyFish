@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode/utf8"
 
 	"RaiseMyFish/internal/event"
 )
@@ -27,16 +28,20 @@ type Scheduler struct {
 }
 
 // ChannelPolicy 是单通道的准入策略；ID 只来自可信配置，不从消息正文推断。
+//
+// ReplyOnlyMention 用指针区分「未写」与「显式 false」：live 通道未写时默认 true。
 type ChannelPolicy struct {
-	Brain          string   `toml:"brain"`
-	RatePerMinute  float64  `toml:"rate_per_minute"`
-	Burst          int      `toml:"burst"`
-	DailyQuota     int      `toml:"daily_quota"`
-	CooldownMS     int      `toml:"cooldown_ms"`
-	MinRunes       int      `toml:"min_runes"`
-	RepeatWindowMS int      `toml:"repeat_window_ms"`
-	OwnerIDs       []string `toml:"owner_ids"`
-	SelfIDs        []string `toml:"self_ids"`
+	Brain            string   `toml:"brain"`
+	RatePerMinute    float64  `toml:"rate_per_minute"`
+	Burst            int      `toml:"burst"`
+	DailyQuota       int      `toml:"daily_quota"`
+	CooldownMS       int      `toml:"cooldown_ms"`
+	MinRunes         int      `toml:"min_runes"`
+	RepeatWindowMS   int      `toml:"repeat_window_ms"`
+	ReplyOnlyMention *bool    `toml:"reply_only_mention"`
+	SelfNames        []string `toml:"self_names"`
+	OwnerIDs         []string `toml:"owner_ids"`
+	SelfIDs          []string `toml:"self_ids"`
 }
 
 // 消费循环默认值（派发单 §1）。
@@ -94,6 +99,14 @@ func (s *Scheduler) ApplyDefaults() {
 		if p.MinRunes == 0 {
 			p.MinRunes = 2
 		}
+		// live 默认只回 @ 鱼的弹幕；显式 false 才保持全量回复。
+		if p.ReplyOnlyMention == nil && ch == event.ChLive {
+			enabled := true
+			p.ReplyOnlyMention = &enabled
+		}
+		for i, name := range p.SelfNames {
+			p.SelfNames[i] = strings.TrimSpace(name)
+		}
 		s.Channels[ch] = p
 	}
 }
@@ -149,6 +162,19 @@ func (s *Scheduler) Validate() error {
 		}
 		if p.MinRunes < 0 || p.RepeatWindowMS < 0 {
 			return fmt.Errorf("通道 %s 的 min_runes/repeat_window_ms 不能为负", ch)
+		}
+		if p.ReplyOnlyMention != nil && *p.ReplyOnlyMention {
+			if ch != event.ChLive {
+				return fmt.Errorf("通道 %s 不支持 reply_only_mention（只对 live 生效）", ch)
+			}
+			if len(p.SelfNames) == 0 {
+				return errors.New("live 通道开启 reply_only_mention 时必须配置 self_names")
+			}
+			for _, name := range p.SelfNames {
+				if name == "" || utf8.RuneCountInString(name) > 32 || strings.ContainsAny(name, "\r\n\x00@＠") {
+					return errors.New("live 通道的 self_names 必须为非空短名，且不能含控制字符或 @")
+				}
+			}
 		}
 	}
 	return nil

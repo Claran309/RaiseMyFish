@@ -25,6 +25,34 @@ func inList(value string, list []string) bool {
 	}
 	return false
 }
+
+// containsMention 匹配 @名字：兼容全角＠、@ 后空白，名字忽略 ASCII 大小写。
+// 不做后缀边界判断，避免「@大肥鱼在吗」这类连写被漏掉。
+func containsMention(text string, names []string) bool {
+	for i, r := range text {
+		if r != '@' && r != '＠' {
+			continue
+		}
+		rest := strings.TrimLeftFunc(text[i+utf8.RuneLen(r):], unicode.IsSpace)
+		if rest == "" {
+			continue
+		}
+		lower := strings.ToLower(rest)
+		for _, name := range names {
+			name = strings.TrimSpace(name)
+			if name != "" && strings.HasPrefix(lower, strings.ToLower(name)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// mentionMiss 只对 live 生效：开启后未 @ 自己的弹幕在准入前跳过，不进入 LLM。
+func mentionMiss(e event.Event, p ChannelPolicy) bool {
+	return e.Channel == event.ChLive && p.ReplyOnlyMention && !containsMention(e.Text, p.SelfNames)
+}
+
 func noiseReason(e event.Event, p ChannelPolicy) string {
 	if inList(e.FromID, p.SelfIDs) {
 		return "self"

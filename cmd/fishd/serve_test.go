@@ -296,7 +296,7 @@ func TestBuildSchedulerOptionsMapping(t *testing.T) {
 		MaxConcurrent: 6, MaxPending: 60, ClaimBatch: 5,
 		PollIntervalMS: 200, RetryDelayMS: 3000, OperationTimeoutMS: 8000, WorkerTimeoutMS: 20000,
 		Channels: map[event.Channel]config.ChannelPolicy{
-			event.ChLive: {Brain: "default", RatePerMinute: 6, Burst: 2, DailyQuota: 200, CooldownMS: 10000, MinRunes: 2, RepeatWindowMS: 60000, OwnerIDs: []string{"42"}, SelfIDs: []string{"7"}},
+			event.ChLive: {Brain: "default", RatePerMinute: 6, Burst: 2, DailyQuota: 200, CooldownMS: 10000, MinRunes: 2, RepeatWindowMS: 60000, ReplyOnlyMention: boolPtr(true), SelfNames: []string{"大肥鱼"}, OwnerIDs: []string{"42"}, SelfIDs: []string{"7"}},
 			event.ChDM:   {Brain: "default", RatePerMinute: 1, Burst: 1, DailyQuota: 5},
 		},
 	}
@@ -319,6 +319,9 @@ func TestBuildSchedulerOptionsMapping(t *testing.T) {
 	}
 	if len(live.OwnerIDs) != 1 || len(live.SelfIDs) != 1 {
 		t.Errorf("ID 列表未透传：%+v", live)
+	}
+	if !live.ReplyOnlyMention || len(live.SelfNames) != 1 || live.SelfNames[0] != "大肥鱼" {
+		t.Errorf("mention 策略未透传：%+v", live)
 	}
 	dm := o.Channels[event.ChDM]
 	if dm.Public || !dm.Private {
@@ -1357,3 +1360,5 @@ func TestGeneratePresenceSkipsSendingWhenNotOK(t *testing.T) {
 		t.Errorf("OK=false 时不应记 sending：%+v", got)
 	}
 }
+
+func boolPtr(v bool) *bool { return &v }

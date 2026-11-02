@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -63,6 +64,30 @@ func TestStreamRecorderFetchesPlayURLAndRecords(t *testing.T) {
 	}
 	if !strings.Contains(args, "Cookie: SESSDATA=test") {
 		t.Fatal("ffmpeg未带凭据")
+	}
+}
+
+func TestStreamRecorderSnapshot(t *testing.T) {
+	recorder, commander := newTestRecorder(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, playInfoFixture)
+	})
+	path, err := recorder.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(path) })
+	if !fileExists(path) {
+		t.Fatal("截帧文件未生成")
+	}
+	if commander.count("ffmpeg") != 1 {
+		t.Fatal("未调用ffmpeg截帧")
+	}
+	args := strings.Join(commander.calls[0].Args, " ")
+	if !strings.Contains(args, "-frames:v 1") || !strings.Contains(args, "scale=960:-2") {
+		t.Fatalf("ffmpeg参数缺少截帧要素：%s", args)
+	}
+	if !strings.Contains(args, "Cookie: SESSDATA=test") {
+		t.Fatal("截帧未带凭据")
 	}
 }
 

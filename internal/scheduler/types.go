@@ -22,21 +22,23 @@ func (systemClock) AfterFunc(d time.Duration, f func()) Timer { return time.Afte
 
 // ChannelPolicy 由可信装配提供，ID不从消息正文推断。
 type ChannelPolicy struct {
-	Public        bool
-	Private       bool
-	Brain         string
-	RatePerMinute float64
-	Burst         int
-	DailyQuota    int
-	Cooldown      time.Duration
-	MinRunes      int
-	RepeatWindow  time.Duration
-	OwnerIDs      []string
-	SelfIDs       []string
-	BotIDs        []string
-	Names         []string
-	Ads           []string
-	Whitelist     []string
+	Public           bool
+	Private          bool
+	Brain            string
+	RatePerMinute    float64
+	Burst            int
+	DailyQuota       int
+	Cooldown         time.Duration
+	MinRunes         int
+	RepeatWindow     time.Duration
+	ReplyOnlyMention bool
+	SelfNames        []string
+	OwnerIDs         []string
+	SelfIDs          []string
+	BotIDs           []string
+	Names            []string
+	Ads              []string
+	Whitelist        []string
 }
 
 // Options 只控制当前调度实例；不改变fishd默认业务开关。

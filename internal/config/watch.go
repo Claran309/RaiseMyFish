@@ -64,31 +64,13 @@ func (w Watch) validateIdentity() error {
 	return nil
 }
 
-// Validate 只做静态校验；不访问网络、不执行 ffmpeg、不读取凭据文件。
-func (w Watch) Validate() error {
-	if err := w.validateIdentity(); err != nil {
-		return err
-	}
-	if !w.Enabled {
-		return nil
-	}
+// validateStream 校验截帧/录制共用的直播流来源；看直播与主动弹幕都依赖它。
+func (w Watch) validateStream() error {
 	if w.Source == "screen" {
 		return errors.New("看直播 screen 模式尚未实现，请使用 stream")
 	}
 	if w.Source != "stream" {
 		return errors.New("看直播 source 只能是 stream 或 screen")
-	}
-	if w.IntervalSeconds < 10 || w.IntervalSeconds > 86400 {
-		return errors.New("看直播间隔必须在10至86400秒之间")
-	}
-	if w.Seconds < 2 || w.Seconds > 120 {
-		return errors.New("看直播秒数必须在2至120之间")
-	}
-	if w.Frames < 3 || w.Frames > 5 {
-		return errors.New("看直播帧数必须在3至5之间")
-	}
-	if valid, _ := validEndpoint(w.ASRURL); !valid {
-		return errors.New("看直播 asr_url 必须是HTTPS或本机HTTP地址")
 	}
 	switch w.StreamQuality {
 	case "origin", "bluray", "ultra", "high", "smooth":
@@ -105,6 +87,32 @@ func (w Watch) Validate() error {
 		strings.ContainsAny(w.FFmpegPath+w.FFprobePath, "\r\n\x00") ||
 		strings.ContainsAny(w.TempDir, "\r\n\x00") {
 		return errors.New("看直播 ffmpeg/ffprobe/临时目录配置无效")
+	}
+	return nil
+}
+
+// Validate 只做静态校验；不访问网络、不执行 ffmpeg、不读取凭据文件。
+func (w Watch) Validate() error {
+	if err := w.validateIdentity(); err != nil {
+		return err
+	}
+	if !w.Enabled {
+		return nil
+	}
+	if err := w.validateStream(); err != nil {
+		return err
+	}
+	if w.IntervalSeconds < 10 || w.IntervalSeconds > 86400 {
+		return errors.New("看直播间隔必须在10至86400秒之间")
+	}
+	if w.Seconds < 2 || w.Seconds > 120 {
+		return errors.New("看直播秒数必须在2至120之间")
+	}
+	if w.Frames < 3 || w.Frames > 5 {
+		return errors.New("看直播帧数必须在3至5之间")
+	}
+	if valid, _ := validEndpoint(w.ASRURL); !valid {
+		return errors.New("看直播 asr_url 必须是HTTPS或本机HTTP地址")
 	}
 	if strings.TrimSpace(w.LLMRoute) == "" || strings.ContainsAny(w.LLMRoute, "\r\n") {
 		return errors.New("看直播 llm_route 不能为空")
