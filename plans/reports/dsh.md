@@ -588,3 +588,13 @@
   3. 接话优先级 1/2 档是梗：**接受**（人格设定，收敛的是兜底万能化）
 - 结论：**批次 4 验收通过**；**人格层（samples/rules/context）口径统一完成**。
 - 下一步：重开冒烟验证「记忆/知识/梗」实际效果（需主人开播），然后 0.11 收尾。
+
+## 0.11 收尾（dev.ps1 + unknown 核验）独立验收（2026-11-02 17:05）
+
+- 交付：`scripts/dev.ps1` 重写（四项要求 + UTF-8 BOM + `go build -C` 修复），新增 status/stop/build 子命令。
+- 独立核对：BOM `efbbbf` 正确；`Ensure-LogsDir`/PID 文件（含 start_utc 防复用）/taskkill 温和→强杀整棵 均在。
+- 已验证：`status` 退出 0、`build`（仓库根与 `cwd=C:\`）均通过、重复 `start` 拒绝并退出 1（未起第二进程）。
+- 未验证（交接声明）：`start→Ctrl+C→无孤儿`、跨终端 `stop`——需停当前 PID 25796（真实直播实例）才能验证。
+- 3 条 unknown_manual：无外部证据（本地无回执、B站 gethistory 只留最近 10 条覆盖不到凌晨），**按规则永久保留 unknown，不补写**。
+- **DSH 裁决**：dev.ps1 重写**验收通过**（已验证项）；未验证项如实记录；unknown 保留**接受**。
+- 结论：**0.11 收尾验收通过**（待提交）；**P0 剩 0.12/0.13/Presence**。
