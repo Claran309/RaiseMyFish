@@ -1,271 +1,354 @@
 package proactive
 
+// 本文件测重构后的 Runner：复用 Brain（断言收到 Visual）、gap、去重、15 字、失败路径。
+
 import (
 	"context"
 	"errors"
-	"image/png"
-	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"RaiseMyFish/internal/brain"
+	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/memory"
+	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/sender"
-	"go.uber.org/zap"
 )
 
+// --- 假依赖 ---
+
 type fakeSnapshotter struct {
-	paths []string
-	calls int
+	path  string
 	err   error
+	calls int
 }
 
 func (f *fakeSnapshotter) Snapshot(context.Context) (string, error) {
-	if f.err != nil {
-		return "", f.err
-	}
-	if f.calls >= len(f.paths) {
-		return "", errors.New("没有更多帧")
-	}
-	path := f.paths[f.calls]
 	f.calls++
-	return path, nil
+	return f.path, f.err
 }
 
-type fakeDescriber struct {
-	texts  []string
-	calls  int
-	frames int
-	prompt string
-	err    error
+type fakeVision struct {
+	text  string
+	err   error
+	calls int
+	got   string
 }
 
-func (f *fakeDescriber) Describe(_ context.Context, frames []string, prompt string) (string, error) {
+func (f *fakeVision) Describe(_ context.Context, path string) (string, error) {
 	f.calls++
-	f.frames, f.prompt = len(frames), prompt
-	if f.err != nil {
-		return "", f.err
-	}
-	if f.calls > len(f.texts) {
-		return "", errors.New("未预期的读帧调用")
-	}
-	return f.texts[f.calls-1], nil
+	f.got = path
+	return f.text, f.err
 }
 
-type fakeProactiveSender struct {
-	texts  []string
+type fakeBrain struct {
+	reply    brain.Reply
+	err      error
+	calls    int
+	gotTask  brain.Task
+	gotInput brain.ContextInput
+}
+
+func (f *fakeBrain) Name() string { return "fake-brain" }
+
+func (f *fakeBrain) Reply(_ context.Context, task brain.Task, in brain.ContextInput) (brain.Reply, error) {
+	f.calls++
+	f.gotTask = task
+	f.gotInput = in
+	if f.err != nil {
+		return brain.Reply{}, f.err
+	}
+	return f.reply, nil
+}
+
+type fakeSender struct {
 	result sender.Result
 	err    error
+	calls  int
+	got    string
 }
 
-func (f *fakeProactiveSender) Send(_ context.Context, text string) (sender.Result, error) {
-	f.texts = append(f.texts, text)
-	return f.result, f.err
+func (f *fakeSender) Send(_ context.Context, text string) (sender.Result, error) {
+	f.calls++
+	f.got = text
+	if f.err != nil {
+		return sender.Result{}, f.err
+	}
+	return f.result, nil
 }
 
-func frameFile(t *testing.T, value uint8) string {
+type fakeMem struct {
+	err   error
+	got   memory.Scope
+	calls int
+}
+
+func (f *fakeMem) Recall(_ context.Context, s memory.Scope) (memory.Context, error) {
+	f.calls++
+	f.got = s
+	if f.err != nil {
+		return memory.Context{}, f.err
+	}
+	return memory.Context{Scope: s}, nil
+}
+
+func (f *fakeMem) Shared(_ context.Context, s memory.Scope) (memory.SharedState, error) {
+	if f.err != nil {
+		return memory.SharedState{}, f.err
+	}
+	return memory.SharedState{Scope: s}, nil
+}
+
+func testPack() persona.Pack {
+	return persona.Pack{
+		Meta:    persona.Meta{Name: "大肥鱼", Version: "1"},
+		Soul:    "你是大肥鱼",
+		Rules:   "规则",
+		Samples: "样本",
+	}
+}
+
+type fixture struct {
+	runner *Runner
+	snap   *fakeSnapshotter
+	vision *fakeVision
+	engine *fakeBrain
+	snd    *fakeSender
+	clock  *time.Time
+}
+
+func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	file, err := os.CreateTemp(t.TempDir(), "frame-*.png")
+	clock := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	f := &fixture{
+		snap:   &fakeSnapshotter{path: t.TempDir() + "/frame.jpg"},
+		vision: &fakeVision{text: "画面里有一个人坐在桌前啃面包，背景是游戏直播界面。"},
+		engine: &fakeBrain{reply: brain.Reply{Text: "在吃面包呢"}},
+		snd:    &fakeSender{result: sender.Result{OK: true, Verified: true}},
+		clock:  &clock,
+	}
+	opts := Options{SendGap: 30 * time.Second, RoomID: "30308220"}
+	opts.Now = func() time.Time { return *f.clock }
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, f.snd, opts)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("装配失败：%v", err)
 	}
-	defer func() { _ = file.Close() }()
-	if err := png.Encode(file, solid(10, 10, value)); err != nil {
-		t.Fatal(err)
-	}
-	return file.Name()
+	f.runner = runner
+	return f
 }
 
-func testRunner(t *testing.T, snapshot Snapshotter, describer Describer, snd Sender, maxPerHour int, minChange float64) *Runner {
-	t.Helper()
-	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
-	r, err := New(snapshot, describer, snd, Options{
-		MaxPerHour:       maxPerHour,
-		MinChangePercent: minChange,
-		Logger:           zap.NewNop(),
-		Now:              func() time.Time { return now },
+// --- 用例 ---
+
+// TestRunOnceReusesBrainWithVisual 核心用例：画面描述进 ContextInput.Visual，走 Brain 管线。
+func TestRunOnceReusesBrainWithVisual(t *testing.T) {
+	f := newFixture(t)
+
+	got, err := f.runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if !got.Sent || got.Text != "在吃面包呢" {
+		t.Fatalf("结果不符：%+v", got)
+	}
+
+	if f.engine.calls != 1 {
+		t.Fatalf("必须复用 Brain 生成（调用 %d 次）", f.engine.calls)
+	}
+	if f.engine.gotInput.Visual != f.vision.text {
+		t.Errorf("Visual 未注入：%q", f.engine.gotInput.Visual)
+	}
+	if strings.TrimSpace(f.engine.gotInput.Persona.Soul) == "" {
+		t.Error("人格包未传入")
+	}
+	// 合成事件：Brain 要求 ID/Text/Session 齐全
+	ev := f.engine.gotInput.Event
+	if !strings.HasPrefix(ev.ID, "proactive:30308220:") {
+		t.Errorf("合成事件 ID 不符：%q", ev.ID)
+	}
+	if ev.Channel != event.ChLive || ev.Dir != event.DirIn || ev.Session != "30308220" {
+		t.Errorf("合成事件字段不符：%+v", ev)
+	}
+	if strings.TrimSpace(ev.Text) != SyntheticEventText {
+		t.Errorf("合成事件正文应为占位文本，实际 %q", ev.Text)
+	}
+	if f.engine.gotTask.EventID != ev.ID || f.engine.gotTask.Channel != ev.Channel {
+		t.Errorf("Task 与事件不一致：%+v / %+v", f.engine.gotTask, ev)
+	}
+	// 记忆 Scope 必须与事件一致
+	if f.engine.gotInput.Memory.Scope != (memory.Scope{Channel: event.ChLive, Session: "30308220"}) {
+		t.Errorf("记忆 Scope 不符：%+v", f.engine.gotInput.Memory.Scope)
+	}
+
+	if f.vision.got != f.snap.path {
+		t.Errorf("识图用的不是截帧：%q vs %q", f.vision.got, f.snap.path)
+	}
+	if f.snd.got != "在吃面包呢" {
+		t.Errorf("发送正文 = %q", f.snd.got)
+	}
+}
+
+// TestRunOnceTruncatesTo15Runes 发送前截到 15 字。
+func TestRunOnceTruncatesTo15Runes(t *testing.T) {
+	f := newFixture(t)
+	f.engine.reply = brain.Reply{Text: "这条弹幕特别特别特别特别特别长超过十五个字了"}
+
+	if _, err := f.runner.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if n := len([]rune(f.snd.got)); n > MaxDanmakuRunes {
+		t.Errorf("发送正文 %d 字，超过 %d", n, MaxDanmakuRunes)
+	}
+}
+
+// TestRunOnceGapSkips 间隔内直接跳过，不截帧、不识图、不调 Brain。
+func TestRunOnceGapSkips(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.runner.RunOnce(context.Background()); err != nil {
+		t.Fatalf("首轮失败：%v", err)
+	}
+	*f.clock = f.clock.Add(10 * time.Second)
+
+	got, err := f.runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("第二轮失败：%v", err)
+	}
+	if got.Sent || got.Reason != ReasonGap {
+		t.Fatalf("间隔内应跳过：%+v", got)
+	}
+	if f.snap.calls != 1 || f.vision.calls != 1 || f.engine.calls != 1 {
+		t.Errorf("跳过时不应再调用下游：snap=%d vision=%d brain=%d", f.snap.calls, f.vision.calls, f.engine.calls)
+	}
+}
+
+// TestRunOnceDedupSimilar 相似度 ≥0.75 不重复发。
+func TestRunOnceDedupSimilar(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.runner.RunOnce(context.Background()); err != nil {
+		t.Fatalf("首轮失败：%v", err)
+	}
+	*f.clock = f.clock.Add(time.Minute)
+
+	got, err := f.runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("第二轮失败：%v", err)
+	}
+	if got.Reason != ReasonSimilar {
+		t.Fatalf("相同内容应被去重：%+v", got)
+	}
+	if f.snd.calls != 1 {
+		t.Errorf("只应发送一次，实际 %d", f.snd.calls)
+	}
+}
+
+// TestRunOnceVisionFailure 识图失败 → 本轮报错，不发送。
+func TestRunOnceVisionFailure(t *testing.T) {
+	f := newFixture(t)
+	f.vision.err = errors.New("vision down")
+
+	if _, err := f.runner.RunOnce(context.Background()); err == nil {
+		t.Fatal("识图失败应报错")
+	}
+	if f.engine.calls != 0 || f.snd.calls != 0 {
+		t.Errorf("识图失败不应继续：brain=%d send=%d", f.engine.calls, f.snd.calls)
+	}
+}
+
+// TestRunOnceEmptyVisual 画面描述为空 → 报错（不拿空上下文骗 Brain）。
+func TestRunOnceEmptyVisual(t *testing.T) {
+	f := newFixture(t)
+	f.vision.text = "   "
+
+	if _, err := f.runner.RunOnce(context.Background()); err == nil {
+		t.Fatal("空描述应报错")
+	}
+	if f.snd.calls != 0 {
+		t.Error("空描述不应发送")
+	}
+}
+
+// TestRunOnceBrainFailure Brain 失败 → 报错、不发送。
+func TestRunOnceBrainFailure(t *testing.T) {
+	f := newFixture(t)
+	f.engine.err = errors.New("brain down")
+
+	if _, err := f.runner.RunOnce(context.Background()); err == nil {
+		t.Fatal("Brain 失败应报错")
+	}
+	if f.snd.calls != 0 {
+		t.Error("Brain 失败不应发送")
+	}
+}
+
+// TestRunOnceSendNotAccepted 平台未接受 → Reason=send_not_accepted，不算 Sent。
+func TestRunOnceSendNotAccepted(t *testing.T) {
+	f := newFixture(t)
+	f.snd.result = sender.Result{OK: false, Error: "content"}
+
+	got, err := f.runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("未被接受不算错误：%v", err)
+	}
+	if got.Sent || got.Reason != "send_not_accepted" {
+		t.Fatalf("结果不符：%+v", got)
+	}
+}
+
+// TestRunOnceMemoryRecallDegrades 记忆召回失败降级为空快照，仍能发送。
+func TestRunOnceMemoryRecallDegrades(t *testing.T) {
+	f := newFixture(t)
+	mem := &fakeMem{err: errors.New("db down")}
+	clock := f.clock
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), mem, f.snd, Options{
+		SendGap: 30 * time.Second, RoomID: "30308220",
+		Now: func() time.Time { return *clock },
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("装配失败：%v", err)
 	}
-	return r
-}
 
-func TestRunnerSendsOnFirstFrame(t *testing.T) {
-	path := frameFile(t, 0)
-	snapshot := &fakeSnapshotter{paths: []string{path}}
-	describer := &fakeDescriber{texts: []string{"鱼鱼可爱"}}
-	snd := &fakeProactiveSender{result: sender.Result{OK: true, Verified: true}}
-	runner := testRunner(t, snapshot, describer, snd, 6, 5)
-
-	result, err := runner.RunOnce(context.Background())
+	got, err := runner.RunOnce(context.Background())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("记忆失败不应阻塞：%v", err)
 	}
-	if !result.Sent || result.ChangePercent != 100 {
-		t.Fatalf("首帧应视为全画面变化并发送：%+v", result)
+	if !got.Sent {
+		t.Errorf("应照常发送：%+v", got)
 	}
-	if len(snd.texts) != 1 || snd.texts[0] != "鱼鱼可爱" {
-		t.Fatalf("发送内容不符：%v", snd.texts)
+	if mem.got != (memory.Scope{Channel: event.ChLive, Session: "30308220"}) {
+		t.Errorf("记忆 Scope 不符：%+v", mem.got)
 	}
-	if describer.frames != 1 || describer.prompt == "" {
-		t.Fatalf("读帧参数不符：frames=%d prompt=%q", describer.frames, describer.prompt)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal("截帧临时文件未清理")
+	if len(f.engine.gotInput.Memory.Recent) != 0 {
+		t.Errorf("降级后记忆应为空：%+v", f.engine.gotInput.Memory)
 	}
 }
 
-func TestRunnerSkipsWithinSendGap(t *testing.T) {
-	snapshot := &fakeSnapshotter{paths: []string{frameFile(t, 0), frameFile(t, 255), frameFile(t, 128)}}
-	describer := &fakeDescriber{texts: []string{"第一条", "第二条"}}
-	snd := &fakeProactiveSender{result: sender.Result{OK: true, Verified: true}}
-	runner := testRunner(t, snapshot, describer, snd, 6, 5)
-	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
-	runner.now = func() time.Time { return now }
+// TestNewRejectsMissingDeps 依赖/参数缺失在构造期失败。
+func TestNewRejectsMissingDeps(t *testing.T) {
+	snap := &fakeSnapshotter{path: "x"}
+	vision := &fakeVision{}
+	engine := &fakeBrain{}
+	snd := &fakeSender{}
+	opts := Options{RoomID: "1"}
 
-	if result, err := runner.RunOnce(context.Background()); err != nil || !result.Sent {
-		t.Fatalf("首帧应发送：%+v err=%v", result, err)
+	if _, err := New(nil, vision, engine, testPack(), nil, snd, opts); err == nil {
+		t.Error("缺截帧应报错")
 	}
-	now = now.Add(10 * time.Second)
-	result, err := runner.RunOnce(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	if _, err := New(snap, nil, engine, testPack(), nil, snd, opts); err == nil {
+		t.Error("缺识图应报错")
 	}
-	if result.Sent || result.Reason != ReasonGap {
-		t.Fatalf("30秒内第二次发送应跳过且 reason=gap：%+v", result)
+	if _, err := New(snap, vision, nil, testPack(), nil, snd, opts); err == nil {
+		t.Error("缺 Brain 应报错")
 	}
-	if snapshot.calls != 1 || describer.calls != 1 || len(snd.texts) != 1 {
-		t.Fatalf("间隔内不应截帧/读帧/发送：snapshot=%d describer=%d sent=%v", snapshot.calls, describer.calls, snd.texts)
+	if _, err := New(snap, vision, engine, persona.Pack{}, nil, snd, opts); err == nil {
+		t.Error("缺人格应报错")
 	}
-	now = now.Add(20 * time.Second) // 距上次发送恰好30秒
-	result, err = runner.RunOnce(context.Background())
-	if err != nil || !result.Sent {
-		t.Fatalf("满30秒应恢复发送：%+v err=%v", result, err)
+	if _, err := New(snap, vision, engine, testPack(), nil, nil, opts); err == nil {
+		t.Error("缺发送应报错")
 	}
-	if len(snd.texts) != 2 || snd.texts[1] != "第二条" {
-		t.Fatalf("恢复后发送内容不符：%v", snd.texts)
+	if _, err := New(snap, vision, engine, testPack(), nil, snd, Options{}); err == nil {
+		t.Error("缺房间号应报错")
 	}
-}
-
-func TestRunnerSkipsUnchangedFrame(t *testing.T) {
-	snapshot := &fakeSnapshotter{paths: []string{frameFile(t, 0), frameFile(t, 0)}}
-	describer := &fakeDescriber{texts: []string{"第一条"}}
-	snd := &fakeProactiveSender{result: sender.Result{OK: true, Verified: true}}
-	runner := testRunner(t, snapshot, describer, snd, 6, 5)
-	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
-	runner.now = func() time.Time { return now }
-
-	if result, err := runner.RunOnce(context.Background()); err != nil || !result.Sent {
-		t.Fatalf("首帧应发送：%+v err=%v", result, err)
-	}
-	now = now.Add(30 * time.Second)
-	result, err := runner.RunOnce(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Sent || result.Reason != ReasonNoChange {
-		t.Fatalf("画面未变化应跳过：%+v", result)
-	}
-	if describer.calls != 1 || len(snd.texts) != 1 {
-		t.Fatalf("变化不足时不应读帧/发送：calls=%d sent=%v", describer.calls, snd.texts)
-	}
-}
-
-func TestRunnerSkipsSimilarText(t *testing.T) {
-	snapshot := &fakeSnapshotter{paths: []string{frameFile(t, 0), frameFile(t, 255)}}
-	describer := &fakeDescriber{texts: []string{"鱼鱼好可爱", "鱼鱼好可爱！"}}
-	snd := &fakeProactiveSender{result: sender.Result{OK: true, Verified: true}}
-	runner := testRunner(t, snapshot, describer, snd, 6, 5)
-	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
-	runner.now = func() time.Time { return now }
-
-	if _, err := runner.RunOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	now = now.Add(30 * time.Second)
-	result, err := runner.RunOnce(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Sent || result.Reason != ReasonSimilar {
-		t.Fatalf("相似弹幕应跳过：%+v", result)
-	}
-	if len(snd.texts) != 1 {
-		t.Fatalf("相似弹幕被重复发送：%v", snd.texts)
-	}
-}
-
-func TestRunnerSkipsOverLimit(t *testing.T) {
-	snapshot := &fakeSnapshotter{paths: []string{frameFile(t, 0), frameFile(t, 255)}}
-	describer := &fakeDescriber{texts: []string{"第一条"}}
-	snd := &fakeProactiveSender{result: sender.Result{OK: true, Verified: true}}
-	runner := testRunner(t, snapshot, describer, snd, 1, 5)
-	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
-	runner.now = func() time.Time { return now }
-
-	if _, err := runner.RunOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	now = now.Add(30 * time.Second)
-	result, err := runner.RunOnce(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Sent || result.Reason != ReasonLimited {
-		t.Fatalf("超过每小时上限应跳过：%+v", result)
-	}
-	if len(snd.texts) != 1 || snapshot.calls != 1 {
-		t.Fatalf("超限后不应再截帧/发送：snapshot=%d sent=%v", snapshot.calls, snd.texts)
-	}
-}
-
-func TestRunnerDescriberFailureDoesNotSend(t *testing.T) {
-	path := frameFile(t, 0)
-	snapshot := &fakeSnapshotter{paths: []string{path}}
-	describer := &fakeDescriber{err: errors.New("视觉模型不可用")}
-	snd := &fakeProactiveSender{result: sender.Result{OK: true}}
-	runner := testRunner(t, snapshot, describer, snd, 6, 5)
-
-	if _, err := runner.RunOnce(context.Background()); err == nil {
-		t.Fatal("读帧失败应返回错误")
-	}
-	if len(snd.texts) != 0 {
-		t.Fatal("读帧失败后仍发送")
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal("失败时截帧临时文件未清理")
-	}
-}
-
-func TestNewRunnerRejectsInvalidOptions(t *testing.T) {
-	snapshot := &fakeSnapshotter{}
-	describer := &fakeDescriber{}
-	snd := &fakeProactiveSender{}
-	if _, err := New(nil, describer, snd, Options{MaxPerHour: 6}); err == nil {
-		t.Error("缺少截帧器应报错")
-	}
-	if _, err := New(snapshot, nil, snd, Options{MaxPerHour: 6}); err == nil {
-		t.Error("缺少读帧器应报错")
-	}
-	if _, err := New(snapshot, describer, nil, Options{MaxPerHour: 6}); err == nil {
-		t.Error("缺少发送器应报错")
-	}
-	if _, err := New(snapshot, describer, snd, Options{MaxPerHour: 0}); err == nil {
-		t.Error("max_per_hour 非法应报错")
-	}
-	if _, err := New(snapshot, describer, snd, Options{MaxPerHour: 6, MinChangePercent: 101}); err == nil {
-		t.Error("min_change_percent 非法应报错")
-	}
-	if _, err := New(snapshot, describer, snd, Options{MaxPerHour: 6, SendGap: -time.Second}); err == nil {
-		t.Error("负的 send_gap 应报错")
-	}
-	if _, err := New(snapshot, describer, snd, Options{MaxPerHour: 6, SendGap: time.Hour + time.Second}); err == nil {
-		t.Error("超上限的 send_gap 应报错")
-	}
-	runner, err := New(snapshot, describer, snd, Options{MaxPerHour: 6})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runner.limiter.gap != DefaultSendGap {
-		t.Fatalf("未配置 send_gap 时应使用默认30秒：%v", runner.limiter.gap)
+	if _, err := New(snap, vision, engine, testPack(), nil, snd, Options{RoomID: "1", SendGap: -time.Second}); err == nil {
+		t.Error("负 gap 应报错")
 	}
 }

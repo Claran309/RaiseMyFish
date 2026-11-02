@@ -1,16 +1,22 @@
 package main
 
-// 本文件是 0.17 的主动弹幕接线：直播采集运行期间按固定间隔旁路说一句，
-// 不参与事件调度状态机，失败只跳过本轮。
+// 本文件是 0.19 的主动弹幕接线：直播采集运行期间按固定间隔旁路说一句。
+//
+// 与 0.17 的区别：不再走独立的「识图→直接出弹幕」简化管线，
+// 而是把画面描述注入 ContextInput.Visual，复用直播回复的 Brain 管线。
 
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
+	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/infra"
+	"RaiseMyFish/internal/memory"
+	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/proactive"
 	senderlive "RaiseMyFish/internal/sender/live"
 	"RaiseMyFish/internal/watch"
@@ -23,9 +29,13 @@ type proactiveRunner interface {
 }
 
 // buildProactiveRunner 只装配依赖，构造期不联网、不执行 ffmpeg。
-func buildProactiveRunner(cfg config.Config, resources *infra.Resources, logger *zap.Logger) (*proactive.Runner, error) {
+func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, logger *zap.Logger) (*proactive.Runner, error) {
 	if resources == nil || resources.DB == nil {
 		return nil, errors.New("主动弹幕缺少数据库资源")
+	}
+	engine := pickProactiveBrain(routes)
+	if engine == nil {
+		return nil, errors.New("主动弹幕需要可用的 Brain 路由")
 	}
 	_, provider, model, err := cfg.LLM.Resolve(cfg.Watch.LLMRoute)
 	if err != nil {
@@ -41,10 +51,21 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, logger 
 	if err != nil {
 		return nil, err
 	}
+	// 视觉客户端沿用 watch 的实现，只把提示词换成固定的「详细识图」
 	describer, err := watch.NewOpenAIDescriber(provider.BaseURL, provider.APIKey, model, nil, 0)
 	if err != nil {
 		return nil, err
 	}
+	vision := proactive.VisionFromFrames(describer)
+
+	// 记忆是可选增强：装配失败只降级为空快照，不影响主动弹幕本身
+	var memReader memory.Reader
+	if memRepo, err := database.NewMemoryRepo(resources.DB); err == nil {
+		if reader, err := memory.NewReader(memRepo, memRepo, memory.ReaderOptions{}); err == nil {
+			memReader = reader
+		}
+	}
+
 	wiring, err := resolveSenderWiring(cfg, senderlive.DefaultOptions().MinInterval)
 	if err != nil {
 		return nil, err
@@ -64,12 +85,29 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, logger 
 	if err != nil {
 		return nil, err
 	}
-	return proactive.New(recorder, describer, psender, proactive.Options{
-		MaxPerHour:       cfg.Proactive.MaxPerHour,
-		MinChangePercent: cfg.Proactive.MinChangePercent,
-		SendGap:          time.Duration(cfg.Proactive.SendGapSeconds) * time.Second,
-		Logger:           logger,
+	return proactive.New(recorder, vision, engine, pack, memReader, psender, proactive.Options{
+		SendGap: time.Duration(cfg.Proactive.SendGapSeconds) * time.Second,
+		RoomID:  cfg.Collector.Live.RoomID,
+		Logger:  logger,
 	})
+}
+
+// pickProactiveBrain 优先用 default 路由，没有就按名字排序取第一个。
+func pickProactiveBrain(routes map[string]brain.Brain) brain.Brain {
+	if engine, ok := routes["default"]; ok && engine != nil {
+		return engine
+	}
+	keys := make([]string, 0, len(routes))
+	for key, engine := range routes {
+		if engine != nil {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	sort.Strings(keys)
+	return routes[keys[0]]
 }
 
 // runProactive 按 ticks 逐次触发；单轮失败只记日志，不退出循环。
@@ -98,7 +136,6 @@ func runProactive(ctx context.Context, runner proactiveRunner, ticks <-chan time
 				zap.String("action", "proactive"),
 				zap.Bool("sent", result.Sent),
 				zap.String("reason", result.Reason),
-				zap.Float64("change_percent", result.ChangePercent),
 				zap.Int64("latency_ms", elapsed.Milliseconds()),
 			)
 		}
@@ -106,12 +143,12 @@ func runProactive(ctx context.Context, runner proactiveRunner, ticks <-chan time
 }
 
 // startProactive 仅在 [proactive] enabled=true 时装配并启动；初始化失败只降级。
-func startProactive(ctx context.Context, cfg config.Config, resources *infra.Resources, logger *zap.Logger) func() {
+func startProactive(ctx context.Context, cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, logger *zap.Logger) func() {
 	noop := func() {}
 	if !cfg.Proactive.Enabled {
 		return noop
 	}
-	runner, err := buildProactiveRunner(cfg, resources, logger)
+	runner, err := buildProactiveRunner(cfg, resources, routes, pack, logger)
 	if err != nil {
 		logger.Error("主动弹幕装配失败，降级运行", zap.String("action", "proactive"), zap.Error(err))
 		return noop
@@ -129,8 +166,6 @@ func startProactive(ctx context.Context, cfg config.Config, resources *infra.Res
 		zap.String("action", "proactive"),
 		zap.Int("interval_seconds", cfg.Proactive.IntervalSeconds),
 		zap.Int("send_gap_seconds", cfg.Proactive.SendGapSeconds),
-		zap.Int("max_per_hour", cfg.Proactive.MaxPerHour),
-		zap.Float64("min_change_percent", cfg.Proactive.MinChangePercent),
 	)
 	return func() {
 		cancel()

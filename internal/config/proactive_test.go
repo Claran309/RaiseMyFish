@@ -30,18 +30,18 @@ func TestProactiveDefaultsOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Proactive.Enabled || cfg.Proactive.IntervalSeconds != 20 || cfg.Proactive.SendGapSeconds != 30 || cfg.Proactive.MaxPerHour != 6 || cfg.Proactive.MinChangePercent != 5 {
+	if cfg.Proactive.Enabled || cfg.Proactive.IntervalSeconds != 20 || cfg.Proactive.SendGapSeconds != 30 {
 		t.Fatalf("主动弹幕默认值不符：%+v", cfg.Proactive)
 	}
 }
 
 func TestProactiveEnabledResolvesWatchStream(t *testing.T) {
-	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = true\ninterval_seconds = 30\nsend_gap_seconds = 45\nmax_per_hour = 8\nmin_change_percent = 7.5\n"
+	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = true\ninterval_seconds = 30\nsend_gap_seconds = 45\n"
 	cfg, err := loadProactive(t, body)
 	if err != nil {
 		t.Fatalf("合法主动弹幕配置被拒绝：%v", err)
 	}
-	if !cfg.Proactive.Enabled || cfg.Proactive.IntervalSeconds != 30 || cfg.Proactive.SendGapSeconds != 45 || cfg.Proactive.MaxPerHour != 8 || cfg.Proactive.MinChangePercent != 7.5 {
+	if !cfg.Proactive.Enabled || cfg.Proactive.IntervalSeconds != 30 || cfg.Proactive.SendGapSeconds != 45 {
 		t.Fatalf("主动弹幕显式值未生效：%+v", cfg.Proactive)
 	}
 	// [watch] 未启用，但主动弹幕复用同一套截帧配置，凭据仍需解析。
@@ -50,14 +50,16 @@ func TestProactiveEnabledResolvesWatchStream(t *testing.T) {
 	}
 }
 
-func TestProactiveAcceptsIntegerChangePercent(t *testing.T) {
-	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = true\nmin_change_percent = 5\n"
-	cfg, err := loadProactive(t, body)
-	if err != nil {
-		t.Fatalf("整数变化阈值被拒绝：%v", err)
-	}
-	if cfg.Proactive.MinChangePercent != 5 {
-		t.Fatalf("整数变化阈值未生效：%+v", cfg.Proactive)
+// TestProactiveRejectsRemovedFields 0.19 已删除 max_per_hour / min_change_percent，
+// 老配置必须显式报错而不是被静默忽略。
+func TestProactiveRejectsRemovedFields(t *testing.T) {
+	for _, body := range []string{
+		"\n[proactive]\nenabled = true\nmax_per_hour = 6\n",
+		"\n[proactive]\nenabled = true\nmin_change_percent = 5\n",
+	} {
+		if _, err := loadProactive(t, watchLLMSection+proactiveLiveSection+body); err == nil {
+			t.Fatalf("已删除字段仍被接受：%s", body)
+		}
 	}
 }
 
@@ -70,10 +72,6 @@ func TestProactiveValidationRejects(t *testing.T) {
 		{"间隔过长", "\n[proactive]\nenabled = true\ninterval_seconds = 3601\n"},
 		{"发送间隔为0", "\n[proactive]\nenabled = true\nsend_gap_seconds = 0\n"},
 		{"发送间隔过长", "\n[proactive]\nenabled = true\nsend_gap_seconds = 3601\n"},
-		{"每小时为0", "\n[proactive]\nenabled = true\nmax_per_hour = 0\n"},
-		{"每小时超限", "\n[proactive]\nenabled = true\nmax_per_hour = 61\n"},
-		{"变化阈值为负", "\n[proactive]\nenabled = true\nmin_change_percent = -1\n"},
-		{"变化阈值超限", "\n[proactive]\nenabled = true\nmin_change_percent = 101\n"},
 		{"未知字段", "\n[proactive]\nenabled = true\nfoo = 1\n"},
 	}
 	for _, tc := range cases {
@@ -86,7 +84,7 @@ func TestProactiveValidationRejects(t *testing.T) {
 }
 
 func TestProactiveDisabledIgnoresInvalidRange(t *testing.T) {
-	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = false\ninterval_seconds = 1\nsend_gap_seconds = 0\nmax_per_hour = 0\n"
+	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = false\ninterval_seconds = 1\nsend_gap_seconds = 0\n"
 	cfg, err := loadProactive(t, body)
 	if err != nil {
 		t.Fatalf("关闭状态不应校验运行参数：%v", err)

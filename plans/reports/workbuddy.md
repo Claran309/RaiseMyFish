@@ -1732,3 +1732,104 @@ timeout_ms = 8000
 
 - **是。** 本轮写入结束，改动仅上表 2 个文件；未执行 git 命令、未提交、未 push。
 - 交 DSH 验收。
+
+---
+
+## 主动弹幕重构 · 复用回复管线 + 注入视觉上下文（2026-11-02，Asia/Shanghai）
+
+按 `plans/phase-0.19-proactive-refactor.md` 实现。未改 contracts、未碰调度/发送语义、未调真实模型/平台、未执行 git。
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/brain/types.go` | 修改（加 Visual） | `180197C4BCC3403D1D06380D2FD2F19AACAD97BDC2A975CA3D096C988F822F64` | 2747 |
+| `internal/brain/context.go` | 修改（visual 段 + 校验 + 降级） | `0D07A2F7F4781AC8F725F48CA78D243F16F5C2099E2BBE3D86E0B503426FDF8F` | 12207 |
+| `internal/brain/knowledge.go` | 修改（传参） | `ECCB9F0E8B64D9EC80C25F7D91B9E39DFD1565A881EB65D5C208760F5481580F` | 3727 |
+| `internal/brain/visual_test.go` | 新增（5 用例） | `9A27DF6A9E1F975BFA17329A9FFAA4243B3816B0ACC88CC1F8526AEF7D01BDE6` | 3883 |
+| `internal/proactive/proactive.go` | 重写（复用 Brain） | `43226439909D5700D3B3D07DB68C1243E069F5F08452CB240AC4C74A20176CDF` | 8329 |
+| `internal/proactive/vision.go` | 新增 | `8615640C1A3627AE58F69DC239747437F9895D23D07BA47C9DC19E6357647B23` | 1630 |
+| `internal/proactive/vision_test.go` | 新增（3 用例） | `595746D7047ED177C513A8D3FB723EB1BE9B1D062D5A29ACAEC5A693EFD3F801` | 1937 |
+| `internal/proactive/limit.go` | 重写（只留 gap） | `6A3825595173836E4FFAE960269E03779E4B4EEB09BF5E31C95954B052D8D3A1` | 1385 |
+| `internal/proactive/limit_test.go` | 重写 | `E885969F7ABB402AE199116D6E0624D86ECBA784AA2F713E7C19175906623A08` | 1874 |
+| `internal/proactive/runner_test.go` | 重写（10 用例） | `B307A9755E40B3D44AF93D9BF23BB48F68BCF53F2A5A9B1EF83BDA0331717A5E` | 10039 |
+| `internal/config/proactive.go` | 修改（删两字段） | `5C2D5F7BB2AA72FCC247FCAEBD0753D995D47C87779B5945925F063E2E796BC1` | 1071 |
+| `internal/config/proactive_test.go` | 修改 | `984B8608B19A8C0EF7DCA8231E77A8C5EB6B1C9E698723A91164A70BF0F01E8C` | 4143 |
+| `config/fishd.toml` | 修改（`[proactive]` 精简） | `9300D03D5922AAD25DC449D4517E71B41EE93D9E75984A2EAA3AB0B8721082F4` | 6646 |
+| `cmd/fishd/proactive.go` | 重写（注入 Brain/Persona/记忆） | `10E02AFCD41B3D5A6F30249AFFBCCBB28AE4D6CE07DF4429A92C7746F7121631` | 5609 |
+| `cmd/fishd/proactive_test.go` | 修改 | `49828C28EAE34CE47371E24EBC3EF5A5286350E4CF16926E54C5DA9937F5C500` | 2573 |
+| `cmd/fishd/main.go` | 修改（传 routes/pack） | `944C2DE981102FC1DEE7874E80A41DB75BCCD32F7D2BCDD7FEE8C4811576E9E4` | 10939 |
+
+**删除**：`internal/proactive/change.go` + `change_test.go`（像素变化检测，用户判定无用）。
+
+### 链路
+
+```
+20s tick
+ └→ gap 检查（≤30s 跳过，不截帧不调模型）
+    └→ Snapshot（ffmpeg 截 1 帧，临时文件用完即删）
+       └→ VisionDescribe（固定 prompt 详细识图，多句、不限 15 字）
+          └→ 构造 ContextInput{Visual, Persona, Memory/Shared, Event=合成事件}
+             └→ Brain.Reply（人设/记忆/知识/预算截断，与弹幕回复同一条管线）
+                └→ 清洗 + 15 字截断
+                   └→ 去重（最近 20 条，Levenshtein ≥0.75 跳过）
+                      └→ Sender（out 事件 + POST）
+```
+
+### 配置
+
+```toml
+[proactive]
+enabled = true
+interval_seconds = 20
+send_gap_seconds = 30
+# max_per_hour / min_change_percent 已删除（老配置会因未知字段被拒，不会静默忽略）
+```
+
+### Visual 注入与预算
+
+- `ContextInput.Visual` 非空 → user prompt 增加 `<visual>\n...\n</visual>` 段（在 `<context>`/状态行之后、`<event>` 之前）。
+- 校验：不允许 `\x00` 与 `<`/`>`（防止伪标签注入），最多 2000 rune；非法直接 `KindInput`，**不调模型**。
+- 预算：Visual 计入 `inputBounds` 字节数；prompt 超预算时**先丢 Visual** 再走既有的记忆/persona 裁剪链，
+  最坏退化成一条普通弹幕回复，而不是整条失败（knowledge 仍按原逻辑在裁剪后参与分配）。
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestVisualInjectedIntoPrompt` | 非空 → prompt 含 `<visual>` 与正文 |
+| `TestVisualEmptyKeepsPromptClean` | 空 → 不出现 visual 段 |
+| `TestVisualRejectsFakeTags` | 伪标签/NUL → KindInput 且 provider 零调用 |
+| `TestVisualOverBudgetIsDropped` | 紧预算丢 visual 且不超限；宽预算 visual 保留 |
+| `TestVisualCountsTowardInputBounds` | 超 2000 rune 被拒 |
+| `TestRunOnceReusesBrainWithVisual` | **断言 Brain 收到 Visual**；合成事件 ID/Channel/Session/Text 正确；Task 与事件一致；记忆 Scope 正确 |
+| `TestRunOnceTruncatesTo15Runes` | 发送正文 ≤15 字 |
+| `TestRunOnceGapSkips` | 间隔内跳过，且 snap/vision/brain 调用次数都不增加 |
+| `TestRunOnceDedupSimilar` | 相似内容不重发 |
+| `TestRunOnceVisionFailure` / `BrainFailure` | 失败即中止，不发送 |
+| `TestRunOnceEmptyVisual` | 空描述报错 |
+| `TestRunOnceSendNotAccepted` | 平台未接受 → reason=send_not_accepted |
+| `TestRunOnceMemoryRecallDegrades` | 记忆失败降级空快照仍发送 |
+| `TestNewRejectsMissingDeps` | 缺依赖/房间号/负 gap 构造期报错 |
+| `TestGapLimiter*` | 间隔边界、gap=0、**无小时窗口**（40 次全放行） |
+| `TestVisionFromFrames*` | 固定 prompt、单帧、错误透传、nil |
+| `TestProactiveRejectsRemovedFields` | `max_per_hour` / `min_change_percent` 老键被拒 |
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l`（改动包） | 无输出 |
+| `go build ./...` / `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **27 个包全绿** |
+| `golangci-lint run ./internal/brain/... ./internal/proactive/... ./internal/config/...` | **0 issues** |
+| `go test -race ./internal/proactive/... ./internal/brain/ ./internal/config/` | **ok 1.895s / 2.148s / 3.185s** |
+
+### 未做项 / 需要裁决
+
+| 项 | 说明 |
+|---|---|
+| 主动弹幕的 `brain.Reply` 没有记忆/知识召回工具调用 | 只注入了 Visual 与预召回记忆（与弹幕单步路径一致）；ReAct 工具链未接进主动弹幕 |
+| 识图仍走 watch 的 OpenAI 兼容客户端 | 复用 `watch.NewOpenAIDescriber` + `VisionFromFrames` 适配，没新写视觉客户端 |
+| `cmd/fishd` 历史 lint | `main_test.go:63`、`memory_test.go:31` 仍是别人留下的问题，未动 |
+| `[proactive]` 的 `enabled` 仍为 true | 与仓库现状一致；要真跑需 B 站凭据 + ffmpeg |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。

@@ -167,7 +167,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	// watch/active 都是旁路：装配失败只记日志，不阻塞采集/调度。
 	stopWatch := startWatch(ctx, cfg, logger)
 	defer stopWatch()
-	stopProactive := startProactive(ctx, cfg, resources, logger)
+	stopProactive := startProactive(ctx, cfg, resources, routes, pack, logger)
 	defer stopProactive()
 	return serveWithCollector(ctx, liveCollector, withPresence(bus, presenceTable), timeout, logger, servePipeline)
 }
