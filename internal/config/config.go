@@ -21,6 +21,7 @@ type Config struct {
 	Channels  Channels   `toml:"channels"`
 	LLM       LLM        `toml:"llm"`
 	Knowledge Knowledge  `toml:"knowledge"`
+	Reasoning Reasoning  `toml:"reasoning"`
 	Watch     Watch      `toml:"watch"`
 	Proactive Proactive  `toml:"proactive"`
 	Gift      Gift       `toml:"gift"`
@@ -93,6 +94,7 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 		Runtime:   Runtime{StateFile: "data/fishd-status.json", HeartbeatSeconds: 5, StaleSeconds: 20},
 		LLM:       defaultLLM(),
 		Knowledge: defaultKnowledge(),
+		Reasoning: DefaultReasoning(),
 		Watch:     defaultWatch(),
 		Proactive: defaultProactive(),
 		Gift:      defaultGift(),
@@ -112,6 +114,8 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 	cfg.Scheduler.ApplyDefaults()
 	// [sender] 同理：缺失即未配置发送。
 	cfg.Sender.ApplyDefaults()
+	// [reasoning] 是值结构：缺字段补默认（默认开启，显式 enabled=false 才关）。
+	cfg.Reasoning.ApplyDefaults()
 	local := map[string]string{}
 	if envPath != "" {
 		values, err := godotenv.Read(envPath)
@@ -176,6 +180,9 @@ func (c Config) validate(strictLive bool) error {
 		}
 	}
 	if err := c.Knowledge.Validate(); err != nil {
+		return err
+	}
+	if err := c.Reasoning.Validate(); err != nil {
 		return err
 	}
 	if err := c.Scheduler.Validate(); err != nil {

@@ -11,12 +11,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"RaiseMyFish/internal/brain"
+	"RaiseMyFish/internal/brain/provider"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/event"
@@ -193,7 +196,7 @@ func truncateRunes(text string, limit int) string {
 //
 // Generate / Deliver / Verify 三个 handler 都必须设置：scheduler.launch 按 claim 的 stage 分派，
 // 任一为 nil 都会在对应阶段裸奔调用。
-func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, pres *presence.Table, state func(time.Time) string, log *zap.Logger) (scheduler.Workers, error) {
+func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, pres *presence.Table, state func(time.Time) string, react reactFactory, log *zap.Logger) (scheduler.Workers, error) {
 	if snd == nil {
 		return scheduler.Workers{}, errors.New("发送器不能为 nil")
 	}
@@ -274,17 +277,39 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 		}
 		task := brain.Task{ID: w.Task.ID, EventID: w.Task.EventID, Channel: w.Task.Channel, Session: w.Task.Session}
 
-		reply, err := engine.Reply(ctx, task, input)
-		if budgetFailure(err) && input.Knowledge != nil {
-			// 预算错误常常是知识段撑爆提示：去掉知识再试一次，仍失败才进 dead。
-			log.Warn("知识召回超出提示预算，去掉知识重试",
-				zap.String("action", "knowledge_budget_fallback"),
-				zap.String("event_id", ev.ID),
-				zap.String("ch", string(ev.Channel)),
-				zap.String("session", ev.Session),
-			)
-			input.Knowledge = nil
+		// ReAct：只有两段式判断为「要查事实」时才走多步；简单弹幕保持单步（延迟维持 1 秒级）。
+		// 工具要按**当前事件**的 Scope 查（并发 worker 共享一个可变 Scope 会串会话），
+		// 所以 Agent 由工厂按事件现造。
+		var reply brain.Reply
+		var err error
+		reactText := ""
+		if react != nil && shouldUseReAct(decision) {
+			reactText, err = runReact(ctx, react, scope, pack, ev, log)
+			if err != nil {
+				// ReAct 是增强：失败就回落单步，不能把弹幕卡死
+				log.Warn("ReAct 执行失败，回落单步生成",
+					zap.String("action", "react_fallback"),
+					zap.String("event_id", ev.ID),
+					zap.Error(err),
+				)
+				reactText = ""
+			}
+		}
+		if strings.TrimSpace(reactText) != "" {
+			reply = brain.Reply{Text: reactText}
+		} else {
 			reply, err = engine.Reply(ctx, task, input)
+			if budgetFailure(err) && input.Knowledge != nil {
+				// 预算错误常常是知识段撑爆提示：去掉知识再试一次，仍失败才进 dead。
+				log.Warn("知识召回超出提示预算，去掉知识重试",
+					zap.String("action", "knowledge_budget_fallback"),
+					zap.String("event_id", ev.ID),
+					zap.String("ch", string(ev.Channel)),
+					zap.String("session", ev.Session),
+				)
+				input.Knowledge = nil
+				reply, err = engine.Reply(ctx, task, input)
+			}
 		}
 		if err != nil {
 			// 生成失败也要结清，否则事件卡在 replying
@@ -496,6 +521,140 @@ func recallKnowledge(ctx context.Context, know knowledge.Reader, ev event.Event,
 	return &got
 }
 
+// reactFactory 按事件 Scope 现造一个 ReAct Agent；nil 表示不启用 ReAct。
+//
+// 为什么是工厂而不是单个实例：工具要在**当前事件**的 Scope 内查询，
+// 并发 worker 共享一个可变 Scope 会串会话（数据竞争 + 隐私越界）。
+type reactFactory func(scope memory.Scope) (*reasoning.Agent, error)
+
+// shouldUseReAct 判断这条弹幕要不要走多步思考。
+//
+// 两段式第一段已经筛过：只有 need_memory / need_knowledge 才算「需要查事实」，
+// 其余（打招呼、复读、纯情绪）保持单步，延迟维持在 1 秒级。
+func shouldUseReAct(d reasoning.Decision) bool {
+	return d.NeedMemory || d.NeedKnowledge
+}
+
+// runReact 执行一次 ReAct 并记录预算相关日志（步数/工具/降级/耗时）。
+func runReact(ctx context.Context, factory reactFactory, scope memory.Scope, pack persona.Pack, ev event.Event, log *zap.Logger) (string, error) {
+	agent, err := factory(scope)
+	if err != nil || agent == nil {
+		return "", err
+	}
+	started := time.Now()
+	res, err := agent.Run(ctx, reasoning.Input{System: pack.SystemPrompt(), Question: ev.Text})
+	elapsed := time.Since(started).Milliseconds()
+	log.Info("ReAct 执行完成",
+		zap.String("action", "react"),
+		zap.String("event_id", ev.ID),
+		zap.Int("steps", res.Steps),
+		zap.Strings("tools_used", res.Tools),
+		zap.Bool("degraded", res.Degraded),
+		zap.String("degrade_reason", res.Reason),
+		zap.Int64("latency_ms", elapsed),
+	)
+	if err != nil {
+		return "", err
+	}
+	return res.Text, nil
+}
+
+// buildReasonerFactory 装配 ReAct：模型走主路由，工具走记忆/知识/状态/历史。
+//
+// 返回 nil 表示不启用（配置关闭、没模型、或一个工具都装不起来）——此时 serve 仍走单步。
+func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, hist reasoning.HistorySearcher, log *zap.Logger) (reactFactory, error) {
+	if !cfg.Reasoning.Enabled {
+		log.Info("ReAct 未启用（配置关闭）", zap.String("action", "react_disabled"))
+		return nil, nil
+	}
+	llm, err := buildReasoningLLM(cfg, log)
+	if err != nil {
+		return nil, err
+	}
+	if llm == nil {
+		log.Info("ReAct 未启用（没有可用模型路由）", zap.String("action", "react_disabled"))
+		return nil, nil
+	}
+	opts := reasoning.Options{
+		MaxSteps: cfg.Reasoning.MaxSteps,
+		Timeout:  time.Duration(cfg.Reasoning.TimeoutMS) * time.Millisecond,
+	}
+	var presenceFn func(time.Time) string
+	if pres != nil {
+		presenceFn = pres.Summary
+	}
+
+	return func(scope memory.Scope) (*reasoning.Agent, error) {
+		box, err := reasoning.BuildTools(reasoning.ToolDeps{
+			Memory:    mem,
+			Knowledge: know,
+			Presence:  presenceFn,
+			History:   hist,
+			Scope:     scope,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return reasoning.New(llm, box, opts, log)
+	}, nil
+}
+
+// buildReasoningLLM 用主模型路由装配 ReAct 的模型调用器；没启用 LLM 时返回 nil。
+//
+// 刻意不复用 buildBrains：Brain 走的是完整 prompt 组装 + 用量记账，
+// 而 ReAct 需要的是「给定 system/user 原样补全」，两者职责不同。
+func buildReasoningLLM(cfg config.Config, log *zap.Logger) (reasoning.LLM, error) {
+	if !cfg.LLM.Enabled || len(cfg.LLM.Routing) == 0 {
+		return nil, nil
+	}
+	key := "default"
+	if _, ok := cfg.LLM.Routing[key]; !ok {
+		keys := make([]string, 0, len(cfg.LLM.Routing))
+		for k := range cfg.LLM.Routing {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		key = keys[0]
+	}
+	name, prov, model, err := cfg.LLM.Resolve(key)
+	if err != nil {
+		return nil, fmt.Errorf("解析 ReAct 模型路由失败：%w", err)
+	}
+	client, err := provider.NewOpenAI(name, prov.BaseURL, prov.APIKey, &http.Client{}, time.Duration(cfg.LLM.AttemptTimeoutMS)*time.Millisecond)
+	if err != nil {
+		return nil, fmt.Errorf("装配 ReAct 模型客户端失败：%w", err)
+	}
+	log.Info("ReAct 模型已装配",
+		zap.String("action", "react_setup"),
+		zap.String("route", key),
+		zap.String("model", model),
+		zap.Int("max_steps", cfg.Reasoning.MaxSteps),
+		zap.Int("timeout_ms", cfg.Reasoning.TimeoutMS),
+	)
+	return &providerLLM{client: client, model: model, maxTokens: cfg.LLM.MaxReplyTokens, temperature: 0.3}, nil
+}
+
+// providerLLM 把 provider.Provider 适配成 reasoning.LLM。
+type providerLLM struct {
+	client      provider.Provider
+	model       string
+	maxTokens   int
+	temperature float64
+}
+
+func (p *providerLLM) Complete(ctx context.Context, system, user string) (string, error) {
+	resp, err := p.client.Chat(ctx, provider.Request{
+		Model:       p.model,
+		Messages:    []provider.Message{{Role: "system", Content: system}, {Role: "user", Content: user}},
+		MaxTokens:   p.maxTokens,
+		Temperature: p.temperature,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Text, nil
+}
+
 // settleDelivered 把「已投递」的事件收尾：核验通过就 done，否则交回 retry 让 verify 阶段接手。
 func settleDelivered(ctx context.Context, bus event.Bus, c event.Claim, verified bool, retryDelay time.Duration) error {
 	from := []event.Status{event.StatusQueued, event.StatusSent}
@@ -622,7 +781,16 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, err
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, pres, brainStateSource(pres, cfg.Watch), log)
+	// history 工具需要读最近事件；EventRepo 只读复用，不新增写路径。
+	eventRepo, err := database.NewEventRepo(resources.DB)
+	if err != nil {
+		return nil, err
+	}
+	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, log)
+	if err != nil {
+		return nil, err
+	}
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, pres, brainStateSource(pres, cfg.Watch), react, log)
 	if err != nil {
 		return nil, err
 	}

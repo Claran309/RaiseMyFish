@@ -1,0 +1,55 @@
+package config
+
+// 本文件定义 `[reasoning]` 段：ReAct 思考链的开关与预算。
+
+import (
+	"fmt"
+)
+
+// Reasoning 是 ReAct 思考链配置。
+//
+// enabled 默认 true（派发单要求）；它只决定「需要查事实时是否走 ReAct」，
+// 真正能不能跑还取决于 [llm] 是否启用、路由是否存在。
+type Reasoning struct {
+	Enabled   bool `toml:"enabled"`
+	MaxSteps  int  `toml:"max_steps"`
+	TimeoutMS int  `toml:"timeout_ms"`
+}
+
+// 预算上限刻意收得紧：ReAct 是给一条弹幕用的，不能拖成半分钟。
+const (
+	defaultReasoningMaxSteps  = 3
+	defaultReasoningTimeoutMS = 8000
+	maxReasoningSteps         = 10
+	minReasoningTimeoutMS     = 1000
+	maxReasoningTimeoutMS     = 10000 // 派发单要求「不能变成 30 秒」，硬顶 10 秒
+)
+
+// DefaultReasoning 返回默认 ReAct 配置。
+func DefaultReasoning() Reasoning {
+	return Reasoning{Enabled: true, MaxSteps: defaultReasoningMaxSteps, TimeoutMS: defaultReasoningTimeoutMS}
+}
+
+// ApplyDefaults 只补零值。
+func (r *Reasoning) ApplyDefaults() {
+	if r == nil {
+		return
+	}
+	if r.MaxSteps == 0 {
+		r.MaxSteps = defaultReasoningMaxSteps
+	}
+	if r.TimeoutMS == 0 {
+		r.TimeoutMS = defaultReasoningTimeoutMS
+	}
+}
+
+// Validate 校验预算区间。
+func (r Reasoning) Validate() error {
+	if r.MaxSteps < 1 || r.MaxSteps > maxReasoningSteps {
+		return fmt.Errorf("ReAct 步数需为1至%d", maxReasoningSteps)
+	}
+	if r.TimeoutMS < minReasoningTimeoutMS || r.TimeoutMS > maxReasoningTimeoutMS {
+		return fmt.Errorf("ReAct 超时需为%d至%d毫秒", minReasoningTimeoutMS, maxReasoningTimeoutMS)
+	}
+	return nil
+}

@@ -82,6 +82,15 @@ enabled = true
 dir = "personas/dafeiyu/knowledge"
 budget_percent = 10
 
+# ReAct 思考链（C 档）：两段式判断为「要查事实」时才走多步，
+# 简单弹幕仍单步生成（延迟维持 1 秒级）。
+# 预算纪律：步数 3、总超时 8 秒；步数/超时/解析失败一律降级，不拖成半分钟。
+# 只有 [llm] enabled 且路由存在时才会真正装配。
+[reasoning]
+enabled = true
+max_steps = 3
+timeout_ms = 8000
+
 # 看直播（0.12 MVP）：录一段 → 抽帧 → 视觉描述 + ASR 转写；默认关闭。
 # 启用需同时启用 [llm]，并从 cookie_env 指向的环境变量读取 B站凭据。
 [watch]
