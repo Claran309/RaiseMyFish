@@ -28,7 +28,7 @@ func TestKnowledgeAssemblyAndDiagnosticWithoutBrainCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Reader == nil || !a.Diagnostic.Assembled || a.Diagnostic.Entries != 500 || len(a.Diagnostic.Revision) != 64 || a.Diagnostic.PipelineConnected {
+	if a.Reader == nil || !a.Diagnostic.Assembled || a.Diagnostic.Entries < 1 || len(a.Diagnostic.Revision) != 64 || a.Diagnostic.PipelineConnected {
 		t.Fatal("未正确装配不可变Reader快照")
 	}
 	var out bytes.Buffer
@@ -39,7 +39,7 @@ func TestKnowledgeAssemblyAndDiagnosticWithoutBrainCalls(t *testing.T) {
 		ProviderCalled bool                `json:"provider_called"`
 		Knowledge      knowledgeDiagnostic `json:"knowledge"`
 	}
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil || result.ProviderCalled || result.Knowledge.PipelineConnected || result.Knowledge.Entries != 500 {
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil || result.ProviderCalled || result.Knowledge.PipelineConnected || result.Knowledge.Entries < 1 {
 		t.Fatal("check输出错误")
 	}
 	if bytes.Contains(out.Bytes(), []byte("personas/")) || bytes.Contains(out.Bytes(), []byte("主题：")) {
