@@ -91,13 +91,17 @@ func structuredMention(e event.Event, p ChannelPolicy) bool {
 
 // MentionBackTarget 返回 live 回复要 @ 的昵称。
 // 仅在 live、开启 ReplyMentionBack 且事件是结构化 @ 自己时生效；
-// 昵称优先 Meta.reply_to_name，缺失时回落到发送者 FromName；空昵称或含控制字符返回 false。
+// reply_to_name 是「被回复的人」——别人回复鱼时它就是鱼自己，@ 自己没意义；
+// 此时改用发弹幕的人（FromName）；都空或含控制字符返回 false。
 func MentionBackTarget(e event.Event, p ChannelPolicy) (string, bool) {
 	if e.Channel != event.ChLive || !p.ReplyMentionBack || !structuredMention(e, p) {
 		return "", false
 	}
 	meta, _ := structuredReply(e)
 	name := strings.TrimSpace(meta.ReplyToName)
+	if name != "" && isSelfName(name, p.SelfNames) {
+		name = ""
+	}
 	if name == "" {
 		name = strings.TrimSpace(e.FromName)
 	}
@@ -105,6 +109,20 @@ func MentionBackTarget(e event.Event, p ChannelPolicy) (string, bool) {
 		return "", false
 	}
 	return name, true
+}
+
+// isSelfName 判断昵称是否是鱼自己（忽略大小写与首尾空白）。
+func isSelfName(name string, selfNames []string) bool {
+	target := strings.ToLower(strings.TrimSpace(name))
+	if target == "" {
+		return false
+	}
+	for _, self := range selfNames {
+		if strings.ToLower(strings.TrimSpace(self)) == target {
+			return true
+		}
+	}
+	return false
 }
 
 // mentionMiss 只对 live 生效：开启后未 @ 自己的弹幕在准入前跳过，不进入 LLM。
