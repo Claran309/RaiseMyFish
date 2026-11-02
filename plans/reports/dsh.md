@@ -632,4 +632,11 @@
 - 交付：`[gift]` 新增 `max_price`（默认 100=1 电池，范围 1-10000）、`max_num`（默认 10，1-100）、`allowed_rooms`（空=不限）；gift.mjs 硬编码改参数（保留 10000/100 二次硬校验）；Go 侧白名单预检（不 spawn）+ 传参。
 - 独立执行：Node 11/11、bili-whale 46/46；Go gift/config 测试通过；race 通过；覆盖率 95.2%/92.3%。
 - **DSH 裁决**：`ADAPTATION.md` 的送礼段落仍写死旧值 → 下批同步（或 DSH 授权直改）。
+
+## P0.5 两段式轻量思考独立验收（2026-11-02 19:10）
+
+- 交付：Qoder 完成；`internal/reasoning/decide.go`（Decision + Decide 规则版）+ serve.go 接入（先判断再召回）+ `action="reasoning"` 日志。
+- 独立执行：`reasoning` 100% 覆盖；`cmd/fishd` 测试通过；全包通过；race 通过。
+- 核对：NeedMemory（刚才/之前/上次/上回/你说/你提/你记得/那个/还记得/又）、NeedKnowledge（梗/什么意思/什么梗/啥意思/知道吗/那个梗）；两类独立；不需要时 Scope 空快照；召回失败降级。
+- 结论：**P0.5 验收通过**（待提交）；**记忆接线（extractworker + fishctl memory）已派发**。
 - 结论：**0.13b-2 验收通过**（待提交）；**P0 剩真实冒烟**（需主人开播：弹幕+看直播+送礼）。

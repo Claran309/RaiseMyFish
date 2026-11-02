@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ import (
 	senderlive "RaiseMyFish/internal/sender/live"
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // fakeBrain 记录被调用时收到的 Task 与 ContextInput。
@@ -788,7 +790,9 @@ func TestGenerateRecallsMemoryWithCorrectScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
-	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+	claim := liveClaim(id)
+	claim.Event.Text = "你还记得刚才说的吗"
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
 		t.Fatalf("Generate 失败：%v", err)
 	}
 
@@ -819,7 +823,9 @@ func TestGenerateMemoryRecallFailureDegrades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
-	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+	claim := liveClaim(id)
+	claim.Event.Text = "之前说过什么"
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
 		t.Fatalf("召回失败不应阻塞回复：%v", err)
 	}
 
@@ -852,14 +858,16 @@ func TestGenerateKnowledgeEnabledFillsContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
-	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+	claim := liveClaim(id)
+	claim.Event.Text = "这个梗什么意思"
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
 		t.Fatalf("Generate 失败：%v", err)
 	}
 
 	if know.recallCalls != 1 {
 		t.Fatalf("知识召回调用 = %d，期望 1", know.recallCalls)
 	}
-	if know.gotQuery.Text != "主播好" {
+	if know.gotQuery.Text != "这个梗什么意思" {
 		t.Errorf("知识查询正文 = %q，期望事件正文", know.gotQuery.Text)
 	}
 	if know.gotQuery.Scope.Channel != event.ChLive || know.gotQuery.Scope.Session != "30308220" {
@@ -870,6 +878,112 @@ func TestGenerateKnowledgeEnabledFillsContext(t *testing.T) {
 	}
 	if len(engine.gotInput.Knowledge.Items) != 1 || engine.gotInput.Knowledge.Items[0].ID != "k1" {
 		t.Errorf("Knowledge 内容不符：%+v", engine.gotInput.Knowledge)
+	}
+}
+
+// TestGenerateSkipsRecallForSimpleEvent 简单弹幕不查记忆/知识，Brain 仍拿到带 Scope 的空快照。
+func TestGenerateSkipsRecallForSimpleEvent(t *testing.T) {
+	const id = "live:30308220:9205"
+	bus := newFakeBus(id)
+	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+	mem := &fakeMemoryReader{
+		ctx:    memory.Context{Scope: memory.Scope{Channel: event.ChLive, Session: "30308220"}, Recent: []memory.Message{{EventID: "e1", Text: "不该被召回"}}},
+		shared: memory.SharedState{Scope: memory.Scope{Channel: event.ChLive, Session: "30308220"}, Facts: []memory.Fact{{Key: "不该", Value: "召回"}}},
+	}
+	know := &fakeKnowledgeReader{
+		ctx: knowledge.Context{Scope: knowledge.Scope{Channel: event.ChLive, Session: "30308220"}, Items: []knowledge.Item{{ID: "k1", Text: "不该被召回"}}},
+	}
+
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, mem, know, nil, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+		t.Fatalf("Generate 失败：%v", err)
+	}
+
+	if mem.recallCalls != 0 || mem.sharedCalls != 0 || know.recallCalls != 0 {
+		t.Fatalf("简单弹幕不应召回：memory=%d/%d knowledge=%d", mem.recallCalls, mem.sharedCalls, know.recallCalls)
+	}
+	if engine.calls != 1 {
+		t.Fatalf("Brain 调用 = %d，期望 1", engine.calls)
+	}
+	wantScope := memory.Scope{Channel: event.ChLive, Session: "30308220"}
+	if engine.gotInput.Memory.Scope != wantScope || engine.gotInput.Shared.Scope != wantScope {
+		t.Errorf("空快照 Scope 不符：%+v / %+v", engine.gotInput.Memory.Scope, engine.gotInput.Shared.Scope)
+	}
+	if len(engine.gotInput.Memory.Recent) != 0 || len(engine.gotInput.Shared.Facts) != 0 {
+		t.Errorf("不需要召回时不应填入数据：%+v / %+v", engine.gotInput.Memory, engine.gotInput.Shared)
+	}
+	if engine.gotInput.Knowledge != nil {
+		t.Errorf("不需要知识时 Knowledge 应为 nil：%+v", engine.gotInput.Knowledge)
+	}
+}
+
+// TestGenerateRecallsBothForMixedQuestion 同时命中记忆与知识时，两路召回都要执行。
+func TestGenerateRecallsBothForMixedQuestion(t *testing.T) {
+	const id = "live:30308220:9206"
+	bus := newFakeBus(id)
+	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+	mem := &fakeMemoryReader{
+		ctx:    memory.Context{Scope: memory.Scope{Channel: event.ChLive, Session: "30308220"}, Recent: []memory.Message{{EventID: "e1", Text: "早"}}},
+		shared: memory.SharedState{Scope: memory.Scope{Channel: event.ChLive, Session: "30308220"}, Facts: []memory.Fact{{Key: "存粮", Value: "有"}}},
+	}
+	know := &fakeKnowledgeReader{
+		ctx: knowledge.Context{Scope: knowledge.Scope{Channel: event.ChLive, Session: "30308220"}, Items: []knowledge.Item{{ID: "k1", Text: "资料"}}},
+	}
+
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, mem, know, nil, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	claim := liveClaim(id)
+	claim.Event.Text = "你还记得那个梗吗"
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
+		t.Fatalf("Generate 失败：%v", err)
+	}
+
+	if mem.recallCalls != 1 || mem.sharedCalls != 1 || know.recallCalls != 1 {
+		t.Fatalf("双命中召回次数不符：memory=%d/%d knowledge=%d", mem.recallCalls, mem.sharedCalls, know.recallCalls)
+	}
+	if engine.gotInput.Knowledge == nil || len(engine.gotInput.Knowledge.Items) != 1 {
+		t.Errorf("Knowledge 未填回：%+v", engine.gotInput.Knowledge)
+	}
+	if len(engine.gotInput.Memory.Recent) != 1 || len(engine.gotInput.Shared.Facts) != 1 {
+		t.Errorf("Memory/Shared 未填回：%+v / %+v", engine.gotInput.Memory, engine.gotInput.Shared)
+	}
+}
+
+// TestGenerateLogsReasoningDecision reasoning 日志要带 action 与两个判断位。
+func TestGenerateLogsReasoningDecision(t *testing.T) {
+	const id = "live:30308220:9207"
+	core, logs := observer.New(zap.InfoLevel)
+	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, newFakeBus(id), time.Second, nil, nil, nil, zap.New(core))
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	claim := liveClaim(id)
+	claim.Event.Text = "你还记得那个梗吗"
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
+		t.Fatalf("Generate 失败：%v", err)
+	}
+
+	entries := logs.FilterField(zap.String("action", "reasoning")).All()
+	if len(entries) != 1 {
+		t.Fatalf("reasoning 日志条数 = %d，期望 1", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	if fields["need_memory"] != true || fields["need_knowledge"] != true {
+		t.Errorf("日志判断位不符：%+v", fields)
+	}
+	reason, _ := fields["reason"].(string)
+	if !strings.Contains(reason, "memory:") || !strings.Contains(reason, "knowledge:") {
+		t.Errorf("日志 reason 不完整：%q", reason)
 	}
 }
 

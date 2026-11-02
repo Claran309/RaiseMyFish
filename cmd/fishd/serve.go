@@ -4,7 +4,7 @@ package main
 //
 // 边界：
 //   - 只做装配，不设计新状态机；准入/冷却/租约语义全部沿用 internal/scheduler；
-//   - 不伪造 Task / Memory / Presence：Memory 与 Shared 显式传空快照（Scope 正确、无数据）；
+//   - 不伪造 Task / Memory / Presence：不需要召回时 Memory 与 Shared 显式传空快照（Scope 正确、无数据）；
 //   - Brain 与 Sender 以接口注入，测试用 mock 跑通链路，不调用真实模型。
 
 import (
@@ -23,6 +23,7 @@ import (
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/presence"
+	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
 	senderlive "RaiseMyFish/internal/sender/live"
@@ -127,9 +128,25 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 		}()
 
 		scope := memory.Scope{Channel: ev.Channel, Session: ev.Session, Private: ev.Private}
-		// 召回失败降级为空快照 + 日志，不阻塞回复（记忆是增强，不是前置条件）
-		memCtx, shared := recallMemory(ctx, mem, scope, log)
-		knowCtx := recallKnowledge(ctx, know, ev, log)
+		// 两段式第一段：先判断需不需要额外召回，简单弹幕直接单步生成。
+		decision := reasoning.Decide(ev.Text)
+		log.Info("两段式判断完成",
+			zap.String("action", "reasoning"),
+			zap.Bool("need_memory", decision.NeedMemory),
+			zap.Bool("need_knowledge", decision.NeedKnowledge),
+			zap.String("reason", decision.Reason),
+		)
+
+		// 不需要召回时仍传带 Scope 的空快照；召回失败按现有降级，不阻塞回复。
+		memCtx := memory.Context{Scope: scope}
+		shared := memory.SharedState{Scope: scope}
+		if decision.NeedMemory {
+			memCtx, shared = recallMemory(ctx, mem, scope, log)
+		}
+		var knowCtx *knowledge.Context
+		if decision.NeedKnowledge {
+			knowCtx = recallKnowledge(ctx, know, ev, log)
+		}
 
 		input := brain.ContextInput{
 			Event:     ev,
