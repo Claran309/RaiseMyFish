@@ -101,6 +101,16 @@ ffprobe_path = "ffprobe"
 temp_dir = "" # 留空使用系统临时目录
 llm_route = "default"
 
+# 主动发弹幕（0.17）：默认关闭。开启后每隔 interval_seconds 截 1 帧，
+# 画面变化不足 min_change_percent 就跳过，交给视觉模型生成 ≤15 字观众弹幕，
+# 去重 + max_per_hour 限流后经 [sender] 发送，并写 DirOut 事件记账。
+# 复用 [watch] 的流清晰度/ffmpeg/凭据配置；需要同时开启 live 采集与 [llm]。
+[proactive]
+enabled = false
+interval_seconds = 20
+max_per_hour = 6
+min_change_percent = 5
+
 # 送礼（0.13b）：默认关闭且默认 dry-run——不读凭据、不调用平台API、不扣电池。
 # 只有 enabled=true 且 real=true 才会真实赠送；凭据只从 FISH_BILI_COOKIE/_FILE 读取。
 # daily_limit 按礼物数量计（不是次数），跨本地自然日重置；真实送礼要求 num <= daily_limit。
@@ -143,3 +153,6 @@ burst = 2
 daily_quota = 200
 cooldown_ms = 10000
 min_runes = 2
+# 只回复 @ 鱼的弹幕；未 @ 的在 schedule 阶段直接 skipped，不调 LLM。
+reply_only_mention = true
+self_names = ["大肥鱼", "Claranの大肥鱼"]

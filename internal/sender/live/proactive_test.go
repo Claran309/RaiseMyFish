@@ -10,6 +10,7 @@ import (
 
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/sender"
+	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
 )
 
@@ -105,6 +106,9 @@ func TestProactiveSendAcceptedRecordsOutEvent(t *testing.T) {
 	if out.ID != "live:out:123:pro-fixed" || out.Dir != event.DirOut || out.Status != event.StatusDone ||
 		out.Session != "123" || out.FromID != "456" || out.Text != "鱼鱼今天状态不错" || out.ReplyTo != "" || !out.At.Equal(p.now()) {
 		t.Fatalf("出事件字段错误：+%v", out)
+	}
+	if err := store.ValidateEvent(out); err != nil {
+		t.Fatalf("出事件不满足持久化契约：%v", err)
 	}
 	var meta map[string]any
 	if err := json.Unmarshal(out.Meta, &meta); err != nil {

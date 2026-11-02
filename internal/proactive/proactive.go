@@ -167,7 +167,8 @@ func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 
 	res, err := r.sender.Send(ctx, text)
 	if err != nil {
-		return Result{ChangePercent: change}, fmt.Errorf("发送主动弹幕失败：%w", err)
+		// 发送成功但审计落库失败时 res.OK 仍为 true，保留真实结果供上层区分。
+		return Result{Sent: res.OK, ChangePercent: change}, fmt.Errorf("发送主动弹幕失败：%w", err)
 	}
 	if !res.OK {
 		r.log.Warn("主动弹幕未被接受",

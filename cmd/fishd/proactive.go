@@ -1,0 +1,137 @@
+package main
+
+// 本文件是 0.17 的主动弹幕接线：直播采集运行期间按固定间隔旁路说一句，
+// 不参与事件调度状态机，失败只跳过本轮。
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"RaiseMyFish/internal/config"
+	"RaiseMyFish/internal/database"
+	"RaiseMyFish/internal/infra"
+	"RaiseMyFish/internal/proactive"
+	senderlive "RaiseMyFish/internal/sender/live"
+	"RaiseMyFish/internal/watch"
+	"go.uber.org/zap"
+)
+
+// proactiveRunner 是定时循环依赖的最小能力，proactive.Runner 直接满足。
+type proactiveRunner interface {
+	RunOnce(context.Context) (proactive.Result, error)
+}
+
+// buildProactiveRunner 只装配依赖，构造期不联网、不执行 ffmpeg。
+func buildProactiveRunner(cfg config.Config, resources *infra.Resources, logger *zap.Logger) (*proactive.Runner, error) {
+	if resources == nil || resources.DB == nil {
+		return nil, errors.New("主动弹幕缺少数据库资源")
+	}
+	_, provider, model, err := cfg.LLM.Resolve(cfg.Watch.LLMRoute)
+	if err != nil {
+		return nil, err
+	}
+	recorder, err := watch.NewStreamRecorder(watch.StreamRecorderOptions{
+		RoomID:     cfg.Collector.Live.RoomID,
+		Cookie:     cfg.Watch.Cookie,
+		Quality:    cfg.Watch.StreamQuality,
+		FFmpegPath: cfg.Watch.FFmpegPath,
+		TempDir:    cfg.Watch.TempDir,
+	})
+	if err != nil {
+		return nil, err
+	}
+	describer, err := watch.NewOpenAIDescriber(provider.BaseURL, provider.APIKey, model, nil, 0)
+	if err != nil {
+		return nil, err
+	}
+	wiring, err := resolveSenderWiring(cfg, senderlive.DefaultOptions().MinInterval)
+	if err != nil {
+		return nil, err
+	}
+	transport, err := senderlive.NewNodeTransport(wiring.Node)
+	if err != nil {
+		return nil, err
+	}
+	events, err := database.NewEventRepo(resources.DB)
+	if err != nil {
+		return nil, err
+	}
+	options := senderlive.DefaultProactiveOptions()
+	options.RoomID = cfg.Collector.Live.RoomID
+	options.SelfID = wiring.Service.SelfID
+	psender, err := senderlive.NewProactiveSender(transport, events, options, logger)
+	if err != nil {
+		return nil, err
+	}
+	return proactive.New(recorder, describer, psender, proactive.Options{
+		MaxPerHour:       cfg.Proactive.MaxPerHour,
+		MinChangePercent: cfg.Proactive.MinChangePercent,
+		Logger:           logger,
+	})
+}
+
+// runProactive 按 ticks 逐次触发；单轮失败只记日志，不退出循环。
+func runProactive(ctx context.Context, runner proactiveRunner, ticks <-chan time.Time, now func() time.Time, logger *zap.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+			started := now()
+			result, err := runner.RunOnce(ctx)
+			elapsed := now().Sub(started)
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				logger.Error("主动弹幕失败，等待下一轮",
+					zap.String("action", "proactive"),
+					zap.Int64("latency_ms", elapsed.Milliseconds()),
+					zap.Error(err),
+				)
+				continue
+			}
+			// 跳过与成功由 Runner 自己记录；这里只留一行轮询结果便于观测。
+			logger.Debug("主动弹幕本轮完成",
+				zap.String("action", "proactive"),
+				zap.Bool("sent", result.Sent),
+				zap.String("reason", result.Reason),
+				zap.Float64("change_percent", result.ChangePercent),
+				zap.Int64("latency_ms", elapsed.Milliseconds()),
+			)
+		}
+	}
+}
+
+// startProactive 仅在 [proactive] enabled=true 时装配并启动；初始化失败只降级。
+func startProactive(ctx context.Context, cfg config.Config, resources *infra.Resources, logger *zap.Logger) func() {
+	noop := func() {}
+	if !cfg.Proactive.Enabled {
+		return noop
+	}
+	runner, err := buildProactiveRunner(cfg, resources, logger)
+	if err != nil {
+		logger.Error("主动弹幕装配失败，降级运行", zap.String("action", "proactive"), zap.Error(err))
+		return noop
+	}
+	interval := time.Duration(cfg.Proactive.IntervalSeconds) * time.Second
+	ticker := time.NewTicker(interval)
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer ticker.Stop()
+		runProactive(runCtx, runner, ticker.C, time.Now, logger)
+	}()
+	logger.Info("主动弹幕已启动",
+		zap.String("action", "proactive"),
+		zap.Int("interval_seconds", cfg.Proactive.IntervalSeconds),
+		zap.Int("max_per_hour", cfg.Proactive.MaxPerHour),
+		zap.Float64("min_change_percent", cfg.Proactive.MinChangePercent),
+	)
+	return func() {
+		cancel()
+		<-done
+	}
+}

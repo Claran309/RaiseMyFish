@@ -36,17 +36,28 @@ func TestProactiveDefaultsOff(t *testing.T) {
 }
 
 func TestProactiveEnabledResolvesWatchStream(t *testing.T) {
-	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = true\n"
+	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = true\ninterval_seconds = 30\nmax_per_hour = 8\nmin_change_percent = 7.5\n"
 	cfg, err := loadProactive(t, body)
 	if err != nil {
 		t.Fatalf("合法主动弹幕配置被拒绝：%v", err)
 	}
-	if !cfg.Proactive.Enabled || cfg.Proactive.IntervalSeconds != 20 || cfg.Proactive.MaxPerHour != 6 || cfg.Proactive.MinChangePercent != 5 {
+	if !cfg.Proactive.Enabled || cfg.Proactive.IntervalSeconds != 30 || cfg.Proactive.MaxPerHour != 8 || cfg.Proactive.MinChangePercent != 7.5 {
 		t.Fatalf("主动弹幕显式值未生效：%+v", cfg.Proactive)
 	}
 	// [watch] 未启用，但主动弹幕复用同一套截帧配置，凭据仍需解析。
 	if cfg.Watch.Cookie != "SESSDATA=canary" {
 		t.Fatal("主动弹幕启用时未解析B站凭据")
+	}
+}
+
+func TestProactiveAcceptsIntegerChangePercent(t *testing.T) {
+	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = true\nmin_change_percent = 5\n"
+	cfg, err := loadProactive(t, body)
+	if err != nil {
+		t.Fatalf("整数变化阈值被拒绝：%v", err)
+	}
+	if cfg.Proactive.MinChangePercent != 5 {
+		t.Fatalf("整数变化阈值未生效：%+v", cfg.Proactive)
 	}
 }
 
