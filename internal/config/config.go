@@ -23,6 +23,7 @@ type Config struct {
 	Knowledge Knowledge  `toml:"knowledge"`
 	Watch     Watch      `toml:"watch"`
 	Gift      Gift       `toml:"gift"`
+	Memory    Memory     `toml:"memory"`
 	Collector Collectors `toml:"collector"`
 	// Scheduler 为 nil 表示「不接消费循环」，只采集。
 	Scheduler *Scheduler `toml:"scheduler"`
@@ -81,6 +82,7 @@ func Load(path, envPath string) (Config, error) {
 		Knowledge: defaultKnowledge(),
 		Watch:     defaultWatch(),
 		Gift:      defaultGift(),
+		Memory:    defaultMemory(),
 		Collector: Collectors{Live: defaultLiveCollector()},
 	}
 	if path != "" {
@@ -166,6 +168,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Gift.Validate(); err != nil {
+		return err
+	}
+	if err := c.Memory.Validate(); err != nil {
 		return err
 	}
 	if err := c.LLM.Validate(); err != nil {
