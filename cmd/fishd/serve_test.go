@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -160,6 +161,90 @@ func TestGenerateCallsBrainThenSender(t *testing.T) {
 	// Scope 必须显式带上，否则真实 sender 的 Validate 会拒
 	if snd.gotReply.Scope != wantScope {
 		t.Errorf("发送 Scope = %+v，期望 %+v", snd.gotReply.Scope, wantScope)
+	}
+}
+
+// replyEvent 造一条带结构化回复目标的 live 事件（Meta 按真实采集器的字段形状）。
+func replyEvent(from, replyID, replyName string) event.Event {
+	ev := liveClaim("live:30308220:9").Event
+	ev.FromName = from
+	raw, err := json.Marshal(struct {
+		ReplyToID   string `json:"reply_to_id,omitempty"`
+		ReplyToName string `json:"reply_to_name,omitempty"`
+	}{ReplyToID: replyID, ReplyToName: replyName})
+	if err != nil {
+		panic(err)
+	}
+	ev.Meta = raw
+	return ev
+}
+
+// TestFormatReplyText 覆盖 0.18 的 @ 回带与前缀/长度截断规则。
+func TestFormatReplyText(t *testing.T) {
+	const selfID = "3747574135655903"
+	enabled := scheduler.ChannelPolicy{ReplyMentionBack: true, MaxReplyRunes: 40, SelfIDs: []string{selfID}}
+	disabled := enabled
+	disabled.ReplyMentionBack = false
+	longName := strings.Repeat("长", 35)
+
+	cases := []struct {
+		name   string
+		ev     event.Event
+		text   string
+		policy scheduler.ChannelPolicy
+		want   string
+	}{
+		{"命中加前缀", replyEvent("路人", selfID, "小黑"), "你好", enabled, "@小黑 你好"},
+		{"空名回落到发送者", replyEvent("路人", selfID, ""), "你好", enabled, "@路人 你好"},
+		{"空昵称跳过", replyEvent("", selfID, ""), "你好", enabled, "你好"},
+		{"已带@不重复", replyEvent("路人", selfID, "小黑"), "@小黑 你好", enabled, "@小黑 你好"},
+		{"非@弹幕不加", replyEvent("路人", "", ""), "你好", enabled, "你好"},
+		{"关闭配置不加", replyEvent("路人", selfID, "小黑"), "你好", disabled, "你好"},
+		{"长昵称截断正文", replyEvent("路人", selfID, longName), strings.Repeat("啊", 20), enabled, "@" + longName + " " + strings.Repeat("啊", 3)},
+		{"昵称过长跳过前缀", replyEvent("路人", selfID, strings.Repeat("长", 45)), strings.Repeat("啊", 20), enabled, strings.Repeat("啊", 20)},
+		{"默认上限40", replyEvent("路人", "", ""), strings.Repeat("啊", 50), scheduler.ChannelPolicy{}, strings.Repeat("啊", 40)},
+		{"已带@也截断", replyEvent("路人", selfID, "小黑"), "@" + strings.Repeat("啊", 50), enabled, "@" + strings.Repeat("啊", 39)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatReplyText(tc.ev, tc.text, tc.policy); got != tc.want {
+				t.Errorf("formatReplyText = %q（%d rune），期望 %q（%d rune）",
+					got, len([]rune(got)), tc.want, len([]rune(tc.want)))
+			}
+		})
+	}
+
+	// 非 live 通道不加前缀，也不受 live 长度上限约束。
+	comment := replyEvent("路人", selfID, "小黑")
+	comment.Channel = event.ChComment
+	long := strings.Repeat("啊", 50)
+	if got := formatReplyText(comment, long, enabled); got != long {
+		t.Errorf("非 live 通道不应改写：%q", got)
+	}
+}
+
+// TestGenerateAppliesMentionBack 端到端确认 Generate 把策略传给发送正文。
+func TestGenerateAppliesMentionBack(t *testing.T) {
+	engine := &fakeBrain{reply: brain.Reply{Text: "才不是给你回的呢"}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, MsgID: "m1", Verified: true}}
+	policy := scheduler.ChannelPolicy{ReplyMentionBack: true, MaxReplyRunes: 40, SelfIDs: []string{"3747574135655903"}}
+
+	workers, err := buildConsumeWorkers(policy, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, newFakeBus(), time.Second, nil, nil, nil, nil, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	claim := liveClaim("live:30308220:9")
+	claim.Event.Meta = json.RawMessage(`{"reply_to_id":"3747574135655903","reply_to_name":"小黑"}`)
+	got, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(claim.Event.ID)})
+	if err != nil {
+		t.Fatalf("Generate 失败：%v", err)
+	}
+	if !got.Replied || snd.sendCalls != 1 {
+		t.Fatalf("投递链路未跑通：result=%+v calls=%d", got, snd.sendCalls)
+	}
+	if want := "@小黑 才不是给你回的呢"; snd.gotReply.Text != want {
+		t.Errorf("发送正文 = %q，期望 %q", snd.gotReply.Text, want)
 	}
 }
 
@@ -773,6 +858,161 @@ func TestDeliverStageRetriesOnRetryable(t *testing.T) {
 	}
 	if got := bus.finalStatus(id); got != event.StatusRetry {
 		t.Errorf("最终状态 = %q，期望 retry", got)
+	}
+}
+
+// leaseLostBus 模拟真实 sender 已经抢先结清：前 successMarks 次 Mark 正常，之后的
+// Mark（以及可选的 Defer）都返回 event.ErrLeaseLost——即旧 claim 已被 sender 释放。
+type leaseLostBus struct {
+	*fakeBus
+	successMarks int
+	failDefer    bool
+	markCalls    int
+}
+
+func (b *leaseLostBus) Mark(ctx context.Context, c event.Claim, from []event.Status, to event.Status) error {
+	b.markCalls++
+	if b.markCalls > b.successMarks {
+		return event.ErrLeaseLost
+	}
+	return b.fakeBus.Mark(ctx, c, from, to)
+}
+
+func (b *leaseLostBus) Defer(ctx context.Context, c event.Claim, until time.Time) error {
+	if b.failDefer {
+		return event.ErrLeaseLost
+	}
+	return b.fakeBus.Defer(ctx, c, until)
+}
+
+// TestGenerateHandledSenderErrorIsNotResettled sender 返回 Settled=true 的错误时，
+// 输入事件已在其事务里结清并释放租约；worker 若再拿旧 claim Defer/Mark，真实 Bus 会报
+// 「事件租约已失效」（线上 retry 错误的根因）。这里断言不再二次结清，且 handler 返回 nil。
+func TestGenerateHandledSenderErrorIsNotResettled(t *testing.T) {
+	for _, kind := range []sender.Kind{sender.KindRetry, sender.KindDead, sender.KindUncertain, sender.KindSkipped} {
+		t.Run(string(kind), func(t *testing.T) {
+			const id = "live:30308220:9301"
+			bus := newFakeBus(id)
+			snd := &fakeSender{sendErr: &sender.Error{Kind: kind, Settled: true}}
+			workers := newSettleWorkers(t, &fakeBrain{reply: brain.Reply{Text: "哼"}}, snd, bus)
+
+			res, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)})
+			if err != nil {
+				t.Fatalf("sender 已结清时不应返回错误：%v", err)
+			}
+			if res.Replied {
+				t.Error("失败结清不应上报 Replied")
+			}
+			if got := bus.markTos(); !slices.Equal(got, []event.Status{event.StatusReplying}) {
+				t.Errorf("Mark 序列 = %v，期望只进 replying（不得再结清）", got)
+			}
+			if len(bus.defers) != 0 {
+				t.Errorf("sender 已结清时不应再 Defer：%v", bus.defers)
+			}
+		})
+	}
+}
+
+// TestResumeHandledSenderErrorIsNotResettled deliver/verify 同样不能二次结清。
+func TestResumeHandledSenderErrorIsNotResettled(t *testing.T) {
+	handlers := map[string]func(scheduler.Workers, context.Context, scheduler.Work) (scheduler.Result, error){
+		"deliver": func(w scheduler.Workers, ctx context.Context, work scheduler.Work) (scheduler.Result, error) {
+			return w.Deliver(ctx, work)
+		},
+		"verify": func(w scheduler.Workers, ctx context.Context, work scheduler.Work) (scheduler.Result, error) {
+			return w.Verify(ctx, work)
+		},
+	}
+	for name, run := range handlers {
+		t.Run(name, func(t *testing.T) {
+			const id = "live:30308220:9302"
+			bus := newFakeBus(id)
+			snd := &fakeSender{resumeErr: &sender.Error{Kind: sender.KindRetry, Settled: true}}
+			workers := newSettleWorkers(t, &fakeBrain{}, snd, bus)
+
+			claim := liveClaim(id)
+			claim.Stage = event.StageDeliver
+			if name == "verify" {
+				claim.Stage = event.StageVerify
+			}
+			if _, err := run(workers, context.Background(), scheduler.Work{Claim: claim}); err != nil {
+				t.Fatalf("sender 已结清时不应返回错误：%v", err)
+			}
+			if got := bus.markTos(); len(got) != 0 {
+				t.Errorf("Resume 已结清时不应 Mark，实际 %v", got)
+			}
+			if len(bus.defers) != 0 {
+				t.Errorf("Resume 已结清时不应 Defer：%v", bus.defers)
+			}
+		})
+	}
+}
+
+// TestGenerateToleratesLeaseLostAfterSenderSettlement 发送成功后 sender 已把事件结清，
+// serve 的 replying→sent 必然租约失效；这属于正常收尾，不能当失败上抛（否则日志全是假错误）。
+func TestGenerateToleratesLeaseLostAfterSenderSettlement(t *testing.T) {
+	const id = "live:30308220:9303"
+	base := newFakeBus(id)
+	bus := &leaseLostBus{fakeBus: base, successMarks: 1}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+	workers := newSettleWorkers(t, &fakeBrain{reply: brain.Reply{Text: "哼"}}, snd, bus)
+
+	res, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)})
+	if err != nil {
+		t.Fatalf("sender 已结清时不应返回错误：%v", err)
+	}
+	if !res.Replied {
+		t.Error("已发送成功应上报 Replied")
+	}
+	if got := base.markTos(); !slices.Equal(got, []event.Status{event.StatusReplying}) {
+		t.Errorf("Mark 序列 = %v，期望只进 replying", got)
+	}
+	if len(base.defers) != 0 {
+		t.Errorf("sender 已结清时不应再 Defer：%v", base.defers)
+	}
+}
+
+// TestResumeToleratesLeaseLostAfterSenderSettlement Resume 成功后 sender 已结清，
+// verify（Mark done）与 deliver（Defer retry）两条收尾都必须容忍旧 claim 的租约失效。
+func TestResumeToleratesLeaseLostAfterSenderSettlement(t *testing.T) {
+	cases := []struct {
+		name        string
+		stage       event.Stage
+		result      sender.Result
+		failDefer   bool
+		wantReplied bool
+	}{
+		{"verify 核验通过", event.StageVerify, sender.Result{OK: true, Verified: true}, false, true},
+		{"deliver 未核验", event.StageDeliver, sender.Result{OK: true, Verified: false}, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const id = "live:30308220:9304"
+			base := newFakeBus(id)
+			bus := &leaseLostBus{fakeBus: base, successMarks: 0, failDefer: tc.failDefer}
+			snd := &fakeSender{resumeResult: tc.result}
+			workers := newSettleWorkers(t, &fakeBrain{}, snd, bus)
+
+			claim := liveClaim(id)
+			claim.Stage = tc.stage
+			run := workers.Deliver
+			if tc.stage == event.StageVerify {
+				run = workers.Verify
+			}
+			res, err := run(context.Background(), scheduler.Work{Claim: claim})
+			if err != nil {
+				t.Fatalf("sender 已结清时不应返回错误：%v", err)
+			}
+			if res.Replied != tc.wantReplied {
+				t.Errorf("Replied = %v，期望 %v", res.Replied, tc.wantReplied)
+			}
+			if got := base.markTos(); len(got) != 0 {
+				t.Errorf("sender 已结清时不应 Mark，实际 %v", got)
+			}
+			if len(base.defers) != 0 {
+				t.Errorf("sender 已结清时不应 Defer：%v", base.defers)
+			}
+		})
 	}
 }
 

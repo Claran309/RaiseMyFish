@@ -76,7 +76,7 @@ func TestSchedulerDefaultsFilled(t *testing.T) {
 
 // TestSchedulerMentionBackExplicitValues 显式关闭/自定义上限不被默认值覆盖。
 func TestSchedulerMentionBackExplicitValues(t *testing.T) {
-	body := "[scheduler.channels.live]\nbrain='default'\nrate_per_minute=6\nburst=1\ndaily_quota=10\nreply_mention_back=false\nmax_reply_runes=30\n"
+	body := "[scheduler.channels.live]\nbrain='default'\nrate_per_minute=6\nburst=1\ndaily_quota=10\nself_names=[\"大肥鱼\"]\nreply_mention_back=false\nmax_reply_runes=30\n"
 	cfg, err := loadWithScheduler(t, body)
 	if err != nil {
 		t.Fatalf("加载失败：%v", err)

@@ -34,6 +34,19 @@ func TestDecideKnowledgeCues(t *testing.T) {
 	}
 }
 
+// TestDecideGagCues 直播间常见梗词不带「梗」字也要触发知识召回。
+func TestDecideGagCues(t *testing.T) {
+	for _, cue := range []string{"拉拉", "给给", "何意味", "魔鱼", "队友呼吸机", "不烧心", "胆子肥嘟嘟"} {
+		got := Decide("今天聊聊" + cue)
+		if got.NeedMemory || !got.NeedKnowledge {
+			t.Fatalf("梗词 %q 判断不符：%+v", cue, got)
+		}
+		if got.Reason != "knowledge:"+cue {
+			t.Fatalf("梗词 %q 命中原因 = %q，期望 knowledge:%s", cue, got.Reason, cue)
+		}
+	}
+}
+
 func TestDecideBothCues(t *testing.T) {
 	for _, text := range []string{
 		"你还记得那个梗吗", "之前说的那个梗是什么意思", "那个梗",

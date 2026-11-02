@@ -188,6 +188,8 @@ func truncateRunes(text string, limit int) string {
 // 两个 handler 都必须**结清事件**再返回：scheduler 在 complete() 里用 ownSettlement 检查
 // 「租约已释放且状态落到 done/skipped/dead/retry」，未结清会直接返回 ErrUnsettled 并终止消费循环。
 // 结清用的都是契约里已有的边（queued→replying→sent→done、replying→dead、retry 走 Defer），不新增状态。
+// 注意：真实 sender 会在 Send/Resume 的事务里原子结清输入事件并释放租约（见 contracts/event.md），
+// 此时 handler 不能再拿旧 claim 写 Bus，否则只会得到「事件租约已失效」。
 //
 // Generate / Deliver / Verify 三个 handler 都必须设置：scheduler.launch 按 claim 的 stage 分派，
 // 任一为 nil 都会在对应阶段裸奔调用。
@@ -284,6 +286,11 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 		// Scope 必须显式带上：sender.Reply.Validate 要求与事件通道/会话一致
 		res, err := snd.Send(ctx, w.Claim, sender.Reply{Text: formatReplyText(ev, reply.Text, live), Scope: scope})
 		if err != nil {
+			// sender 在自身事务里已把输入事件结清并释放租约（Settled=true）；
+			// 再拿旧 claim 走 Bus 必然报「事件租约已失效」，这不是需要重试的失败。
+			if sender.Handled(err) {
+				return scheduler.Result{Replied: res.OK}, nil
+			}
 			if settleErr := settleFailure(ctx, bus, w.Claim, err, []event.Status{event.StatusReplying}, retryDelay); settleErr != nil {
 				return scheduler.Result{}, errors.Join(err, settleErr)
 			}
@@ -297,6 +304,11 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 
 		// 2. 投递完成 → sent（Mark 会把 stage 推到 verify 并保留租约）
 		if err := bus.Mark(ctx, w.Claim, []event.Status{event.StatusReplying}, event.StatusSent); err != nil {
+			// 真实 sender 在 Send 返回前已原子结清输入事件并释放租约，这次 Mark 只会
+			// 拿到 ErrLeaseLost；事件已落到 done/retry，交给 scheduler 按快照核验即可。
+			if errors.Is(err, event.ErrLeaseLost) {
+				return scheduler.Result{Replied: res.OK}, nil
+			}
 			return scheduler.Result{}, fmt.Errorf("标记投递完成失败：%w", err)
 		}
 		// 3. 核验通过 → done；未核验则交回 retry，由 verify 阶段接手
@@ -316,12 +328,20 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 
 		res, err := snd.Resume(ctx, w.Claim)
 		if err != nil {
+			// 同 Send：sender 已结清并释放租约时不能再拿旧 claim 二次结清。
+			if sender.Handled(err) {
+				return scheduler.Result{Replied: res.OK}, nil
+			}
 			if settleErr := settleFailure(ctx, bus, w.Claim, err, from, retryDelay); settleErr != nil {
 				return scheduler.Result{}, errors.Join(err, settleErr)
 			}
 			return scheduler.Result{}, err
 		}
 		if err := settleDelivered(ctx, bus, w.Claim, res.Verified, retryDelay); err != nil {
+			// Resume 成功同样意味着 sender 已原子结清；旧 claim 写 Bus 会报租约失效。
+			if errors.Is(err, event.ErrLeaseLost) {
+				return scheduler.Result{Replied: res.OK}, nil
+			}
 			return scheduler.Result{}, err
 		}
 		return scheduler.Result{Replied: res.OK}, nil
@@ -467,6 +487,9 @@ func settleDelivered(ctx context.Context, bus event.Bus, c event.Claim, verified
 }
 
 // settleFailure 按发送错误类别结清事件。
+//
+// 只用于 sender 尚未结清的错误（!sender.Handled）：sender 已结清时输入租约已被其事务释放，
+// 再拿旧 claim Defer/Mark 只会报「事件租约已失效」，调用方必须先过滤。
 //
 // 只有 KindRetry（可重试的临时故障）交回 retry；其余（dead/auth/input/skipped/uncertain）
 // 一律置 dead——尤其是 uncertain（可能已经发出去了），重投会重复发弹幕，宁可停下来让人看。

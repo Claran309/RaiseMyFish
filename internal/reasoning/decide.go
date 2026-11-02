@@ -11,7 +11,10 @@ type Decision struct {
 }
 
 var memoryCues = []string{"刚才", "之前", "上次", "上回", "你说", "你提", "你记得", "那个", "还记得", "又"}
-var knowledgeCues = []string{"梗", "什么意思", "什么梗", "啥意思", "知道吗", "那个梗"}
+
+// knowledgeCues 分两类：问梗句式（梗/什么意思…）和直播间常见梗词本身。
+// 后者即使不带「梗」字，也需要查知识库才能听懂上下文。
+var knowledgeCues = []string{"梗", "什么意思", "什么梗", "啥意思", "知道吗", "那个梗", "拉拉", "给给", "何意味", "魔鱼", "队友呼吸机", "不烧心", "胆子肥嘟嘟"}
 
 // Decide 判断事件是否需要额外召回；纯函数、无网络、无模型。
 func Decide(text string) Decision {

@@ -175,9 +175,15 @@ func TestMentionBackTarget(t *testing.T) {
 	}
 
 	ev = base
-	ev.Meta = json.RawMessage(`{"reply_to_name":"大肥鱼"}`)
+	ev.Meta = json.RawMessage(`{"reply_to_id":"3747574135655903"}`)
 	if got, ok := MentionBackTarget(ev, policy); !ok || got != "路人" {
 		t.Errorf("reply_to_name 为空时应回落到 FromName，实际 (%q,%v)", got, ok)
+	}
+
+	ev = base
+	ev.Meta = json.RawMessage(`{"reply_to_name":"大肥鱼"}`)
+	if got, ok := MentionBackTarget(ev, policy); !ok || got != "大肥鱼" {
+		t.Errorf("名字命中时也应按 reply_to_name 回带，实际 (%q,%v)", got, ok)
 	}
 
 	ev = base
