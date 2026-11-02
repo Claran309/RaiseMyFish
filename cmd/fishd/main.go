@@ -16,6 +16,7 @@ import (
 	"RaiseMyFish/internal/database"
 	eventbus "RaiseMyFish/internal/event/bus"
 	"RaiseMyFish/internal/infra"
+	"RaiseMyFish/internal/presence"
 	"go.uber.org/zap"
 )
 
@@ -130,7 +131,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
-	consume, err := buildConsume(cfg, resources, routes, pack, bus, knowledgeRuntime.Reader, logger)
+	// 活动流是 P0 内存态：只用于展示主体此刻在做什么，不落库。
+	presenceTable := presence.NewTable()
+	consume, err := buildConsume(cfg, resources, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, logger)
 	if err != nil {
 		return err
 	}
@@ -148,7 +151,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if liveCollector == nil {
 		return servePipeline(ctx)
 	}
-	return serveWithCollector(ctx, liveCollector, bus, timeout, logger, servePipeline)
+	return serveWithCollector(ctx, liveCollector, withPresence(bus, presenceTable), timeout, logger, servePipeline)
 }
 
 // serve 不启动额外后台goroutine；所有探活有超时，取消后更新状态再释放连接。

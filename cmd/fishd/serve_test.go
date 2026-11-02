@@ -18,6 +18,7 @@ import (
 	"RaiseMyFish/internal/knowledge"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/persona"
+	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
 	senderlive "RaiseMyFish/internal/sender/live"
@@ -32,6 +33,7 @@ type fakeBrain struct {
 	calls    int
 	gotTask  brain.Task
 	gotInput brain.ContextInput
+	onReply  func()
 }
 
 func (f *fakeBrain) Name() string { return "fake" }
@@ -40,6 +42,9 @@ func (f *fakeBrain) Reply(_ context.Context, task brain.Task, in brain.ContextIn
 	f.calls++
 	f.gotTask = task
 	f.gotInput = in
+	if f.onReply != nil {
+		f.onReply()
+	}
 	if f.err != nil {
 		return brain.Reply{}, f.err
 	}
@@ -102,7 +107,7 @@ func TestGenerateCallsBrainThenSender(t *testing.T) {
 	engine := &fakeBrain{reply: brain.Reply{Text: "哼，才不是给你回的呢"}}
 	snd := &fakeSender{sendResult: sender.Result{OK: true, MsgID: "m1", Verified: true}}
 
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, newFakeBus(), time.Second, nil, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, newFakeBus(), time.Second, nil, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -155,7 +160,7 @@ func TestGenerateCallsBrainThenSender(t *testing.T) {
 
 // TestGenerateRejectsMissingTask 没有 Task 就报错，不伪造任务。
 func TestGenerateRejectsMissingTask(t *testing.T) {
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -166,7 +171,7 @@ func TestGenerateRejectsMissingTask(t *testing.T) {
 
 // TestGenerateRejectsUnknownChannel 通道没有路由时报错，不静默丢弃。
 func TestGenerateRejectsUnknownChannel(t *testing.T) {
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -182,13 +187,13 @@ func TestGeneratePropagatesErrors(t *testing.T) {
 	boom := errors.New("炸了")
 
 	engine := &fakeBrain{err: boom}
-	workers, _ := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, zap.NewNop())
+	workers, _ := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, nil, zap.NewNop())
 	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim("live:1:2"), Task: liveTask("live:1:2")}); !errors.Is(err, boom) {
 		t.Errorf("Brain 错误未透传：%v", err)
 	}
 
 	snd := &fakeSender{sendErr: boom}
-	workers2, _ := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{reply: brain.Reply{Text: "好"}}}, snd, newFakeBus(), time.Second, nil, nil, zap.NewNop())
+	workers2, _ := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{reply: brain.Reply{Text: "好"}}}, snd, newFakeBus(), time.Second, nil, nil, nil, zap.NewNop())
 	if _, err := workers2.Generate(context.Background(), scheduler.Work{Claim: liveClaim("live:1:3"), Task: liveTask("live:1:3")}); !errors.Is(err, boom) {
 		t.Errorf("Sender 错误未透传：%v", err)
 	}
@@ -198,7 +203,7 @@ func TestGeneratePropagatesErrors(t *testing.T) {
 func TestVerifyUsesResume(t *testing.T) {
 	engine := &fakeBrain{}
 	snd := &fakeSender{resumeResult: sender.Result{OK: true, Verified: true}}
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, newFakeBus(), time.Second, nil, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, newFakeBus(), time.Second, nil, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -220,19 +225,19 @@ func TestVerifyUsesResume(t *testing.T) {
 
 // TestBuildConsumeWorkersRejectsNilSender 依赖缺失在构造期就失败。
 func TestBuildConsumeWorkersRejectsNilSender(t *testing.T) {
-	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, nil, newFakeBus(), time.Second, nil, nil, zap.NewNop()); err == nil {
+	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, nil, newFakeBus(), time.Second, nil, nil, nil, zap.NewNop()); err == nil {
 		t.Error("Sender 为 nil 应报错")
 	}
-	if _, err := buildConsumeWorkers(persona.Pack{}, nil, &fakeSender{}, newFakeBus(), time.Second, nil, nil, zap.NewNop()); err == nil {
+	if _, err := buildConsumeWorkers(persona.Pack{}, nil, &fakeSender{}, newFakeBus(), time.Second, nil, nil, nil, zap.NewNop()); err == nil {
 		t.Error("没有路由应报错")
 	}
-	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, nil, time.Second, nil, nil, zap.NewNop()); err == nil {
+	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, nil, time.Second, nil, nil, nil, zap.NewNop()); err == nil {
 		t.Error("Bus 为 nil 应报错")
 	}
-	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), 0, nil, nil, zap.NewNop()); err == nil {
+	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), 0, nil, nil, nil, zap.NewNop()); err == nil {
 		t.Error("重试间隔非正应报错")
 	}
-	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, nil); err == nil {
+	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, nil, nil); err == nil {
 		t.Error("日志器为 nil 应报错")
 	}
 }
@@ -422,7 +427,7 @@ func TestSchedulerAcceptsAssembledWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("路由解析失败：%v", err)
 	}
-	workers, err := buildConsumeWorkers(persona.Pack{}, byChannel, &fakeSender{}, newFakeBus(), time.Second, nil, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(persona.Pack{}, byChannel, &fakeSender{}, newFakeBus(), time.Second, nil, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("worker 装配失败：%v", err)
 	}
@@ -519,7 +524,7 @@ func TestResolveSenderWiringRequiresSenderSection(t *testing.T) {
 // newSettleWorkers 装配一套带假总线的 worker。
 func newSettleWorkers(t *testing.T, engine brain.Brain, snd sender.Sender, bus event.Bus) scheduler.Workers {
 	t.Helper()
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -779,7 +784,7 @@ func TestGenerateRecallsMemoryWithCorrectScope(t *testing.T) {
 		shared: memory.SharedState{Scope: memory.Scope{Channel: event.ChLive, Session: "30308220"}, Facts: []memory.Fact{{Key: "存粮", Value: "有"}}},
 	}
 
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, mem, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, mem, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -810,7 +815,7 @@ func TestGenerateMemoryRecallFailureDegrades(t *testing.T) {
 	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
 	mem := &fakeMemoryReader{recallErr: errors.New("db down"), sharedErr: errors.New("db down")}
 
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, mem, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, mem, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -843,7 +848,7 @@ func TestGenerateKnowledgeEnabledFillsContext(t *testing.T) {
 		ctx: knowledge.Context{Scope: knowledge.Scope{Channel: event.ChLive, Session: "30308220"}, Revision: "rev1", Items: []knowledge.Item{{ID: "k1", Text: "资料"}}},
 	}
 
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, know, zap.NewNop())
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, know, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -875,7 +880,7 @@ func TestGenerateKnowledgeDisabledKeepsNil(t *testing.T) {
 	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
 	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
 
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -887,22 +892,84 @@ func TestGenerateKnowledgeDisabledKeepsNil(t *testing.T) {
 	}
 }
 
-// TestGenerateKnowledgeFailureDegrades 知识召回失败降级为 nil，不阻塞回复。
-func TestGenerateKnowledgeFailureDegrades(t *testing.T) {
-	const id = "live:30308220:9205"
+// TestGeneratePresenceLifecycle 生成期间标 replying、投递成功后标 sending，返回前清掉 replying。
+func TestGeneratePresenceLifecycle(t *testing.T) {
+	const id = "live:30308220:9301"
 	bus := newFakeBus(id)
-	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
-	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
-	know := &fakeKnowledgeReader{recallErr: errors.New("knowledge broken")}
+	table := presence.NewTable()
+	var during []presence.State
+	engine := &fakeBrain{
+		reply:   brain.Reply{Text: "哼"},
+		onReply: func() { during = table.Active(time.Now()) },
+	}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, MsgID: "m1", Verified: true}}
 
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, know, zap.NewNop())
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, table, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
 	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
-		t.Fatalf("知识召回失败不应阻塞回复：%v", err)
+		t.Fatalf("Generate 失败：%v", err)
 	}
-	if engine.gotInput.Knowledge != nil {
-		t.Errorf("知识召回失败后 Knowledge 应为 nil：%+v", engine.gotInput.Knowledge)
+
+	if len(during) != 1 || during[0].Kind != presence.KindReplying || during[0].Channel != string(event.ChLive) {
+		t.Fatalf("Brain 调用期间 presence = %+v，期望 replying/live", during)
+	}
+
+	active := table.Active(time.Now())
+	if len(active) != 1 || active[0].Kind != presence.KindSending || active[0].Channel != string(event.ChLive) {
+		t.Fatalf("Generate 返回后 presence = %+v，期望只剩 sending/live", active)
+	}
+	if active[0].TTL != time.Minute {
+		t.Errorf("sending TTL = %v，期望 1m", active[0].TTL)
+	}
+	if got := table.Summary(time.Now()); got != "在发弹幕" {
+		t.Errorf("Summary = %q，期望「在发弹幕」", got)
+	}
+}
+
+// TestGeneratePresenceClearsReplyingOnBrainFailure 生成失败也要清掉 replying，不留悬挂状态。
+func TestGeneratePresenceClearsReplyingOnBrainFailure(t *testing.T) {
+	const id = "live:30308220:9302"
+	bus := newFakeBus(id)
+	table := presence.NewTable()
+	var during []presence.State
+	engine := &fakeBrain{
+		err:     errors.New("模型炸了"),
+		onReply: func() { during = table.Active(time.Now()) },
+	}
+
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, &fakeSender{}, bus, time.Second, nil, nil, table, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err == nil {
+		t.Fatal("Brain 失败时应返回错误")
+	}
+
+	if len(during) != 1 || during[0].Kind != presence.KindReplying {
+		t.Fatalf("Brain 调用期间 presence = %+v，期望 replying", during)
+	}
+	if got := table.Active(time.Now()); len(got) != 0 {
+		t.Errorf("Generate 返回后 presence = %+v，期望空表", got)
+	}
+}
+
+// TestGeneratePresenceSkipsSendingWhenNotOK 发送未被接受（OK=false）不记 sending。
+func TestGeneratePresenceSkipsSendingWhenNotOK(t *testing.T) {
+	const id = "live:30308220:9303"
+	bus := newFakeBus(id)
+	table := presence.NewTable()
+	snd := &fakeSender{sendResult: sender.Result{OK: false, Verified: false}}
+
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{reply: brain.Reply{Text: "哼"}}}, snd, bus, time.Second, nil, nil, table, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+		t.Fatalf("Generate 失败：%v", err)
+	}
+	if got := table.Active(time.Now()); len(got) != 0 {
+		t.Errorf("OK=false 时不应记 sending：%+v", got)
 	}
 }

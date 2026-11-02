@@ -22,6 +22,7 @@ import (
 	"RaiseMyFish/internal/knowledge"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/persona"
+	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
 	senderlive "RaiseMyFish/internal/sender/live"
@@ -83,7 +84,7 @@ func resolveRoutes(policies map[event.Channel]scheduler.ChannelPolicy, routes ma
 //
 // Generate / Deliver / Verify 三个 handler 都必须设置：scheduler.launch 按 claim 的 stage 分派，
 // 任一为 nil 都会在对应阶段裸奔调用。
-func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, log *zap.Logger) (scheduler.Workers, error) {
+func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, pres *presence.Table, log *zap.Logger) (scheduler.Workers, error) {
 	if snd == nil {
 		return scheduler.Workers{}, errors.New("发送器不能为 nil")
 	}
@@ -115,6 +116,15 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 		if err := bus.Mark(ctx, w.Claim, []event.Status{event.StatusQueued}, event.StatusReplying); err != nil {
 			return scheduler.Result{}, fmt.Errorf("进入执行中失败：%w", err)
 		}
+		// presence 是旁路观测：空表跳过，失败也不影响主链路
+		if pres != nil {
+			pres.Set(presence.State{Kind: presence.KindReplying, Channel: string(ev.Channel)})
+		}
+		defer func() {
+			if pres != nil {
+				pres.Clear(presence.KindReplying, string(ev.Channel))
+			}
+		}()
 
 		scope := memory.Scope{Channel: ev.Channel, Session: ev.Session, Private: ev.Private}
 		// 召回失败降级为空快照 + 日志，不阻塞回复（记忆是增强，不是前置条件）
@@ -146,6 +156,11 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 				return scheduler.Result{}, errors.Join(err, settleErr)
 			}
 			return scheduler.Result{}, err
+		}
+
+		// 投递被接受才算发送成功；OK=false 不记 sending
+		if pres != nil && res.OK {
+			pres.Set(presence.State{Kind: presence.KindSending, Channel: string(ev.Channel), TTL: time.Minute})
 		}
 
 		// 2. 投递完成 → sent（Mark 会把 stage 推到 verify 并保留租约）
@@ -339,7 +354,7 @@ func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger)
 }
 
 // buildConsume 装配消费循环；未启用（无 [scheduler] / 无 Brain 路由 / 通道关闭）时返回 nil。
-func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, log *zap.Logger) (*scheduler.Scheduler, error) {
+func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, log *zap.Logger) (*scheduler.Scheduler, error) {
 	if !consumeEnabled(cfg, routes) {
 		return nil, nil
 	}
@@ -363,7 +378,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, err
 	}
-	workers, err := buildConsumeWorkers(pack, byChannel, snd, bus, options.RetryDelay, memReader, know, log)
+	workers, err := buildConsumeWorkers(pack, byChannel, snd, bus, options.RetryDelay, memReader, know, pres, log)
 	if err != nil {
 		return nil, err
 	}

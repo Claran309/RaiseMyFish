@@ -607,3 +607,13 @@
 - 核对：失败降级 7 类（录制/抽帧/亮度/视觉/无音轨/ASR/ctx 取消）不阻塞弹幕闭环；cookie 脱敏；配置校验（asr_url 本机 HTTP、路由存在、llm 启用）。
 - 未做（交接声明）：未接入 cmd/fishd（周期触发留 0.13）、未真实冒烟（留验收时）、model/language/response_format 未做成配置项。
 - 结论：**0.12 验收通过**（待提交）；**真实冒烟待主人开播 + ASR 服务**。
+
+## 0.13a 活动流 + Presence 独立验收（2026-11-02 17:55）
+
+- 交付：`internal/presence/`（State/Table：RWMutex、Set/Clear/Active/Summary、DefaultTTL 5m）+ `cmd/fishd/presence.go`（采集包装）+ serve.go 的 replying/sending 接入 + main.go 创建内存 Table。
+- 独立执行：presence 覆盖率 91.1%；cmd/fishd 通过（7 条接入用例）；race 通过；25 包全绿。
+- 核对：watching（采集前）、replying（Generate 期间 defer Clear）、sending（res.OK 才记，Resume 不记）；调度/发送语义/contracts/数据库未改。
+- **DSH 裁决**：
+  1. replying 单键（同通道并发先结束的协程会清掉仍在生成的状态）→ **接受**（P0 最小；引用计数留后续）
+  2. Summary 未暴露到 fishctl status/HTTP → **接受**（本批规格内）
+- 结论：**0.13a 验收通过**（待提交）；**P0 剩 0.13b 送礼 → 真实冒烟收尾**。
