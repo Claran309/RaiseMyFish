@@ -101,7 +101,7 @@ func TestGenerateCallsBrainThenSender(t *testing.T) {
 	engine := &fakeBrain{reply: brain.Reply{Text: "哼，才不是给你回的呢"}}
 	snd := &fakeSender{sendResult: sender.Result{OK: true, MsgID: "m1", Verified: true}}
 
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, newFakeBus(), time.Second)
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, newFakeBus(), time.Second, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -154,7 +154,7 @@ func TestGenerateCallsBrainThenSender(t *testing.T) {
 
 // TestGenerateRejectsMissingTask 没有 Task 就报错，不伪造任务。
 func TestGenerateRejectsMissingTask(t *testing.T) {
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), time.Second)
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -165,7 +165,7 @@ func TestGenerateRejectsMissingTask(t *testing.T) {
 
 // TestGenerateRejectsUnknownChannel 通道没有路由时报错，不静默丢弃。
 func TestGenerateRejectsUnknownChannel(t *testing.T) {
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), time.Second)
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -181,13 +181,13 @@ func TestGeneratePropagatesErrors(t *testing.T) {
 	boom := errors.New("炸了")
 
 	engine := &fakeBrain{err: boom}
-	workers, _ := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, &fakeSender{}, newFakeBus(), time.Second)
+	workers, _ := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, zap.NewNop())
 	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim("live:1:2"), Task: liveTask("live:1:2")}); !errors.Is(err, boom) {
 		t.Errorf("Brain 错误未透传：%v", err)
 	}
 
 	snd := &fakeSender{sendErr: boom}
-	workers2, _ := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{reply: brain.Reply{Text: "好"}}}, snd, newFakeBus(), time.Second)
+	workers2, _ := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{reply: brain.Reply{Text: "好"}}}, snd, newFakeBus(), time.Second, nil, nil, zap.NewNop())
 	if _, err := workers2.Generate(context.Background(), scheduler.Work{Claim: liveClaim("live:1:3"), Task: liveTask("live:1:3")}); !errors.Is(err, boom) {
 		t.Errorf("Sender 错误未透传：%v", err)
 	}
@@ -197,7 +197,7 @@ func TestGeneratePropagatesErrors(t *testing.T) {
 func TestVerifyUsesResume(t *testing.T) {
 	engine := &fakeBrain{}
 	snd := &fakeSender{resumeResult: sender.Result{OK: true, Verified: true}}
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, newFakeBus(), time.Second)
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, newFakeBus(), time.Second, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -219,10 +219,10 @@ func TestVerifyUsesResume(t *testing.T) {
 
 // TestBuildConsumeWorkersRejectsNilSender 依赖缺失在构造期就失败。
 func TestBuildConsumeWorkersRejectsNilSender(t *testing.T) {
-	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, nil, newFakeBus(), time.Second); err == nil {
+	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, nil, newFakeBus(), time.Second, nil, nil, zap.NewNop()); err == nil {
 		t.Error("Sender 为 nil 应报错")
 	}
-	if _, err := buildConsumeWorkers(persona.Pack{}, nil, &fakeSender{}, newFakeBus(), time.Second); err == nil {
+	if _, err := buildConsumeWorkers(persona.Pack{}, nil, &fakeSender{}, newFakeBus(), time.Second, nil, nil, zap.NewNop()); err == nil {
 		t.Error("没有路由应报错")
 	}
 	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, nil, time.Second); err == nil {
@@ -418,7 +418,7 @@ func TestSchedulerAcceptsAssembledWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("路由解析失败：%v", err)
 	}
-	workers, err := buildConsumeWorkers(persona.Pack{}, byChannel, &fakeSender{}, newFakeBus(), time.Second)
+	workers, err := buildConsumeWorkers(persona.Pack{}, byChannel, &fakeSender{}, newFakeBus(), time.Second, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("worker 装配失败：%v", err)
 	}
@@ -515,7 +515,7 @@ func TestResolveSenderWiringRequiresSenderSection(t *testing.T) {
 // newSettleWorkers 装配一套带假总线的 worker。
 func newSettleWorkers(t *testing.T, engine brain.Brain, snd sender.Sender, bus event.Bus) scheduler.Workers {
 	t.Helper()
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second)
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}

@@ -19,6 +19,7 @@ import (
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/infra"
+	"RaiseMyFish/internal/knowledge"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/scheduler"
@@ -82,7 +83,7 @@ func resolveRoutes(policies map[event.Channel]scheduler.ChannelPolicy, routes ma
 //
 // Generate / Deliver / Verify 三个 handler 都必须设置：scheduler.launch 按 claim 的 stage 分派，
 // 任一为 nil 都会在对应阶段裸奔调用。
-func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration) (scheduler.Workers, error) {
+func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, log *zap.Logger) (scheduler.Workers, error) {
 	if snd == nil {
 		return scheduler.Workers{}, errors.New("发送器不能为 nil")
 	}
@@ -94,6 +95,9 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 	}
 	if len(byChannel) == 0 {
 		return scheduler.Workers{}, errors.New("没有可用的 Brain 路由")
+	}
+	if log == nil {
+		return scheduler.Workers{}, errors.New("日志器不能为 nil")
 	}
 
 	generate := func(ctx context.Context, w scheduler.Work) (scheduler.Result, error) {
@@ -113,13 +117,16 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 		}
 
 		scope := memory.Scope{Channel: ev.Channel, Session: ev.Session, Private: ev.Private}
+		// 召回失败降级为空快照 + 日志，不阻塞回复（记忆是增强，不是前置条件）
+		memCtx, shared := recallMemory(ctx, mem, scope, log)
+		knowCtx := recallKnowledge(ctx, know, ev, log)
+
 		input := brain.ContextInput{
-			Event:   ev,
-			Persona: pack,
-			// Memory/Shared 只带 Scope、不带数据：本批不接召回，也不编造记忆
-			Memory:    memory.Context{Scope: scope},
-			Shared:    memory.SharedState{Scope: scope},
-			Knowledge: nil,
+			Event:     ev,
+			Persona:   pack,
+			Memory:    memCtx,
+			Shared:    shared,
+			Knowledge: knowCtx,
 		}
 		task := brain.Task{ID: w.Task.ID, EventID: w.Task.EventID, Channel: w.Task.Channel, Session: w.Task.Session}
 
@@ -178,6 +185,59 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 		Deliver:  resumeAndSettle,
 		Verify:   resumeAndSettle,
 	}, nil
+}
+
+// recallMemory 召回记忆与共享事实。
+//
+//   - mem 为 nil（未装配）→ 返回只带 Scope 的空快照，不报错；
+//   - 召回失败 → 降级为只带 Scope 的空快照 + 记日志，**不阻塞回复**；
+//   - 隐私：Scope 由事件派生，Reader 内部按 Scope 做隔离，这里不做任何越界拼装。
+func recallMemory(ctx context.Context, mem memory.Reader, scope memory.Scope, log *zap.Logger) (memory.Context, memory.SharedState) {
+	empty := memory.Context{Scope: scope}
+	emptyShared := memory.SharedState{Scope: scope}
+	if mem == nil {
+		return empty, emptyShared
+	}
+	recalled, err := mem.Recall(ctx, scope)
+	if err != nil {
+		log.Warn("记忆召回失败，降级为空快照",
+			zap.String("action", "memory_recall"),
+			zap.String("channel", string(scope.Channel)),
+			zap.Error(err))
+		return empty, emptyShared
+	}
+	shared, err := mem.Shared(ctx, scope)
+	if err != nil {
+		log.Warn("共享事实召回失败，降级为空",
+			zap.String("action", "shared_recall"),
+			zap.String("channel", string(scope.Channel)),
+			zap.Error(err))
+		return recalled, emptyShared
+	}
+	return recalled, shared
+}
+
+// recallKnowledge 召回知识库条目。
+//
+//   - know 为 nil（[knowledge] enabled=false 或未装配）→ 返回 nil，Brain 按无知识处理；
+//   - 召回失败 → 降级为 nil + 记日志，不阻塞回复。
+func recallKnowledge(ctx context.Context, know knowledge.Reader, ev event.Event, log *zap.Logger) *knowledge.Context {
+	if know == nil {
+		return nil
+	}
+	query := knowledge.Query{
+		Scope: knowledge.Scope{Channel: ev.Channel, Session: ev.Session, Private: ev.Private},
+		Text:  ev.Text,
+	}
+	got, err := know.Recall(ctx, query)
+	if err != nil {
+		log.Warn("知识召回失败，降级为无知识",
+			zap.String("action", "knowledge_recall"),
+			zap.String("channel", string(ev.Channel)),
+			zap.Error(err))
+		return nil
+	}
+	return &got
 }
 
 // settleDelivered 把「已投递」的事件收尾：核验通过就 done，否则交回 retry 让 verify 阶段接手。
@@ -279,9 +339,19 @@ func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger)
 }
 
 // buildConsume 装配消费循环；未启用（无 [scheduler] / 无 Brain 路由 / 通道关闭）时返回 nil。
-func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, log *zap.Logger) (*scheduler.Scheduler, error) {
+func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, log *zap.Logger) (*scheduler.Scheduler, error) {
 	if !consumeEnabled(cfg, routes) {
 		return nil, nil
+	}
+
+	// 记忆 Reader 装配失败是启动级错误：召回是消费循环的核心输入，不能静默降级成「永远失忆」。
+	memRepo, err := database.NewMemoryRepo(resources.DB)
+	if err != nil {
+		return nil, fmt.Errorf("装配记忆仓储失败：%w", err)
+	}
+	memReader, err := memory.NewReader(memRepo, memRepo, memory.ReaderOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("装配记忆 Reader 失败：%w", err)
 	}
 
 	options := buildSchedulerOptions(cfg.Scheduler)
@@ -293,7 +363,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, err
 	}
-	workers, err := buildConsumeWorkers(pack, byChannel, snd, bus, options.RetryDelay)
+	workers, err := buildConsumeWorkers(pack, byChannel, snd, bus, options.RetryDelay, memReader, know, log)
 	if err != nil {
 		return nil, err
 	}

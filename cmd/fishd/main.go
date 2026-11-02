@@ -130,7 +130,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
-	consume, err := buildConsume(cfg, resources, routes, pack, bus, logger)
+	consume, err := buildConsume(cfg, resources, routes, pack, bus, knowledgeRuntime.Reader, logger)
 	if err != nil {
 		return err
 	}

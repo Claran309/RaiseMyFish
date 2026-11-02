@@ -51,7 +51,7 @@ func NewStats(db *gorm.DB) (*Stats, error) {
 //	Received = events 里 dir='in' 的事件数（本窗口收到了多少条待处理输入）
 //	Skipped  = events 里 status='skipped' 的事件数（主动不回复）
 //	Replied  = 窗口内 dir='in' 事件中，send_log.ok IS TRUE 的去重事件数
-//	Failed   = send_log 里 ok IS FALSE 的去重事件数（明确失败；ok 为 NULL 的"未知"不计）
+//	Failed   = 窗口内 dir='in' 事件中，send_log.ok IS FALSE 的去重事件数（event_id 缺失的老行仍计）
 //	CostUSD  = llm_usage.cost_usd 求和（没有记录或全为 NULL → nil = 未知）
 //
 // 用去重事件数而不是尝试次数：同一条回复重试多次不该把「回复数」算多。
@@ -69,12 +69,15 @@ JOIN events e ON e.id = l.event_id
 WHERE l.ok IS TRUE AND e.dir = 'in' AND e.at >= ? AND e.at < ?
 GROUP BY 1`
 
+	// failedRowsSQL 与 sentRowsSQL 对称：也只统计「窗口内的入向事件」，
+	// 按事件时间过滤 + 要求 dir='in'，避免 Failed 与 Replied 口径不一致。
+	// 仍用 LEFT JOIN：event_id 缺失的老审计行也计入（无从归属到某条事件，但不能丢）。
 	failedRowsSQL = `
 SELECT COALESCE(NULLIF(l.channel, ''), e.channel, '') AS channel,
        COUNT(DISTINCT COALESCE(l.event_id, 'log:' || l.id::text)) AS n
 FROM send_log l
 LEFT JOIN events e ON e.id = l.event_id
-WHERE l.ok IS FALSE AND l.at >= ? AND l.at < ?
+WHERE l.ok IS FALSE AND (e.id IS NULL OR (e.dir = 'in' AND e.at >= ? AND e.at < ?))
 GROUP BY 1`
 )
 
