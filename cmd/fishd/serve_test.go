@@ -225,11 +225,14 @@ func TestBuildConsumeWorkersRejectsNilSender(t *testing.T) {
 	if _, err := buildConsumeWorkers(persona.Pack{}, nil, &fakeSender{}, newFakeBus(), time.Second, nil, nil, zap.NewNop()); err == nil {
 		t.Error("没有路由应报错")
 	}
-	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, nil, time.Second); err == nil {
+	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, nil, time.Second, nil, nil, zap.NewNop()); err == nil {
 		t.Error("Bus 为 nil 应报错")
 	}
-	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), 0); err == nil {
+	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), 0, nil, nil, zap.NewNop()); err == nil {
 		t.Error("重试间隔非正应报错")
+	}
+	if _, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{}}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, nil); err == nil {
+		t.Error("日志器为 nil 应报错")
 	}
 }
 
