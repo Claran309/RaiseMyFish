@@ -275,12 +275,25 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 		task := brain.Task{ID: w.Task.ID, EventID: w.Task.EventID, Channel: w.Task.Channel, Session: w.Task.Session}
 
 		reply, err := engine.Reply(ctx, task, input)
+		if budgetFailure(err) && input.Knowledge != nil {
+			// 预算错误常常是知识段撑爆提示：去掉知识再试一次，仍失败才进 dead。
+			log.Warn("知识召回超出提示预算，去掉知识重试",
+				zap.String("action", "knowledge_budget_fallback"),
+				zap.String("event_id", ev.ID),
+				zap.String("ch", string(ev.Channel)),
+				zap.String("session", ev.Session),
+			)
+			input.Knowledge = nil
+			reply, err = engine.Reply(ctx, task, input)
+		}
 		if err != nil {
 			// 生成失败也要结清，否则事件卡在 replying
 			if markErr := bus.Mark(ctx, w.Claim, []event.Status{event.StatusReplying}, event.StatusDead); markErr != nil {
 				return scheduler.Result{}, errors.Join(err, markErr)
 			}
-			return scheduler.Result{}, err
+			// 事件已结清：可预期失败只留日志，返回 nil 让消费循环继续。
+			logWorkFailure(log, "generate_failed", w, err)
+			return scheduler.Result{}, nil
 		}
 
 		// Scope 必须显式带上：sender.Reply.Validate 要求与事件通道/会话一致
@@ -364,20 +377,33 @@ func withErrorLog(log *zap.Logger, action string, handler scheduler.Handler) sch
 			if err == nil {
 				return
 			}
-			ev := w.Claim.Event
-			log.Error("调度工作失败",
-				zap.String("action", action),
-				zap.String("event_id", ev.ID),
-				zap.String("ch", string(ev.Channel)),
-				zap.String("session", ev.Session),
-				zap.String("stage", string(w.Claim.Stage)),
-				zap.String("error_kind", safeErrorKind(err)),
-				zap.String("error_chain", safeErrorChain(err)),
-				zap.Error(err),
-			)
+			logWorkFailure(log, action, w, err)
 		}()
 		return handler(ctx, w)
 	}
+}
+
+// logWorkFailure 记录一次调度工作失败的完整错误链。
+// 已结清的可预期错误（handler 返回 nil）也走这里留痕，避免“不崩循环”变成“没有日志”。
+// 字段只含事件标识，不打印正文、prompt、凭据或 cookie。
+func logWorkFailure(log *zap.Logger, action string, w scheduler.Work, err error) {
+	ev := w.Claim.Event
+	log.Error("调度工作失败",
+		zap.String("action", action),
+		zap.String("event_id", ev.ID),
+		zap.String("ch", string(ev.Channel)),
+		zap.String("session", ev.Session),
+		zap.String("stage", string(w.Claim.Stage)),
+		zap.String("error_kind", safeErrorKind(err)),
+		zap.String("error_chain", safeErrorChain(err)),
+		zap.Error(err),
+	)
+}
+
+// budgetFailure 判断是否为提示预算超限；只有这类错误值得去掉知识重试。
+func budgetFailure(err error) bool {
+	var typed *brain.Error
+	return errors.As(err, &typed) && typed.Kind == brain.KindBudget
 }
 
 // safeErrorKind 提取项目内已知错误类型的类别；未知错误返回空串。

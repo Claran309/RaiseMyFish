@@ -1,0 +1,10 @@
+22:31:04	人尹人咯	傲娇ai也萌萌哒	{"source": "bili-whale-ws", "reply_to_id": "3747574135655903", "reply_to_name": "Claranの大肥鱼", "original_runes": 8}
+22:30:40	年轻倒头就睡怎么了	你回复的好乱啊	{"source": "bili-whale-ws", "reply_to_id": "3747574135655903", "reply_to_name": "Claranの大肥鱼", "original_runes": 7}
+22:29:58	年轻倒头就睡怎么了	那你知道娇娇关注你是终南仙主的功劳吗	{"source": "bili-whale-ws", "reply_to_id": "3747574135655903", "reply_to_name": "Claranの大肥鱼", "original_runes": 18}
+22:29:25	人尹人咯	感觉你的小眼镜好可爱，客服妹妹	{"source": "bili-whale-ws", "reply_to_id": "3747574135655903", "reply_to_name": "Claranの大肥鱼", "original_runes": 15}
+22:10:23	人尹人咯	胖嘟嘟也很可爱，唐朝美	{"source": "bili-whale-ws", "reply_to_id": "3747574135655903", "reply_to_name": "Claranの大肥鱼", "original_runes": 11}
+22:10:19	年轻倒头就睡怎么了	你多发几个这表情，最好一下发三个[dog]	{"source": "bili-whale-ws", "reply_to_id": "3747574135655903", "reply_to_name": "Claranの大肥鱼", "original_runes": 21}
+22:09:41	梭花不摸鱼	行，那我也不证，站这儿就行	{"source": "bili-whale-ws", "reply_to_id": "486003636", "reply_to_name": "顾苓依", "original_runes": 13}
+22:09:33	年轻倒头就睡怎么了	你怎么自己@自己啊	{"source": "bili-whale-ws", "reply_to_id": "3747574135655903", "reply_to_name": "Claranの大肥鱼", "original_runes": 9}
+22:09:33	゙゙゙魚魚	娇娇回你了	{"source": "bili-whale-ws", "reply_to_id": "3747574135655903", "reply_to_name": "Claranの大肥鱼", "original_runes": 5}
+22:08:59	゙゙゙魚魚	你天天看娇娇直播要花多少token啊	{"source": "bili-whale-ws", "reply_to_id": "3747574135655903", "reply_to_name": "Claranの大肥鱼", "original_runes": 18}

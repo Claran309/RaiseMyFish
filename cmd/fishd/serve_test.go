@@ -34,12 +34,13 @@ import (
 
 // fakeBrain 记录被调用时收到的 Task 与 ContextInput。
 type fakeBrain struct {
-	reply    brain.Reply
-	err      error
-	calls    int
-	gotTask  brain.Task
-	gotInput brain.ContextInput
-	onReply  func()
+	reply     brain.Reply
+	err       error
+	calls     int
+	gotTask   brain.Task
+	gotInput  brain.ContextInput
+	onReply   func()
+	replyFunc func(call int, in brain.ContextInput) (brain.Reply, error)
 }
 
 func (f *fakeBrain) Name() string { return "fake" }
@@ -50,6 +51,9 @@ func (f *fakeBrain) Reply(_ context.Context, task brain.Task, in brain.ContextIn
 	f.gotInput = in
 	if f.onReply != nil {
 		f.onReply()
+	}
+	if f.replyFunc != nil {
+		return f.replyFunc(f.calls, in)
 	}
 	if f.err != nil {
 		return brain.Reply{}, f.err
@@ -315,19 +319,27 @@ func TestGenerateRejectsUnknownChannel(t *testing.T) {
 	}
 }
 
-// TestGeneratePropagatesErrors Brain 与 Sender 的错误都要原样上抛。
-func TestGeneratePropagatesErrors(t *testing.T) {
+// TestGenerateSettlesBrainErrorButPropagatesSenderError Brain 失败已标 dead → 返回 nil；
+// sender 的未结清错误仍上抛（基础设施失败要让调度看见）。
+func TestGenerateSettlesBrainErrorButPropagatesSenderError(t *testing.T) {
 	boom := errors.New("炸了")
 
+	const brainID = "live:1:2"
+	brainBus := newFakeBus(brainID)
 	engine := &fakeBrain{err: boom}
-	workers, _ := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, &fakeSender{}, newFakeBus(), time.Second, nil, nil, nil, nil, zap.NewNop())
-	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim("live:1:2"), Task: liveTask("live:1:2")}); !errors.Is(err, boom) {
-		t.Errorf("Brain 错误未透传：%v", err)
+	workers, _ := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, &fakeSender{}, brainBus, time.Second, nil, nil, nil, nil, zap.NewNop())
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(brainID), Task: liveTask(brainID)}); err != nil {
+		t.Errorf("Brain 失败已结清，不应返回错误：%v", err)
+	}
+	if got := brainBus.finalStatus(brainID); got != event.StatusDead {
+		t.Errorf("Brain 失败最终状态 = %q，期望 dead", got)
 	}
 
+	const sendID = "live:1:3"
+	sendBus := newFakeBus(sendID)
 	snd := &fakeSender{sendErr: boom}
-	workers2, _ := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{reply: brain.Reply{Text: "好"}}}, snd, newFakeBus(), time.Second, nil, nil, nil, nil, zap.NewNop())
-	if _, err := workers2.Generate(context.Background(), scheduler.Work{Claim: liveClaim("live:1:3"), Task: liveTask("live:1:3")}); !errors.Is(err, boom) {
+	workers2, _ := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{reply: brain.Reply{Text: "好"}}}, snd, sendBus, time.Second, nil, nil, nil, nil, zap.NewNop())
+	if _, err := workers2.Generate(context.Background(), scheduler.Work{Claim: liveClaim(sendID), Task: liveTask(sendID)}); !errors.Is(err, boom) {
 		t.Errorf("Sender 错误未透传：%v", err)
 	}
 }
@@ -737,18 +749,106 @@ func TestGenerateSettlesBySenderKind(t *testing.T) {
 	}
 }
 
-// TestGenerateSettlesBrainFailure 生成失败也不能把事件留在 replying。
+// TestGenerateSettlesBrainFailure 生成失败要标 dead 并返回 nil（事件已结清，循环不能崩）。
 func TestGenerateSettlesBrainFailure(t *testing.T) {
 	const id = "live:30308220:9004"
 	boom := errors.New("模型炸了")
 	bus := newFakeBus(id)
 	workers := newSettleWorkers(t, &fakeBrain{err: boom}, &fakeSender{}, bus)
 
-	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); !errors.Is(err, boom) {
-		t.Fatalf("Brain 错误未上抛：%v", err)
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+		t.Fatalf("事件已结清时不应返回错误：%v", err)
 	}
 	if got := bus.finalStatus(id); got != event.StatusDead {
 		t.Errorf("最终状态 = %q，期望 dead（不能留 replying）", got)
+	}
+}
+
+// TestGenerateBudgetFallbackDropsKnowledge 预算错误先去掉知识重试一次；成功就不标 dead。
+func TestGenerateBudgetFallbackDropsKnowledge(t *testing.T) {
+	const id = "live:30308220:9501"
+	bus := newFakeBus(id)
+	know := &fakeKnowledgeReader{ctx: knowledge.Context{
+		Scope:    knowledge.Scope{Channel: event.ChLive, Session: "30308220"},
+		Revision: "rev1",
+		Items:    []knowledge.Item{{ID: "k1", Text: "拉拉是常见梗"}},
+	}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+
+	var firstHadKnowledge, secondHadKnowledge bool
+	engine := &fakeBrain{replyFunc: func(call int, in brain.ContextInput) (brain.Reply, error) {
+		switch call {
+		case 1:
+			firstHadKnowledge = in.Knowledge != nil
+			return brain.Reply{}, &brain.Error{Kind: brain.KindBudget}
+		case 2:
+			secondHadKnowledge = in.Knowledge != nil
+			return brain.Reply{Text: "哼"}, nil
+		default:
+			t.Fatalf("预算降级只应重试一次，实际调用 %d 次", call)
+			return brain.Reply{}, nil
+		}
+	}}
+
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, know, nil, nil, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	claim := liveClaim(id)
+	claim.Event.Text = "拉拉是什么意思"
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
+		t.Fatalf("降级重试成功后不应返回错误：%v", err)
+	}
+
+	if !firstHadKnowledge {
+		t.Error("首次调用应带知识（否则降级没有意义）")
+	}
+	if secondHadKnowledge {
+		t.Error("预算降级后的重试不应再带知识")
+	}
+	if engine.calls != 2 {
+		t.Errorf("Brain 调用次数 = %d，期望 2", engine.calls)
+	}
+	if snd.sendCalls != 1 {
+		t.Errorf("Sender 调用次数 = %d，期望 1", snd.sendCalls)
+	}
+	if got := bus.finalStatus(id); got != event.StatusDone {
+		t.Errorf("最终状态 = %q，期望 done", got)
+	}
+}
+
+// TestGenerateBudgetFallbackStillFailsGoesDead 去掉知识仍超预算 → 标 dead、返回 nil，不再重试。
+func TestGenerateBudgetFallbackStillFailsGoesDead(t *testing.T) {
+	const id = "live:30308220:9502"
+	bus := newFakeBus(id)
+	know := &fakeKnowledgeReader{ctx: knowledge.Context{
+		Scope:    knowledge.Scope{Channel: event.ChLive, Session: "30308220"},
+		Revision: "rev1",
+		Items:    []knowledge.Item{{ID: "k1", Text: "资料"}},
+	}}
+	snd := &fakeSender{}
+	engine := &fakeBrain{replyFunc: func(int, brain.ContextInput) (brain.Reply, error) {
+		return brain.Reply{}, &brain.Error{Kind: brain.KindBudget}
+	}}
+
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, know, nil, nil, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	claim := liveClaim(id)
+	claim.Event.Text = "这个梗什么意思"
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
+		t.Fatalf("事件已结清时不应返回错误：%v", err)
+	}
+
+	if engine.calls != 2 {
+		t.Errorf("Brain 调用次数 = %d，期望 2（首次 + 去知识重试）", engine.calls)
+	}
+	if snd.sendCalls != 0 {
+		t.Errorf("预算失败不应发送，实际 Send %d 次", snd.sendCalls)
+	}
+	if got := bus.finalStatus(id); got != event.StatusDead {
+		t.Errorf("最终状态 = %q，期望 dead", got)
 	}
 }
 
@@ -1346,8 +1446,8 @@ func TestGeneratePresenceClearsReplyingOnBrainFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
-	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err == nil {
-		t.Fatal("Brain 失败时应返回错误")
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+		t.Fatalf("Brain 失败已结清，不应返回错误：%v", err)
 	}
 
 	if len(during) != 1 || during[0].Kind != presence.KindReplying {
@@ -1489,8 +1589,8 @@ func TestGenerateLogsFullErrorChain(t *testing.T) {
 	}
 	claim := liveClaim(id)
 	claim.Event.Text = "这句弹幕正文不能进日志"
-	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err == nil {
-		t.Fatal("Brain 失败应返回错误")
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
+		t.Fatalf("Brain 失败已结清，不应返回错误：%v", err)
 	}
 
 	entries := logs.FilterField(zap.String("action", "generate_failed")).All()
