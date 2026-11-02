@@ -106,7 +106,7 @@ llm_route = "default"
 # 去重 + max_per_hour 限流后经 [sender] 发送，并写 DirOut 事件记账。
 # 复用 [watch] 的流清晰度/ffmpeg/凭据配置；需要同时开启 live 采集与 [llm]。
 [proactive]
-enabled = false
+enabled = true
 interval_seconds = 20
 send_gap_seconds = 30 # 两次主动发送的最小间隔；间隔内跳过（reason=gap）
 max_per_hour = 60 # 20s 间隔 = 理论 180/小时；上限 60 兜底防刷屏
