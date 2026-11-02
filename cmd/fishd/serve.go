@@ -599,11 +599,12 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 	}, nil
 }
 
-// buildReasoningLLM 用主模型路由装配 ReAct 的模型调用器；没启用 LLM 时返回 nil。
+// buildReasoningLLM 用主模型路由装配 ReAct 的模型蓝图；没启用 LLM 时返回 nil。
 //
-// 刻意不复用 buildBrains：Brain 走的是完整 prompt 组装 + 用量记账，
-// 而 ReAct 需要的是「给定 system/user 原样补全」，两者职责不同。
-func buildReasoningLLM(cfg config.Config, log *zap.Logger) (reasoning.LLM, error) {
+// 刻意不复用 buildBrains：Brain 走的是完整 prompt 组装，
+// 而 ReAct 需要的是「给定 system/user 原样补全」。
+// 但记账口径与 Brain 保持一致：每次 Chat 都写一行 llm_usage（含失败调用）。
+func buildReasoningLLM(cfg config.Config, usage store.UsageRepo, log *zap.Logger) (*reasoningModel, error) {
 	if !cfg.LLM.Enabled || len(cfg.LLM.Routing) == 0 {
 		return nil, nil
 	}
@@ -624,14 +625,112 @@ func buildReasoningLLM(cfg config.Config, log *zap.Logger) (reasoning.LLM, error
 	if err != nil {
 		return nil, fmt.Errorf("装配 ReAct 模型客户端失败：%w", err)
 	}
+	blueprint := &reasoningModel{
+		client:      client,
+		model:       model,
+		maxTokens:   cfg.LLM.MaxReplyTokens,
+		temperature: 0.3,
+		usage:       usage,
+	}
+	// 报价可选：没配就记 nil 费用，而不是编一个 0
+	if price, ok := prov.Prices[model]; ok {
+		blueprint.inUSD = price.InputUSDPerMillion
+		blueprint.outUSD = price.OutputUSDPerMillion
+	}
 	log.Info("ReAct 模型已装配",
 		zap.String("action", "react_setup"),
 		zap.String("route", key),
 		zap.String("model", model),
 		zap.Int("max_steps", cfg.Reasoning.MaxSteps),
 		zap.Int("timeout_ms", cfg.Reasoning.TimeoutMS),
+		zap.Bool("usage_recording", usage != nil),
 	)
-	return &providerLLM{client: client, model: model, maxTokens: cfg.LLM.MaxReplyTokens, temperature: 0.3}, nil
+	return blueprint, nil
+}
+
+// reasoningModel 是 ReAct 的模型蓝图：客户端 + 模型名 + 可选单价 + 账本。
+//
+// 每次事件再派生出 providerLLM（带上该事件的通道），避免共享可变状态。
+type reasoningModel struct {
+	client      provider.Provider
+	model       string
+	maxTokens   int
+	temperature float64
+	inUSD       *float64
+	outUSD      *float64
+	usage       store.UsageRepo
+}
+
+// providerLLM 把 provider.Provider 适配成 reasoning.LLM，并在每次调用后记账。
+type providerLLM struct {
+	blueprint *reasoningModel
+	channel   event.Channel
+	log       *zap.Logger
+}
+
+func (p *providerLLM) Complete(ctx context.Context, system, user string) (string, error) {
+	at := time.Now()
+	resp, err := p.blueprint.client.Chat(ctx, provider.Request{
+		Model:       p.blueprint.model,
+		Messages:    []provider.Message{{Role: "system", Content: system}, {Role: "user", Content: user}},
+		MaxTokens:   p.blueprint.maxTokens,
+		Temperature: p.blueprint.temperature,
+	})
+	// 失败调用也要记（OK=false），否则「模型一直挂」在账本里完全看不见
+	p.record(ctx, at, resp, err)
+	if err != nil {
+		return "", err
+	}
+	return resp.Text, nil
+}
+
+// record 写一行 llm_usage。
+//
+// 记账失败只记日志、绝不上抛：ReAct 是增强能力，不能因为账本写不进去就让弹幕收不到回复。
+func (p *providerLLM) record(ctx context.Context, at time.Time, resp provider.Response, callErr error) {
+	if p.blueprint.usage == nil {
+		return
+	}
+	row := store.Usage{
+		At:           at.UTC(),
+		Channel:      p.channel,
+		Model:        p.blueprint.model,
+		InputTokens:  validTokens(resp.Usage.InputTokens),
+		OutputTokens: validTokens(resp.Usage.OutputTokens),
+		CostUSD:      p.cost(resp.Usage),
+		Milliseconds: int(time.Since(at).Milliseconds()),
+		OK:           callErr == nil,
+	}
+	// 父 ctx 可能已经超时（ReAct 预算耗尽），记账用脱离取消的 ctx，但只给 2 秒
+	accountCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := p.blueprint.usage.RecordUsage(accountCtx, row); err != nil {
+		p.log.Warn("ReAct 记账失败",
+			zap.String("action", "react_usage"),
+			zap.String("result", "failed"),
+			zap.String("ch", string(p.channel)),
+			zap.String("model", row.Model),
+			zap.Int("cost_ms", row.Milliseconds),
+			zap.Error(err),
+		)
+	}
+}
+
+// cost 与 Brain 同一口径：缺 token 或缺报价就是 nil，不编造 0。
+func (p *providerLLM) cost(u provider.Usage) *float64 {
+	if u.InputTokens == nil || u.OutputTokens == nil || p.blueprint.inUSD == nil || p.blueprint.outUSD == nil {
+		return nil
+	}
+	v := math.Round((float64(*u.InputTokens)**p.blueprint.inUSD+float64(*u.OutputTokens)**p.blueprint.outUSD)) / 1e6
+	return &v
+}
+
+// validTokens 把负数/越界 token 当作未知（nil），不让脏数据进账本。
+func validTokens(n *int) *int {
+	if n == nil || *n < 0 || int64(*n) > 2147483647 {
+		return nil
+	}
+	return n
 }
 
 // providerLLM 把 provider.Provider 适配成 reasoning.LLM。

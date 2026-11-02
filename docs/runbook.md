@@ -2,6 +2,23 @@
 
 > 出问题时按这里排查。先看 `fishctl status`，再看日志。
 
+## 停止 fishd（必须彻底，2026-11-02 主人要求）
+
+「关 fishd」= **杀全部 + 验证**，不能只杀单个 PID：
+
+```powershell
+# 1. 杀所有 fishd.exe
+Get-Process fishd -ErrorAction SilentlyContinue | Stop-Process -Force
+# 2. 杀所有采集 node 子进程
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+  Where-Object { $_.CommandLine -like '*danmaku-await*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+# 3. 验证
+tasklist | findstr /i fishd        # 应为空
+```
+
+⚠️ 注意：`Get-Process fishd` 可能漏掉某些实例（用户遇到过 32988 残留）——验证时同时用 `Get-CimInstance` 查命令行含 fishd 的进程（DeepSeek Harness 本体除外）。
+
 ## 装配诊断（不调用模型）
 
 ```powershell
