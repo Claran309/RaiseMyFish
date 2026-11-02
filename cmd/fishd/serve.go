@@ -157,8 +157,9 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 	}
 
 	generate := func(ctx context.Context, w scheduler.Work) (scheduler.Result, error) {
-		// schedule 阶段可能因配额/冷却没有 Task；交回调度器，不能让未结清事件带崩消费循环。
-		if w.Task == nil {
+		// 0.4 契约：schedule 只做首次过滤与准入，Task 是否存在都不能进入生成；
+		// 交回调度器重新准入，未结清事件会让 complete() 终止消费循环。
+		if w.Claim.Stage == event.StageSchedule || w.Task == nil {
 			if err := bus.Defer(ctx, w.Claim, time.Now().Add(retryDelay)); err != nil {
 				return scheduler.Result{}, fmt.Errorf("交回调度重试失败：%w", err)
 			}

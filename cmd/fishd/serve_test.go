@@ -160,45 +160,57 @@ func TestGenerateCallsBrainThenSender(t *testing.T) {
 	}
 }
 
-// TestGenerateDefersScheduleWithoutTask schedule 阶段可能没有 Task；此时交回调度器，不能让消费循环退出。
-func TestGenerateDefersScheduleWithoutTask(t *testing.T) {
-	engine := &fakeBrain{}
-	snd := &fakeSender{}
-	claim := liveClaim("live:1:1")
-	claim.Stage = event.StageSchedule
-	bus := newFakeBus(claim.Event.ID)
+// TestGenerateDefersScheduleStage 0.4 契约要求 schedule 只做过滤/准入；
+// 即使 Task 非 nil（retry 遗留）也不能进入 Mark/Brain/Sender。
+func TestGenerateDefersScheduleStage(t *testing.T) {
+	cases := []struct {
+		name string
+		task *store.Task
+	}{
+		{name: "无Task"},
+		{name: "有Task", task: liveTask("live:1:1")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := &fakeBrain{}
+			snd := &fakeSender{}
+			claim := liveClaim("live:1:1")
+			claim.Stage = event.StageSchedule
+			bus := newFakeBus(claim.Event.ID)
 
-	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, nil, zap.NewNop())
-	if err != nil {
-		t.Fatalf("装配失败：%v", err)
-	}
+			workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, nil, zap.NewNop())
+			if err != nil {
+				t.Fatalf("装配失败：%v", err)
+			}
 
-	before := time.Now()
-	got, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim})
-	if err != nil {
-		t.Fatalf("Task 为 nil 时应交回调度而不是报错：%v", err)
-	}
-	if got != (scheduler.Result{}) {
-		t.Errorf("Result = %+v，期望零值", got)
-	}
-	if engine.calls != 0 || snd.sendCalls != 0 {
-		t.Errorf("不应调用 Brain/Sender：brain=%d sender=%d", engine.calls, snd.sendCalls)
-	}
+			before := time.Now()
+			got, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: tc.task})
+			if err != nil {
+				t.Fatalf("schedule 阶段应交回调度而不是报错：%v", err)
+			}
+			if got != (scheduler.Result{}) {
+				t.Errorf("Result = %+v，期望零值", got)
+			}
+			if engine.calls != 0 || snd.sendCalls != 0 {
+				t.Errorf("不应调用 Brain/Sender：brain=%d sender=%d", engine.calls, snd.sendCalls)
+			}
 
-	bus.mu.Lock()
-	until, deferred := bus.defers[claim.Event.ID]
-	bus.mu.Unlock()
-	if !deferred {
-		t.Fatal("应调用 Defer 交回调度器")
-	}
-	if until.Before(before.Add(time.Second)) {
-		t.Errorf("Defer 期限 %v 早于 now+retryDelay（before=%v）", until, before)
-	}
-	if status := bus.finalStatus(claim.Event.ID); status != event.StatusRetry {
-		t.Errorf("事件状态 = %s，期望 retry", status)
-	}
-	if tos := bus.markTos(); len(tos) != 0 {
-		t.Errorf("不应经过 Mark 状态迁移：%v", tos)
+			bus.mu.Lock()
+			until, deferred := bus.defers[claim.Event.ID]
+			bus.mu.Unlock()
+			if !deferred {
+				t.Fatal("应调用 Defer 交回调度器")
+			}
+			if until.Before(before.Add(time.Second)) {
+				t.Errorf("Defer 期限 %v 早于 now+retryDelay（before=%v）", until, before)
+			}
+			if status := bus.finalStatus(claim.Event.ID); status != event.StatusRetry {
+				t.Errorf("事件状态 = %s，期望 retry", status)
+			}
+			if tos := bus.markTos(); len(tos) != 0 {
+				t.Errorf("不应经过 Mark 状态迁移：%v", tos)
+			}
+		})
 	}
 }
 
