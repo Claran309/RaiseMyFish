@@ -62,7 +62,8 @@ func runGiftWith(ctx context.Context, configPath, envPath string, args []string,
 	if spec.Action == "help" {
 		return nil
 	}
-	cfg, err := config.Load(configPath, envPath)
+	// CLI 送礼不依赖直播采集；live 配置缺失不应挡住手动 dry-run/发送。
+	cfg, err := config.LoadForCLI(configPath, envPath)
 	if err != nil {
 		return err
 	}

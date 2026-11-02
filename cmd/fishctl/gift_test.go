@@ -155,6 +155,28 @@ func TestRunGiftDryRunOutput(t *testing.T) {
 	}
 }
 
+// TestRunGiftDryRunWithoutLiveConfig 直播采集配置缺失不应挡住手动 dry-run。
+func TestRunGiftDryRunWithoutLiveConfig(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	for _, key := range []string{"FISH_BILI_ROOM_ID", "FISH_BILI_SELF_ID", "FISH_BILI_COOKIE", "FISH_BILI_COOKIE_FILE"} {
+		t.Setenv(key, "")
+	}
+	path := writeGiftConfig(t, "[channels.live]\nenabled=true\n[collector.live]\nroom_id=\"\"\nself_id=\"\"\n[gift]\nenabled=true\nreal=false\ngift_id=\"31036\"\nnum=1\n")
+	sender := &fakeGiftSender{result: gift.Result{Sent: true, GiftID: "31036", Num: 1}}
+	factory := func(config.Gift, string) (giftSender, error) { return sender, nil }
+	var out bytes.Buffer
+	if err := runGiftWith(context.Background(), path, "", []string{"send", "--room", "99"}, &out, io.Discard, factory); err != nil {
+		t.Fatalf("dry-run 被 live 配置挡住：%v", err)
+	}
+	var got giftSendOutput
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.DryRun || got.Sent || sender.calls != 1 {
+		t.Fatalf("dry-run 输出不符：%+v", got)
+	}
+}
+
 func TestRunGiftRealOutput(t *testing.T) {
 	t.Setenv("FISH_DB_DSN", "postgres://fixture")
 	t.Setenv("FISH_BILI_COOKIE", "SESSDATA=fixture")

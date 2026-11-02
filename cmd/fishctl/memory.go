@@ -65,7 +65,8 @@ func runMemory(ctx context.Context, configPath, envPath string, args []string, o
 		return nil
 	}
 
-	cfg, err := config.Load(configPath, envPath)
+	// 只读命令不采集直播，跳过 collector.live 校验，避免凭据缺失时不可用。
+	cfg, err := config.LoadForCLI(configPath, envPath)
 	if err != nil {
 		return err
 	}

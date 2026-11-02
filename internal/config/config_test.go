@@ -69,6 +69,41 @@ func TestInvalidConfigurationIsSafe(t *testing.T) {
 	}
 }
 
+// TestLoadForCLIAllowsMissingLiveConfig CLI 只读命令不因 live 凭据缺失被挡；fishd 的 Load 仍严格。
+func TestLoadForCLIAllowsMissingLiveConfig(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fish:private@localhost/fish")
+	for _, key := range []string{"FISH_BILI_ROOM_ID", "FISH_BILI_SELF_ID", "FISH_BILI_COOKIE", "FISH_BILI_COOKIE_FILE"} {
+		t.Setenv(key, "")
+	}
+	p := filepath.Join(t.TempDir(), "fishd.toml")
+	body := "[channels.live]\nenabled=true\n[collector.live]\nroom_id=''\nself_id=''\n"
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p, ""); err == nil {
+		t.Fatal("fishd 严格加载不应放过缺失的 live 配置")
+	}
+	cfg, err := LoadForCLI(p, "")
+	if err != nil {
+		t.Fatalf("CLI 加载被 live 配置挡住：%v", err)
+	}
+	if !cfg.Channels.Live.Enabled {
+		t.Fatal("CLI 应保留 live 开关原值，只跳过校验")
+	}
+}
+
+// TestLoadForCLIKeepsNonLiveValidation CLI 只跳过 live，不放过其它无效配置。
+func TestLoadForCLIKeepsNonLiveValidation(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fish:private@localhost/fish")
+	p := filepath.Join(t.TempDir(), "fishd.toml")
+	if err := os.WriteFile(p, []byte("[db]\ntimeout_seconds=0\n[channels.live]\nenabled=true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadForCLI(p, ""); err == nil {
+		t.Fatal("非 live 的无效配置仍应被拒绝")
+	}
+}
+
 func TestDotenvFallbackAndMissingOptionalFile(t *testing.T) {
 	key := "FISH_CONFIG_FILE_ONLY_DSN"
 	if _, exists := os.LookupEnv(key); exists {

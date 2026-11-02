@@ -73,7 +73,19 @@ func (e *safeError) Error() string { return e.message }
 func (e *safeError) Unwrap() error { return e.cause }
 
 // Load 按进程环境 > dotenv > TOML > 默认值加载；空路径表示不读该文件。
+// fishd 使用完整校验，collector.live 缺房间/凭据时拒绝启动。
 func Load(path, envPath string) (Config, error) {
+	return load(path, envPath, true)
+}
+
+// LoadForCLI 供 fishctl 的运维命令加载配置：跳过 collector.live 的运行校验。
+// CLI 不采集直播，不应因为 live 房间/自身身份/凭据缺失而不可用；
+// 数据库、日志、LLM 等其余配置仍按 fishd 同一口径校验。
+func LoadForCLI(path, envPath string) (Config, error) {
+	return load(path, envPath, false)
+}
+
+func load(path, envPath string, strictLive bool) (Config, error) {
 	cfg := Config{
 		Database:  Database{DSNEnv: "FISH_DB_DSN", TimeoutSeconds: 5},
 		Log:       Log{Level: "info", Dir: "logs"},
@@ -125,14 +137,16 @@ func Load(path, envPath string) (Config, error) {
 	cfg.Collector.Live.resolveEnvironment(lookup, cfg.Channels.Live.Enabled)
 	cfg.Watch.resolveEnvironment(lookup, cfg.Watch.Enabled)
 	cfg.Gift.resolveEnvironment(lookup, cfg.Gift.Enabled)
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.validate(strictLive); err != nil {
 		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
 	}
 	return cfg, nil
 }
 
 // Validate 只验证已装配能力；LLM/B站密钥留到对应模块启用时检查。
-func (c Config) Validate() error {
+func (c Config) Validate() error { return c.validate(true) }
+
+func (c Config) validate(strictLive bool) error {
 	if strings.TrimSpace(c.Database.DSNEnv) == "" || strings.TrimSpace(c.Database.DSN) == "" {
 		return errors.New("数据库环境变量未配置")
 	}
@@ -152,8 +166,11 @@ func (c Config) Validate() error {
 	if c.Channels.Comment.Enabled || c.Channels.DM.Enabled || c.Channels.QQ.Enabled {
 		return errors.New("评论/私信/QQ尚未装配，请关闭对应通道开关")
 	}
-	if err := c.Collector.Live.Validate(c.Channels.Live.Enabled); err != nil {
-		return err
+	// CLI 只读命令不需要直播采集运行时；跳过这一项，但保留其余严格校验。
+	if strictLive {
+		if err := c.Collector.Live.Validate(c.Channels.Live.Enabled); err != nil {
+			return err
+		}
 	}
 	if err := c.Knowledge.Validate(); err != nil {
 		return err

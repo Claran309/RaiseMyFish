@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -229,6 +230,31 @@ func TestRunMemoryRejectsUsageBeforeLoadingConfig(t *testing.T) {
 	err := runMemory(context.Background(), missing, "", nil, io.Discard, io.Discard)
 	if !errors.Is(err, errMemoryUsage) {
 		t.Fatalf("期望用法错误，实际 %v", err)
+	}
+}
+
+// TestRunMemoryWithoutLiveConfig 无 live 凭据时 memory list/stats 仍能通过配置加载进入数据库阶段。
+func TestRunMemoryWithoutLiveConfig(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fish:private-secret@127.0.0.1:1/fish?connect_timeout=1")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fishd.toml")
+	body := "[db]\ntimeout_seconds=1\n[channels.live]\nenabled=true\n[collector.live]\nroom_id=\"\"\nself_id=\"\"\n"
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"memory", "list"}, {"memory", "stats"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			err := run(context.Background(), append([]string{"--config", path, "--env-file", ""}, args...), io.Discard, io.Discard)
+			if err == nil {
+				t.Fatal("数据库不可达时应报错")
+			}
+			if strings.Contains(err.Error(), "直播采集") {
+				t.Fatalf("memory 被 live 配置挡住：%v", err)
+			}
+			if !strings.Contains(err.Error(), "初始化PG") {
+				t.Fatalf("未进入数据库连接阶段：%v", err)
+			}
+		})
 	}
 }
 

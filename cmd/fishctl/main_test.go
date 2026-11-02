@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,6 +132,30 @@ func TestRunTailDoesNotRequireLiveDatabase(t *testing.T) {
 	w := writeFunc(func(p []byte) (int, error) { cancel(); return len(p), nil })
 	if err := run(ctx, []string{"--config", configPath, "--env-file", "", "tail"}, w, io.Discard); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRunStatusWithoutLiveConfig status 不依赖 live 配置；数据库不可达时仍输出失败摘要。
+func TestRunStatusWithoutLiveConfig(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fish:private-secret@127.0.0.1:1/fish?connect_timeout=1")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fishd.toml")
+	body := "[db]\ntimeout_seconds=1\n[runtime]\nstate_file=\"" +
+		filepath.ToSlash(filepath.Join(dir, "status.json")) +
+		"\"\n[channels.live]\nenabled=true\n[collector.live]\nroom_id=\"\"\nself_id=\"\"\n"
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"--config", path, "--env-file", "", "status"}, &out, io.Discard)
+	if err == nil {
+		t.Fatal("数据库不可达时应报错")
+	}
+	if strings.Contains(err.Error(), "直播采集") || strings.Contains(out.String(), "直播采集") {
+		t.Fatalf("status 被 live 配置挡住：%v", err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"database_ready":false`)) {
+		t.Fatalf("缺少数据库失败摘要：%s", out.String())
 	}
 }
 
