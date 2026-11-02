@@ -4,12 +4,15 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Watch 是「看直播」流水线的部署配置（`[watch]`），默认关闭。
 // 凭据只从 cookie_env 指向的环境变量读取，不写入 TOML/JSON。
 type Watch struct {
 	Enabled         bool   `toml:"enabled"`
+	CurrentRoom     string `toml:"current_room"`
+	StreamerName    string `toml:"streamer_name"`
 	Source          string `toml:"source"`
 	IntervalSeconds int    `toml:"interval_seconds"`
 	Seconds         int    `toml:"seconds"`
@@ -25,6 +28,7 @@ type Watch struct {
 }
 
 var watchEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var watchRoomPattern = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
 func defaultWatch() Watch {
 	return Watch{
@@ -48,8 +52,23 @@ func (w *Watch) resolveEnvironment(lookup func(string) (string, bool), enabled b
 	w.Cookie, _ = lookup(w.CookieEnv)
 }
 
+// validateIdentity 校验状态注入字段；即使看直播关闭也要校验，因为它们会进入 Brain prompt。
+func (w Watch) validateIdentity() error {
+	if w.CurrentRoom != "" && !watchRoomPattern.MatchString(w.CurrentRoom) {
+		return errors.New("看直播 current_room 必须是1至20位数字房间号")
+	}
+	name := strings.TrimSpace(w.StreamerName)
+	if utf8.RuneCountInString(name) > 32 || strings.ContainsAny(name, "\r\n\x00<>") {
+		return errors.New("看直播 streamer_name 最多32个字符且不能包含控制字符或尖括号")
+	}
+	return nil
+}
+
 // Validate 只做静态校验；不访问网络、不执行 ffmpeg、不读取凭据文件。
 func (w Watch) Validate() error {
+	if err := w.validateIdentity(); err != nil {
+		return err
+	}
 	if !w.Enabled {
 		return nil
 	}
