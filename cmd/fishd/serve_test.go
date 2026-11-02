@@ -7,6 +7,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"RaiseMyFish/internal/brain"
+	"RaiseMyFish/internal/brain/provider"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/knowledge"
@@ -1214,6 +1217,125 @@ func TestGenerateStateEmptyWithoutPresenceOrConfig(t *testing.T) {
 	}
 	if engine.gotInput.State != "" {
 		t.Fatalf("无状态来源时 State = %q，期望空", engine.gotInput.State)
+	}
+}
+
+// TestSafeErrorChainExpandsWrappedAndJoined 错误链要逐层展开，含 errors.Join 的多分支。
+func TestSafeErrorChainExpandsWrappedAndJoined(t *testing.T) {
+	inner := errors.New("prompt超出预算")
+	wrapped := fmt.Errorf("生成回复失败：%w", inner)
+	got := safeErrorChain(errors.Join(wrapped, errors.New("进入执行中失败")))
+	for _, want := range []string{"生成回复失败", "prompt超出预算", "进入执行中失败"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("错误链 %q 缺少 %q", got, want)
+		}
+	}
+	if got := safeErrorChain(nil); got != "" {
+		t.Errorf("nil 错误链 = %q，期望空", got)
+	}
+}
+
+// TestGenerateLogsFullErrorChain 下游失败时日志要带 Kind 与完整错误链，且不泄漏事件正文。
+func TestGenerateLogsFullErrorChain(t *testing.T) {
+	const id = "live:30308220:9406"
+	core, logs := observer.New(zap.ErrorLevel)
+	engine := &fakeBrain{err: &brain.Error{Kind: brain.KindBudget, Cause: errors.New("prompt超出预算")}}
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, &fakeSender{}, newFakeBus(id), time.Second, nil, nil, nil, nil, zap.New(core))
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	claim := liveClaim(id)
+	claim.Event.Text = "这句弹幕正文不能进日志"
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err == nil {
+		t.Fatal("Brain 失败应返回错误")
+	}
+
+	entries := logs.FilterField(zap.String("action", "generate_failed")).All()
+	if len(entries) != 1 {
+		t.Fatalf("generate_failed 日志条数 = %d，期望 1", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	if fields["error_kind"] != "budget" {
+		t.Errorf("error_kind = %v，期望 budget", fields["error_kind"])
+	}
+	chain, _ := fields["error_chain"].(string)
+	if !strings.Contains(chain, "类别budget") || !strings.Contains(chain, "prompt超出预算") {
+		t.Errorf("error_chain 未展开完整错误链：%q", chain)
+	}
+	for key, value := range fields {
+		if text, ok := value.(string); ok && strings.Contains(text, claim.Event.Text) {
+			t.Errorf("日志字段 %s 泄漏了事件正文：%q", key, text)
+		}
+	}
+}
+
+// budgetProbeProvider 只记录请求，不访问网络。
+type budgetProbeProvider struct {
+	calls int
+	last  provider.Request
+}
+
+func (p *budgetProbeProvider) Name() string { return "budget-probe" }
+
+func (p *budgetProbeProvider) Chat(_ context.Context, req provider.Request) (provider.Response, error) {
+	p.calls++
+	p.last = req
+	return provider.Response{Text: "哼"}, nil
+}
+
+// TestProductionPromptBudgetFitsPersonaAndState 生产配置在注入状态后仍必须能生成。
+//
+// 崩溃根因回归：8192 时现人格固定内容加 [当前状态] 行已无空间可裁，
+// buildPrompt 返回 KindBudget；生产配置提高预算后必须容纳真实人格与状态。
+func TestProductionPromptBudgetFitsPersonaAndState(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://unit:unit@127.0.0.1:5432/unit?sslmode=disable")
+	t.Setenv("FISH_LLM_KEY", "unit-only")
+	t.Setenv("FISH_LLM_BASE_URL", "https://api.deepseek.com/v1")
+	t.Setenv("FISH_LLM_MODEL", "deepseek-chat")
+	// 生产配置开启了真实送礼；只做装配校验，测试不会调用平台。
+	t.Setenv("FISH_BILI_COOKIE", "unit-cookie")
+	cfg, err := config.LoadForCLI(filepath.Join("..", "..", "config", "fishd.toml"), "")
+	if err != nil {
+		t.Fatalf("加载生产配置失败：%v", err)
+	}
+	pack, err := persona.Load(context.Background(), filepath.Join("..", "..", "personas", "dafeiyu"))
+	if err != nil {
+		t.Fatalf("加载人格包失败：%v", err)
+	}
+
+	probe := &budgetProbeProvider{}
+	engine, err := brain.New(probe, &diagnosticUsage{}, brain.Options{
+		Model:           "probe",
+		MaxPromptTokens: cfg.LLM.MaxPromptTokens,
+		MaxReplyTokens:  cfg.LLM.MaxReplyTokens,
+		AttemptTimeout:  time.Duration(cfg.LLM.AttemptTimeoutMS) * time.Millisecond,
+		TotalTimeout:    time.Duration(cfg.LLM.TotalTimeoutMS) * time.Millisecond,
+		Backoff:         time.Duration(cfg.LLM.BackoffMS) * time.Millisecond,
+		MaxConcurrent:   1,
+		Temperature:     cfg.LLM.Temperature,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("构造 Brain 失败：%v", err)
+	}
+
+	claim := liveClaim("live:30308220:9407")
+	scope := memory.Scope{Channel: event.ChLive, Session: claim.Event.Session}
+	const state = "你正在看房间 1992099976 的直播，你在其弹幕区发弹幕"
+	task := brain.Task{ID: "task-" + claim.Event.ID, EventID: claim.Event.ID, Channel: event.ChLive, Session: claim.Event.Session}
+	if _, err := engine.Reply(context.Background(), task, brain.ContextInput{
+		Event:   claim.Event,
+		Persona: pack,
+		Memory:  memory.Context{Scope: scope},
+		Shared:  memory.SharedState{Scope: scope},
+		State:   state,
+	}); err != nil {
+		t.Fatalf("生产配置 max_prompt_tokens=%d 下生成失败（状态注入后超预算）：%v", cfg.LLM.MaxPromptTokens, err)
+	}
+	if probe.calls != 1 {
+		t.Fatalf("Provider 调用 %d 次，期望 1", probe.calls)
+	}
+	if len(probe.last.Messages) != 2 || !strings.Contains(probe.last.Messages[1].Content, "[当前状态] "+state) {
+		t.Fatalf("Provider 未收到状态注入：%+v", probe.last.Messages)
 	}
 }
 

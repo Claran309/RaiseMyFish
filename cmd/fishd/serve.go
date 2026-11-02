@@ -276,10 +276,73 @@ func buildConsumeWorkers(pack persona.Pack, byChannel map[event.Channel]brain.Br
 	}
 
 	return scheduler.Workers{
-		Generate: generate,
-		Deliver:  resumeAndSettle,
-		Verify:   resumeAndSettle,
+		Generate: withErrorLog(log, "generate_failed", generate),
+		Deliver:  withErrorLog(log, "deliver_failed", resumeAndSettle),
+		Verify:   withErrorLog(log, "verify_failed", resumeAndSettle),
 	}, nil
+}
+
+// withErrorLog 在 handler 返回错误前记录完整错误链。
+//
+// scheduler.complete 只把错误包成固定文案的 safeError，日志里看不到具体类别与原因；
+// 这里补上 Kind 和逐层展示信息。字段只含事件标识，不打印正文、prompt、凭据或 cookie。
+func withErrorLog(log *zap.Logger, action string, handler scheduler.Handler) scheduler.Handler {
+	return func(ctx context.Context, w scheduler.Work) (res scheduler.Result, err error) {
+		defer func() {
+			if err == nil {
+				return
+			}
+			ev := w.Claim.Event
+			log.Error("调度工作失败",
+				zap.String("action", action),
+				zap.String("event_id", ev.ID),
+				zap.String("ch", string(ev.Channel)),
+				zap.String("session", ev.Session),
+				zap.String("stage", string(w.Claim.Stage)),
+				zap.String("error_kind", safeErrorKind(err)),
+				zap.String("error_chain", safeErrorChain(err)),
+				zap.Error(err),
+			)
+		}()
+		return handler(ctx, w)
+	}
+}
+
+// safeErrorKind 提取项目内已知错误类型的类别；未知错误返回空串。
+func safeErrorKind(err error) string {
+	var brainErr *brain.Error
+	if errors.As(err, &brainErr) {
+		return string(brainErr.Kind)
+	}
+	var senderErr *sender.Error
+	if errors.As(err, &senderErr) {
+		return string(senderErr.Kind)
+	}
+	return ""
+}
+
+// safeErrorChain 展开错误链的逐层展示文本（含 errors.Join 的多分支）。
+// 项目内错误类型的 Error() 都承诺不含凭据与正文；未知错误仍只展示其 Error()，不打印结构化字段。
+func safeErrorChain(err error) string {
+	const maxParts = 8
+	parts := make([]string, 0, maxParts)
+	var walk func(error)
+	walk = func(e error) {
+		if e == nil || len(parts) >= maxParts {
+			return
+		}
+		parts = append(parts, e.Error())
+		switch wrapped := e.(type) {
+		case interface{ Unwrap() []error }:
+			for _, child := range wrapped.Unwrap() {
+				walk(child)
+			}
+		case interface{ Unwrap() error }:
+			walk(wrapped.Unwrap())
+		}
+	}
+	walk(err)
+	return strings.Join(parts, "：")
 }
 
 // recallMemory 召回记忆与共享事实。

@@ -50,7 +50,9 @@ http_timeout_ms = 35000
 [llm]
 enabled = true
 persona_dir = "personas/dafeiyu"
-max_prompt_tokens = 8192
+# 现人格 soul+live 场景约 8KB，已接近契约默认 8192；再叠加 Presence 状态行会触发 budget 错误。
+# 这里是 prompt 估算上限，不是输入校验放宽；生产留出状态行与部分 samples/rules 的余量。
+max_prompt_tokens = 16384
 max_reply_tokens = 128
 attempt_timeout_ms = 10000
 total_timeout_ms = 40000
