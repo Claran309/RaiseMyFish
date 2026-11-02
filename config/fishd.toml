@@ -24,7 +24,7 @@ enabled = false
 
 # 启用live前需明确房间与自身UID；Cookie仅从环境或显式文件读取。
 [collector.live]
-room_id = "30308220"
+room_id = "1992099976"
 self_id = "3747574135655903"
 node_path = "node"
 script_path = "tools/bili-whale/danmaku-await.mjs"
@@ -101,14 +101,14 @@ llm_route = "default"
 # daily_limit 按礼物数量计（不是次数），跨本地自然日重置；真实送礼要求 num <= daily_limit。
 # max_price/max_num 是 Go 与 Node 双重执行的限制；allowed_rooms 为空表示不限制房间。
 [gift]
-enabled = false
-real = false
+enabled = true # 娇娇直播间测试：真实送礼（每15分钟1朵小花花）
+real = true
 gift_id = "31036" # 小花花：直购礼物，price=100（1电池）
 num = 1
-daily_limit = 1
+daily_limit = 100 # 测试期放宽（每15分钟1朵≈4朵/小时）
 max_price = 100 # price 单位，100=1电池；范围1-10000
 max_num = 10 # 单次数量上限；范围1-100，不能小于 num
-allowed_rooms = [] # 空=不限制；否则只允许列出的纯数字房间号
+allowed_rooms = ["1992099976"] # 娇娇直播间
 node_path = "node"
 script_path = "tools/bili-whale/gift.mjs"
 timeout_ms = 30000

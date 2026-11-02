@@ -19,7 +19,8 @@ const DEFAULT_MAX_PRICE = 100 // price 100 = 1 电池；默认安全上限
 const DEFAULT_MAX_NUM = 100
 const HARD_MAX_PRICE = 10000
 const HARD_MAX_NUM = 100
-const MAX_RESPONSE = 1024 * 1024
+// giftConfig 的实际响应可达 1.6MiB（2026-11-02 实测），1MiB 会把正常面板误判为超限。
+const MAX_RESPONSE = 4 * 1024 * 1024
 const HTTP_TIMEOUT_MS = 10000
 const UA = 'Mozilla/5.0 RaiseMyFish/0.13'
 

@@ -11,6 +11,31 @@ const panel = (items = [{ id: 31036, price: 100, bag_gift: 0 }]) => ({ code: 0, 
 function response(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)) }
 }
+// streamResponse 模拟真实 fetch 的 body.getReader 路径，避免只测到 text() 回退分支。
+function streamResponse(body, status = 200) {
+  const text = typeof body === 'string' ? body : JSON.stringify(body)
+  const data = Buffer.from(text)
+  let offset = 0
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => text,
+    body: {
+      getReader() {
+        return {
+          async read() {
+            if (offset >= data.length) return { done: true, value: undefined }
+            const value = data.subarray(offset, offset + 64 * 1024)
+            offset += value.length
+            return { done: false, value }
+          },
+          async cancel() {},
+          releaseLock() {},
+        }
+      },
+    },
+  }
+}
 function preparation(overrides = {}) {
   const calls = []
   return {
@@ -86,6 +111,35 @@ test('自定义价格上限在真送前生效', async () => {
   const accepted = preparation()
   assert.deepEqual(await runGift([...base, '--go', '--max-price', '100'], accepted), { protocol: 1, type: 'sent', gift_id: giftID, num: 1 })
   assert.equal(accepted.calls.length, 4)
+})
+
+test('礼物面板大响应（>1MiB）仍能正常解析并发送', async () => {
+  const padding = 'x'.repeat(1024 * 1024 + 1024)
+  const bigPanel = { code: 0, data: { list: [{ id: 31036, price: 100, bag_gift: 0 }], padding } }
+  assert.ok(Buffer.byteLength(JSON.stringify(bigPanel)) > 1024 * 1024)
+  for (const [name, makeResponse] of [['stream', streamResponse], ['text', response]]) {
+    const deps = preparation()
+    const fetch = deps.fetch
+    deps.fetch = async (url, init) => {
+      if (!url.includes('/giftConfig')) return fetch(url, init)
+      deps.calls.push({ url, init })
+      return makeResponse(bigPanel)
+    }
+    const frame = await runGift([...base, '--go'], deps)
+    assert.deepEqual(frame, { protocol: 1, type: 'sent', gift_id: giftID, num: 1 }, name)
+    assert.equal(deps.calls.length, 4, name)
+  }
+})
+
+test('超过4MiB的响应仍按超限拒绝', async () => {
+  const padding = 'x'.repeat(4 * 1024 * 1024 + 1024)
+  const tooBig = { code: 0, data: { list: [{ id: 31036, price: 100, bag_gift: 0 }], padding } }
+  const deps = preparation({ panel: tooBig })
+  const frame = await runGift([...base, '--go'], deps)
+  assert.equal(frame.type, 'error')
+  assert.equal(frame.kind, 'retryable')
+  assert.equal(frame.message, '网络响应无效')
+  assert.equal(deps.calls.length, 2)
 })
 
 test('真送完整流程：面板数字ID、直购校验、表单与CSRF、单次POST', async () => {

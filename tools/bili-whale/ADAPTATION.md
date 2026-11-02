@@ -66,7 +66,8 @@ node --test tools/bili-whale/protocol.test.mjs
 - 本机源路径：`C:/Users/Claran/.dsh/profiles/desktop/node_modules/dsh-bili-whale/tools/commands/gift.mjs`
 - 源文件 SHA-256：`36269f19346b396115cde1ed78b4fbd7e74650e92f3a0399785bd105a0208831`
 - 移植日期：2026-11-02。
-- 移植入口：`tools/bili-whale/gift.mjs`（当前 SHA-256：`a5591a959a940ee1e53718325fdcdcf31eeb7d81162e9e89ae681c6ac0cd79ac`）。
+- 移植入口：`tools/bili-whale/gift.mjs`（当前 SHA-256：`70af7cca9ea3a02038a8df0467e177b1ac38adfdec5ee7a9ad24c64c95e3d2e4`）。
+- 2026-11-02：`giftConfig` 实测响应约 1.6MiB，超过原 1MiB 上限导致误报「网络响应无效」；`MAX_RESPONSE` 调整为 4MiB，并补充 >1MiB 正常解析、>4MiB 仍拒绝的测试。
 
 保留上游的礼物面板直购校验（`bag_gift=0`）、价格上限 `price <= 100`（1 电池）、`sendGoldMultiUser` 表单字段与 `code=0` 判定；礼物固定按 ID 选择，不再按「小花花 / 人气票」名称白名单。删除 DSH 凭据文件、房间/礼物白名单、本地账本、宿主日志与交互确认；凭据只从 `FISH_BILI_COOKIE` / `FISH_BILI_COOKIE_FILE` 读取。每日限额改由 Go 父进程在内存中计数（按礼物数量），Node 脚本本身不持久化状态。
 
