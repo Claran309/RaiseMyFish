@@ -1486,3 +1486,82 @@ panic: runtime error: invalid memory address or nil pointer dereference
 
 - **是。** 本轮写入结束，改动仅上表 6 个文件；未执行 git 命令、未提交、未 push。
 - 交 DSH 验收后可重开冒烟。
+
+---
+
+## 0.11 补丁批次 2 · 记忆召回 + 知识接线 + Failed 口径（2026-11-02，Asia/Shanghai）
+
+- 未改 `contracts`、未碰人格、全程 mock Reader（不调真实模型）；未改 Brain/Scheduler/Sender 内部语义。
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `cmd/fishd/serve.go` | 召回接线 + 降级 | `316A3653909D9760A16EC1F599D8E7546A27AD50B34085258A1C21F594B32A06` | 15930 |
+| `cmd/fishd/serve_test.go` | 5 个新用例 | `1F725BCD12C36B1F9CCB2D7B4C939592564F5F0798FA1872A896881247963F9E` | 34942 |
+| `cmd/fishd/main.go` | 传 knowledge Reader | `DABC6943861BC1A38227F376FF61073C192E2BDC0BB377F47E4FAE40DCDBD97D` | 6382 |
+| `internal/database/stats.go` | Failed 口径对称 | `633BEBA906C80B906881C2EC54972ABCD79D1E63A88678D405CCB9EA8DF70CFD` | 6675 |
+| `internal/database/stats_integration_test.go` | Failed 口径用例 | `7DDBC0DCFF15E58F62BB7FAF093A5D4160AA339261AF8B824973BD11BC92B981` | 11104 |
+
+### 记忆召回接线
+
+`buildConsumeWorkers` 新增两个参数：`mem memory.Reader`、`know knowledge.Reader`。
+
+- `Generate` 里不再传空 Scope，改调 `recallMemory` / `recallKnowledge`：
+  - **Scope 由事件派生**（Channel/Session/Private），Reader 内部按 Scope 做隔离，装配层不做任何越界拼装；
+  - **召回失败降级**为空快照 + `zap.Warn` 日志，不阻塞回复（记忆/知识是增强，不是前置条件）；
+  - `mem == nil`（未装配）→ 空快照；`know == nil`（`[knowledge] enabled=false`）→ `Knowledge=nil`。
+- **Reader 初始化失败是启动级错误**：`buildConsume` 里 `database.NewMemoryRepo` + `memory.NewReader`
+  任一失败直接 `return err`，不能静默降级成「永远失忆」。
+
+### 知识库接线（默认关闭）
+
+- `buildKnowledge` 已返回 `knowledgeAssembly{Reader, ...}`；本批把 `knowledgeRuntime.Reader` 透传到 `buildConsume`。
+- `[knowledge] enabled=true` → `Reader` 非 nil → 填 `ContextInput.Knowledge`；默认 `false` → `Reader` 为 nil → 保持 nil。
+- 知识召回失败同样降级 nil + 日志。
+
+### Failed 口径对称
+
+`failedRowsSQL` 改为与 `sentRowsSQL` 对称：按**事件时间**过滤 + 要求 `dir='in'`。
+保留 `LEFT JOIN` + `event_id IS NULL` 兜底——event_id 缺失的老审计行仍计入（无法归属到某条事件，但不能丢）。
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestGenerateRecallsMemoryWithCorrectScope` | 召回按事件 Scope 查询，Recent/Facts 填回 ContextInput |
+| `TestGenerateMemoryRecallFailureDegrades` | Recall/Shared 都失败 → 空快照 + Scope 不丢 + Brain 仍被调 1 次 |
+| `TestGenerateKnowledgeEnabledFillsContext` | Reader 存在 → 填 Knowledge，查询正文=事件正文、Scope 正确 |
+| `TestGenerateKnowledgeDisabledKeepsNil` | Reader 为 nil → Knowledge 保持 nil |
+| `TestGenerateKnowledgeFailureDegrades` | 知识召回失败 → Knowledge nil + 不阻塞 |
+| `TestStatsFailedOnlyCountsInWindowInbound` | Failed 只算窗口内 dir='in' 的 ok IS FALSE 去重 |
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l cmd/fishd internal/database` | 无输出 |
+| `go build ./...` / `go vet`（两包） | 通过 |
+| `go test ./cmd/fishd/` | ok（新增 5 用例全 PASS） |
+| `go test -tags=integration ./internal/database/ -run TestStats` | ok |
+| `go test ./... -count=1` | 22 个包全绿 |
+| `golangci-lint`（两包） | 0 issues |
+| `go test -race ./cmd/fishd/... ./internal/database/...` | **ok 4.839s / 2.909s** |
+
+### 未做项及原因
+
+| 未做 | 原因 |
+|---|---|
+| Presence 注入 | 派发单明令后续批次 |
+| 记忆/知识的**写入**（提炼 worker 接到消费循环） | 本批只做召回接线，写入链路是另一条 |
+| `buildConsume` 的真实 PG 集成测试 | 用 mock Reader 已覆盖装配逻辑；真实联调归冒烟 |
+
+### 风险 / 需 DSH 裁决
+
+1. **`memory.NewReader(memRepo, memRepo, ...)`**：0.9d 里 `database.MemoryRepo` 同时满足 `RecordSource` 和
+   `FactSource`，所以事实来源直接传同一个 repo；若以后事实有独立表/实现，这里要拆。
+2. **召回失败只降级不重试**：单次事件里记忆召回失败就空着回复（下次事件再查）。如果希望失败重试，
+   需要在 worker 里加一次 backoff，本批没做（会拖慢消费循环）。
+3. **知识 Reader 与记忆 Reader 都进 `buildConsumeWorkers` 签名**：参数已到 8 个，有点长；
+   若后续再加输入源，建议收成一个 `consumeInputs` 结构体。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束，改动仅上表 5 个文件；未执行 git 命令、未提交、未 push。
+- 交 DSH 验收。

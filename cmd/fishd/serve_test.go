@@ -719,3 +719,190 @@ func TestDeliverStageRetriesOnRetryable(t *testing.T) {
 		t.Errorf("最终状态 = %q，期望 retry", got)
 	}
 }
+
+// fakeMemoryReader 记录被查询的 Scope 并返回可控结果。
+type fakeMemoryReader struct {
+	recallErr error
+	sharedErr error
+	ctx       memory.Context
+	shared    memory.SharedState
+
+	gotScope    memory.Scope
+	recallCalls int
+	sharedCalls int
+}
+
+func (f *fakeMemoryReader) Recall(_ context.Context, s memory.Scope) (memory.Context, error) {
+	f.recallCalls++
+	f.gotScope = s
+	if f.recallErr != nil {
+		return memory.Context{}, f.recallErr
+	}
+	return f.ctx, nil
+}
+
+func (f *fakeMemoryReader) Shared(_ context.Context, s memory.Scope) (memory.SharedState, error) {
+	f.sharedCalls++
+	f.gotScope = s
+	if f.sharedErr != nil {
+		return memory.SharedState{}, f.sharedErr
+	}
+	return f.shared, nil
+}
+
+// fakeKnowledgeReader 记录被查询的 Query 并返回可控结果。
+type fakeKnowledgeReader struct {
+	recallErr error
+	ctx       knowledge.Context
+
+	gotQuery    knowledge.Query
+	recallCalls int
+}
+
+func (f *fakeKnowledgeReader) Recall(_ context.Context, q knowledge.Query) (knowledge.Context, error) {
+	f.recallCalls++
+	f.gotQuery = q
+	if f.recallErr != nil {
+		return knowledge.Context{}, f.recallErr
+	}
+	return f.ctx, nil
+}
+
+// TestGenerateRecallsMemoryWithCorrectScope 记忆召回按事件 Scope 查询，结果填进 ContextInput。
+func TestGenerateRecallsMemoryWithCorrectScope(t *testing.T) {
+	const id = "live:30308220:9201"
+	bus := newFakeBus(id)
+	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+	mem := &fakeMemoryReader{
+		ctx:    memory.Context{Scope: memory.Scope{Channel: event.ChLive, Session: "30308220"}, Recent: []memory.Message{{EventID: "e1", Text: "早"}}},
+		shared: memory.SharedState{Scope: memory.Scope{Channel: event.ChLive, Session: "30308220"}, Facts: []memory.Fact{{Key: "存粮", Value: "有"}}},
+	}
+
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, mem, nil, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+		t.Fatalf("Generate 失败：%v", err)
+	}
+
+	wantScope := memory.Scope{Channel: event.ChLive, Session: "30308220"}
+	if mem.recallCalls != 1 || mem.sharedCalls != 1 {
+		t.Fatalf("Recall/Shared 调用次数 = %d/%d，期望 1/1", mem.recallCalls, mem.sharedCalls)
+	}
+	if mem.gotScope != wantScope {
+		t.Errorf("召回 Scope = %+v，期望 %+v", mem.gotScope, wantScope)
+	}
+	if len(engine.gotInput.Memory.Recent) != 1 || engine.gotInput.Memory.Recent[0].Text != "早" {
+		t.Errorf("Memory 未填回：%+v", engine.gotInput.Memory)
+	}
+	if len(engine.gotInput.Shared.Facts) != 1 || engine.gotInput.Shared.Facts[0].Key != "存粮" {
+		t.Errorf("Shared 未填回：%+v", engine.gotInput.Shared)
+	}
+}
+
+// TestGenerateMemoryRecallFailureDegrades 召回失败降级为空快照，且不阻塞回复。
+func TestGenerateMemoryRecallFailureDegrades(t *testing.T) {
+	const id = "live:30308220:9202"
+	bus := newFakeBus(id)
+	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+	mem := &fakeMemoryReader{recallErr: errors.New("db down"), sharedErr: errors.New("db down")}
+
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, mem, nil, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+		t.Fatalf("召回失败不应阻塞回复：%v", err)
+	}
+
+	// 降级为空快照，Scope 仍正确（Brain 需要它校验）
+	if len(engine.gotInput.Memory.Recent) != 0 || len(engine.gotInput.Memory.Records) != 0 {
+		t.Errorf("召回失败后 Memory 应为空：%+v", engine.gotInput.Memory)
+	}
+	if len(engine.gotInput.Shared.Facts) != 0 {
+		t.Errorf("召回失败后 Shared 应为空：%+v", engine.gotInput.Shared)
+	}
+	if engine.gotInput.Memory.Scope.Channel != event.ChLive {
+		t.Errorf("降级后 Scope 不应丢失：%+v", engine.gotInput.Memory.Scope)
+	}
+	if engine.calls != 1 {
+		t.Errorf("Brain 应被调用 1 次，实际 %d", engine.calls)
+	}
+}
+
+// TestGenerateKnowledgeEnabledFillsContext 知识 Reader 存在时填 ContextInput.Knowledge。
+func TestGenerateKnowledgeEnabledFillsContext(t *testing.T) {
+	const id = "live:30308220:9203"
+	bus := newFakeBus(id)
+	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+	know := &fakeKnowledgeReader{
+		ctx: knowledge.Context{Scope: knowledge.Scope{Channel: event.ChLive, Session: "30308220"}, Revision: "rev1", Items: []knowledge.Item{{ID: "k1", Text: "资料"}}},
+	}
+
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, know, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+		t.Fatalf("Generate 失败：%v", err)
+	}
+
+	if know.recallCalls != 1 {
+		t.Fatalf("知识召回调用 = %d，期望 1", know.recallCalls)
+	}
+	if know.gotQuery.Text != "主播好" {
+		t.Errorf("知识查询正文 = %q，期望事件正文", know.gotQuery.Text)
+	}
+	if know.gotQuery.Scope.Channel != event.ChLive || know.gotQuery.Scope.Session != "30308220" {
+		t.Errorf("知识查询 Scope = %+v", know.gotQuery.Scope)
+	}
+	if engine.gotInput.Knowledge == nil {
+		t.Fatal("Knowledge 未填回")
+	}
+	if len(engine.gotInput.Knowledge.Items) != 1 || engine.gotInput.Knowledge.Items[0].ID != "k1" {
+		t.Errorf("Knowledge 内容不符：%+v", engine.gotInput.Knowledge)
+	}
+}
+
+// TestGenerateKnowledgeDisabledKeepsNil 知识 Reader 为 nil（未启用）→ ContextInput.Knowledge 保持 nil。
+func TestGenerateKnowledgeDisabledKeepsNil(t *testing.T) {
+	const id = "live:30308220:9204"
+	bus := newFakeBus(id)
+	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+		t.Fatalf("Generate 失败：%v", err)
+	}
+	if engine.gotInput.Knowledge != nil {
+		t.Errorf("知识未启用时 Knowledge 应为 nil：%+v", engine.gotInput.Knowledge)
+	}
+}
+
+// TestGenerateKnowledgeFailureDegrades 知识召回失败降级为 nil，不阻塞回复。
+func TestGenerateKnowledgeFailureDegrades(t *testing.T) {
+	const id = "live:30308220:9205"
+	bus := newFakeBus(id)
+	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
+	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
+	know := &fakeKnowledgeReader{recallErr: errors.New("knowledge broken")}
+
+	workers, err := buildConsumeWorkers(persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, know, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+		t.Fatalf("知识召回失败不应阻塞回复：%v", err)
+	}
+	if engine.gotInput.Knowledge != nil {
+		t.Errorf("知识召回失败后 Knowledge 应为 nil：%+v", engine.gotInput.Knowledge)
+	}
+}

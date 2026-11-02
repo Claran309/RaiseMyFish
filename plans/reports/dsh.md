@@ -555,3 +555,14 @@
   1. `Failed` 与 `Replied` 口径对称改：**同意批次 2 一起改**
   2. `Replied` 按事件时间归属（窗口内收到、窗口外发送也计入）：**接受**（「统计这批输入去向」口径）
 - 结论：**批次 1 验收通过**（待提交）；批次 2（记忆/知识接线）放行。
+
+## 0.11 补丁批次 2（记忆/知识接线）独立验收（2026-11-02 16:35）
+
+- 交付：`cmd/fishd/serve.go`（recallMemory/recallKnowledge + 降级）、`main.go`（knowledge Reader 透传）、`internal/database/stats.go`（Failed 对称）。
+- 独立执行：`cmd/fishd` 5 个新用例 PASS；集成 TestStats 通过；22 包全绿；lint 0；race ok。
+- 核对：
+  - 记忆召回：Scope 由事件派生、Reader 内部隔离、失败降级空快照+Warn 不阻塞、Reader 初始化失败启动报错
+  - 知识：默认关闭（nil）、开启时填 Knowledge、失败降级 nil
+  - Failed 口径与 Replied 对称（事件时间+dir='in'，保留老审计兜底）
+- 结论：**批次 2 验收通过**（待提交）。
+- 下一批交 Qoder：批次 3（梗不硬套：samples 收敛 + rules「未命中普通回答」），然后重开冒烟验证记忆/知识效果。

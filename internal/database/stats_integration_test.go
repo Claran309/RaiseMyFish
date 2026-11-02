@@ -177,6 +177,38 @@ func TestStatsRepliedOnlyCountsInWindowInbound(t *testing.T) {
 	}
 }
 
+// TestStatsFailedOnlyCountsInWindowInbound Failed 与 Replied 口径对称：
+// 只算「窗口内入向事件」的 ok IS FALSE 去重数。
+func TestStatsFailedOnlyCountsInWindowInbound(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	stats, err := NewStats(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	from := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+
+	// 窗口内入向事件 + 失败发送（应计入）
+	seedEvent(t, db, "live:f:in1", "live", "in", "dead", from.Add(10*time.Minute))
+	// 窗口外入向事件 + 失败发送（不应计入）
+	seedEvent(t, db, "live:f:early", "live", "in", "dead", from.Add(-time.Hour))
+	// 出向事件 + 失败发送（不应计入）
+	seedEvent(t, db, "live:f:out", "live", "out", "dead", from.Add(20*time.Minute))
+
+	for _, id := range []string{"live:f:in1", "live:f:early", "live:f:out"} {
+		seedSend(t, db, id, "live", boolPtr(false), from.Add(30*time.Minute))
+	}
+
+	got, err := stats.Counts(ctx, from, to)
+	if err != nil {
+		t.Fatalf("Counts 失败：%v", err)
+	}
+	if got.Failed != 1 {
+		t.Errorf("Failed = %d，期望 1（只算窗口内 dir=in 的事件）", got.Failed)
+	}
+}
+
 // TestStatsEmptyDatabase 空库：全 0、费用未知（nil）、无通道。
 func TestStatsEmptyDatabase(t *testing.T) {
 	db, ctx := repositoryDB(t)
