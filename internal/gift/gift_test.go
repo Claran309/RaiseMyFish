@@ -123,6 +123,14 @@ func TestNewValidation(t *testing.T) {
 		"超时过长":    func(o *Options) { o.Timeout = time.Hour },
 		"限额为零":    func(o *Options) { o.DailyLimit = 0 },
 		"限额过大":    func(o *Options) { o.DailyLimit = 101 },
+		"价格上限为零":  func(o *Options) { o.MaxPrice = 0 },
+		"价格上限过大":  func(o *Options) { o.MaxPrice = 10001 },
+		"数量上限为零":  func(o *Options) { o.MaxNum = 0 },
+		"数量上限过大":  func(o *Options) { o.MaxNum = 101 },
+		"白名单非数字":  func(o *Options) { o.AllowedRooms = []string{"abc"} },
+		"白名单为零":   func(o *Options) { o.AllowedRooms = []string{"0"} },
+		"白名单含空白":  func(o *Options) { o.AllowedRooms = []string{" 99"} },
+		"白名单超长":   func(o *Options) { o.AllowedRooms = []string{"99999999999999999"} },
 		"真送缺凭据":   func(o *Options) { o.DryRun = false; o.Cookie, o.CookieFile = "", "" },
 		"凭据含控制字符": func(o *Options) { o.Cookie = "SESSDATA=x\r\n" },
 	} {
@@ -148,6 +156,9 @@ func TestDryRunClearsCredentialsAndBuildsSafeCommand(t *testing.T) {
 	if !strings.Contains(args, "--dry-run") || strings.Contains(args, "--go") {
 		t.Fatalf("dry-run参数错误：%s", args)
 	}
+	if !strings.Contains(args, "--max-price 100") || !strings.Contains(args, "--max-num 10") {
+		t.Fatalf("限制参数未传递：%s", args)
+	}
 	if strings.Contains(args, "leak") || strings.Contains(args, "private-cookie") {
 		t.Fatal("凭据进入命令行")
 	}
@@ -170,6 +181,9 @@ func TestRealCommandContainsOnlyWhitelistedEnvironment(t *testing.T) {
 	args := strings.Join(cmd.Args, " ")
 	if !strings.Contains(args, "--go") || strings.Contains(args, "--dry-run") || !strings.Contains(args, "--num 2") {
 		t.Fatalf("真送参数错误：%s", args)
+	}
+	if !strings.Contains(args, "--max-price 100") || !strings.Contains(args, "--max-num 10") {
+		t.Fatalf("真送限制参数未传递：%s", args)
 	}
 	if strings.Contains(args, "fixture") {
 		t.Fatal("凭据进入命令行")
@@ -196,6 +210,16 @@ func TestRealCommandContainsOnlyWhitelistedEnvironment(t *testing.T) {
 	}
 	if !hasFile {
 		t.Fatal("cookie文件未传入")
+	}
+}
+
+func TestCommandPassesConfiguredLimits(t *testing.T) {
+	o := DefaultOptions()
+	o.MaxPrice, o.MaxNum = 500, 5
+	s := newSender(t, o)
+	args := strings.Join(s.buildCommand(context.Background(), helperRoom, helperGift, 5).Args, " ")
+	if !strings.Contains(args, "--max-price 500") || !strings.Contains(args, "--max-num 5") {
+		t.Fatalf("自定义限制参数未传递：%s", args)
 	}
 }
 
@@ -334,6 +358,53 @@ func TestSendInputValidationDoesNotSpawn(t *testing.T) {
 	}
 	if atomic.LoadInt32(&spawns) != 0 || s.used != 0 {
 		t.Fatal("无效输入不得启动子进程或计数")
+	}
+}
+
+func TestAllowedRoomsBlockBeforeSpawn(t *testing.T) {
+	var spawns int32
+	o := realOptions()
+	o.AllowedRooms = []string{helperRoom}
+	s := newSender(t, o)
+	s.command = helperCommand("sent", &spawns)
+	result, err := s.Send(context.Background(), "100", helperGift, 1)
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Kind != KindFatal || result.Error != "房间不在送礼白名单" {
+		t.Fatalf("白名单未拦截：%+v %v", result, err)
+	}
+	if atomic.LoadInt32(&spawns) != 0 || s.used != 0 {
+		t.Fatal("白名单拒绝不得启动子进程或占用额度")
+	}
+	if result, err := s.Send(context.Background(), helperRoom, helperGift, 1); err != nil || !result.Sent || s.used != 1 {
+		t.Fatalf("白名单内应放行：%+v %v", result, err)
+	}
+
+	dry := DefaultOptions()
+	dry.AllowedRooms = []string{helperRoom}
+	d := newSender(t, dry)
+	var drySpawns int32
+	d.command = helperCommand("sent", &drySpawns)
+	if _, err := d.Send(context.Background(), "100", helperGift, 1); err == nil {
+		t.Fatal("dry-run也必须执行白名单")
+	}
+	if atomic.LoadInt32(&drySpawns) != 0 {
+		t.Fatal("dry-run白名单拒绝不得启动子进程")
+	}
+}
+
+func TestSendRejectsNumAboveMaxNumWithoutSpawn(t *testing.T) {
+	var spawns int32
+	o := realOptions()
+	o.MaxNum = 2
+	s := newSender(t, o)
+	s.command = helperCommand("sent", &spawns)
+	result, err := s.Send(context.Background(), helperRoom, helperGift, 3)
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Kind != KindFatal || result.Error == "" {
+		t.Fatalf("超过数量上限未被拒绝：%+v %v", result, err)
+	}
+	if atomic.LoadInt32(&spawns) != 0 || s.used != 0 {
+		t.Fatal("数量超限不得启动子进程或占用额度")
 	}
 }
 

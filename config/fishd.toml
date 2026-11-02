@@ -98,12 +98,16 @@ llm_route = "default"
 # 送礼（0.13b）：默认关闭且默认 dry-run——不读凭据、不调用平台API、不扣电池。
 # 只有 enabled=true 且 real=true 才会真实赠送；凭据只从 FISH_BILI_COOKIE/_FILE 读取。
 # daily_limit 按礼物数量计（不是次数），跨本地自然日重置；真实送礼要求 num <= daily_limit。
+# max_price/max_num 是 Go 与 Node 双重执行的限制；allowed_rooms 为空表示不限制房间。
 [gift]
 enabled = false
 real = false
 gift_id = "31036" # 小花花：直购礼物，price=100（1电池）
 num = 1
 daily_limit = 1
+max_price = 100 # price 单位，100=1电池；范围1-10000
+max_num = 10 # 单次数量上限；范围1-100，不能小于 num
+allowed_rooms = [] # 空=不限制；否则只允许列出的纯数字房间号
 node_path = "node"
 script_path = "tools/bili-whale/gift.mjs"
 timeout_ms = 30000

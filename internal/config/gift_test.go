@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -30,11 +31,32 @@ func TestGiftDefaultsOffAndDryRun(t *testing.T) {
 	if cfg.Gift.GiftID != "31036" || cfg.Gift.Num != 1 || cfg.Gift.DailyLimit != 1 {
 		t.Fatalf("送礼默认值不符：%+v", cfg.Gift)
 	}
+	if cfg.Gift.MaxPrice != 100 || cfg.Gift.MaxNum != 10 || len(cfg.Gift.AllowedRooms) != 0 {
+		t.Fatalf("送礼限制默认值不符：%+v", cfg.Gift)
+	}
 	if cfg.Gift.NodePath != "node" || cfg.Gift.ScriptPath != "tools/bili-whale/gift.mjs" || cfg.Gift.TimeoutMS != 30000 {
 		t.Fatalf("送礼运行默认值不符：%+v", cfg.Gift)
 	}
 	if cfg.Gift.Cookie != "" || cfg.Gift.CookieFile != "" {
 		t.Fatal("未启用时不应解析凭据")
+	}
+}
+
+func TestGiftLimitsAndWhitelistLoad(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	t.Setenv("FISH_BILI_COOKIE", "SESSDATA=canary")
+	cfg, err := loadGiftConfig(t, "[gift]\nenabled=true\nmax_price=500\nmax_num=5\nnum=5\nallowed_rooms=[\"123\", \"456\"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Gift.MaxPrice != 500 || cfg.Gift.MaxNum != 5 || cfg.Gift.Num != 5 {
+		t.Fatalf("送礼限制未按配置加载：%+v", cfg.Gift)
+	}
+	if !slices.Equal(cfg.Gift.AllowedRooms, []string{"123", "456"}) {
+		t.Fatalf("房间白名单未按配置加载：%+v", cfg.Gift.AllowedRooms)
+	}
+	if cfg.Gift.Cookie != "" || cfg.Gift.CookieFile != "" {
+		t.Fatal("dry-run不应解析凭据")
 	}
 }
 
@@ -104,6 +126,16 @@ func TestGiftInvalidConfigIsSafe(t *testing.T) {
 		{"礼物ID超长", "[gift]\nenabled=true\ngift_id=\"99999999999999999\"\n", nil},
 		{"数量为零", "[gift]\nenabled=true\nnum=0\n", nil},
 		{"数量超限", "[gift]\nenabled=true\nnum=101\n", nil},
+		{"数量超过上限", "[gift]\nenabled=true\nnum=11\n", nil},
+		{"价格上限为零", "[gift]\nenabled=true\nmax_price=0\n", nil},
+		{"价格上限超限", "[gift]\nenabled=true\nmax_price=10001\n", nil},
+		{"数量上限为零", "[gift]\nenabled=true\nmax_num=0\n", nil},
+		{"数量上限超限", "[gift]\nenabled=true\nmax_num=101\n", nil},
+		{"白名单非数字", "[gift]\nenabled=true\nallowed_rooms=[\"abc\"]\n", nil},
+		{"白名单为零", "[gift]\nenabled=true\nallowed_rooms=[\"0\"]\n", nil},
+		{"白名单前导零", "[gift]\nenabled=true\nallowed_rooms=[\"00123\"]\n", nil},
+		{"白名单含空白", "[gift]\nenabled=true\nallowed_rooms=[\" 123\"]\n", nil},
+		{"白名单超长", "[gift]\nenabled=true\nallowed_rooms=[\"99999999999999999\"]\n", nil},
 		{"限额为零", "[gift]\nenabled=true\ndaily_limit=0\n", nil},
 		{"限额超限", "[gift]\nenabled=true\ndaily_limit=101\n", nil},
 		{"超时过短", "[gift]\nenabled=true\ntimeout_ms=999\n", nil},

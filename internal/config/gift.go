@@ -10,16 +10,19 @@ import (
 // Gift 是送礼通道配置（`[gift]`）：默认关闭且默认 dry-run。
 // 凭据只从环境变量读取，不写入 TOML/JSON；真实送礼需显式 real=true。
 type Gift struct {
-	Enabled    bool   `toml:"enabled"`
-	Real       bool   `toml:"real"`
-	GiftID     string `toml:"gift_id"`
-	Num        int    `toml:"num"`
-	DailyLimit int    `toml:"daily_limit"`
-	NodePath   string `toml:"node_path"`
-	ScriptPath string `toml:"script_path"`
-	TimeoutMS  int    `toml:"timeout_ms"`
-	Cookie     string `toml:"-" json:"-"`
-	CookieFile string `toml:"-" json:"-"`
+	Enabled      bool     `toml:"enabled"`
+	Real         bool     `toml:"real"`
+	GiftID       string   `toml:"gift_id"`
+	Num          int      `toml:"num"`
+	DailyLimit   int      `toml:"daily_limit"`
+	MaxPrice     int      `toml:"max_price"`
+	MaxNum       int      `toml:"max_num"`
+	AllowedRooms []string `toml:"allowed_rooms"`
+	NodePath     string   `toml:"node_path"`
+	ScriptPath   string   `toml:"script_path"`
+	TimeoutMS    int      `toml:"timeout_ms"`
+	Cookie       string   `toml:"-" json:"-"`
+	CookieFile   string   `toml:"-" json:"-"`
 }
 
 var giftIDPattern = regexp.MustCompile(`^[1-9][0-9]{0,15}$`)
@@ -32,6 +35,8 @@ func defaultGift() Gift {
 		GiftID:     "31036",
 		Num:        1,
 		DailyLimit: 1,
+		MaxPrice:   100,
+		MaxNum:     10,
 		NodePath:   "node",
 		ScriptPath: "tools/bili-whale/gift.mjs",
 		TimeoutMS:  30000,
@@ -61,8 +66,14 @@ func (g Gift) Validate() error {
 	if err != nil || id > 9007199254740991 {
 		return errors.New("礼物ID超出安全整数范围")
 	}
-	if g.Num < 1 || g.Num > 100 {
-		return errors.New("单次礼物数量必须在1至100之间")
+	if g.MaxPrice < 1 || g.MaxPrice > 10000 {
+		return errors.New("送礼价格上限必须在1至10000之间")
+	}
+	if g.MaxNum < 1 || g.MaxNum > 100 {
+		return errors.New("送礼数量上限必须在1至100之间")
+	}
+	if g.Num < 1 || g.Num > g.MaxNum {
+		return errors.New("单次礼物数量必须在1至max_num之间")
 	}
 	if g.DailyLimit < 1 || g.DailyLimit > 100 {
 		return errors.New("送礼每日限额必须在1至100之间")
@@ -73,6 +84,15 @@ func (g Gift) Validate() error {
 	if strings.TrimSpace(g.NodePath) == "" || strings.TrimSpace(g.ScriptPath) == "" ||
 		strings.ContainsAny(g.NodePath+g.ScriptPath, "\r\n\x00") {
 		return errors.New("送礼node/脚本路径配置无效")
+	}
+	for _, room := range g.AllowedRooms {
+		if !giftIDPattern.MatchString(room) {
+			return errors.New("送礼房间白名单必须是纯数字房间号")
+		}
+		roomID, err := strconv.ParseUint(room, 10, 64)
+		if err != nil || roomID > 9007199254740991 {
+			return errors.New("送礼房间白名单超出安全整数范围")
+		}
 	}
 	if g.Real {
 		if g.Num > g.DailyLimit {

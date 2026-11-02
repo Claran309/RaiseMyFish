@@ -15,9 +15,11 @@ const GIFT_URL = 'https://api.live.bilibili.com/xlive/web-room/v1/giftPanel/gift
 const NAV_URL = 'https://api.bilibili.com/x/web-interface/nav'
 const SEND_URL = 'https://api.live.bilibili.com/xlive/revenue/v2/gift/sendGoldMultiUser'
 const WEB_LOCATION = '444.8'
-const PRICE_CEILING = 100 // price 100 = 1 电池；只防价格暴涨
+const DEFAULT_MAX_PRICE = 100 // price 100 = 1 电池；默认安全上限
+const DEFAULT_MAX_NUM = 100
+const HARD_MAX_PRICE = 10000
+const HARD_MAX_NUM = 100
 const MAX_RESPONSE = 1024 * 1024
-const MAX_NUM = 100
 const HTTP_TIMEOUT_MS = 10000
 const UA = 'Mozilla/5.0 RaiseMyFish/0.13'
 
@@ -38,6 +40,15 @@ const safeDecimalID = value => {
   return id
 }
 
+// 配置值再由脚本做一次硬上限校验，防止 TOML 或装配层写错。
+function boundedInt(text, fallback, max, label) {
+  if (text === undefined) return fallback
+  if (typeof text !== 'string' || !/^[1-9][0-9]{0,4}$/.test(text)) throw fatal(`${label}无效`)
+  const number = Number(text)
+  if (!Number.isSafeInteger(number) || number < 1 || number > max) throw fatal(`${label}无效`)
+  return number
+}
+
 function parseArgs(argv) {
   const values = new Map()
   for (let index = 0; index < argv.length; index += 1) {
@@ -47,7 +58,7 @@ function parseArgs(argv) {
       values.set(arg, true)
       continue
     }
-    if (!['--room', '--gift-id', '--num'].includes(arg)) throw fatal('参数无效')
+    if (!['--room', '--gift-id', '--num', '--max-price', '--max-num'].includes(arg)) throw fatal('参数无效')
     if (values.has(arg)) throw fatal('参数重复')
     const value = argv[index + 1]
     if (value === undefined || value.startsWith('--')) throw fatal('参数缺少值')
@@ -58,9 +69,13 @@ function parseArgs(argv) {
   const giftID = safeDecimalID(values.get('--gift-id'))
   const numText = values.get('--num')
   const num = typeof numText === 'string' && /^[1-9][0-9]{0,2}$/.test(numText) ? Number(numText) : 0
-  if (!room || !giftID || num < 1 || num > MAX_NUM) throw fatal('房间号/礼物ID/数量无效')
+  const maxPrice = boundedInt(values.get('--max-price'), DEFAULT_MAX_PRICE, HARD_MAX_PRICE, '价格上限')
+  const maxNum = boundedInt(values.get('--max-num'), DEFAULT_MAX_NUM, HARD_MAX_NUM, '数量上限')
+  if (!room || !giftID) throw fatal('房间号/礼物ID无效')
+  if (num < 1) throw fatal('礼物数量无效')
+  if (num > maxNum) throw fatal('礼物数量超过上限')
   if (values.has('--dry-run') && values.has('--go')) throw fatal('--dry-run 与 --go 不能同时使用')
-  return { room, giftID, num, dryRun: !values.has('--go') }
+  return { room, giftID, num, maxPrice, maxNum, dryRun: !values.has('--go') }
 }
 
 function sentFrame(options) {
@@ -190,7 +205,7 @@ export async function sendGift(options, deps = {}) {
   if (typeof rawPrice !== 'number' && typeof rawPrice !== 'string') throw fatal('礼物价格无效')
   const price = Number(rawPrice)
   if (!Number.isSafeInteger(price) || price < 0) throw fatal('礼物价格无效')
-  if (price > PRICE_CEILING) throw fatal('礼物价格超过1电池上限')
+  if (price > (options.maxPrice ?? DEFAULT_MAX_PRICE)) throw fatal('礼物价格超过配置上限')
 
   const nav = await httpJSON(NAV_URL, { cookie, referer: `https://live.bilibili.com/${shortID}`, deps })
   if (nav?.code !== 0 || nav.data?.isLogin !== true) throw fatal('登录态无效')

@@ -47,6 +47,13 @@ test('参数严格：缺失/重复/未知/非法ID数量/双开关均拒绝，�
     ['--room', '99', '--gift-id', '31036', '--num', '01'],
     [...base, '--unknown'], [...base, '--room', '100'], [...base, '--room'],
     [...base, '--dry-run', '--go'],
+    [...base, '--max-price', '0'], [...base, '--max-price', '10001'],
+    [...base, '--max-price', 'abc'], [...base, '--max-price', '01'], [...base, '--max-price'],
+    [...base, '--max-price', '100', '--max-price', '100'],
+    [...base, '--max-num', '0'], [...base, '--max-num', '101'],
+    [...base, '--max-num', 'abc'], [...base, '--max-num'],
+    ['--room', '99', '--gift-id', '31036', '--num', '2', '--max-num', '1'],
+    [...base, '--go', '--max-price', '0'], [...base, '--go', '--max-num', '101'],
   ]) {
     const frame = await runGift(args, deps)
     assert.equal(frame.type, 'error', JSON.stringify(args))
@@ -55,6 +62,30 @@ test('参数严格：缺失/重复/未知/非法ID数量/双开关均拒绝，�
     assert.ok(!frame.message.includes('fixture'))
   }
   assert.equal(calls, 0)
+})
+
+test('上限参数：默认100/100，边界值可接受且数量不得超过max-num', async () => {
+  const frame = { protocol: 1, type: 'sent', gift_id: giftID, num: 1 }
+  assert.deepEqual(await runGift([...base, '--max-price', '10000', '--max-num', '1'], { env: {} }), frame)
+  assert.deepEqual(await runGift([...base, '--max-price', '100', '--max-num', '100'], { env: {} }), frame)
+  const five = ['--room', '99', '--gift-id', giftID, '--num', '5', '--max-num', '5']
+  assert.deepEqual(await runGift(five, { env: {} }), { protocol: 1, type: 'sent', gift_id: giftID, num: 5 })
+  const hundred = ['--room', '99', '--gift-id', giftID, '--num', '100']
+  assert.deepEqual(await runGift(hundred, { env: {} }), { protocol: 1, type: 'sent', gift_id: giftID, num: 100 })
+})
+
+test('自定义价格上限在真送前生效', async () => {
+  const rejected = preparation()
+  const frame = await runGift([...base, '--go', '--max-price', '50'], rejected)
+  assert.equal(frame.type, 'error')
+  assert.equal(frame.kind, 'fatal')
+  assert.equal(frame.message, '礼物价格超过配置上限')
+  assert.equal(rejected.calls.length, 2)
+  assert.ok(rejected.calls.every(call => call.init.method === 'GET'))
+
+  const accepted = preparation()
+  assert.deepEqual(await runGift([...base, '--go', '--max-price', '100'], accepted), { protocol: 1, type: 'sent', gift_id: giftID, num: 1 })
+  assert.equal(accepted.calls.length, 4)
 })
 
 test('真送完整流程：面板数字ID、直购校验、表单与CSRF、单次POST', async () => {
@@ -84,9 +115,9 @@ test('真送完整流程：面板数字ID、直购校验、表单与CSRF、单�
   assert.ok(!post.init.body.includes('fixture-session'))
 })
 
-test('礼物必须是直购且价格不超过1电池，否则不发POST', async () => {
+test('礼物必须是直购且价格不超过配置上限，否则不发POST', async () => {
   const cases = [
-    { panel: panel([{ id: 31036, price: 101, bag_gift: 0 }]), message: '礼物价格超过1电池上限' },
+    { panel: panel([{ id: 31036, price: 101, bag_gift: 0 }]), message: '礼物价格超过配置上限' },
     { panel: panel([{ id: 31036, price: 100, bag_gift: 1 }]), message: '该礼物不是直购礼物' },
     { panel: panel([{ id: 31036, price: 100, bag_gift: null }]), message: '该礼物不是直购礼物' },
     { panel: panel([{ id: 31036, price: null, bag_gift: 0 }]), message: '礼物价格无效' },

@@ -66,6 +66,12 @@ type Options struct {
 	DryRun bool
 	// DailyLimit 是每个本地自然日允许真实送出的礼物总数；dry-run 不计数。
 	DailyLimit int
+	// MaxPrice 是礼物单价上限（price 单位，100=1电池）。
+	MaxPrice int
+	// MaxNum 是单次送礼数量上限。
+	MaxNum int
+	// AllowedRooms 是房间白名单；空表示不限制。
+	AllowedRooms []string
 	// Now 仅用于测试跨日重置；nil 时使用 time.Now。
 	Now func() time.Time
 }
@@ -78,13 +84,16 @@ func DefaultOptions() Options {
 		Timeout:    30 * time.Second,
 		DryRun:     true,
 		DailyLimit: 1,
+		MaxPrice:   100,
+		MaxNum:     10,
 	}
 }
 
 // NodeSender 串行化每日额度并在每次调用时启动一个一次性 Node 进程。
 type NodeSender struct {
-	options Options
-	command func(context.Context, string, string, int) *exec.Cmd
+	options      Options
+	command      func(context.Context, string, string, int) *exec.Cmd
+	allowedRooms map[string]struct{}
 
 	mu   sync.Mutex
 	day  string
@@ -109,9 +118,19 @@ func New(o Options) (*NodeSender, error) {
 	if strings.TrimSpace(o.NodePath) == "" || strings.TrimSpace(o.ScriptPath) == "" ||
 		strings.ContainsAny(o.NodePath+o.ScriptPath+o.Cookie+o.CookieFile, "\r\n\x00") ||
 		o.Timeout < time.Second || o.Timeout > 10*time.Minute ||
-		o.DailyLimit < 1 || o.DailyLimit > 100 {
+		o.DailyLimit < 1 || o.DailyLimit > 100 ||
+		o.MaxPrice < 1 || o.MaxPrice > 10000 ||
+		o.MaxNum < 1 || o.MaxNum > 100 {
 		return nil, &Error{Kind: KindFatal, Message: "送礼运行时或限额配置无效"}
 	}
+	allowed := make(map[string]struct{}, len(o.AllowedRooms))
+	for _, room := range o.AllowedRooms {
+		if !validGiftID(room) {
+			return nil, &Error{Kind: KindFatal, Message: "送礼房间白名单无效"}
+		}
+		allowed[room] = struct{}{}
+	}
+	o.AllowedRooms = append([]string(nil), o.AllowedRooms...)
 	if o.DryRun {
 		// dry-run 一律不传凭据，即使调用方误配也不泄露。
 		o.Cookie, o.CookieFile = "", ""
@@ -121,7 +140,7 @@ func New(o Options) (*NodeSender, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	s := &NodeSender{options: o}
+	s := &NodeSender{options: o, allowedRooms: allowed}
 	s.command = s.buildCommand
 	return s, nil
 }
@@ -131,7 +150,8 @@ func (s *NodeSender) buildCommand(ctx context.Context, room, giftID string, num 
 	if !s.options.DryRun {
 		mode = "--go"
 	}
-	args := []string{s.options.ScriptPath, "--room", room, "--gift-id", giftID, "--num", strconv.Itoa(num), mode}
+	args := []string{s.options.ScriptPath, "--room", room, "--gift-id", giftID, "--num", strconv.Itoa(num),
+		"--max-price", strconv.Itoa(s.options.MaxPrice), "--max-num", strconv.Itoa(s.options.MaxNum), mode}
 	// #nosec G204 -- Node与脚本路径来自可信部署配置；逐参数传递且不经shell，平台ID已在Send中限制为十进制。
 	cmd := exec.CommandContext(ctx, s.options.NodePath, args...)
 	cmd.Env = []string{}
@@ -187,8 +207,13 @@ func (s *NodeSender) Send(ctx context.Context, room string, giftID string, num i
 	if ctx == nil {
 		return fail(KindFatal, "缺少调用上下文")
 	}
-	if !validGiftID(room) || !validGiftID(giftID) || num < 1 || num > 100 {
+	if !validGiftID(room) || !validGiftID(giftID) || num < 1 || num > s.options.MaxNum {
 		return fail(KindFatal, "房间号/礼物ID/数量无效")
+	}
+	if len(s.allowedRooms) > 0 {
+		if _, ok := s.allowedRooms[room]; !ok {
+			return fail(KindFatal, "房间不在送礼白名单")
+		}
 	}
 	if ctx.Err() != nil {
 		return fail(KindFatal, "送礼已取消")
