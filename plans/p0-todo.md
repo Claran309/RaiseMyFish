@@ -9,7 +9,7 @@
 | 1 | ~~ReAct 思考链~~ | Qoder/WorkBuddy | ✅ 验收通过（b4b8795） |
 | 2 | ~~ReAct token 记账~~ | Qoder/WorkBuddy | ✅ 验收通过（ce6d5d2） |
 | 3 | **主动弹幕重构**（`plans/phase-0.19-proactive-refactor.md`：复用 Brain + 注入 Visual） | Qoder/WorkBuddy | ⏳ 派发单就绪 |
-| 4 | **Resume 的 budget 降级**（本轮只修了 Generate） | Qoder/WorkBuddy | ⏳ 待做 |
+| 4 | ~~Resume budget 降级~~（伪待办：Resume 不调 brain，只有 sender.Resume） | — | ✅ 已核实不需要 |
 | 5 | **梗库扩充**（500 → 7000 条：从 DSH `~/.dsh/meme-wiki/memes.db` 转换导入 K0 格式） | Qoder/WorkBuddy | ⏳ 新 |
 | 6 | **梗白学习**（meme-learn：从弹幕学习新梗入库） | P2 | ⏳ 新 |
 | 7 | **ReAct 工具扩充**（gift/follow/verify 等，现在只有 4 个：记忆/知识/状态/历史） | P6 | ⏳ 新 |
