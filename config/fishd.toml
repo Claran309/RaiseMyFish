@@ -85,6 +85,7 @@ budget_percent = 10
 [watch]
 enabled = false
 source = "stream"
+interval_seconds = 600 # 直播采集运行期间，每隔多少秒看一次
 seconds = 10
 frames = 4
 asr_url = "http://127.0.0.1:8077/v1/audio/transcriptions"
@@ -111,6 +112,13 @@ allowed_rooms = [] # 空=不限制；否则只允许列出的纯数字房间号
 node_path = "node"
 script_path = "tools/bili-whale/gift.mjs"
 timeout_ms = 30000
+
+# 记忆提炼（0.5 补丁）：默认开启，水位固定写入 state/memory-watermark.json。
+# worker 初始化失败只记日志并降级，不阻塞采集/消费；allow_private=false 时私密事件不提炼。
+[memory]
+enabled = true
+interval_seconds = 300
+allow_private = false
 
 # 消费循环（Claim → Scheduler → Brain → Sender）。
 # 整段缺失表示「只采集不回复」；这里保留默认值，实际是否回复还取决于 [llm] enabled 与路由。

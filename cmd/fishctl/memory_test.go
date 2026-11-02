@@ -1,0 +1,241 @@
+package main
+
+// 0.5 补丁：fishctl memory 子命令测试，仓储用 mock 注入，不连 PG。
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"RaiseMyFish/internal/memory"
+	"RaiseMyFish/internal/store"
+)
+
+// mockMemoryRepo 记录收到的参数并按预设返回。
+type mockMemoryRepo struct {
+	list      []store.MemoryRecord
+	listErr   error
+	search    []store.MemoryRecord
+	searchErr error
+	counts    map[string]int
+	countErr  error
+
+	gotLimit int
+	gotQuery string
+}
+
+func (m *mockMemoryRepo) ListRecords(_ context.Context, limit int) ([]store.MemoryRecord, error) {
+	m.gotLimit = limit
+	return m.list, m.listErr
+}
+
+func (m *mockMemoryRepo) SearchRecords(_ context.Context, q string, limit int) ([]store.MemoryRecord, error) {
+	m.gotQuery, m.gotLimit = q, limit
+	return m.search, m.searchErr
+}
+
+func (m *mockMemoryRepo) CountByKind(context.Context) (map[string]int, error) {
+	return m.counts, m.countErr
+}
+
+// TestParseMemoryArgs 子命令、默认值、边界与 help。
+func TestParseMemoryArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want memoryCommand
+	}{
+		{"list 默认", []string{"list"}, memoryCommand{Action: "list", Limit: defaultMemoryLimit}},
+		{"list 指定条数", []string{"list", "--limit", "5"}, memoryCommand{Action: "list", Limit: 5}},
+		{"search 默认", []string{"search", "--q", "猫"}, memoryCommand{Action: "search", Limit: defaultMemoryLimit, Query: "猫"}},
+		{"search 去空白", []string{"search", "--q", "  带话  ", "--limit", "3"}, memoryCommand{Action: "search", Limit: 3, Query: "带话"}},
+		{"stats", []string{"stats"}, memoryCommand{Action: "stats", Limit: defaultMemoryLimit}},
+		{"help", []string{"list", "--help"}, memoryCommand{Action: "help"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseMemoryArgs(tc.args, io.Discard)
+			if err != nil {
+				t.Fatalf("解析失败：%v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("解析结果 = %+v，期望 %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseMemoryArgsRejectsBadInput 缺子命令、未知子命令、越界与多余参数都拒绝。
+func TestParseMemoryArgsRejectsBadInput(t *testing.T) {
+	cases := map[string][]string{
+		"缺子命令":        nil,
+		"未知子命令":       {"remove"},
+		"list 越界":     {"list", "--limit", "0"},
+		"list 超上限":    {"list", "--limit", "201"},
+		"list 多余参数":   {"list", "extra"},
+		"search 缺关键词": {"search"},
+		"search 空白词":  {"search", "--q", "   "},
+		"stats 多余参数":  {"stats", "extra"},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseMemoryArgs(args, io.Discard); err == nil {
+				t.Fatalf("参数 %v 未被拒绝", args)
+			}
+		})
+	}
+}
+
+// TestExecuteMemoryList 有数据/空数据的 JSON 输出与参数传递。
+func TestExecuteMemoryList(t *testing.T) {
+	created := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	repo := &mockMemoryRepo{list: []store.MemoryRecord{
+		{
+			Record:    memory.Record{ID: "mem-1", Importance: 0.9},
+			Source:    "owner_direct",
+			Kind:      "fact",
+			Title:     "猫",
+			CreatedAt: created,
+		},
+	}}
+
+	var out bytes.Buffer
+	if err := executeMemory(context.Background(), repo, memoryCommand{Action: "list", Limit: 10}, &out); err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if repo.gotLimit != 10 {
+		t.Errorf("limit = %d，期望 10", repo.gotLimit)
+	}
+	var got struct {
+		Query   string       `json:"query"`
+		Records []memoryItem `json:"records"`
+		Count   int          `json:"count"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("JSON 解析失败：%v\n%s", err, out.String())
+	}
+	if got.Query != "" || got.Count != 1 || len(got.Records) != 1 {
+		t.Fatalf("输出不符：%+v", got)
+	}
+	item := got.Records[0]
+	if item.ID != "mem-1" || item.Kind != "fact" || item.Title != "猫" || item.Importance != 0.9 || !item.At.Equal(created) {
+		t.Fatalf("记录字段不符：%+v", item)
+	}
+
+	empty := &mockMemoryRepo{}
+	out.Reset()
+	if err := executeMemory(context.Background(), empty, memoryCommand{Action: "list", Limit: 20}, &out); err != nil {
+		t.Fatalf("空列表失败：%v", err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"records":[]`)) || !bytes.Contains(out.Bytes(), []byte(`"count":0`)) {
+		t.Fatalf("空列表应输出 []：%s", out.String())
+	}
+}
+
+// TestExecuteMemorySearch 关键词与 limit 透传，输出带 query。
+func TestExecuteMemorySearch(t *testing.T) {
+	repo := &mockMemoryRepo{search: []store.MemoryRecord{{
+		Record: memory.Record{ID: "mem-2", ValidFrom: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)},
+		Kind:   "note",
+		Title:  "带话",
+	}}}
+
+	var out bytes.Buffer
+	if err := executeMemory(context.Background(), repo, memoryCommand{Action: "search", Limit: 7, Query: "带话"}, &out); err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if repo.gotQuery != "带话" || repo.gotLimit != 7 {
+		t.Fatalf("参数未透传：query=%q limit=%d", repo.gotQuery, repo.gotLimit)
+	}
+	var got struct {
+		Query   string       `json:"query"`
+		Records []memoryItem `json:"records"`
+		Count   int          `json:"count"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Query != "带话" || got.Count != 1 || got.Records[0].ID != "mem-2" {
+		t.Fatalf("输出不符：%+v", got)
+	}
+	// CreatedAt 缺失时回退 ValidFrom，避免输出零时间
+	if !got.Records[0].At.Equal(repo.search[0].ValidFrom) {
+		t.Errorf("At = %v，期望回退 ValidFrom %v", got.Records[0].At, repo.search[0].ValidFrom)
+	}
+}
+
+// TestExecuteMemoryStats 按 kind 汇总并给出总数；空 map 输出 {}。
+func TestExecuteMemoryStats(t *testing.T) {
+	repo := &mockMemoryRepo{counts: map[string]int{"fact": 3, "promise": 2}}
+	var out bytes.Buffer
+	if err := executeMemory(context.Background(), repo, memoryCommand{Action: "stats"}, &out); err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	var got struct {
+		Counts map[string]int `json:"counts"`
+		Total  int            `json:"total"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Total != 5 || got.Counts["fact"] != 3 || got.Counts["promise"] != 2 {
+		t.Fatalf("统计输出不符：%+v", got)
+	}
+
+	out.Reset()
+	if err := executeMemory(context.Background(), &mockMemoryRepo{}, memoryCommand{Action: "stats"}, &out); err != nil {
+		t.Fatalf("空统计失败：%v", err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"counts":{}`)) || !bytes.Contains(out.Bytes(), []byte(`"total":0`)) {
+		t.Fatalf("空统计应输出 {}：%s", out.String())
+	}
+}
+
+// TestExecuteMemoryErrors 查询错误与输出错误必须上抛。
+func TestExecuteMemoryErrors(t *testing.T) {
+	boom := errors.New("查询炸了")
+	if err := executeMemory(context.Background(), &mockMemoryRepo{listErr: boom}, memoryCommand{Action: "list", Limit: 1}, io.Discard); !errors.Is(err, boom) {
+		t.Errorf("list 错误未透传：%v", err)
+	}
+	if err := executeMemory(context.Background(), &mockMemoryRepo{searchErr: boom}, memoryCommand{Action: "search", Limit: 1, Query: "猫"}, io.Discard); !errors.Is(err, boom) {
+		t.Errorf("search 错误未透传：%v", err)
+	}
+	if err := executeMemory(context.Background(), &mockMemoryRepo{countErr: boom}, memoryCommand{Action: "stats"}, io.Discard); !errors.Is(err, boom) {
+		t.Errorf("stats 错误未透传：%v", err)
+	}
+
+	fail := failingWriter(func([]byte) (int, error) { return 0, errors.New("写不出去") })
+	if err := executeMemory(context.Background(), &mockMemoryRepo{}, memoryCommand{Action: "list", Limit: 1}, fail); err == nil {
+		t.Error("输出失败未报错")
+	}
+	if err := executeMemory(context.Background(), &mockMemoryRepo{}, memoryCommand{Action: "stats"}, fail); err == nil {
+		t.Error("统计输出失败未报错")
+	}
+}
+
+type failingWriter func([]byte) (int, error)
+
+func (f failingWriter) Write(p []byte) (int, error) { return f(p) }
+
+// TestRunMemoryRejectsUsageBeforeLoadingConfig 参数错误先于配置加载返回。
+func TestRunMemoryRejectsUsageBeforeLoadingConfig(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.toml")
+	err := runMemory(context.Background(), missing, "", nil, io.Discard, io.Discard)
+	if !errors.Is(err, errMemoryUsage) {
+		t.Fatalf("期望用法错误，实际 %v", err)
+	}
+}
+
+// TestRunRoutesMemoryCommand 顶层 run 能路由到 memory 并拒绝非法 limit。
+func TestRunRoutesMemoryCommand(t *testing.T) {
+	err := run(context.Background(), []string{"memory", "list", "--limit", "0"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("memory 路由未生效：%v", err)
+	}
+}

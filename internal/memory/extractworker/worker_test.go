@@ -129,6 +129,18 @@ func (f *fakeRepo) Records(context.Context, memory.Scope, int) ([]memory.Record,
 	return nil, nil
 }
 
+func (f *fakeRepo) ListRecords(context.Context, int) ([]store.MemoryRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeRepo) SearchRecords(context.Context, string, int) ([]store.MemoryRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeRepo) CountByKind(context.Context) (map[string]int, error) {
+	return nil, nil
+}
+
 func (f *fakeRepo) all() []store.MemoryRecord {
 	f.mu.Lock()
 	defer f.mu.Unlock()

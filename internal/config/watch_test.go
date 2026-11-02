@@ -44,7 +44,7 @@ func TestWatchDefaultsOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Watch.Enabled || cfg.Watch.Source != "stream" || cfg.Watch.Seconds != 10 || cfg.Watch.Frames != 4 {
+	if cfg.Watch.Enabled || cfg.Watch.Source != "stream" || cfg.Watch.IntervalSeconds != 600 || cfg.Watch.Seconds != 10 || cfg.Watch.Frames != 4 {
 		t.Fatalf("看直播默认值不符：%+v", cfg.Watch)
 	}
 	if cfg.Watch.ASRURL != "http://127.0.0.1:8077/v1/audio/transcriptions" || cfg.Watch.StreamQuality != "origin" || cfg.Watch.LLMRoute != "default" {
@@ -91,6 +91,8 @@ func TestWatchInvalidConfigIsSafe(t *testing.T) {
 		{"帧数超限", "[watch]\nenabled=true\nframes=6\n", setWatchEnv},
 		{"screen未实现", "[watch]\nenabled=true\nsource=\"screen\"\n", setWatchEnv},
 		{"秒数过短", "[watch]\nenabled=true\nseconds=1\n", setWatchEnv},
+		{"间隔过短", "[watch]\nenabled=true\ninterval_seconds=1\n", setWatchEnv},
+		{"间隔过长", "[watch]\nenabled=true\ninterval_seconds=86401\n", setWatchEnv},
 		{"ASR非本机HTTP", "[watch]\nenabled=true\nasr_url=\"http://example.com/transcribe\"\n", setWatchEnv},
 		{"未知清晰度", "[watch]\nenabled=true\nstream_quality=\"4k\"\n", setWatchEnv},
 		{"未知字段", "[watch]\nenabled=true\nfoo=1\n", setWatchEnv},

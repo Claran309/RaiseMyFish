@@ -41,6 +41,43 @@ func TestServeCancellationAndFinalState(t *testing.T) {
 	}
 }
 
+// TestServePublishesPresenceSummary 心跳把注入的摘要写进状态文件，停止后清空。
+func TestServePublishesPresenceSummary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	want := "在看直播 30308220 / 在回弹幕"
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- serve(ctx, path, time.Hour, zap.NewNop(), func(context.Context) error { return nil },
+			func(time.Time) string { return want })
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		state, err := infra.ReadStatus(path)
+		if err == nil && state.Presence == want {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatalf("状态文件未写入 presence：%v / %+v", err, state)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	state, err := infra.ReadStatus(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Presence != "" {
+		t.Errorf("停止后应清空 presence，实际 %q", state.Presence)
+	}
+}
+
 type diagnosticUsage struct{ calls atomic.Int32 }
 
 func (u *diagnosticUsage) RecordUsage(context.Context, store.Usage) error { u.calls.Add(1); return nil }

@@ -23,6 +23,7 @@ credentials.json
 
 # ── 数据与日志 ──────────────────────────────────────
 data/
+state/
 logs/
 *.log
 data/**/*.jsonl

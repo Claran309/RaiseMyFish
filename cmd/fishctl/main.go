@@ -47,8 +47,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if len(action) >= 2 && action[0] == "persona" && action[1] == "eval" {
 		return runPersonaEval(ctx, *path, *envPath, action[2:], stdout, stderr)
 	}
+	if len(action) >= 1 && action[0] == "memory" {
+		return runMemory(ctx, *path, *envPath, action[1:], stdout, stderr)
+	}
+	if len(action) >= 1 && action[0] == "gift" {
+		return runGift(ctx, *path, *envPath, action[1:], stdout, stderr)
+	}
 	if len(action) != 1 || (action[0] != "status" && action[0] != "tail") {
-		return errors.New("用法：fishctl [--config 路径] [--env-file 路径] status|tail|persona eval")
+		return errors.New("用法：fishctl [--config 路径] [--env-file 路径] status|tail|persona eval|memory list|search|stats|gift send")
 	}
 	cfg, err := config.Load(*path, *envPath)
 	if err != nil {
@@ -92,10 +98,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 func printStatus(path string, ttl time.Duration, databaseReady bool, out io.Writer, stats ...StatusStats) error {
 	state, readErr := infra.ReadStatus(path)
 	alive := readErr == nil && state.Alive(time.Now().UTC(), ttl) && databaseReady
+	// stats 为可选参数：传了且非空时追加 `stats` 字段；不传时输出与 0.1 逐字节一致，
+	// 避免影响既有的状态解析方。presence 只在服务存活时展示，避免展示过期摘要。
 	var extra *StatusStats
 	if len(stats) > 0 && !stats[0].empty() {
 		snapshot := stats[0]
 		extra = &snapshot
+	}
+	presenceText := ""
+	if alive {
+		presenceText = state.Presence
+	} else {
+		// 未存活时连 service 内的旧摘要一起清掉，避免把过期活动当成当前状态。
+		state.Presence = ""
 	}
 	summary := struct {
 		ServiceAlive  bool         `json:"service_alive"`
@@ -103,7 +118,15 @@ func printStatus(path string, ttl time.Duration, databaseReady bool, out io.Writ
 		Service       infra.Status `json:"service"`
 		Channels      string       `json:"channels"`
 		Stats         *StatusStats `json:"stats,omitempty"`
-	}{alive, databaseReady, state, "not_implemented", extra}
+		Presence      string       `json:"presence,omitempty"`
+	}{
+		ServiceAlive:  alive,
+		DatabaseReady: databaseReady,
+		Service:       state,
+		Channels:      "not_implemented",
+		Stats:         extra,
+		Presence:      presenceText,
+	}
 	if err := json.NewEncoder(out).Encode(summary); err != nil {
 		return fmt.Errorf("输出状态摘要：%w", err)
 	}

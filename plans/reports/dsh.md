@@ -639,4 +639,12 @@
 - 独立执行：`reasoning` 100% 覆盖；`cmd/fishd` 测试通过；全包通过；race 通过。
 - 核对：NeedMemory（刚才/之前/上次/上回/你说/你提/你记得/那个/还记得/又）、NeedKnowledge（梗/什么意思/什么梗/啥意思/知道吗/那个梗）；两类独立；不需要时 Scope 空快照；召回失败降级。
 - 结论：**P0.5 验收通过**（待提交）；**记忆接线（extractworker + fishctl memory）已派发**。
+
+## P0 接线收尾独立验收（2026-11-02 19:30）
+
+- **批次 A（memory-wiring）**：extractworker 启动接入 fishd（自行 RunOnce 循环、state 水位、失败降级不阻塞）+ fishctl memory（list/search/stats JSON）+ store.MemoryRepo 只读三方法。
+- **批次 B（wiring）**：watch 接入 fishd（定时旁路 + fake clock + 降级）+ fishctl gift send（dry-run/real 区分 + 白名单）+ 跨进程文件额度账本（quota.go，O_EXCL 原子写、跨日重置）+ Presence Summary 暴露（status 顶层 presence）。
+- 独立执行：全仓测试通过；集成（database 56s + gift）通过；新文件齐全。
+- **DSH 裁决未做项**：watch 首触发在第一个 interval 后（接受）、screen 模式未实现（接受）、Presence 内存态+心跳快照（接受）、gift 仅手动 CLI（接受，禁止自动送）、status 最多滞后一个心跳（接受）。
+- 结论：**接线收尾两批验收通过**（待提交）；**P0 无「包级完成未接线」尾巴**；剩最终冒烟（开播：弹幕+看直播+送礼+记忆）。
 - 结论：**0.13b-2 验收通过**（待提交）；**P0 剩真实冒烟**（需主人开播：弹幕+看直播+送礼）。

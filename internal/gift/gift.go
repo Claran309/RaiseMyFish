@@ -72,6 +72,9 @@ type Options struct {
 	MaxNum int
 	// AllowedRooms 是房间白名单；空表示不限制。
 	AllowedRooms []string
+	// Quota 是可选的每日额度仓储；nil 时使用进程内计数（适合长驻进程）。
+	// 一次性命令必须注入持久化实现，否则每次启动都会重置 daily_limit。
+	Quota QuotaStore
 	// Now 仅用于测试跨日重置；nil 时使用 time.Now。
 	Now func() time.Time
 }
@@ -173,10 +176,12 @@ func (s *NodeSender) buildCommand(ctx context.Context, room, giftID string, num 
 }
 
 // reserve 在启动真实送礼前预占额度；并发调用不会突破每日上限。
-func (s *NodeSender) reserve(now time.Time, num int) error {
+func (s *NodeSender) reserve(day string, num int) error {
+	if s.options.Quota != nil {
+		return s.options.Quota.Reserve(day, num, s.options.DailyLimit)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	day := now.Format("2006-01-02")
 	if day != s.day {
 		s.day = day
 		s.used = 0
@@ -189,9 +194,16 @@ func (s *NodeSender) reserve(now time.Time, num int) error {
 }
 
 // release 只用于确定未提交 POST 的失败；不确定时宁可占用额度也不重复扣费。
-func (s *NodeSender) release(num int) {
+func (s *NodeSender) release(day string, num int) {
+	if s.options.Quota != nil {
+		s.options.Quota.Release(day, num)
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if day != s.day {
+		return
+	}
 	s.used -= num
 	if s.used < 0 {
 		s.used = 0
@@ -219,9 +231,14 @@ func (s *NodeSender) Send(ctx context.Context, room string, giftID string, num i
 		return fail(KindFatal, "送礼已取消")
 	}
 	reserved := false
+	day := s.options.Now().Format("2006-01-02")
 	if !s.options.DryRun {
-		if err := s.reserve(s.options.Now(), num); err != nil {
-			return fail(KindFatal, "送礼超过每日限额")
+		if err := s.reserve(day, num); err != nil {
+			var typed *Error
+			if errors.As(err, &typed) {
+				return fail(typed.Kind, typed.Message)
+			}
+			return fail(KindFatal, "送礼每日限额检查失败")
 		}
 		reserved = true
 	}
@@ -229,7 +246,7 @@ func (s *NodeSender) Send(ctx context.Context, room string, giftID string, num i
 	if err != nil {
 		var typed *Error
 		if reserved && (!started || (errors.As(err, &typed) && typed.Kind == KindRetryable)) {
-			s.release(num)
+			s.release(day, num)
 		}
 		result.Error = err.Error()
 		return result, err

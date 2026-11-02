@@ -14,6 +14,7 @@ import (
 
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/infra"
+	"RaiseMyFish/internal/presence"
 )
 
 // statNow 是固定的「当前时间」，避免用例依赖真实时钟。
@@ -212,6 +213,72 @@ func TestPrintStatusWithStats(t *testing.T) {
 	}
 	if len(decoded.Stats.Warnings) != 1 || !strings.Contains(decoded.Stats.Warnings[0], "≥") {
 		t.Errorf("stats.heartbeat_warnings 不符：%v", decoded.Stats.Warnings)
+	}
+}
+
+// TestPrintStatusWithPresence 多值摘要从状态文件读到顶层 presence 字段。
+func TestPrintStatusWithPresence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	table := presence.NewTable()
+	table.Set(presence.State{
+		Kind: presence.KindWatching, Channel: "live", Detail: "30308220",
+		Since: statNow.Add(-2 * time.Minute), TTL: time.Hour,
+	})
+	table.Set(presence.State{
+		Kind: presence.KindReplying, Channel: "live",
+		Since: statNow.Add(-time.Minute), TTL: time.Hour,
+	})
+	want := table.Summary(statNow)
+	if want != "在看直播 30308220 / 在回弹幕" {
+		t.Fatalf("Table 摘要 = %q", want)
+	}
+	if err := infra.WriteStatus(path, infra.Status{
+		PID: 1, State: "running", Database: "ready", Presence: want, UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := printStatus(path, 20*time.Second, true, &out); err != nil {
+		t.Fatalf("printStatus 失败：%v", err)
+	}
+	var decoded struct {
+		Presence string       `json:"presence"`
+		Service  infra.Status `json:"service"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("输出不是合法 JSON：%v\n%s", err, out.String())
+	}
+	if decoded.Presence != want {
+		t.Errorf("presence = %q，期望 %q", decoded.Presence, want)
+	}
+	if decoded.Service.Presence != want {
+		t.Errorf("service.presence = %q，期望 %q", decoded.Service.Presence, want)
+	}
+}
+
+// TestPrintStatusOmitsEmptyPresence 空表或未存活时不输出 presence 字段。
+func TestPrintStatusOmitsEmptyPresence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	cases := []struct {
+		name  string
+		state infra.Status
+	}{
+		{"空表", infra.Status{PID: 1, State: "running", Database: "ready", UpdatedAt: time.Now().UTC()}},
+		{"已停止", infra.Status{PID: 1, State: "stopped", Database: "ready", Presence: "在看直播 1", UpdatedAt: time.Now().UTC()}},
+		{"心跳过期", infra.Status{PID: 1, State: "running", Database: "ready", Presence: "在看直播 1", UpdatedAt: time.Now().UTC().Add(-time.Hour)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := infra.WriteStatus(path, tc.state); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			_ = printStatus(path, 20*time.Second, true, &out)
+			if bytes.Contains(out.Bytes(), []byte(`"presence"`)) {
+				t.Fatalf("不应输出 presence：%s", out.String())
+			}
+		})
 	}
 }
 

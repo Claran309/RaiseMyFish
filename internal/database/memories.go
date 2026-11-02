@@ -11,6 +11,14 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
+)
+
+const (
+	// memoryRecordLimitMax 是运维查询的单次上限，避免误把整表读进内存。
+	memoryRecordLimitMax = 200
+	// memorySearchMaxRunes 限制搜索词长度，防止构造超长 SQL 参数。
+	memorySearchMaxRunes = 200
 )
 
 // MemoryRepo 执行范围受限的持久化读写，不实现提炼/Reader编排。
@@ -18,6 +26,7 @@ type MemoryRepo struct{ db *gorm.DB }
 
 // 编译期断言：事实查询同时满足 store 与 memory 两侧的窄接口。
 var (
+	_ store.MemoryRepo  = (*MemoryRepo)(nil)
 	_ store.FactSource  = (*MemoryRepo)(nil)
 	_ memory.FactSource = (*MemoryRepo)(nil)
 )
@@ -118,6 +127,122 @@ func (r *MemoryRepo) Records(ctx context.Context, s memory.Scope, limit int) ([]
 		return nil, &safeError{"记忆摘要存量数据无效", err}
 	}
 	return result, nil
+}
+
+// ListRecords 返回最近创建的记录（含私密与归档行）。
+//
+// 这是本机运维查询，不做公开/私密过滤：fishctl 由主人本人在本机执行，
+// 需要能看到完整存量来排查提炼问题；给 Brain 的召回仍走 Records/Facts 的隐私过滤。
+func (r *MemoryRepo) ListRecords(ctx context.Context, limit int) ([]store.MemoryRecord, error) {
+	if err := validateMemoryRecordQuery(ctx, limit); err != nil {
+		return nil, err
+	}
+	return r.queryMemoryRecords(ctx, "", limit)
+}
+
+// SearchRecords 按 title/summary 模糊搜索，关键词与 limit 都走参数化/边界校验。
+func (r *MemoryRepo) SearchRecords(ctx context.Context, q string, limit int) ([]store.MemoryRecord, error) {
+	if err := validateMemoryRecordQuery(ctx, limit); err != nil {
+		return nil, err
+	}
+	keyword := strings.TrimSpace(q)
+	if keyword == "" || utf8.RuneCountInString(keyword) > memorySearchMaxRunes {
+		return nil, store.ErrInvalid
+	}
+	return r.queryMemoryRecords(ctx, keyword, limit)
+}
+
+// CountByKind 按 kind 统计全部记录数量（含私密与归档行）。
+func (r *MemoryRepo) CountByKind(ctx context.Context) (map[string]int, error) {
+	if ctx == nil {
+		return nil, store.ErrInvalid
+	}
+	var rows []struct {
+		Kind  string
+		Count int64
+	}
+	err := r.db.WithContext(ctx).Table("memory_records").
+		Select("kind, COUNT(*) AS count").
+		Group("kind").
+		Order("kind ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, &safeError{"统计记忆类型失败", err}
+	}
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		counts[row.Kind] = int(row.Count)
+	}
+	return counts, nil
+}
+
+// queryMemoryRecords 统一 list/search 的字段投影与排序，关键词为空表示不筛选。
+func (r *MemoryRepo) queryMemoryRecords(ctx context.Context, keyword string, limit int) ([]store.MemoryRecord, error) {
+	query := r.db.WithContext(ctx).Table("memory_records")
+	if keyword != "" {
+		pattern := "%" + keyword + "%"
+		query = query.Where("title ILIKE ? OR summary ILIKE ?", pattern, pattern)
+	}
+	// channel/session 可为 NULL（全局记录）：先归一成空串，避免扫描 NULL 失败。
+	var rows []struct {
+		ID         string
+		Source     string
+		Kind       string
+		Title      string
+		Summary    string
+		Body       string
+		Importance float64
+		Confidence float64
+		Private    bool
+		Channel    event.Channel
+		Session    string
+		ValidFrom  time.Time
+		CreatedAt  time.Time
+		IDs        json.RawMessage
+	}
+	err := query.
+		Select("id, source, kind, title, summary, body, importance, confidence, private, COALESCE(channel,'') AS channel, COALESCE(session,'') AS session, valid_from, created_at, to_json(event_ids) AS ids").
+		Order("created_at DESC, id ASC").
+		Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, &safeError{"查询记忆记录失败", err}
+	}
+
+	records := make([]store.MemoryRecord, 0, len(rows))
+	for _, row := range rows {
+		record := store.MemoryRecord{
+			Record: memory.Record{
+				ID:         row.ID,
+				Channel:    row.Channel,
+				Session:    row.Session,
+				Summary:    row.Summary,
+				Importance: row.Importance,
+				Confidence: row.Confidence,
+				Private:    row.Private,
+				ValidFrom:  row.ValidFrom,
+			},
+			Source:    row.Source,
+			Kind:      row.Kind,
+			Title:     row.Title,
+			Body:      row.Body,
+			CreatedAt: row.CreatedAt,
+		}
+		if len(row.IDs) > 0 {
+			if err := json.Unmarshal(row.IDs, &record.EventIDs); err != nil {
+				return nil, &safeError{"读取记忆来源失败", err}
+			}
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func validateMemoryRecordQuery(ctx context.Context, limit int) error {
+	if ctx == nil || limit < 1 || limit > memoryRecordLimitMax {
+		return store.ErrInvalid
+	}
+	return nil
 }
 
 // Facts 返回 scope 可见的当前有效共享事实（0.9d）。

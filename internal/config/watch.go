@@ -9,33 +9,35 @@ import (
 // Watch 是「看直播」流水线的部署配置（`[watch]`），默认关闭。
 // 凭据只从 cookie_env 指向的环境变量读取，不写入 TOML/JSON。
 type Watch struct {
-	Enabled       bool   `toml:"enabled"`
-	Source        string `toml:"source"`
-	Seconds       int    `toml:"seconds"`
-	Frames        int    `toml:"frames"`
-	ASRURL        string `toml:"asr_url"`
-	StreamQuality string `toml:"stream_quality"`
-	CookieEnv     string `toml:"cookie_env"`
-	FFmpegPath    string `toml:"ffmpeg_path"`
-	FFprobePath   string `toml:"ffprobe_path"`
-	TempDir       string `toml:"temp_dir"`
-	LLMRoute      string `toml:"llm_route"`
-	Cookie        string `toml:"-" json:"-"`
+	Enabled         bool   `toml:"enabled"`
+	Source          string `toml:"source"`
+	IntervalSeconds int    `toml:"interval_seconds"`
+	Seconds         int    `toml:"seconds"`
+	Frames          int    `toml:"frames"`
+	ASRURL          string `toml:"asr_url"`
+	StreamQuality   string `toml:"stream_quality"`
+	CookieEnv       string `toml:"cookie_env"`
+	FFmpegPath      string `toml:"ffmpeg_path"`
+	FFprobePath     string `toml:"ffprobe_path"`
+	TempDir         string `toml:"temp_dir"`
+	LLMRoute        string `toml:"llm_route"`
+	Cookie          string `toml:"-" json:"-"`
 }
 
 var watchEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func defaultWatch() Watch {
 	return Watch{
-		Source:        "stream",
-		Seconds:       10,
-		Frames:        4,
-		ASRURL:        "http://127.0.0.1:8077/v1/audio/transcriptions",
-		StreamQuality: "origin",
-		CookieEnv:     "FISH_BILI_COOKIE",
-		FFmpegPath:    "ffmpeg",
-		FFprobePath:   "ffprobe",
-		LLMRoute:      "default",
+		Source:          "stream",
+		IntervalSeconds: 600,
+		Seconds:         10,
+		Frames:          4,
+		ASRURL:          "http://127.0.0.1:8077/v1/audio/transcriptions",
+		StreamQuality:   "origin",
+		CookieEnv:       "FISH_BILI_COOKIE",
+		FFmpegPath:      "ffmpeg",
+		FFprobePath:     "ffprobe",
+		LLMRoute:        "default",
 	}
 }
 
@@ -56,6 +58,9 @@ func (w Watch) Validate() error {
 	}
 	if w.Source != "stream" {
 		return errors.New("看直播 source 只能是 stream 或 screen")
+	}
+	if w.IntervalSeconds < 10 || w.IntervalSeconds > 86400 {
+		return errors.New("看直播间隔必须在10至86400秒之间")
 	}
 	if w.Seconds < 2 || w.Seconds > 120 {
 		return errors.New("看直播秒数必须在2至120之间")

@@ -10,11 +10,13 @@ import (
 )
 
 // Status 仅含运维摘要，不包含DSN、密钥或消息内容。
+// Presence 是活动流的一句话摘要（P0 内存态，随心跳落盘供 CLI 读取）。
 type Status struct {
 	PID       int       `json:"pid"`
 	State     string    `json:"state"`
 	Database  string    `json:"database"`
 	Version   string    `json:"version"`
+	Presence  string    `json:"presence,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 

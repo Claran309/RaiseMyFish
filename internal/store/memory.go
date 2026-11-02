@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // MemoryRecord 是写入用数据；只读Records接口仅返回嵌入的摘要投影。
@@ -14,6 +15,8 @@ type MemoryRecord struct {
 	Kind   string
 	Title  string
 	Body   string
+	// CreatedAt 只由 ListRecords/SearchRecords 填充，用于运维查看；写入时忽略。
+	CreatedAt time.Time
 }
 
 // MemoryRepo 将隐私限制放在SQL层；不等于完整Memory Reader/提炼服务。
@@ -22,6 +25,12 @@ type MemoryRepo interface {
 	Recent(context.Context, memory.Scope, int) ([]memory.Message, error)
 	CrossChannel(context.Context, memory.Scope, int) ([]memory.Message, error)
 	Records(context.Context, memory.Scope, int) ([]memory.Record, error)
+	// ListRecords 返回最近创建的记录，供本机运维查看（含私密与归档行）。
+	ListRecords(ctx context.Context, limit int) ([]MemoryRecord, error)
+	// SearchRecords 按 title/summary 模糊搜索，返回顺序与 ListRecords 一致。
+	SearchRecords(ctx context.Context, q string, limit int) ([]MemoryRecord, error)
+	// CountByKind 按 kind 统计记录数量。
+	CountByKind(ctx context.Context) (map[string]int, error)
 }
 
 // Validate 检查持久化输入，拒绝错误降密和无范围私密记录。
