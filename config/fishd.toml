@@ -78,7 +78,7 @@ live = "deepseek:deepseek-chat"
 
 # 仅装配知识Reader；默认关闭，事件消费链路尚未接入。
 [knowledge]
-enabled = false
+enabled = true
 dir = "personas/dafeiyu/knowledge"
 budget_percent = 10
 
