@@ -1,0 +1,125 @@
+package main
+
+// 召回与状态片段：记忆/知识/当前观看状态。
+// 所有召回失败都只降级并记日志，不阻塞回复。
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"RaiseMyFish/internal/config"
+	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/knowledge"
+	"RaiseMyFish/internal/memory"
+	"RaiseMyFish/internal/presence"
+	"go.uber.org/zap"
+)
+
+// validBrainRoom 只接受数字房间号，避免把事件里的异常会话值原样写进 prompt。
+func validBrainRoom(room string) bool {
+	if len(room) == 0 || len(room) > 20 {
+		return false
+	}
+	for _, r := range room {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return strings.Trim(room, "0") != ""
+}
+
+// brainState 生成注入 Brain 的当前状态摘要。
+// Presence 的实时 watching 优先；没有 watching 时用 [watch] 配置兜底。
+func brainState(active []presence.State, watch config.Watch) string {
+	room, name := strings.TrimSpace(watch.CurrentRoom), strings.TrimSpace(watch.StreamerName)
+	watchingRoom := ""
+	// Active 按 Since 升序；同一时刻只保留一个房间，取最新的一条。
+	for i := len(active) - 1; i >= 0; i-- {
+		if active[i].Kind != presence.KindWatching {
+			continue
+		}
+		if detail := strings.TrimSpace(active[i].Detail); validBrainRoom(detail) {
+			watchingRoom = detail
+			break
+		}
+	}
+	if watchingRoom != "" {
+		// 配置的主播名只在房间匹配（或未配置房间）时使用，避免串台。
+		if name != "" && (room == "" || room == watchingRoom) {
+			return fmt.Sprintf("你正在看%s（房间 %s）的直播，你在她弹幕区发弹幕", name, watchingRoom)
+		}
+		return fmt.Sprintf("你正在看房间 %s 的直播，你在其弹幕区发弹幕", watchingRoom)
+	}
+	if room == "" {
+		return ""
+	}
+	if name != "" {
+		return fmt.Sprintf("你正在看%s（房间 %s）的直播", name, room)
+	}
+	return fmt.Sprintf("你正在看房间 %s 的直播", room)
+}
+
+// brainStateSource 返回按时间读取 Presence 的状态摘要函数；table 为空时只用配置兜底。
+func brainStateSource(table *presence.Table, watch config.Watch) func(time.Time) string {
+	return func(now time.Time) string {
+		if table == nil {
+			return brainState(nil, watch)
+		}
+		return brainState(table.Active(now), watch)
+	}
+}
+
+// recallMemory 召回记忆与共享事实。
+//
+//   - mem 为 nil（未装配）→ 返回只带 Scope 的空快照，不报错；
+//   - 召回失败 → 降级为只带 Scope 的空快照 + 记日志，**不阻塞回复**；
+//   - 隐私：Scope 由事件派生，Reader 内部按 Scope 做隔离，这里不做任何越界拼装。
+func recallMemory(ctx context.Context, mem memory.Reader, scope memory.Scope, log *zap.Logger) (memory.Context, memory.SharedState) {
+	empty := memory.Context{Scope: scope}
+	emptyShared := memory.SharedState{Scope: scope}
+	if mem == nil {
+		return empty, emptyShared
+	}
+	recalled, err := mem.Recall(ctx, scope)
+	if err != nil {
+		log.Warn("记忆召回失败，降级为空快照",
+			zap.String("action", "memory_recall"),
+			zap.String("channel", string(scope.Channel)),
+			zap.Error(err))
+		return empty, emptyShared
+	}
+	shared, err := mem.Shared(ctx, scope)
+	if err != nil {
+		log.Warn("共享事实召回失败，降级为空",
+			zap.String("action", "shared_recall"),
+			zap.String("channel", string(scope.Channel)),
+			zap.Error(err))
+		return recalled, emptyShared
+	}
+	return recalled, shared
+}
+
+// recallKnowledge 召回知识库条目。
+//
+//   - know 为 nil（[knowledge] enabled=false 或未装配）→ 返回 nil，Brain 按无知识处理；
+//   - 召回失败 → 降级为 nil + 记日志，不阻塞回复。
+func recallKnowledge(ctx context.Context, know knowledge.Reader, ev event.Event, log *zap.Logger) *knowledge.Context {
+	if know == nil {
+		return nil
+	}
+	query := knowledge.Query{
+		Scope: knowledge.Scope{Channel: ev.Channel, Session: ev.Session, Private: ev.Private},
+		Text:  ev.Text,
+	}
+	got, err := know.Recall(ctx, query)
+	if err != nil {
+		log.Warn("知识召回失败，降级为无知识",
+			zap.String("action", "knowledge_recall"),
+			zap.String("channel", string(ev.Channel)),
+			zap.Error(err))
+		return nil
+	}
+	return &got
+}
