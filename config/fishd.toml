@@ -148,6 +148,9 @@ timeout_ms = 30000
 enabled = true
 interval_seconds = 300
 allow_private = false
+# LLM 语义提炼：只对「@鱼/长文本/强互动」跑模型，其余走规则版；超限流回落规则。
+llm_extract = true
+llm_extract_max_per_hour = 30
 
 # 消费循环（Claim → Scheduler → Brain → Sender）。
 # 整段缺失表示「只采集不回复」；这里保留默认值，实际是否回复还取决于 [llm] enabled 与路由。

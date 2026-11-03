@@ -102,7 +102,7 @@ func TestNewMemoryWorkerAdvancesWatermark(t *testing.T) {
 	source := &memoryTestSource{events: []event.Event{ev}}
 	repo := &memoryTestRepo{}
 
-	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, repo, nil, path)
+	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, repo, nil, nil, path)
 	if err != nil {
 		t.Fatalf("装配 worker 失败：%v", err)
 	}
@@ -204,7 +204,7 @@ func TestRunMemoryExtractLogsAndContinuesAfterError(t *testing.T) {
 // TestStartMemoryExtractorDisabled 关闭时不装配、不写日志。
 func TestStartMemoryExtractorDisabled(t *testing.T) {
 	core, logs := observer.New(zapcore.InfoLevel)
-	stop := startMemoryExtractor(context.Background(), config.Memory{Enabled: false}, nil, zap.New(core))
+	stop := startMemoryExtractor(context.Background(), config.Config{Memory: config.Memory{Enabled: false}}, nil, zap.New(core))
 	stop()
 	if logs.Len() != 0 {
 		t.Fatalf("关闭时不应启动或记日志：%v", logs.All())
@@ -214,7 +214,7 @@ func TestStartMemoryExtractorDisabled(t *testing.T) {
 // TestStartMemoryExtractorDegradesOnBadDependency 依赖缺失只记日志并降级，不 panic。
 func TestStartMemoryExtractorDegradesOnBadDependency(t *testing.T) {
 	core, logs := observer.New(zapcore.InfoLevel)
-	stop := startMemoryExtractor(context.Background(), config.Memory{Enabled: true, IntervalSeconds: 300}, nil, zap.New(core))
+	stop := startMemoryExtractor(context.Background(), config.Config{Memory: config.Memory{Enabled: true, IntervalSeconds: 300}}, nil, zap.New(core))
 	stop()
 	if logs.FilterMessage("记忆提炼装配失败，降级运行").Len() == 0 {
 		t.Fatalf("初始化失败未记降级日志：%v", logs.All())

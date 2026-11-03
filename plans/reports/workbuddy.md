@@ -2217,3 +2217,89 @@ rebuild_interval_seconds = 3600
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。
+
+---
+
+## 记忆 LLM 提炼（2026-11-03，Asia/Shanghai）
+
+`internal/memory/extractor.go` 新增可插拔提炼器。未碰调度/发送、未调真实模型（mock）、未执行 git。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `internal/memory/extractor.go` | 新增（接口 + 规则版 + LLM 版） | `8B1369D8AB8D6395` | 7899 |
+| `internal/memory/extractor_test.go` | 新增（7 用例） | `FDC544E84871AFD1` | 6123 |
+| `internal/config/memory.go` | 修改（两个配置项） | `B89378405FC0E209` | 1391 |
+| `config/fishd.toml` | 修改（`[memory]` 增字段） | `B9D51E5319BFED28` | 7415 |
+
+### 接口
+
+```go
+type Extractor interface {
+    Extract(ctx, ev event.Event, opts ExtractOptions) ([]Candidate, error)
+}
+```
+
+- `RuleExtractor`：直接包装现有纯函数 `Extract`（承诺/事实/主人相关/首次出现），无网络无状态。
+- `LLMExtractor`：语义理解；`llm == nil` 时自动退化成规则版。
+
+### LLM 版行为
+
+- 输入：昵称 + 主人昵称（可选）+ 事件正文（拼成短 prompt）。
+- 输出解析：`{archive, records:[{kind,title,summary,importance}], confidence}`，
+  容忍代码块/前后废话；`kind` 收敛到已知四类（未知按 fact）；`title/summary` 超长按 rune 截断；
+  `importance` 越界回落 0.6、`confidence` 越界回落 0.7。
+- **降级链**：模型报错 / 解析失败 / 返回不可用记录 / 限流 → 一律返回**规则版结果**，不报错。
+
+### 触发策略（省成本）
+
+只对以下事件调模型，其余走规则版：
+
+| 条件 | 例子 |
+|---|---|
+| 长文本（>20 rune） | 「我今年大二，学计算机专业，平时喜欢写代码…」 |
+| 含 @（@ 鱼） | 「@大肥鱼 你觉得呢」 |
+| 强互动词 | 摸 / 抱 / 亲 / 蹭 / 贴贴 |
+
+### 限流
+
+进程内滑动小时窗口，默认 30 次/小时；超限**回落规则版**（不是报错）。
+
+### 配置
+
+```toml
+[memory]
+llm_extract = true            # 默认 true
+llm_extract_max_per_hour = 30 # 限流
+```
+
+校验：开启时上限须在 1–1000。关闭 `llm_extract` 等价于全走规则版。
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestLLMExtractorParsesJSON` | 合法 JSON → 用模型结果；kind/title/importance/confidence 透传；输入带昵称 |
+| `TestLLMExtractorFallsBackOnBadJSON` | 非 JSON → 回落规则 fact |
+| `TestLLMExtractorFallsBackOnModelError` | 模型报错 → 回落规则 |
+| `TestLLMExtractorTriggerPolicy` | 短句不调、@ 调、长文本调、强互动调、空文本不调 |
+| `TestLLMExtractorRateLimit` | 2 次后限流、不再调模型、回落规则；一小时后恢复 |
+| `TestRuleExtractorMatchesPureFunction` | 规则版与纯函数逐条一致 |
+| `TestLLMExtractorNilLLM` | 没接模型时直接走规则版 |
+
+| 命令 | 结果 |
+|---|---|
+| `go test ./... -count=1` | **28 个包全绿**（memory 7 个新用例全 PASS） |
+| `golangci-lint ./internal/memory/... ./internal/config/...` | **0 issues** |
+| `go test -race ./internal/memory/...` | **ok 1.779s / 1.928s** |
+
+### 未做项 / 说明
+
+| 项 | 说明 |
+|---|---|
+| extractworker 默认仍用规则版 | `Extractor` 接口已就绪，但 worker 的 `Extract` 调用点本批未替换（避免影响既有水位/去重语义）；要启用 LLM，把 worker 里 `memory.Extract(...)` 换成注入的 `Extractor` 即可 |
+| 「最近 N 条上下文」 | `LLMExtractOptions.ContextLimit` 已留（默认 5），但当前 input 只拼了单条事件 + 昵称；接上下文需要 worker 把最近事件传进来 |
+| 成本估算 | 触发策略 + 30 次/小时已封顶；没有额外 token 账本（走的是外部注入的 LLM） |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。

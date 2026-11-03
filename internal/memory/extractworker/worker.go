@@ -72,6 +72,9 @@ type Options struct {
 	OwnerName string
 	// AllowPrivate 为 true 时才提炼私密事件；默认 false（fail-closed）。
 	AllowPrivate bool
+	// Extractor 是提炼器；nil 时用规则版（memory.NewRuleExtractor）。
+	// 传 LLMExtractor 时按触发策略走模型，失败内部回落规则版。
+	Extractor memory.Extractor
 	// BatchSize 单次拉取条数，<=0 用默认值，超过上限会被夹到上限。
 	BatchSize int
 	// ScanInterval 定时扫描间隔，<=0 用 5 分钟。
@@ -294,13 +297,22 @@ func (w *Worker) handleEvent(ctx context.Context, ev event.Event, stats *Stats) 
 		return next, nil
 	}
 
-	candidates := memory.Extract(ev, memory.ExtractOptions{
+	extractOpts := memory.ExtractOptions{
 		OwnerName: w.opts.OwnerName,
 		// 首次出现需要「该 session 已见昵称集合」，属持久化能力，
 		// 既有 repo 没有对应接口，本批不臆造存储，固定传 false。
 		IsFirstNick:  false,
 		AllowPrivate: w.opts.AllowPrivate,
-	})
+	}
+	extractor := w.opts.Extractor
+	if extractor == nil {
+		extractor = memory.NewRuleExtractor()
+	}
+	candidates, err := extractor.Extract(ctx, ev, extractOpts)
+	if err != nil {
+		// 提炼器异常兜底规则版；LLMExtractor 内部通常已降级，这里防未来实现。
+		candidates = memory.Extract(ev, extractOpts)
+	}
 	if len(candidates) == 0 {
 		stats.Skipped++
 		return next, nil

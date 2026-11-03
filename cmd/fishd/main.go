@@ -7,15 +7,19 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
+	"RaiseMyFish/internal/brain/provider"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
 	eventbus "RaiseMyFish/internal/event/bus"
 	"RaiseMyFish/internal/infra"
+	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/memory/extractworker"
 	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/store"
@@ -114,7 +118,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		return printBrainDiagnostic(*brainRoute, routes, pack, stdout)
 	}
 	// 记忆提炼是增强能力：初始化失败只记日志并降级，不阻塞采集/消费主链路。
-	stopMemory := startMemoryExtractor(ctx, cfg.Memory, resources.DB, logger)
+	stopMemory := startMemoryExtractor(ctx, cfg, resources.DB, logger)
 	defer stopMemory()
 	logger.Info("Brain装配检查完成，未消费事件", zap.String("action", "brain_setup"), zap.Int("routes", len(routes)))
 	logger.Info("知识装配检查完成，未接入事件消费", zap.String("action", "knowledge_setup"), zap.Bool("enabled", knowledgeRuntime.Diagnostic.Enabled), zap.Bool("assembled", knowledgeRuntime.Diagnostic.Assembled), zap.Int("entries", knowledgeRuntime.Diagnostic.Entries), zap.String("revision", knowledgeRuntime.Diagnostic.Revision))
@@ -230,14 +234,75 @@ type memoryExtractWorker interface {
 }
 
 // newMemoryWorker 只用接口依赖装配 worker，测试可注入 mock 来源与仓库。
-func newMemoryWorker(cfg config.Memory, source extractworker.DoneSource, repo store.MemoryRepo, profiles extractworker.ProfileSource, watermarkPath string) (*extractworker.Worker, error) {
+func newMemoryWorker(cfg config.Memory, source extractworker.DoneSource, repo store.MemoryRepo, profiles extractworker.ProfileSource, extractor memory.Extractor, watermarkPath string) (*extractworker.Worker, error) {
 	watermark, err := extractworker.NewFileWatermark(watermarkPath)
 	if err != nil {
 		return nil, err
 	}
 	// 间隔由 runMemoryExtract 的循环控制；worker 的 Run 不在本装配中使用。
 	// Profiles 非 nil 时会在提炼循环里附带档案重建（每小时节流 + 只在直播活跃时）。
-	return extractworker.New(source, repo, watermark, extractworker.Options{AllowPrivate: cfg.AllowPrivate, Profiles: profiles})
+	// Extractor 非 nil 时按触发策略走 LLM，否则规则版。
+	return extractworker.New(source, repo, watermark, extractworker.Options{AllowPrivate: cfg.AllowPrivate, Profiles: profiles, Extractor: extractor})
+}
+
+// buildMemoryExtractor 构造记忆提炼器：LLM 版（按触发策略）或 nil（规则版）。
+// 任何装配失败都回落规则版——提炼是增强能力，不能因模型不可用而中断。
+func buildMemoryExtractor(cfg config.Config, logger *zap.Logger) memory.Extractor {
+	if !cfg.Memory.LLMExtract {
+		return nil
+	}
+	if !cfg.LLM.Enabled || len(cfg.LLM.Routing) == 0 {
+		logger.Warn("记忆 LLM 提炼已配置但 LLM 未启用，回落规则版", zap.String("action", "memory_extract"))
+		return nil
+	}
+	key := "default"
+	if _, ok := cfg.LLM.Routing[key]; !ok {
+		keys := make([]string, 0, len(cfg.LLM.Routing))
+		for k := range cfg.LLM.Routing {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		key = keys[0]
+	}
+	name, prov, model, err := cfg.LLM.Resolve(key)
+	if err != nil {
+		logger.Warn("记忆 LLM 提炼模型路由无效，回落规则版", zap.String("action", "memory_extract"), zap.Error(err))
+		return nil
+	}
+	client, err := provider.NewOpenAI(name, prov.BaseURL, prov.APIKey, &http.Client{}, time.Duration(cfg.LLM.AttemptTimeoutMS)*time.Millisecond)
+	if err != nil {
+		logger.Warn("记忆 LLM 提炼客户端装配失败，回落规则版", zap.String("action", "memory_extract"), zap.Error(err))
+		return nil
+	}
+	extractor, err := memory.NewLLMExtractor(&memoryProviderLLM{client: client, model: model, maxTokens: cfg.LLM.MaxReplyTokens}, memory.LLMExtractOptions{
+		MaxPerHour: cfg.Memory.LLMExtractMaxPerHour,
+	})
+	if err != nil {
+		logger.Warn("记忆 LLM 提炼器装配失败，回落规则版", zap.String("action", "memory_extract"), zap.Error(err))
+		return nil
+	}
+	logger.Info("记忆 LLM 提炼已启用", zap.String("action", "memory_extract"), zap.String("model", model))
+	return extractor
+}
+
+// memoryProviderLLM 把 provider 适配成 memory.LLM。
+type memoryProviderLLM struct {
+	client    provider.Provider
+	model     string
+	maxTokens int
+}
+
+func (m *memoryProviderLLM) Complete(ctx context.Context, system, user string) (string, error) {
+	resp, err := m.client.Chat(ctx, provider.Request{
+		Model:       m.model,
+		Messages:    []provider.Message{{Role: "system", Content: system}, {Role: "user", Content: user}},
+		MaxTokens:   m.maxTokens,
+		Temperature: 0.2,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Text, nil
 }
 
 // runMemoryExtract 立即扫一轮，之后按 interval 循环；单轮失败只记日志，等下轮重试。
@@ -275,9 +340,9 @@ func runMemoryExtract(ctx context.Context, worker memoryExtractWorker, interval 
 
 // startMemoryExtractor 装配并启动提炼 worker；返回的 stop 会取消并等待循环退出。
 // 未启用或初始化失败时返回空 stop，调用方主链路不受影响。
-func startMemoryExtractor(ctx context.Context, cfg config.Memory, db *gorm.DB, logger *zap.Logger) func() {
+func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, logger *zap.Logger) func() {
 	noop := func() {}
-	if !cfg.Enabled {
+	if !cfg.Memory.Enabled {
 		return noop
 	}
 	source, err := database.NewDoneSourceRepo(db)
@@ -290,23 +355,25 @@ func startMemoryExtractor(ctx context.Context, cfg config.Memory, db *gorm.DB, l
 		logger.Error("记忆提炼装配失败，降级运行", zap.String("action", "memory_extract"), zap.Error(err))
 		return noop
 	}
-	// 观众档案重建依赖：失败降级为不建档案（提炼本身不受影响）。
+	// 观察档案重建依赖：失败降级为不建档案（提炼本身不受影响）。
 	profiles, err := database.NewViewerRepo(db)
 	if err != nil {
 		logger.Warn("观众档案装配失败，跳过档案重建", zap.String("action", "memory_extract"), zap.Error(err))
 		profiles = nil
 	}
-	worker, err := newMemoryWorker(cfg, source, repo, profiles, memoryWatermarkPath)
+	extractor := buildMemoryExtractor(cfg, logger)
+	worker, err := newMemoryWorker(cfg.Memory, source, repo, profiles, extractor, memoryWatermarkPath)
 	if err != nil {
 		logger.Error("记忆提炼初始化失败，降级运行", zap.String("action", "memory_extract"), zap.Error(err))
 		return noop
 	}
 
-	interval := time.Duration(cfg.IntervalSeconds) * time.Second
+	interval := time.Duration(cfg.Memory.IntervalSeconds) * time.Second
 	logger.Info("记忆提炼已启动",
 		zap.String("action", "memory_extract"),
-		zap.Int("interval_seconds", cfg.IntervalSeconds),
-		zap.Bool("allow_private", cfg.AllowPrivate),
+		zap.Int("interval_seconds", cfg.Memory.IntervalSeconds),
+		zap.Bool("allow_private", cfg.Memory.AllowPrivate),
+		zap.Bool("llm_extract", cfg.Memory.LLMExtract),
 	)
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
