@@ -120,6 +120,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	// 记忆提炼是增强能力：初始化失败只记日志并降级，不阻塞采集/消费主链路。
 	stopMemory := startMemoryExtractor(ctx, cfg, resources.DB, logger)
 	defer stopMemory()
+	stopMemeLearn := startMemeLearn(ctx, cfg, resources.DB, knowledgeRuntime, logger)
+	defer stopMemeLearn()
 	logger.Info("Brain装配检查完成，未消费事件", zap.String("action", "brain_setup"), zap.Int("routes", len(routes)))
 	logger.Info("知识装配检查完成，未接入事件消费", zap.String("action", "knowledge_setup"), zap.Bool("enabled", knowledgeRuntime.Diagnostic.Enabled), zap.Bool("assembled", knowledgeRuntime.Diagnostic.Assembled), zap.Int("entries", knowledgeRuntime.Diagnostic.Entries), zap.String("revision", knowledgeRuntime.Diagnostic.Revision))
 	check := func(parent context.Context) error {
@@ -255,26 +257,13 @@ func buildMemoryExtractor(cfg config.Config, logger *zap.Logger) memory.Extracto
 		logger.Warn("记忆 LLM 提炼已配置但 LLM 未启用，回落规则版", zap.String("action", "memory_extract"))
 		return nil
 	}
-	key := "default"
-	if _, ok := cfg.LLM.Routing[key]; !ok {
-		keys := make([]string, 0, len(cfg.LLM.Routing))
-		for k := range cfg.LLM.Routing {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		key = keys[0]
-	}
-	name, prov, model, err := cfg.LLM.Resolve(key)
+	key := backgroundRoute(cfg)
+	adapter, model, err := buildBackgroundLLM(cfg, key, cfg.LLM.MaxReplyTokens)
 	if err != nil {
-		logger.Warn("记忆 LLM 提炼模型路由无效，回落规则版", zap.String("action", "memory_extract"), zap.Error(err))
+		logger.Warn("记忆 LLM 提炼装配失败，回落规则版", zap.String("action", "memory_extract"), zap.Error(err))
 		return nil
 	}
-	client, err := provider.NewOpenAI(name, prov.BaseURL, prov.APIKey, &http.Client{}, time.Duration(cfg.LLM.AttemptTimeoutMS)*time.Millisecond)
-	if err != nil {
-		logger.Warn("记忆 LLM 提炼客户端装配失败，回落规则版", zap.String("action", "memory_extract"), zap.Error(err))
-		return nil
-	}
-	extractor, err := memory.NewLLMExtractor(&memoryProviderLLM{client: client, model: model, maxTokens: cfg.LLM.MaxReplyTokens}, memory.LLMExtractOptions{
+	extractor, err := memory.NewLLMExtractor(adapter, memory.LLMExtractOptions{
 		MaxPerHour: cfg.Memory.LLMExtractMaxPerHour,
 	})
 	if err != nil {
@@ -285,7 +274,37 @@ func buildMemoryExtractor(cfg config.Config, logger *zap.Logger) memory.Extracto
 	return extractor
 }
 
-// memoryProviderLLM 把 provider 适配成 memory.LLM。
+// backgroundRoute 选择后台增强任务的具名路由：优先 default，否则按名称排序取第一个。
+func backgroundRoute(cfg config.Config) string {
+	if _, ok := cfg.LLM.Routing["default"]; ok {
+		return "default"
+	}
+	keys := make([]string, 0, len(cfg.LLM.Routing))
+	for key := range cfg.LLM.Routing {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
+}
+
+// buildBackgroundLLM 按具名路由装配后台增强任务共用的模型客户端；不记录密钥。
+func buildBackgroundLLM(cfg config.Config, key string, maxTokens int) (*memoryProviderLLM, string, error) {
+	name, prov, model, err := cfg.LLM.Resolve(key)
+	if err != nil {
+		return nil, "", err
+	}
+	client, err := provider.NewOpenAI(name, prov.BaseURL, prov.APIKey, &http.Client{}, time.Duration(cfg.LLM.AttemptTimeoutMS)*time.Millisecond)
+	if err != nil {
+		return nil, "", err
+	}
+	return &memoryProviderLLM{client: client, model: model, maxTokens: maxTokens}, model, nil
+}
+
+// memoryProviderLLM 把 provider 适配成后台增强任务共用的最小模型接口
+// （memory.LLM 与 knowledge.MemeLLM）。
 type memoryProviderLLM struct {
 	client    provider.Provider
 	model     string

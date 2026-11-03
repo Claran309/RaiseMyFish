@@ -79,7 +79,7 @@ func containedPath(root, path string) (string, error) {
 	return resolved, nil
 }
 
-// NewFileReader 只读取四个必需根文件和memes/batch-*.md，不返回部分成功快照。
+// NewFileReader 只读取四个必需根文件、memes/batch-*.md 与 memes/learned.md，不返回部分成功快照。
 func NewFileReader(ctx context.Context, dir string) (*FileReader, error) {
 	if err := checkContext(ctx); err != nil {
 		return nil, err
@@ -114,7 +114,7 @@ func NewFileReader(ctx context.Context, dir string) (*FileReader, error) {
 			files, readErr := f.ReadDir(128)
 			for _, file := range files {
 				name := file.Name()
-				if strings.HasPrefix(name, "batch-") && strings.HasSuffix(name, ".md") {
+				if (strings.HasPrefix(name, "batch-") || name == "learned.md") && strings.HasSuffix(name, ".md") {
 					if strings.ContainsAny(name, "\n\r\t") || len(names) >= maxEntries+4 {
 						return nil, errors.New("知识批次路径或文件数量无效")
 					}
@@ -308,48 +308,54 @@ func validateWireTypes(node *yaml.Node) error {
 }
 
 func parseFile(ctx context.Context, data []byte, meme bool) ([]entry, error) {
+	_, items, err := parseDocument(ctx, data, meme)
+	return items, err
+}
+
+// parseDocument 同时返回原始条目与转换结果，供需要原样回写的机器管理文件使用。
+func parseDocument(ctx context.Context, data []byte, meme bool) (diskFile, []entry, error) {
 	front, err := frontMatter(data)
 	if err != nil {
-		return nil, err
+		return diskFile{}, nil, err
 	}
 	var node yaml.Node
 	if err := yaml.Unmarshal([]byte(front), &node); err != nil {
-		return nil, errors.New("知识YAML语法无效")
+		return diskFile{}, nil, errors.New("知识YAML语法无效")
 	}
 	if err := rejectAliases(ctx, &node); err != nil {
-		return nil, err
+		return diskFile{}, nil, err
 	}
 	if err := validateWireTypes(&node); err != nil {
-		return nil, err
+		return diskFile{}, nil, err
 	}
 	var raw diskFile
 	decoder := yaml.NewDecoder(strings.NewReader(front))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&raw); err != nil {
-		return nil, errors.New("知识YAML字段、类型或重复键无效")
+		return diskFile{}, nil, errors.New("知识YAML字段、类型或重复键无效")
 	}
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, errors.New("知识YAML必须只有一个文档")
+		return diskFile{}, nil, errors.New("知识YAML必须只有一个文档")
 	}
 	if raw.Schema != "fish-knowledge/v1" || raw.Entries == nil {
-		return nil, errors.New("知识schema或entries无效")
+		return diskFile{}, nil, errors.New("知识schema或entries无效")
 	}
 	if len(*raw.Entries) > maxEntries {
-		return nil, errors.New("知识文件超过条目上限")
+		return diskFile{}, nil, errors.New("知识文件超过条目上限")
 	}
 	items := make([]entry, 0, len(*raw.Entries))
 	for _, d := range *raw.Entries {
 		if err := checkContext(ctx); err != nil {
-			return nil, err
+			return diskFile{}, nil, err
 		}
 		item, err := convertEntry(d, meme)
 		if err != nil {
-			return nil, err
+			return diskFile{}, nil, err
 		}
 		items = append(items, item)
 	}
-	return items, nil
+	return raw, items, nil
 }
 
 func convertEntry(d diskEntry, meme bool) (entry, error) {

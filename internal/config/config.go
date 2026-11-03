@@ -186,6 +186,9 @@ func (c Config) validate(strictLive bool) error {
 	if err := c.Knowledge.Validate(); err != nil {
 		return err
 	}
+	if c.Knowledge.MemeLearn && !c.LLM.Enabled {
+		return errors.New("梗白学习启用需要先启用LLM")
+	}
 	if err := c.Reasoning.Validate(); err != nil {
 		return err
 	}

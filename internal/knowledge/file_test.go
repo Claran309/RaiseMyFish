@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"RaiseMyFish/internal/event"
 )
 
 const emptyFile = "---\nschema: fish-knowledge/v1\nentries: []\n---\n"
@@ -153,6 +155,26 @@ func TestLoadRequiredAndBatches(t *testing.T) {
 	}
 	if _, err := NewFileReader(context.Background(), ""); err == nil {
 		t.Fatal("空目录未拒绝")
+	}
+}
+
+func TestLoadLearnedMemeFile(t *testing.T) {
+	dir := knowledgeDir(t)
+	writeKnowledge(t, dir, "memes/learned.md", sampleFile)
+	r, err := NewFileReader(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Recall(context.Background(), Query{Scope: Scope{Channel: event.ChLive, Session: "room"}, Text: "原词怎么用"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 1 || got.Items[0].ID != "first" {
+		t.Fatalf("learned.md 未参与召回：%+v", got.Items)
+	}
+	writeKnowledge(t, dir, "memes/learned.md", strings.Repeat("a", maxFileBytes+1))
+	if _, err := NewFileReader(context.Background(), dir); err == nil {
+		t.Fatal("learned.md 超过单文件上限未拒绝")
 	}
 }
 

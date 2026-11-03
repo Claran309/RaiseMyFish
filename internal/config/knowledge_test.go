@@ -16,6 +16,9 @@ func TestKnowledgeConfigDefaultsAndLimits(t *testing.T) {
 	if cfg.Knowledge.Enabled || cfg.Knowledge.Dir != "personas/dafeiyu/knowledge" || cfg.Knowledge.BudgetPercent != 10 {
 		t.Fatal("知识默认配置错误")
 	}
+	if cfg.Knowledge.MemeLearn || cfg.Knowledge.MemeLearnMaxPerDay != 10 {
+		t.Fatal("梗白学习默认配置错误")
+	}
 	for _, content := range []string{"enabled=false\nbudget_percent=-1", "enabled=false\nbudget_percent=11", "enabled=true\ndir=''", "enabled=false\nbudget_percent=10.5", "enabled=false\nunknown='private-config-value'"} {
 		path := filepath.Join(t.TempDir(), "config.toml")
 		if err := os.WriteFile(path, []byte("[knowledge]\n"+content+"\n"), 0600); err != nil {
@@ -31,6 +34,18 @@ func TestKnowledgeConfigDefaultsAndLimits(t *testing.T) {
 		if err := k.Validate(); err != nil {
 			t.Fatal(err)
 		}
+	}
+	for _, k := range []Knowledge{
+		{Dir: "personas", Enabled: false, MemeLearn: true, MemeLearnMaxPerDay: 10},
+		{Dir: "personas", Enabled: true, MemeLearn: true, MemeLearnMaxPerDay: 0},
+		{Dir: "personas", Enabled: true, MemeLearn: true, MemeLearnMaxPerDay: 101},
+	} {
+		if err := k.Validate(); err == nil {
+			t.Fatalf("梗白学习非法配置未拒绝：%+v", k)
+		}
+	}
+	if err := (Knowledge{Dir: "personas", Enabled: true, MemeLearn: true, MemeLearnMaxPerDay: 10}).Validate(); err != nil {
+		t.Fatal(err)
 	}
 }
 

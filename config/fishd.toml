@@ -81,6 +81,11 @@ live = "deepseek:deepseek-chat"
 enabled = true
 dir = "personas/dafeiyu/knowledge"
 budget_percent = 10
+# 梗白学习：从最近 24h 公开弹幕里发现知识库未收录的重复短语，
+# 交给 LLM 判断是否值得收录，结果追加到 memes/learned.md。
+# 默认关闭；启用需同时启用 [llm]。每日上限按 UTC 自然日计，持久化在条目 ID 前缀。
+meme_learn = false
+meme_learn_max_per_day = 10
 
 # 联网搜索（ReAct 的 web_search 工具）：留空表示未配置，工具明确回「未配置搜索源」。
 # 协议：POST {"query": "..."} → {"results": [{"title","snippet","url"}]}，
