@@ -2158,3 +2158,62 @@ rebuild_interval_seconds = 3600
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。
+
+---
+
+## fact 采集器（2026-11-03，Asia/Shanghai）
+
+复用 `memory_records kind='fact'`（0.9d 裁决，独立表留 P2）。未改 contracts、未碰调度/发送、未执行 git。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `internal/memory/extract.go` | 修改（fact 规则） | `C5FF6D94FB617328` | 10488 |
+| `internal/memory/fact_test.go` | 新增（4 用例） | `297706630AFDBB8B` | 2596 |
+| `internal/memory/extractworker/worker.go` | 修改（同人去重主键） | `28AC662787C8B83F` | 14114 |
+| `internal/memory/extractworker/fact_test.go` | 新增（2 用例） | `504B13178AA1C26F` | 2283 |
+
+### 规则
+
+触发词（自我陈述）：
+`我是 / 我叫 / 我住 / 我今年 / 我大 / 我姓 / 我喜欢 / 我爱吃 / 我爱喝 / 我玩 / 我养 / 我有 / 我在 / 我平时 / 我每天 / 我想`
+
+- 命中 → `Kind=fact`，`Title=事实：<正文>`（≤60 字），`Summary=原文`（≤200 字），`Importance=0.6`，`Confidence=0.85`。
+- **反例护栏**：触发词紧跟在「你/他/她/它」之后不算自我陈述（`你我是学生` 不命中）；
+  「你是学生吧」「他爱吃辣吗」没有「我+陈述」组合，天然不命中。
+- 沿用既有过滤：私密未授权、空文本、纯符号、超 4000 字一律不提炼。
+
+### 去重
+
+`recordIDFor`：fact 记录主键改为 `fact:<from_id>:<sha256(title) 前12位>`，
+**同一个人说同一句事实 → 同一主键 → ON CONFLICT 天然幂等**；不同人 / 不同事实互不影响。
+非 fact 类别仍按事件去重（行为不变）。
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestFactSelfStatementsAreExtracted` | 「我是学生」「我爱吃辣」「我叫小王，住在广州」「我今年大二」「我养了两只猫」→ 各 1 条 fact，重要度/标题/长度符合规格 |
+| `TestFactSecondPersonIsNotFact` | 「你是学生吧」「他爱吃辣吗」「她是老师」「你我是学生」「今天天气不错」→ 0 条 |
+| `TestFactEmptyText` | 空串/空白/纯标点 → 0 条 |
+| `TestFactPrivateNeedsOptIn` | 私密未授权不提炼 |
+| `TestFactRecordIDDedupBySubject` | 同人同事实同主键、不同人/不同事实不同主键、格式 `fact:2002:...` |
+| `TestNonFactRecordIDStillEventScoped` | 非 fact 仍随事件区分 |
+
+| 命令 | 结果 |
+|---|---|
+| `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **28 个包全绿** |
+| `golangci-lint ./internal/memory/...` | **0 issues** |
+| `go test -race ./internal/memory/...` | **ok 1.694s / 1.957s** |
+
+### 未做项
+
+| 项 | 说明 |
+|---|---|
+| 独立 fact 表 | 按裁决留 P2；现在复用 `memory_records kind='fact'` |
+| from_id/from_name 落库字段 | `memory_records` 没有对应列；当前把主体编进主键（`fact:<uid>:<hash>`）用于去重，昵称仍只在事件里。要按 uid 查询历史事实，P2 建表时补字段 |
+| 事实的时效/冲突处理 | 「我今年大二」明年变大三，本批不做失效；同人去重会保留最先那条 |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。

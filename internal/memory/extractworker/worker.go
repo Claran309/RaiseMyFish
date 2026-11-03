@@ -329,7 +329,7 @@ func (w *Worker) buildRecord(ev event.Event, c memory.Candidate) store.MemoryRec
 	}
 	return store.MemoryRecord{
 		Record: memory.Record{
-			ID:         recordID(ev.ID, c.Kind, c.Title),
+			ID:         recordIDFor(ev, c),
 			Channel:    ev.Channel,
 			Session:    ev.Session,
 			Summary:    c.Summary,
@@ -383,6 +383,23 @@ func (w *Worker) saveIfAdvanced(ctx context.Context, from, to Cursor) error {
 //
 // 用 sha256 前 12 字节（96 位）足够避免碰撞，且长度可控；
 // 分隔符用 \x1f 防止「ab+c」与「a+bc」拼接后撞车。
+// recordIDFor 生成记录主键。
+//
+// 事实类按「同一个人 + 同一句事实」去重（而不是按事件）：同一个人在不同时间
+// 重复说「我是学生」，只该留一条。其他类别仍按事件去重。
+func recordIDFor(ev event.Event, c memory.Candidate) string {
+	if c.Kind == memory.KindFact && strings.TrimSpace(ev.FromID) != "" {
+		return "fact:" + strings.TrimSpace(ev.FromID) + ":" + shortHash(c.Title)
+	}
+	return recordID(ev.ID, c.Kind, c.Title)
+}
+
+// shortHash 取摘要前 12 个十六进制字符，足够在同一人下区分不同事实。
+func shortHash(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
 func recordID(eventID, kind, title string) string {
 	sum := sha256.Sum256([]byte(eventID + "\x1f" + kind + "\x1f" + title))
 	return "mem_" + hex.EncodeToString(sum[:12])

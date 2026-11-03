@@ -47,6 +47,8 @@ const (
 	preferenceConfidence = 0.9
 	firstSeenImportance  = 0.4
 	firstSeenConfidence  = 0.9
+	// factConfidence：自我陈述是用户亲口说的，置信度略低于承诺。
+	factConfidence = 0.85
 )
 
 // 长度上限（按 rune 计，不是字节）：Title ≤60、Summary ≤200、超长文本不提炼。
@@ -72,6 +74,18 @@ var promiseDingYiVerbs = []string{
 
 // ownerKeyword 是「主人相关」规则的文本触发词。
 const ownerKeyword = "主人"
+
+// factMarkers 是「自我陈述」触发词：命中即认为对方在说自己（事实类）。
+//
+// 只收「我 + 陈述」结构，避免把「你是学生吧」这类反问/第二人称当成事实。
+var factMarkers = []string{
+	"我是", "我叫", "我住", "我今年", "我大", "我姓",
+	"我喜欢", "我爱吃", "我爱喝", "我玩", "我养", "我有",
+	"我在", "我平时", "我每天", "我想",
+}
+
+// factImportance 是事实类的重要度（比承诺低、比首次出现高）。
+const factImportance = 0.6
 
 // Candidate 是提炼候选，尚未落库。
 type Candidate struct {
@@ -101,7 +115,7 @@ type ExtractOptions struct {
 }
 
 // Extract 按规则从一条事件提炼候选，返回顺序固定为规则优先级：
-// 承诺 → 主人相关 → 首次出现。
+// 承诺 → 事实 → 主人相关 → 首次出现。
 //
 // 规则（只做这四条）：
 //  1. 承诺：文本含「我答应 / 我保证 / 包在我身上」，或含「一定 + 动词」白名单
@@ -147,7 +161,18 @@ func Extract(ev Event, opts ExtractOptions) []Candidate {
 		})
 	}
 
-	// 规则 2：主人相关
+	// 规则 2：自我陈述（fact）
+	if body, ok := selfStatement(text); ok {
+		out = append(out, Candidate{
+			Kind:       KindFact,
+			Title:      titled("事实", body),
+			Summary:    truncateRunes(text, maxSummaryRunes),
+			Importance: factImportance,
+			Confidence: factConfidence,
+		})
+	}
+
+	// 规则 3：主人相关
 	if isOwnerRelated(ev, opts, text) {
 		out = append(out, Candidate{
 			Kind:       KindPreference,
@@ -158,7 +183,7 @@ func Extract(ev Event, opts ExtractOptions) []Candidate {
 		})
 	}
 
-	// 规则 3：首次出现
+	// 规则 4：首次出现
 	if name := strings.TrimSpace(ev.FromName); opts.IsFirstNick && name != "" {
 		out = append(out, Candidate{
 			Kind:       KindFirstSeen,
@@ -174,6 +199,34 @@ func Extract(ev Event, opts ExtractOptions) []Candidate {
 }
 
 // isOwnerRelated 判断是否「主人相关」：文本提到主人，或发言人就是主人。
+// selfStatement 判断文本是不是「对方在说自己的事」，返回去掉首位标点的正文。
+//
+// 反例处理：「你是学生吧」「他是学生」不含「我 + 陈述」组合，自然不命中；
+// 另外还要求触发词前面不是第二/第三人称（防止「你我是学生」这种粘连写法）。
+func selfStatement(text string) (string, bool) {
+	runes := []rune(text)
+	for _, marker := range factMarkers {
+		idx := strings.Index(text, marker)
+		if idx < 0 {
+			continue
+		}
+		// 触发词前一个字符是 你/他/她 → 主语不是「我」，不算自我陈述
+		pos := len([]rune(text[:idx]))
+		if pos > 0 {
+			switch runes[pos-1] {
+			case '你', '他', '她', '它':
+				continue
+			}
+		}
+		body := strings.TrimSpace(strings.TrimLeft(text, "，,。.！!？?、~ "))
+		if body == "" {
+			return "", false
+		}
+		return body, true
+	}
+	return "", false
+}
+
 func isOwnerRelated(ev Event, opts ExtractOptions, text string) bool {
 	if strings.Contains(text, ownerKeyword) {
 		return true
