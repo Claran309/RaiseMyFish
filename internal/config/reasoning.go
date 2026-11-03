@@ -14,6 +14,9 @@ type Reasoning struct {
 	Enabled   bool `toml:"enabled"`
 	MaxSteps  int  `toml:"max_steps"`
 	TimeoutMS int  `toml:"timeout_ms"`
+	// AllowSideEffectTools 是副作用工具（送礼/关注/点赞/私信/发动态）的总开关。
+	// 默认 false：模型即使调用也只会收到「未授权」，不会真的动平台。
+	AllowSideEffectTools bool `toml:"allow_side_effect_tools"`
 }
 
 // 预算上限刻意收得紧：ReAct 是给一条弹幕用的，不能拖成半分钟。

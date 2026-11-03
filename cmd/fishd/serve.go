@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/gift"
 	"RaiseMyFish/internal/infra"
 	"RaiseMyFish/internal/knowledge"
 	"RaiseMyFish/internal/memory"
@@ -564,7 +566,7 @@ func runReact(ctx context.Context, factory reactFactory, scope memory.Scope, pac
 // buildReasonerFactory 装配 ReAct：模型走主路由，工具走记忆/知识/状态/历史。
 //
 // 返回 nil 表示不启用（配置关闭、没模型、或一个工具都装不起来）——此时 serve 仍走单步。
-func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, hist reasoning.HistorySearcher, usage store.UsageRepo, log *zap.Logger) (reactFactory, error) {
+func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, events *database.EventRepo, quota reasoning.QuotaSource, usage store.UsageRepo, log *zap.Logger) (reactFactory, error) {
 	if !cfg.Reasoning.Enabled {
 		log.Info("ReAct 未启用（配置关闭）", zap.String("action", "react_disabled"))
 		return nil, nil
@@ -587,13 +589,38 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 	}
 
 	return func(scope memory.Scope) (*reasoning.Agent, error) {
-		box, err := reasoning.BuildTools(reasoning.ToolDeps{
+		recall, err := reasoning.BuildTools(reasoning.ToolDeps{
 			Memory:    mem,
 			Knowledge: know,
 			Presence:  presenceFn,
-			History:   hist,
+			History:   events,
 			Scope:     scope,
 		})
+		if err != nil {
+			return nil, err
+		}
+		// 只读 7 个：观众史/回复史/直播状态/额度/时间/画面/搜索
+		readonly, err := reasoning.BuildReadOnlyTools(reasoning.ReadOnlyDeps{
+			Viewer:     events,
+			Replies:    events,
+			Quota:      quota,
+			QuotaLimit: cfg.Gift.DailyLimit,
+			Room:       scope.Session,
+			Now:        time.Now,
+		})
+		if err != nil {
+			return nil, err
+		}
+		boxes := []*reasoning.Toolbox{recall, readonly}
+		// 副作用 5 个：默认关；关了就不注册，模型连选项都看不见
+		if cfg.Reasoning.AllowSideEffectTools {
+			side, err := reasoning.BuildSideEffectTools(sideEffectDeps(cfg, quota, scope.Session, log))
+			if err != nil {
+				return nil, err
+			}
+			boxes = append(boxes, side)
+		}
+		box, err := reasoning.MergeToolboxes(boxes...)
 		if err != nil {
 			return nil, err
 		}
@@ -838,6 +865,65 @@ func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger)
 	return senderlive.New(repo, transport, wiring.Service, log)
 }
 
+// defaultOwnerMID 是主人的 B站 UID（派发单给定）：永不取关、私信默认允许。
+const defaultOwnerMID = "313591854"
+
+// ownerMID 优先用调度配置里的 owner_ids，缺省回落常量。
+func ownerMID(cfg config.Config) string {
+	if cfg.Scheduler != nil {
+		if live, ok := cfg.Scheduler.Channels[event.ChLive]; ok && len(live.OwnerIDs) > 0 {
+			if mid := strings.TrimSpace(live.OwnerIDs[0]); mid != "" {
+				return mid
+			}
+		}
+	}
+	return defaultOwnerMID
+}
+
+// selfMID 是本鱼自己的 UID（用于「永不取关自己」）。
+func selfMID(cfg config.Config) string {
+	if cfg.Sender != nil {
+		if mid := strings.TrimSpace(cfg.Sender.SelfID); mid != "" {
+			return mid
+		}
+	}
+	return strings.TrimSpace(cfg.Collector.Live.SelfID)
+}
+
+// buildGiftQuota 装配送礼额度账本（ReAct 的 quota 工具 + gift 副作用共用）。
+// 装配失败只降级为 nil：额度未知比直接崩掉好。
+func buildGiftQuota(cfg config.Config, log *zap.Logger) reasoning.QuotaSource {
+	dir := filepath.Dir(cfg.Runtime.StateFile)
+	quota, err := gift.NewFileQuota(filepath.Join(dir, "gift-ledger.json"))
+	if err != nil {
+		log.Warn("送礼额度账本装配失败，quota 工具降级", zap.String("action", "quota_setup"), zap.Error(err))
+		return nil
+	}
+	return quota
+}
+
+// sideEffectDeps 把配置投影成副作用工具的护栏参数。
+//
+// 注意：平台执行器（送礼/关注/点赞/私信/动态）本批尚未接入，置 nil 时工具会明确回「未配置」，
+// 但护栏（开关/白名单/额度/限频/不取关主人）全部生效并有单测覆盖。
+func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, room string, log *zap.Logger) reasoning.SideEffectDeps {
+	return reasoning.SideEffectDeps{
+		Enabled:          cfg.Reasoning.AllowSideEffectTools,
+		QuotaView:        quota,
+		GiftEnabled:      cfg.Gift.Enabled,
+		GiftReal:         cfg.Gift.Real,
+		GiftID:           cfg.Gift.GiftID,
+		MaxNum:           cfg.Gift.MaxNum,
+		DailyLimit:       cfg.Gift.DailyLimit,
+		AllowedRooms:     cfg.Gift.AllowedRooms,
+		AllowPostDynamic: false, // 发动态默认关，需要单独开
+		OwnerMID:         ownerMID(cfg),
+		SelfMID:          selfMID(cfg),
+		Room:             room,
+		Log:              log,
+	}
+}
+
 // buildConsume 装配消费循环；未启用（无 [scheduler] / 无 Brain 路由 / 通道关闭）时返回 nil。
 func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, log *zap.Logger) (*scheduler.Scheduler, error) {
 	if !consumeEnabled(cfg, routes) {
@@ -873,7 +959,8 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, fmt.Errorf("装配用量账本失败：%w", err)
 	}
-	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, usageRepo, log)
+	quota := buildGiftQuota(cfg, log)
+	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, quota, usageRepo, log)
 	if err != nil {
 		return nil, err
 	}

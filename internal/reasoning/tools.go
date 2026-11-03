@@ -97,6 +97,23 @@ func (b *Toolbox) Run(ctx context.Context, name, args string) (string, error) {
 	return clip(out, maxObservationRunes), nil
 }
 
+// MergeToolboxes 合并多个工具箱；重名直接报错（工具名是协议，不能含糊）。
+func MergeToolboxes(boxes ...*Toolbox) (*Toolbox, error) {
+	var all []Tool
+	for _, box := range boxes {
+		if box == nil {
+			continue
+		}
+		for _, name := range box.order {
+			all = append(all, box.tools[name])
+		}
+	}
+	if len(all) == 0 {
+		return nil, fmt.Errorf("没有任何可用工具")
+	}
+	return NewToolbox(all...)
+}
+
 // ToolDeps 是四个工具的数据来源；为 nil 的工具不会被注册（而不是注册一个永远返回空的）。
 type ToolDeps struct {
 	// Memory 提供记忆召回（memory.Reader）。

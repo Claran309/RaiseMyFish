@@ -98,6 +98,22 @@ func (q *FileQuota) Release(day string, num int) {
 	_ = q.save(ledger)
 }
 
+// Used 返回某天已真实送出的数量（只读；跨天返回 0）。
+//
+// 供 ReAct 的 quota 工具查询剩余额度用，不修改账本。
+func (q *FileQuota) Used(day string) (int, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	ledger, err := q.load()
+	if err != nil {
+		return 0, err
+	}
+	if ledger.Day != day {
+		return 0, nil
+	}
+	return ledger.Used, nil
+}
+
 func (q *FileQuota) load() (quotaLedger, error) {
 	var ledger quotaLedger
 	data, err := os.ReadFile(q.path)

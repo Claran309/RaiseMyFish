@@ -1898,3 +1898,84 @@ send_gap_seconds = 30
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。
+
+---
+
+## ReAct 工具一次性补齐（0.21，2026-11-03，Asia/Shanghai）
+
+按 `plans/phase-0.21-tools.md`：只读 7 个 + 副作用 5 个，统一进 Toolbox。未改 contracts、未碰调度/发送语义、未调真实模型/平台、未执行 git。
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/reasoning/tools.go` | 修改（MergeToolboxes） | `923638D03DC58F5D7E30ED25EA64BDF82E841CF117C42FED1E4A497CD61D6DBB` | 7931 |
+| `internal/reasoning/tools_readonly.go` | 新增（7 工具） | `68A8FF0B32C50F265D06B10D7F3C36ED49F0EABF682966FBD478BD5AA05E8D7F` | 8602 |
+| `internal/reasoning/tools_readonly_test.go` | 新增（8 用例） | `36F604C57E43B0A071D768545AB5BEFB90E7289E0B1F46DD2D702BC07B4521DC` | 7709 |
+| `internal/reasoning/tools_sideeffect.go` | 新增（5 工具 + 护栏） | `7FE400095CA2E7C0B0C46E15636C97CEEA7AC9428D6D0C3B7E0794200BF35774` | 16380 |
+| `internal/reasoning/tools_sideeffect_test.go` | 新增（11 用例） | `D90B6D0CADE9D287AF0AF4EC312E8A9888DCFDB3D1CDD4ED9376BD3CF3DEC4B6` | 10741 |
+| `internal/config/reasoning.go` | 修改（allow_side_effect_tools） | `95BA4EB1FE7557831719511737A81C4C31AC2D11A6FD2B3C081E336110BF0C22` | 1876 |
+| `internal/database/events_recent.go` | 修改（观众史/回复史） | `EC099E9A1DEB7AF41035938B5DF39FA2DB857EE92634B7A51C3E7FC77362B5C2` | 2798 |
+| `internal/gift/quota.go` | 修改（Used 只读） | `BAE4627CC316044903E6F26EFA953A10E1538E5CE20964C36B3ED2195E6756BA` | 5555 |
+| `cmd/fishd/serve.go` | 修改（工具箱合并 + 护栏投影） | `BDDE304837C5596D40372174B43670B9EEF2E8CE4CD35A4E2B6D75C9025EC40B` | 38496 |
+| `cmd/fishd/proactive.go` | 修改（传 quota） | `45AA94EB1701F4C8ABD82306AB1DC22EFA7E6261E87093E3A03FB7FFF410DB95` | 6415 |
+| `config/fishd.toml` | 修改（副作用开关） | `966BB3B5F1C0B1D7AE52DF6FDA30744F991E65570CFD3F5630EA734F99A5E805` | 6934 |
+
+### 工具清单
+
+**只读（7，结果统一截断 ≤500 字）**
+
+| 名称 | 参数 | 数据源 | 未配置时 |
+|---|---|---|---|
+| `viewer_memory` | `{"from_id":"纯数字","limit":1-20}` | `EventRepo.ViewerRecent`（不写库） | 「未配置观众历史数据源」 |
+| `reply_history` | `{"limit":1-20}` | `EventRepo.RecentReplies`（dir=out） | 「未配置回复历史数据源」 |
+| `live_status` | 无 | `LiveStatusSource`（B站 room get_info） | 「未配置直播间状态数据源」 |
+| `quota` | 无 | `FileQuota.Used(day)` + `gift.daily_limit` | 「未配置礼物额度」 |
+| `now` | 无 | 本地时钟（可注入） | — |
+| `vision` | 无 | 截帧 + VisionDescriber | 「未配置画面采集」 |
+| `web_search` | query ≤100 字 | `WebSearcher` | 「未配置搜索源，无法联网查证」 |
+
+**副作用（5，全部护栏）**
+
+| 名称 | 参数 | 护栏 |
+|---|---|---|
+| `gift` | `{"gift_id":"数字","num":n}` | 总开关 → 房间白名单 → `num ≤ max_num` → `Quota.Reserve(day,num,daily_limit)` → `enabled/real=false` 走 dry-run（退还额度）→ 执行；失败 `Release` 且**不重试** |
+| `follow` | `{"mid":"1,2,3","action":"follow\|unfollow"}` | 总开关 → action 校验 → 单批 ≤5 → **永不取关主人（313591854）/自己** → 限频 1 分钟 |
+| `like` | `{"count":1-3}` | 总开关 → count 范围 → 限频 1 分钟 |
+| `dm` | `{"mid":"数字","text":"≤200字"}` | 总开关 → **只允许主人/`allowed_mids`** → 长度 → 限频 1 分钟 |
+| `post_dynamic` | `{"text":"≤200字"}` | 总开关 → **独立开关默认关** → 长度 → 限频 10 分钟 |
+
+统一：
+- `[reasoning] allow_side_effect_tools = false`（默认）：关闭时**5 个工具都不注册**，模型看不见；即便被直接调用也返回「未授权」。
+- 每次副作用调用记 `action="tool_side_effect"`，字段 `tool/args(≤80字)/result/quota_left`。
+- 失败不重试（送礼失败退回额度，避免"失败也算钱"）。
+
+### 测试
+
+只读（8 个）：工具全注册 + 描述完整、`viewer_memory` 参数透传与截断、非法 from_id/limit 拒绝、
+`reply_history` 作用域与 limit、`quota` 按当天计算、`vision` 串起截帧+识图、`web_search` 空/超长拒绝与未配置说明、
+全部数据源缺失时统一降级「未配置」不 panic。
+
+副作用（11 个）：5 工具注册、**总开关关闭时全部拒绝且不触碰执行器/不占额度**、
+房间白名单、`num > max_num`、额度不足拒绝、**dry-run 不真发且退还额度**、真实送礼占额度、
+**取关主人/自己被跳过**、单批 ≤5、关注/点赞/私信限频、私信白名单与 200 字、发动态默认关 + 10 分钟限频、
+执行器缺失时「未配置」。
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l`（改动包） | 无输出 |
+| `go build ./...` / `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **27 个包全绿** |
+| `golangci-lint run ./internal/reasoning/... ./internal/config/... ./internal/database/...` | **0 issues** |
+| `go test -race ./internal/reasoning/... ./internal/config/... ./cmd/fishd/` | **ok 1.929s / 2.761s / 7.033s** |
+
+### 未做项（重要）
+
+| 项 | 说明 |
+|---|---|
+| **平台执行器未接真实客户端** | `GiftExecutor` / `SocialExecutor` / `LiveStatusSource` / `WebSearcher` 本批只定义接口并置 nil → 工具回「未配置」。护栏逻辑全部实现且有单测；接真实 B站接口属于下一批（要处理签名/风控/凭据）。 |
+| `vision` 工具未在 cmd 装配 | 需要 watch recorder + 视觉客户端，主动弹幕侧已有；ReAct 侧本批留 nil（返回「未配置」），后续可复用同一实例。 |
+| `gift` 价格校验 | 只校验数量与额度；单价来自 `[gift] max_price` 的部分未接入（需要礼物面板价格表）。 |
+| `internal/gift` 历史 lint | `gift_test.go` 有 4 条既有问题（gosec/staticcheck），非本批文件，未动。 |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。

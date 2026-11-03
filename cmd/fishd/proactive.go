@@ -89,7 +89,7 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 		if err != nil {
 			return nil, fmt.Errorf("装配主动弹幕用量账本失败：%w", err)
 		}
-		factory, err := buildReasonerFactory(cfg, memReader, know, pres, events, usageRepo, logger)
+		factory, err := buildReasonerFactory(cfg, memReader, know, pres, events, buildGiftQuota(cfg, logger), usageRepo, logger)
 		if err != nil {
 			return nil, err
 		}

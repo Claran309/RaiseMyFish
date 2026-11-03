@@ -90,6 +90,8 @@ budget_percent = 10
 enabled = true
 max_steps = 3
 timeout_ms = 8000
+# 副作用工具（送礼/关注/点赞/私信/发动态）总开关：默认关，开了模型才看得见这些工具。
+allow_side_effect_tools = false
 
 # 看直播（0.12 MVP）：录一段 → 抽帧 → 视觉描述 + ASR 转写；默认关闭。
 # 启用需同时启用 [llm]，并从 cookie_env 指向的环境变量读取 B站凭据。
