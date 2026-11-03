@@ -120,3 +120,27 @@ func TestProactiveRequiresRuntimeDependencies(t *testing.T) {
 		}
 	})
 }
+
+// TestProactiveUseReactDefaultTrue use_react 默认 true：主动弹幕默认允许走 ReAct。
+func TestProactiveUseReactDefaultTrue(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	cfg, err := Load("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Proactive.UseReact {
+		t.Fatal("use_react 默认应为 true")
+	}
+}
+
+// TestProactiveUseReactCanBeDisabled 显式 false → 永远单步。
+func TestProactiveUseReactCanBeDisabled(t *testing.T) {
+	body := watchLLMSection + proactiveLiveSection + "\n[proactive]\nenabled = true\nuse_react = false\n"
+	cfg, err := loadProactive(t, body)
+	if err != nil {
+		t.Fatalf("加载失败：%v", err)
+	}
+	if cfg.Proactive.UseReact {
+		t.Fatal("use_react=false 未生效")
+	}
+}

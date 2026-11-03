@@ -120,6 +120,8 @@ llm_route = "default"
 enabled = true
 interval_seconds = 20
 send_gap_seconds = 30 # 两次主动发送的最小间隔；间隔内跳过（reason=gap）
+# 画面里出现「要查事实」的线索时先走 ReAct 多步查证，否则单步；false 则永远单步。
+use_react = true
 
 # 送礼（0.13b）：默认关闭且默认 dry-run——不读凭据、不调用平台API、不扣电池。
 # 只有 enabled=true 且 real=true 才会真实赠送；凭据只从 FISH_BILI_COOKIE/_FILE 读取。

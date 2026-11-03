@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -15,8 +16,10 @@ import (
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/infra"
+	"RaiseMyFish/internal/knowledge"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/persona"
+	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/proactive"
 	senderlive "RaiseMyFish/internal/sender/live"
 	"RaiseMyFish/internal/watch"
@@ -29,7 +32,7 @@ type proactiveRunner interface {
 }
 
 // buildProactiveRunner 只装配依赖，构造期不联网、不执行 ffmpeg。
-func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, logger *zap.Logger) (*proactive.Runner, error) {
+func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, know knowledge.Reader, pres *presence.Table, logger *zap.Logger) (*proactive.Runner, error) {
 	if resources == nil || resources.DB == nil {
 		return nil, errors.New("主动弹幕缺少数据库资源")
 	}
@@ -78,6 +81,20 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 	if err != nil {
 		return nil, err
 	}
+	// ReAct 多步：与弹幕回复共用同一套装配（工具按事件 Scope 现造）。
+	// use_react=false 时明确传 nil，永远单步。
+	var react proactive.ReactFactory
+	if cfg.Proactive.UseReact {
+		usageRepo, err := database.NewUsageRepo(resources.DB)
+		if err != nil {
+			return nil, fmt.Errorf("装配主动弹幕用量账本失败：%w", err)
+		}
+		factory, err := buildReasonerFactory(cfg, memReader, know, pres, events, usageRepo, logger)
+		if err != nil {
+			return nil, err
+		}
+		react = proactive.ReactFactory(factory)
+	}
 	options := senderlive.DefaultProactiveOptions()
 	options.RoomID = cfg.Collector.Live.RoomID
 	options.SelfID = wiring.Service.SelfID
@@ -85,7 +102,7 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 	if err != nil {
 		return nil, err
 	}
-	return proactive.New(recorder, vision, engine, pack, memReader, psender, proactive.Options{
+	return proactive.New(recorder, vision, engine, pack, memReader, react, psender, proactive.Options{
 		SendGap: time.Duration(cfg.Proactive.SendGapSeconds) * time.Second,
 		RoomID:  cfg.Collector.Live.RoomID,
 		Logger:  logger,
@@ -143,12 +160,12 @@ func runProactive(ctx context.Context, runner proactiveRunner, ticks <-chan time
 }
 
 // startProactive 仅在 [proactive] enabled=true 时装配并启动；初始化失败只降级。
-func startProactive(ctx context.Context, cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, logger *zap.Logger) func() {
+func startProactive(ctx context.Context, cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, know knowledge.Reader, pres *presence.Table, logger *zap.Logger) func() {
 	noop := func() {}
 	if !cfg.Proactive.Enabled {
 		return noop
 	}
-	runner, err := buildProactiveRunner(cfg, resources, routes, pack, logger)
+	runner, err := buildProactiveRunner(cfg, resources, routes, pack, know, pres, logger)
 	if err != nil {
 		logger.Error("主动弹幕装配失败，降级运行", zap.String("action", "proactive"), zap.Error(err))
 		return noop
@@ -166,6 +183,7 @@ func startProactive(ctx context.Context, cfg config.Config, resources *infra.Res
 		zap.String("action", "proactive"),
 		zap.Int("interval_seconds", cfg.Proactive.IntervalSeconds),
 		zap.Int("send_gap_seconds", cfg.Proactive.SendGapSeconds),
+		zap.Bool("use_react", cfg.Proactive.UseReact),
 	)
 	return func() {
 		cancel()

@@ -21,6 +21,7 @@ import (
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/persona"
+	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/sender"
 	"go.uber.org/zap"
 )
@@ -51,6 +52,12 @@ type Sender interface {
 	Send(ctx context.Context, text string) (sender.Result, error)
 }
 
+// ReactFactory 按事件 Scope 现造一个 ReAct Agent；nil 表示不启用多步。
+//
+// 与 cmd 侧同名类型签名一致，装配时可直接转换。
+// 用工厂而不是单例：工具要按当前房间/会话查，并发 worker 共享可变 Scope 会串会话。
+type ReactFactory func(scope memory.Scope) (*reasoning.Agent, error)
+
 // Options 是运行期参数；Interval 由 cmd 的定时循环控制，不在这里睡眠。
 type Options struct {
 	// SendGap 是两次发送的最小间隔；零值取 DefaultSendGap。
@@ -69,6 +76,8 @@ type Result struct {
 	Text string
 	// Visual 是本轮注入给 Brain 的画面描述（便于排查「模型凭什么这么说」）。
 	Visual string
+	// React 表示本轮走了 ReAct 多步（降级回落单步时为 false）。
+	React bool
 }
 
 // Runner 一次只跑一轮；不保存上一帧（像素变化检测已删除）。
@@ -78,6 +87,7 @@ type Runner struct {
 	brain    brain.Brain
 	pack     persona.Pack
 	mem      memory.Reader
+	react    ReactFactory
 	sender   Sender
 	room     string
 	limiter  *gapLimiter
@@ -87,7 +97,7 @@ type Runner struct {
 }
 
 // New 校验依赖与参数；构造期不截帧、不调用模型、不发送。
-func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack persona.Pack, mem memory.Reader, snd Sender, opts Options) (*Runner, error) {
+func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack persona.Pack, mem memory.Reader, react ReactFactory, snd Sender, opts Options) (*Runner, error) {
 	if snapshot == nil || vision == nil || snd == nil {
 		return nil, errors.New("主动弹幕缺少截帧/识图/发送环节")
 	}
@@ -121,6 +131,7 @@ func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack 
 		brain:    engine,
 		pack:     pack,
 		mem:      mem,
+		react:    react,
 		sender:   snd,
 		room:     opts.RoomID,
 		limiter:  newGapLimiter(gap),
@@ -180,25 +191,26 @@ func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 	}
 	task := brain.Task{ID: ev.ID, EventID: ev.ID, Channel: ev.Channel, Session: ev.Session}
 
-	// 5. 复用 Brain：人设、记忆、知识、预算截断与弹幕回复完全相同
-	reply, err := r.brain.Reply(ctx, task, input)
+	// 5. 生成：画面里出现「要查事实」的线索就走 ReAct，否则单步 Brain
+	//    （两条路都复用同一套人设/记忆/知识/预算管线）
+	usedReact, raw, err := r.generate(ctx, scope, input, task, visual)
 	if err != nil {
-		return Result{Visual: visual}, fmt.Errorf("生成主动弹幕失败：%w", err)
+		return Result{Visual: visual}, err
 	}
 
 	// 6. 清洗 + 15 字截断
-	text := sanitizeDanmaku(reply.Text)
+	text := sanitizeDanmaku(raw)
 	if text == "" {
-		return Result{Visual: visual}, errors.New("生成主动弹幕为空")
+		return Result{Visual: visual, React: usedReact}, errors.New("生成主动弹幕为空")
 	}
 	// 7. 去重：最近 20 条里相似度 ≥0.75 视为重复
 	if r.recent.similar(text) {
 		r.skip(ReasonSimilar)
-		return Result{Reason: ReasonSimilar, Visual: visual}, nil
+		return Result{Reason: ReasonSimilar, Visual: visual, React: usedReact}, nil
 	}
 	if !r.limiter.Reserve(r.now()) {
 		r.skip(ReasonGap)
-		return Result{Reason: ReasonGap, Visual: visual}, nil
+		return Result{Reason: ReasonGap, Visual: visual, React: usedReact}, nil
 	}
 	r.recent.add(text)
 
@@ -206,22 +218,80 @@ func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 	res, err := r.sender.Send(ctx, text)
 	if err != nil {
 		// 发送成功但审计落库失败时 res.OK 仍为 true，保留真实结果供上层区分。
-		return Result{Sent: res.OK, Text: text, Visual: visual}, fmt.Errorf("发送主动弹幕失败：%w", err)
+		return Result{Sent: res.OK, Text: text, Visual: visual, React: usedReact}, fmt.Errorf("发送主动弹幕失败：%w", err)
 	}
 	if !res.OK {
 		r.log.Warn("主动弹幕未被接受",
 			zap.String("action", "proactive"),
 			zap.String("error_kind", res.Error),
 		)
-		return Result{Reason: "send_not_accepted", Text: text, Visual: visual}, nil
+		return Result{Reason: "send_not_accepted", Text: text, Visual: visual, React: usedReact}, nil
 	}
 	r.log.Info("主动弹幕已发送",
 		zap.String("action", "proactive"),
 		zap.Bool("verified", res.Verified),
+		zap.Bool("react", usedReact),
 		zap.Int("runes", len([]rune(text))),
 		zap.Int("visual_runes", len([]rune(visual))),
 	)
-	return Result{Sent: true, Text: text, Visual: visual}, nil
+	return Result{Sent: true, Text: text, Visual: visual, React: usedReact}, nil
+}
+
+// generate 决定本轮走 ReAct 还是单步，返回「原始回复文本 + 是否用了 ReAct」。
+//
+// ReAct 是增强能力：装配失败、执行失败、超时、空回复一律回落单步，
+// 与弹幕回复路径的降级策略保持一致。
+func (r *Runner) generate(ctx context.Context, scope memory.Scope, input brain.ContextInput, task brain.Task, visual string) (bool, string, error) {
+	if r.shouldUseReAct(visual) {
+		text, err := r.runReact(ctx, scope, visual)
+		if err == nil && strings.TrimSpace(text) != "" {
+			return true, text, nil
+		}
+		r.log.Warn("主动弹幕 ReAct 失败，回落单步",
+			zap.String("action", "proactive_react"),
+			zap.Error(err),
+		)
+	}
+	reply, err := r.brain.Reply(ctx, task, input)
+	if err != nil {
+		return false, "", fmt.Errorf("生成主动弹幕失败：%w", err)
+	}
+	return false, reply.Text, nil
+}
+
+// shouldUseReAct 用「占位正文 + 画面描述」做两段式判断。
+//
+// 画面描述里可能自然出现「梗」「刚才」之类线索，正好是该查一下的信号。
+func (r *Runner) shouldUseReAct(visual string) bool {
+	if r.react == nil {
+		return false
+	}
+	decision := reasoning.Decide(SyntheticEventText + " " + visual)
+	return decision.NeedMemory || decision.NeedKnowledge
+}
+
+// runReact 调 ReAct 循环拿回复；预算与降级由 reasoning.Agent 自己控制。
+func (r *Runner) runReact(ctx context.Context, scope memory.Scope, visual string) (string, error) {
+	agent, err := r.react(scope)
+	if err != nil {
+		return "", err
+	}
+	if agent == nil {
+		return "", errors.New("ReAct 未装配")
+	}
+	question := SyntheticEventText + "\n画面：" + visual
+	res, err := agent.Run(ctx, reasoning.Input{System: r.pack.SystemPrompt(), Question: question})
+	r.log.Info("主动弹幕 ReAct 完成",
+		zap.String("action", "proactive_react"),
+		zap.Int("steps", res.Steps),
+		zap.Strings("tools_used", res.Tools),
+		zap.Bool("degraded", res.Degraded),
+		zap.String("degrade_reason", res.Reason),
+	)
+	if err != nil {
+		return "", err
+	}
+	return res.Text, nil
 }
 
 // syntheticEvent 造一条「没有弹幕的弹幕」。

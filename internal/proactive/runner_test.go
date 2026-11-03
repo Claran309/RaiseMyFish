@@ -13,7 +13,9 @@ import (
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/persona"
+	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/sender"
+	"go.uber.org/zap"
 )
 
 // --- 假依赖 ---
@@ -130,7 +132,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	opts := Options{SendGap: 30 * time.Second, RoomID: "30308220"}
 	opts.Now = func() time.Time { return *f.clock }
-	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, f.snd, opts)
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, nil, f.snd, opts)
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -299,7 +301,7 @@ func TestRunOnceMemoryRecallDegrades(t *testing.T) {
 	f := newFixture(t)
 	mem := &fakeMem{err: errors.New("db down")}
 	clock := f.clock
-	runner, err := New(f.snap, f.vision, f.engine, testPack(), mem, f.snd, Options{
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), mem, nil, f.snd, Options{
 		SendGap: 30 * time.Second, RoomID: "30308220",
 		Now: func() time.Time { return *clock },
 	})
@@ -330,25 +332,201 @@ func TestNewRejectsMissingDeps(t *testing.T) {
 	snd := &fakeSender{}
 	opts := Options{RoomID: "1"}
 
-	if _, err := New(nil, vision, engine, testPack(), nil, snd, opts); err == nil {
+	if _, err := New(nil, vision, engine, testPack(), nil, nil, snd, opts); err == nil {
 		t.Error("缺截帧应报错")
 	}
-	if _, err := New(snap, nil, engine, testPack(), nil, snd, opts); err == nil {
+	if _, err := New(snap, nil, engine, testPack(), nil, nil, snd, opts); err == nil {
 		t.Error("缺识图应报错")
 	}
-	if _, err := New(snap, vision, nil, testPack(), nil, snd, opts); err == nil {
+	if _, err := New(snap, vision, nil, testPack(), nil, nil, snd, opts); err == nil {
 		t.Error("缺 Brain 应报错")
 	}
-	if _, err := New(snap, vision, engine, persona.Pack{}, nil, snd, opts); err == nil {
+	if _, err := New(snap, vision, engine, persona.Pack{}, nil, nil, snd, opts); err == nil {
 		t.Error("缺人格应报错")
 	}
-	if _, err := New(snap, vision, engine, testPack(), nil, nil, opts); err == nil {
+	if _, err := New(snap, vision, engine, testPack(), nil, nil, nil, opts); err == nil {
 		t.Error("缺发送应报错")
 	}
-	if _, err := New(snap, vision, engine, testPack(), nil, snd, Options{}); err == nil {
+	if _, err := New(snap, vision, engine, testPack(), nil, nil, snd, Options{}); err == nil {
 		t.Error("缺房间号应报错")
 	}
-	if _, err := New(snap, vision, engine, testPack(), nil, snd, Options{RoomID: "1", SendGap: -time.Second}); err == nil {
+	if _, err := New(snap, vision, engine, testPack(), nil, nil, snd, Options{RoomID: "1", SendGap: -time.Second}); err == nil {
 		t.Error("负 gap 应报错")
+	}
+}
+
+// ---------- ReAct 分流 ----------
+
+// stubLLM 是 ReAct 用的假模型：固定回放一条 final，或固定报错。
+type stubLLM struct {
+	reply string
+	err   error
+	calls int
+}
+
+func (s *stubLLM) Complete(_ context.Context, _, _ string) (string, error) {
+	s.calls++
+	if s.err != nil {
+		return "", s.err
+	}
+	return s.reply, nil
+}
+
+// reactFixture 造一个「真 Agent + 假模型」的工厂，并记录工厂被调次数。
+func reactFixture(t *testing.T, llm *stubLLM) (ReactFactory, *int) {
+	t.Helper()
+	box, err := reasoning.NewToolbox(reasoning.Tool{
+		Name: reasoning.ToolHistory, Desc: "测试工具",
+		Run: func(context.Context, string) (string, error) { return "弹幕一", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	factoryCalls := 0
+	factory := func(_ memory.Scope) (*reasoning.Agent, error) {
+		factoryCalls++
+		agent, err := reasoning.New(llm, box, reasoning.Options{MaxSteps: 3, Timeout: 2 * time.Second}, zap.NewNop())
+		return agent, err
+	}
+	return factory, &factoryCalls
+}
+
+// TestRunOnceUsesReactWhenVisualHintsFact 画面里出现「梗」→ 走 ReAct，单步 Brain 不被调用。
+func TestRunOnceUsesReactWhenVisualHintsFact(t *testing.T) {
+	f := newFixture(t)
+	f.vision.text = "画面里的人正在讲解一个弹幕梗，笑得很开心。"
+	llm := &stubLLM{reply: `{"thought":"懂了","action":"final","final":"这梗笑死"}`}
+	factory, factoryCalls := reactFixture(t, llm)
+
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, factory, f.snd, Options{
+		SendGap: 30 * time.Second, RoomID: "30308220",
+		Now: func() time.Time { return *f.clock },
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	got, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if *factoryCalls != 1 {
+		t.Errorf("ReAct 工厂调用 %d 次，期望 1", *factoryCalls)
+	}
+	if llm.calls == 0 {
+		t.Error("ReAct 模型未被调用")
+	}
+	if f.engine.calls != 0 {
+		t.Errorf("走 ReAct 时不应再调单步 Brain，实际 %d 次", f.engine.calls)
+	}
+	if !got.React || !got.Sent || got.Text != "这梗笑死" {
+		t.Errorf("结果不符：%+v", got)
+	}
+	if f.snd.got != "这梗笑死" {
+		t.Errorf("发送正文 = %q", f.snd.got)
+	}
+}
+
+// TestRunOnceSkipsReactWithoutHint 画面没有事实线索 → 单步，ReAct 工厂不被调用。
+func TestRunOnceSkipsReactWithoutHint(t *testing.T) {
+	f := newFixture(t)
+	f.vision.text = "画面里一个人安静地坐着喝茶。"
+	llm := &stubLLM{reply: `{"thought":"t","action":"final","final":"不该用"}`}
+	factory, factoryCalls := reactFixture(t, llm)
+
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, factory, f.snd, Options{
+		SendGap: 30 * time.Second, RoomID: "30308220",
+		Now: func() time.Time { return *f.clock },
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	got, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if *factoryCalls != 0 || llm.calls != 0 {
+		t.Errorf("简单场景不应进 ReAct：factory=%d llm=%d", *factoryCalls, llm.calls)
+	}
+	if f.engine.calls != 1 {
+		t.Errorf("应走单步 1 次，实际 %d", f.engine.calls)
+	}
+	if got.React || !got.Sent {
+		t.Errorf("结果不符：%+v", got)
+	}
+}
+
+// TestRunOnceReactFactoryErrorFallsBack 工厂报错 → 回落单步，弹幕照发。
+func TestRunOnceReactFactoryErrorFallsBack(t *testing.T) {
+	f := newFixture(t)
+	f.vision.text = "画面里的人在讲之前说过的那个梗。"
+	boom := errors.New("工具装配失败")
+	factory := ReactFactory(func(memory.Scope) (*reasoning.Agent, error) { return nil, boom })
+
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, factory, f.snd, Options{
+		SendGap: 30 * time.Second, RoomID: "30308220",
+		Now: func() time.Time { return *f.clock },
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	got, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("ReAct 失败不应阻塞：%v", err)
+	}
+	if f.engine.calls != 1 {
+		t.Errorf("应回落单步 1 次，实际 %d", f.engine.calls)
+	}
+	if got.React || !got.Sent || f.snd.got != "在吃面包呢" {
+		t.Errorf("结果不符：%+v / %q", got, f.snd.got)
+	}
+}
+
+// TestRunOnceReactLLMErrorFallsBack ReAct 模型报错 → 降级后仍为空 → 回落单步。
+func TestRunOnceReactLLMErrorFallsBack(t *testing.T) {
+	f := newFixture(t)
+	f.vision.text = "画面里的人在提刚才那句话。"
+	llm := &stubLLM{err: errors.New("model down")}
+	factory, factoryCalls := reactFixture(t, llm)
+
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, factory, f.snd, Options{
+		SendGap: 30 * time.Second, RoomID: "30308220",
+		Now: func() time.Time { return *f.clock },
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	got, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if *factoryCalls != 1 {
+		t.Errorf("应尝试过 ReAct：%d", *factoryCalls)
+	}
+	if f.engine.calls != 1 {
+		t.Errorf("模型失败后应回落单步，实际 brain=%d", f.engine.calls)
+	}
+	if got.React {
+		t.Error("回落单步时 React 标记应为 false")
+	}
+}
+
+// TestRunOnceNilReactAlwaysSingleStep 没装 ReactFactory 时，即使画面有线索也走单步。
+func TestRunOnceNilReactAlwaysSingleStep(t *testing.T) {
+	f := newFixture(t)
+	f.vision.text = "画面里的人在讲一个梗。"
+
+	got, err := f.runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if got.React {
+		t.Error("未装配 ReAct 时不应标记 React")
+	}
+	if f.engine.calls != 1 {
+		t.Errorf("应走单步 1 次，实际 %d", f.engine.calls)
 	}
 }

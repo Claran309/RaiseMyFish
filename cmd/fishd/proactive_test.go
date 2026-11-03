@@ -88,12 +88,12 @@ func TestRunProactiveStopsWithoutTicks(t *testing.T) {
 
 func TestStartProactiveDisabledOrDegraded(t *testing.T) {
 	ctx := context.Background()
-	stop := startProactive(ctx, config.Config{}, nil, nil, persona.Pack{}, zap.NewNop())
+	stop := startProactive(ctx, config.Config{}, nil, nil, persona.Pack{}, nil, nil, zap.NewNop())
 	stop()
 
 	cfg := config.Config{Proactive: config.Proactive{Enabled: true, IntervalSeconds: 5, SendGapSeconds: 30}}
 	core, logs := observer.New(zap.DebugLevel)
-	stop = startProactive(ctx, cfg, nil, nil, persona.Pack{}, zap.New(core))
+	stop = startProactive(ctx, cfg, nil, nil, persona.Pack{}, nil, nil, zap.New(core))
 	stop()
 	if logs.FilterMessage("主动弹幕装配失败，降级运行").Len() != 1 {
 		t.Fatal("装配失败未降级")

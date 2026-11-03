@@ -1833,3 +1833,68 @@ send_gap_seconds = 30
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。
+
+---
+
+## 主动弹幕接 ReAct 工具链（2026-11-03，Asia/Shanghai）
+
+- 目标：主动弹幕也能「查了再说」，复用 `reasoning.Agent`（memory_search/knowledge_search/presence/history）。
+- 未改 contracts、未碰调度/发送语义、未调真实模型、未执行 git。
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/proactive/proactive.go` | 修改（分流 + ReactFactory） | `6972E188341305CCE0A55E2A67BD0CD232360BB7FA9A7B7C146858368E47389C` | 11091 |
+| `internal/proactive/runner_test.go` | 修改（+5 用例） | `4632681135C9D1CCC5C5BC2A070A87FF3CE120D4457E0F51F9BEAD245749DCEE` | 15789 |
+| `internal/config/proactive.go` | 修改（use_react） | `DAAFE1861D5F28AE4D37A0E1B336510BF682527817022D2161C2D6030581009C` | 1328 |
+| `internal/config/proactive_test.go` | 修改（+2 用例） | `169FD4554729B66C96CDB0B6BAF8DB4F06A7109121ADDDA3F81B5A8B2558C1DC` | 4876 |
+| `config/fishd.toml` | 修改（use_react） | `D36B1F351031E4AA48EC70F9BCDA533FD1018EC44AC8A899D2A2589645887986` | 6778 |
+| `cmd/fishd/proactive.go` | 修改（装配 React） | `AE0355E541EDEB1AA6743224F44D1056CA7BA98778679A41C8B50387F5E3B37B` | 6386 |
+| `cmd/fishd/proactive_test.go` | 修改（签名） | `8F91334FFA134B0B81CF74F4FE98A90689CAD9BD74143ACF164DCC082C6D1018` | 2593 |
+| `cmd/fishd/main.go` | 修改（传 know/pres） | `D0A835ABA3E0DC6FCBBFB60AABF60E5499764D651346B74BFD8F240B5C064C5E` | 10979 |
+
+### 改动
+
+- `proactive.ReactFactory = func(memory.Scope) (*reasoning.Agent, error)`，`New()` 新增该参数（可空）。
+  与 cmd 的 `reactFactory` 底层签名一致，装配时直接 `proactive.ReactFactory(factory)` 转换。
+- `RunOnce` 在拿到 Visual 后：
+  ```
+  reasoning.Decide(SyntheticEventText + " " + visual)
+     → NeedMemory || NeedKnowledge && react != nil → runReact
+     → 否则（或 ReAct 失败/空回复）→ 单步 brain.Reply
+  ```
+- ReAct 的 `Input{System: pack.SystemPrompt(), Question: "[画面] 正在看直播\n画面：" + visual}`。
+- **降级**：工厂报错、Agent 报错、返回空文本 → 一律回落单步（与弹幕路径同策略），并在日志里留
+  `action=proactive_react` + `steps/tools_used/degraded/degrade_reason`。
+- `Result.React` 新增，标记本轮是否走了多步（回落时为 false），日志也记 `react=true/false`。
+- 配置：`[proactive] use_react`（默认 true）；false 时装配阶段就传 nil，永远单步。
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestRunOnceUsesReactWhenVisualHintsFact` | 画面含「梗」→ 工厂调 1 次、ReAct 模型被调、**单步 Brain 0 次**、发送 ReAct 的 final、`Result.React=true` |
+| `TestRunOnceSkipsReactWithoutHint` | 画面无线索 → 工厂 0 次、单步 1 次、`React=false` |
+| `TestRunOnceReactFactoryErrorFallsBack` | 工厂报错 → 回落单步、照常发送 |
+| `TestRunOnceReactLLMErrorFallsBack` | ReAct 模型报错 → 降级为空 → 回落单步、`React=false` |
+| `TestRunOnceNilReactAlwaysSingleStep` | 未装配工厂时即使有线索也单步 |
+| `TestProactiveUseReactDefaultTrue` / `CanBeDisabled` | 配置默认 true / 显式 false 生效 |
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l`（改动包） | 无输出 |
+| `go build ./...` / `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **27 个包全绿**（proactive 14 个 RunOnce 用例全 PASS） |
+| `golangci-lint run ./internal/proactive/... ./internal/config/...` | **0 issues** |
+| `go test -race ./internal/proactive/... ./internal/config/` | **ok 1.876s / 2.962s** |
+
+### 未做项 / 需要裁决
+
+| 项 | 说明 |
+|---|---|
+| ReAct 触发词仍复用 `reasoning.Decide` 的静态词表 | 画面描述里出现「梗/刚才」等词才走多步；若发现漏触发，可考虑把 VisionPrompt 也纳入判断 |
+| 主动弹幕 ReAct 的 token 记账 | 走的是 `buildReasonerFactory`，已含上一批的 `llm_usage` 记账（UsageRepo 在 cmd 侧装配） |
+| 降级不重试单步 | ReAct 失败直接单步，不二次尝试 ReAct（避免一条弹幕吃掉两倍预算） |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。
