@@ -120,3 +120,34 @@ func TestVisualCountsTowardInputBounds(t *testing.T) {
 		t.Fatalf("合法 visual 被拒：%v", err)
 	}
 }
+
+// TestViewerInjectedWhenPresent 有档案片段时注入 <viewer> 段。
+func TestViewerInjectedWhenPresent(t *testing.T) {
+	p := &fakeProvider{}
+	b := makeBrain(t, p, &fakeUsage{}, options())
+
+	task, in := fixture()
+	in.Viewer = "【对方档案 · 老熟人】\n- 说过 12 次 / 鱼回过 3 次 / 最后出现 11-02"
+	if _, err := b.Reply(context.Background(), task, in); err != nil {
+		t.Fatalf("Reply 失败：%v", err)
+	}
+	user := p.last().Messages[len(p.last().Messages)-1].Content
+	if !strings.Contains(user, "<viewer>") || !strings.Contains(user, "老熟人") {
+		t.Fatalf("档案未注入：%s", user)
+	}
+}
+
+// TestViewerEmptyKeepsPromptClean 空档案（陌生人）不出现 viewer 段。
+func TestViewerEmptyKeepsPromptClean(t *testing.T) {
+	p := &fakeProvider{}
+	b := makeBrain(t, p, &fakeUsage{}, options())
+
+	task, in := fixture()
+	if _, err := b.Reply(context.Background(), task, in); err != nil {
+		t.Fatalf("Reply 失败：%v", err)
+	}
+	user := p.last().Messages[len(p.last().Messages)-1].Content
+	if strings.Contains(user, "<viewer>") {
+		t.Errorf("空档案不应注入：%s", user)
+	}
+}

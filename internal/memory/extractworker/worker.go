@@ -80,6 +80,25 @@ type Options struct {
 	Source string
 	// Now 注入时钟，仅测试需要；为空时用 time.Now。
 	Now func() time.Time
+	// Profiles 是观众档案重建依赖；nil 表示不跑这个子任务。
+	Profiles ProfileSource
+	// ProfileInterval 是档案重建节流间隔，<=0 用 1 小时。
+	ProfileInterval time.Duration
+	// ProfileMinHits 建档门槛，<=0 用 2。
+	ProfileMinHits int
+	// ProfileRecentTexts / ProfileRecentReplies 是档案保留条数。
+	ProfileRecentTexts   int
+	ProfileRecentReplies int
+	// ProfileActiveWindow 是「直播活跃」判定窗口，<=0 用 5 分钟。
+	ProfileActiveWindow time.Duration
+}
+
+// ProfileSource 是观众档案重建所需的最小能力（由 database.ViewerRepo 实现）。
+type ProfileSource interface {
+	// ActiveSince 判断 since 之后是否有入向事件。
+	ActiveSince(ctx context.Context, since time.Time) (bool, error)
+	// RebuildProfiles 从 events 全量重算档案。
+	RebuildProfiles(ctx context.Context, opts store.ViewerRebuildOptions) (store.ViewerRebuildStats, error)
 }
 
 // Stats 是一轮扫描的统计，交给上层打日志/日报。
@@ -94,6 +113,10 @@ type Stats struct {
 	Duplicated int
 	// Skipped 没提炼出候选（含私密未授权、空文本、无规则命中、时间缺失）的事件条数。
 	Skipped int
+	// ProfilesRebuilt 本轮重建的档案数（-1 表示本轮跳过）。
+	ProfilesRebuilt int
+	// ProfileSkipped 是跳过重建的原因（throttled / idle / none）。
+	ProfileSkipped string
 }
 
 // Worker 是提炼 worker 本体。
@@ -102,6 +125,8 @@ type Worker struct {
 	repo   store.MemoryRepo
 	wm     Watermark
 	opts   Options
+	// 档案重建节流状态（进程内，重启后立刻允许跑一次）
+	lastProfile time.Time
 }
 
 // New 构造 worker，并规范化参数。
@@ -124,6 +149,21 @@ func New(source DoneSource, repo store.MemoryRepo, wm Watermark, opts Options) (
 	}
 	if opts.ScanInterval <= 0 {
 		opts.ScanInterval = defaultScanInterval
+	}
+	if opts.ProfileInterval <= 0 {
+		opts.ProfileInterval = time.Hour
+	}
+	if opts.ProfileMinHits <= 0 {
+		opts.ProfileMinHits = 2
+	}
+	if opts.ProfileRecentTexts <= 0 {
+		opts.ProfileRecentTexts = 15
+	}
+	if opts.ProfileRecentReplies <= 0 {
+		opts.ProfileRecentReplies = 10
+	}
+	if opts.ProfileActiveWindow <= 0 {
+		opts.ProfileActiveWindow = 5 * time.Minute
 	}
 	opts.Source = strings.TrimSpace(opts.Source)
 
@@ -205,7 +245,42 @@ func (w *Worker) RunOnce(ctx context.Context) (Stats, error) {
 	if err := w.saveIfAdvanced(ctx, start, cursor); err != nil {
 		return stats, err
 	}
+	w.rebuildProfiles(ctx, &stats)
 	return stats, nil
+}
+
+// rebuildProfiles 是档案重建子任务：每小时节流 + 只在直播活跃（最近 5 分钟有 in 事件）时跑。
+//
+// 失败只记在 stats 里，不影响提炼主流程（档案是增强，不是前置）。
+func (w *Worker) rebuildProfiles(ctx context.Context, stats *Stats) {
+	stats.ProfilesRebuilt = -1
+	if w.opts.Profiles == nil {
+		stats.ProfileSkipped = "none"
+		return
+	}
+	now := w.now()
+	if !w.lastProfile.IsZero() && now.Sub(w.lastProfile) < w.opts.ProfileInterval {
+		stats.ProfileSkipped = "throttled"
+		return
+	}
+	active, err := w.opts.Profiles.ActiveSince(ctx, now.Add(-w.opts.ProfileActiveWindow))
+	if err != nil || !active {
+		stats.ProfileSkipped = "idle"
+		return
+	}
+	res, err := w.opts.Profiles.RebuildProfiles(ctx, store.ViewerRebuildOptions{
+		MinHits:       w.opts.ProfileMinHits,
+		RecentTexts:   w.opts.ProfileRecentTexts,
+		RecentReplies: w.opts.ProfileRecentReplies,
+	})
+	// 无论成功失败都记节流时间：坏库时不要每 5 分钟重试一次
+	w.lastProfile = now
+	if err != nil {
+		stats.ProfileSkipped = "failed"
+		return
+	}
+	stats.ProfilesRebuilt = res.Profiles
+	stats.ProfileSkipped = ""
 }
 
 // handleEvent 处理单条事件，返回本条事件对应的新水位。

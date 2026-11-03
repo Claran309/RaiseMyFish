@@ -176,3 +176,12 @@ reply_mention_back = true
 max_reply_runes = 40
 self_names = ["大肥鱼", "Claranの大肥鱼"]
 self_ids = ["3747574135655903"]
+
+# 观众档案（认人）：从 events 聚合「谁说过什么/鱼怎么回」，按 from_id 注入 prompt。
+# 只给 hits ≥ min_hits 的人建档；每小时节流重建，且只在直播活跃时跑。
+[viewer]
+enabled = true
+min_hits = 2
+recent_texts = 15
+recent_replies = 10
+rebuild_interval_seconds = 3600

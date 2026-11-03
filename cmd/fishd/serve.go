@@ -200,7 +200,7 @@ func truncateRunes(text string, limit int) string {
 //
 // Generate / Deliver / Verify 三个 handler 都必须设置：scheduler.launch 按 claim 的 stage 分派，
 // 任一为 nil 都会在对应阶段裸奔调用。
-func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, pres *presence.Table, state func(time.Time) string, react reactFactory, log *zap.Logger) (scheduler.Workers, error) {
+func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, viewers store.ViewerRepo, pres *presence.Table, state func(time.Time) string, react reactFactory, log *zap.Logger) (scheduler.Workers, error) {
 	if snd == nil {
 		return scheduler.Workers{}, errors.New("发送器不能为 nil")
 	}
@@ -271,6 +271,13 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 		if state != nil {
 			stateText = state(time.Now())
 		}
+		// 认人：按 from_id 查档案；陌生人（无档案）不注入
+		viewerText := ""
+		if viewers != nil && strings.TrimSpace(ev.FromID) != "" {
+			if profile, err := viewers.GetProfile(ctx, ev.FromID); err == nil {
+				viewerText = formatViewerProfile(profile)
+			}
+		}
 		input := brain.ContextInput{
 			Event:     ev,
 			Persona:   pack,
@@ -278,6 +285,7 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 			Shared:    shared,
 			Knowledge: knowCtx,
 			State:     stateText,
+			Viewer:    viewerText,
 		}
 		task := brain.Task{ID: w.Task.ID, EventID: w.Task.EventID, Channel: w.Task.Channel, Session: w.Task.Session}
 
@@ -930,6 +938,36 @@ func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExe
 	}
 }
 
+// formatViewerProfile 把档案压成 300-400 字的注入片段。
+//
+// 只带「说过多少次/回过多少次/最近几句」，不做价值判断，也不带 uid。
+func formatViewerProfile(p store.ViewerProfile) string {
+	texts := p.RecentTexts
+	if len(texts) > 8 {
+		texts = texts[:8]
+	}
+	replies := p.RecentReplies
+	if len(replies) > 4 {
+		replies = replies[:4]
+	}
+	var sb strings.Builder
+	sb.WriteString("【对方档案 · 老熟人】\n")
+	fmt.Fprintf(&sb, "- 说过 %d 次 / 鱼回过 %d 次 / 最后出现 %s\n", p.Hits, p.Replies, p.LastSeen.Format("01-02"))
+	if len(texts) > 0 {
+		sb.WriteString("## 他说过的话（最近几条）\n")
+		for _, t := range texts {
+			sb.WriteString("- " + truncateRunes(t, 40) + "\n")
+		}
+	}
+	if len(replies) > 0 {
+		sb.WriteString("## 本鱼回过的（最近几条）\n")
+		for _, t := range replies {
+			sb.WriteString("- " + truncateRunes(t, 30) + "\n")
+		}
+	}
+	return truncateRunes(sb.String(), 400)
+}
+
 // buildConsume 装配消费循环；未启用（无 [scheduler] / 无 Brain 路由 / 通道关闭）时返回 nil。
 func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, log *zap.Logger) (*scheduler.Scheduler, error) {
 	if !consumeEnabled(cfg, routes) {
@@ -965,13 +1003,20 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, fmt.Errorf("装配用量账本失败：%w", err)
 	}
+	// 观众档案：没启用就不建仓储（Generate 里 viewers==nil 自然不注入）
+	var viewerRepo store.ViewerRepo
+	if cfg.Viewer.Enabled {
+		if repo, err := database.NewViewerRepo(resources.DB); err == nil {
+			viewerRepo = repo
+		}
+	}
 	quota := buildGiftQuota(cfg, log)
 	execs := buildToolExecutors(cfg, log)
 	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, quota, execs, usageRepo, log)
 	if err != nil {
 		return nil, err
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, pres, brainStateSource(pres, cfg.Watch), react, log)
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, pres, brainStateSource(pres, cfg.Watch), react, log)
 	if err != nil {
 		return nil, err
 	}

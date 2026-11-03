@@ -44,6 +44,8 @@ type ContextInput struct {
 	State string
 	// Visual 是画面描述（主动弹幕/看直播注入）；空则不出现 <visual> 段。
 	Visual string
+	// Viewer 是对方档案片段（认人用）；空则不出现 <viewer> 段（陌生人）。
+	Viewer string
 }
 
 // Reply 不包含原始prompt或模型凭据。

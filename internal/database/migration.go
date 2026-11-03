@@ -51,7 +51,17 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取发送迁移：%w", err)
 	}
 	deliveryHash := sha256.Sum256(delivery)
-	return []migrationStep{{1, source, checksum}, {2, string(leases), hex.EncodeToString(hash[:])}, {3, string(delivery), hex.EncodeToString(deliveryHash[:])}}, nil
+	viewers, err := migrations.Files.ReadFile("0004_viewer_profiles.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取观众档案迁移：%w", err)
+	}
+	viewersHash := sha256.Sum256(viewers)
+	return []migrationStep{
+		{1, source, checksum},
+		{2, string(leases), hex.EncodeToString(hash[:])},
+		{3, string(delivery), hex.EncodeToString(deliveryHash[:])},
+		{4, string(viewers), hex.EncodeToString(viewersHash[:])},
+	}, nil
 }
 
 func checkMigrationPrefix(rows []migrationReceipt, steps []migrationStep) error {

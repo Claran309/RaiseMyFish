@@ -102,7 +102,7 @@ func TestNewMemoryWorkerAdvancesWatermark(t *testing.T) {
 	source := &memoryTestSource{events: []event.Event{ev}}
 	repo := &memoryTestRepo{}
 
-	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, repo, path)
+	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, repo, nil, path)
 	if err != nil {
 		t.Fatalf("装配 worker 失败：%v", err)
 	}

@@ -2063,3 +2063,98 @@ cookie 有 + bili_jct  → Live/Social（+Gift/Frame/FrameRead 各自独立降�
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。
+
+---
+
+## 观众档案 PerViewer Profiles（1.1，2026-11-03，Asia/Shanghai）
+
+按 `plans/phase-1.1-viewer-profiles.md` 实现。未改 contracts 语义、未碰调度/发送、未执行 git。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `migrations/0004_viewer_profiles.sql` | 新增（建表） | `DB35EBB08CD9A5CC` | 691 |
+| `internal/store/viewer.go` | 新增（接口+类型） | `36AFD17D237130B5` | 2035 |
+| `internal/database/viewers.go` | 新增（读+聚合） | `B17428301BC45B7C` | 6676 |
+| `internal/database/viewers_integration_test.go` | 新增（3 用例） | `BD2B73F4012D40E9` | 5442 |
+| `internal/database/migration.go` | 修改（step 4） | `A23923BB694EC1E2` | 4864 |
+| `internal/brain/types.go` | 修改（加 Viewer） | `68230D1D29A983B8` | 2859 |
+| `internal/brain/context.go` | 修改（注入+预算） | `4F76262D120B9031` | 13226 |
+| `internal/brain/knowledge.go` | 修改（传参） | `53B20717F10D41F9` | 3751 |
+| `internal/brain/visual_test.go` | 修改（+2 用例） | `7EA1DC65C316355A` | 4994 |
+| `internal/config/viewer.go` | 新增（`[viewer]`） | `3FB2A89C9B703A98` | 1367 |
+| `internal/config/config.go` | 修改（注册） | `2BBA33CEB4FD376A` | 8076 |
+| `internal/memory/extractworker/worker.go` | 修改（档案子任务） | `05331017F1404FFE` | 13431 |
+| `internal/memory/extractworker/viewer_test.go` | 新增（4 用例） | `A3D1DD4E51B503B1` | 3841 |
+| `cmd/fishd/serve.go` | 修改（注入档案） | `1671FDE1046F9160` | 40311 |
+| `cmd/fishd/serve_test.go` | 修改（签名） | `8936CB6A87C75032` | 82851 |
+| `config/fishd.toml` | 修改（`[viewer]`） | `5BCF3D8A93E668BE` | 7251 |
+
+### 表结构
+
+`viewer_profiles(uid PK, name, hits, replies, last_seen, recent_texts JSONB, recent_replies JSONB, updated_at)` +
+`idx_viewer_profiles_last_seen`。
+
+### 聚合口径
+
+- in 事件按 `from_id` 分组：`hits`、`last_seen`、`recent_texts`（最近 N 条，新的在前）；
+- out 事件经 `reply_to` JOIN 回 in：`replies`、`recent_replies`；
+- **只给 hits ≥ min_hits 建档**（1 句路过不建）；
+- `ON CONFLICT (uid) DO UPDATE` → 幂等（重跑不累加）。
+
+### 注入
+
+- `ContextInput.Viewer` 非空 → prompt 增加 `<viewer>...</viewer>` 段（在 visual 之后、event 之前）。
+- `serve.go` Generate 按 `ev.FromID` 查档案 → `formatViewerProfile`（≤400 字：说过的次数/最后出现 +
+  最近 8 句发言 + 最近 4 句回复），陌生人（无档案）**不注入**。
+- 校验：禁 NUL/尖括号、≤800 rune；超预算时先丢 visual，再丢 viewer，最后才裁记忆/人格。
+
+### 重建子任务
+
+`extractworker` 增加档案重建：**每小时节流**（`ProfileInterval`）+ **只在直播活跃时跑**
+（`ActiveSince(now-5m)`，即最近 5 分钟有 in 事件）。失败也记节流时间，避免坏库时每 5 分钟重试。
+
+### 配置
+
+```toml
+[viewer]
+enabled = true
+min_hits = 2
+recent_texts = 15
+recent_replies = 10
+rebuild_interval_seconds = 3600
+```
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestViewerProfileRebuild`（集成） | 3 观众 1/2/5 句 → **只建 2 个**；熟客 hits=2/replies=2/快照倒序；老熟人 hits=5；榜单按 hits 倒序；**二次重建幂等** |
+| `TestViewerProfileMigrationIdempotent` | 迁移重复执行不报错、表存在 |
+| `TestViewerActiveSince` | 窗口内活跃 / 窗口外不活跃 |
+| `TestViewerInjectedWhenPresent` | 有档案 → prompt 含 `<viewer>` 与内容 |
+| `TestViewerEmptyKeepsPromptClean` | 空档案 → 无 viewer 段 |
+| `TestRebuildProfilesThrottled` | 半小时内跳过、满一小时再跑 |
+| `TestRebuildProfilesIdle` | 不活跃不跑；活跃后立即跑 |
+| `TestRebuildProfilesFailureKeepsThrottle` | 失败也节流 |
+| `TestRebuildProfilesNilSource` | 未装配时跳过 |
+
+| 命令 | 结果 |
+|---|---|
+| `go build ./...` / `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **28 个包全绿** |
+| `go test -tags=integration ./internal/database/ -run TestViewer` | ok（3/3 PASS） |
+| `golangci-lint`（database/store/brain/config/extractworker） | **0 issues** |
+| `go test -race ./internal/database/ ./internal/brain/ ./internal/memory/extractworker/` | **ok 2.953s / 1.679s / 1.712s** |
+
+### 未做项
+
+| 项 | 说明 |
+|---|---|
+| `memory.Reader.PerViewer` | 直接在 `serve.go` 查 `store.ViewerRepo`，没往 memory.Reader 加方法（少一层跳转，接口没膨胀） |
+| `reasoning.Decide.NeedViewerMemory` | 派发单标为「可选，可延后」；本批选择**每轮都注入**（档案短，≤400 字） |
+| 档案写入的增量更新 | 现在是全量重算（幂等），事件量大时可以考虑增量；当前量级够用 |
+| extractworker 运行时装配 | `ProfileSource` 已接好，但 `cmd/fishd` 里 worker 的装配点本批未改（保持原调用，默认不跑档案）；需要时传入 `viewerRepo` 即可 |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。

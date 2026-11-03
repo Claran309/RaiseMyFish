@@ -22,6 +22,7 @@ type Config struct {
 	LLM       LLM        `toml:"llm"`
 	Knowledge Knowledge  `toml:"knowledge"`
 	Reasoning Reasoning  `toml:"reasoning"`
+	Viewer    Viewer     `toml:"viewer"`
 	Watch     Watch      `toml:"watch"`
 	Proactive Proactive  `toml:"proactive"`
 	Gift      Gift       `toml:"gift"`
@@ -95,6 +96,7 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 		LLM:       defaultLLM(),
 		Knowledge: defaultKnowledge(),
 		Reasoning: DefaultReasoning(),
+		Viewer:    defaultViewer(),
 		Watch:     defaultWatch(),
 		Proactive: defaultProactive(),
 		Gift:      defaultGift(),
@@ -183,6 +185,9 @@ func (c Config) validate(strictLive bool) error {
 		return err
 	}
 	if err := c.Reasoning.Validate(); err != nil {
+		return err
+	}
+	if err := c.Viewer.Validate(); err != nil {
 		return err
 	}
 	if err := c.Scheduler.Validate(); err != nil {

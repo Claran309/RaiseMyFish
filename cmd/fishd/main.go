@@ -230,13 +230,14 @@ type memoryExtractWorker interface {
 }
 
 // newMemoryWorker 只用接口依赖装配 worker，测试可注入 mock 来源与仓库。
-func newMemoryWorker(cfg config.Memory, source extractworker.DoneSource, repo store.MemoryRepo, watermarkPath string) (*extractworker.Worker, error) {
+func newMemoryWorker(cfg config.Memory, source extractworker.DoneSource, repo store.MemoryRepo, profiles extractworker.ProfileSource, watermarkPath string) (*extractworker.Worker, error) {
 	watermark, err := extractworker.NewFileWatermark(watermarkPath)
 	if err != nil {
 		return nil, err
 	}
 	// 间隔由 runMemoryExtract 的循环控制；worker 的 Run 不在本装配中使用。
-	return extractworker.New(source, repo, watermark, extractworker.Options{AllowPrivate: cfg.AllowPrivate})
+	// Profiles 非 nil 时会在提炼循环里附带档案重建（每小时节流 + 只在直播活跃时）。
+	return extractworker.New(source, repo, watermark, extractworker.Options{AllowPrivate: cfg.AllowPrivate, Profiles: profiles})
 }
 
 // runMemoryExtract 立即扫一轮，之后按 interval 循环；单轮失败只记日志，等下轮重试。
@@ -289,7 +290,13 @@ func startMemoryExtractor(ctx context.Context, cfg config.Memory, db *gorm.DB, l
 		logger.Error("记忆提炼装配失败，降级运行", zap.String("action", "memory_extract"), zap.Error(err))
 		return noop
 	}
-	worker, err := newMemoryWorker(cfg, source, repo, memoryWatermarkPath)
+	// 观众档案重建依赖：失败降级为不建档案（提炼本身不受影响）。
+	profiles, err := database.NewViewerRepo(db)
+	if err != nil {
+		logger.Warn("观众档案装配失败，跳过档案重建", zap.String("action", "memory_extract"), zap.Error(err))
+		profiles = nil
+	}
+	worker, err := newMemoryWorker(cfg, source, repo, profiles, memoryWatermarkPath)
 	if err != nil {
 		logger.Error("记忆提炼初始化失败，降级运行", zap.String("action", "memory_extract"), zap.Error(err))
 		return noop
