@@ -12,6 +12,11 @@ state_file = "data/fishd-status.json"
 heartbeat_seconds = 5
 stale_seconds = 20
 
+# 常驻点赞：fishd 在线时每隔 N 秒给当前直播间点一次赞（复用直播采集的凭据）。
+# 0=关闭；开启时 10-600 秒。无凭据或凭据缺 bili_jct 时自动跳过，不影响采集/消费。
+[presence]
+heartbeat_like_seconds = 0
+
 # live仅采集到Bus；0.11冒烟临时开启（30分钟）
 [channels.live]
 enabled = true

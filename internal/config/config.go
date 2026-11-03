@@ -18,6 +18,7 @@ type Config struct {
 	Database  Database   `toml:"db"`
 	Log       Log        `toml:"log"`
 	Runtime   Runtime    `toml:"runtime"`
+	Presence  Presence   `toml:"presence"`
 	Channels  Channels   `toml:"channels"`
 	LLM       LLM        `toml:"llm"`
 	Knowledge Knowledge  `toml:"knowledge"`
@@ -173,6 +174,9 @@ func (c Config) validate(strictLive bool) error {
 	}
 	if c.Runtime.HeartbeatSeconds < 1 || c.Runtime.HeartbeatSeconds > 300 || c.Runtime.StaleSeconds <= 2*c.Runtime.HeartbeatSeconds || c.Runtime.StaleSeconds > 3600 {
 		return errors.New("心跳周期需为1至300秒，过期阈值需大于两倍周期且不超过3600秒")
+	}
+	if err := c.Presence.Validate(); err != nil {
+		return err
 	}
 	if c.Channels.Comment.Enabled || c.Channels.DM.Enabled || c.Channels.QQ.Enabled {
 		return errors.New("评论/私信/QQ尚未装配，请关闭对应通道开关")

@@ -122,6 +122,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	defer stopMemory()
 	stopMemeLearn := startMemeLearn(ctx, cfg, resources.DB, knowledgeRuntime, logger)
 	defer stopMemeLearn()
+	stopHeartbeatLike := startHeartbeatLike(ctx, cfg, logger)
+	defer stopHeartbeatLike()
 	logger.Info("Brain装配检查完成，未消费事件", zap.String("action", "brain_setup"), zap.Int("routes", len(routes)))
 	logger.Info("知识装配检查完成，未接入事件消费", zap.String("action", "knowledge_setup"), zap.Bool("enabled", knowledgeRuntime.Diagnostic.Enabled), zap.Bool("assembled", knowledgeRuntime.Diagnostic.Assembled), zap.Int("entries", knowledgeRuntime.Diagnostic.Entries), zap.String("revision", knowledgeRuntime.Diagnostic.Revision))
 	check := func(parent context.Context) error {
