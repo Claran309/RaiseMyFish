@@ -265,39 +265,40 @@ func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExe
 }
 
 // buildConsume 装配消费循环；未启用（无 [scheduler] / 无 Brain 路由 / 通道关闭）时返回 nil。
-func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, log *zap.Logger) (*scheduler.Scheduler, error) {
+// 返回的发送器与消费循环共用同一实例，供通道注册表复用（同一限流与暂停状态）。
+func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, error) {
 	if !consumeEnabled(cfg, routes) {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// 记忆 Reader 装配失败是启动级错误：召回是消费循环的核心输入，不能静默降级成「永远失忆」。
 	memRepo, err := database.NewMemoryRepo(resources.DB)
 	if err != nil {
-		return nil, fmt.Errorf("装配记忆仓储失败：%w", err)
+		return nil, nil, fmt.Errorf("装配记忆仓储失败：%w", err)
 	}
 	memReader, err := memory.NewReader(memRepo, memRepo, memory.ReaderOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("装配记忆 Reader 失败：%w", err)
+		return nil, nil, fmt.Errorf("装配记忆 Reader 失败：%w", err)
 	}
 
 	options := buildSchedulerOptions(cfg.Scheduler)
 	byChannel, err := resolveRoutes(options.Channels, routes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	snd, err := buildSender(cfg, resources, log)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// history 工具需要读最近事件；EventRepo 只读复用，不新增写路径。
 	eventRepo, err := database.NewEventRepo(resources.DB)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// ReAct 的 token 也要进 llm_usage，否则日报费用偏低
 	usageRepo, err := database.NewUsageRepo(resources.DB)
 	if err != nil {
-		return nil, fmt.Errorf("装配用量账本失败：%w", err)
+		return nil, nil, fmt.Errorf("装配用量账本失败：%w", err)
 	}
 	// 观众档案：没启用就不建仓储（Generate 里 viewers==nil 自然不注入）
 	var viewerRepo store.ViewerRepo
@@ -310,17 +311,18 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	execs := buildToolExecutors(cfg, log)
 	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, quota, execs, usageRepo, log)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, pres, brainStateSource(pres, cfg.Watch), react, log)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	repo, err := database.NewSchedulerRepo(resources.DB)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return scheduler.New(bus, repo, options, workers, log)
+	sched, err := scheduler.New(bus, repo, options, workers, log)
+	return sched, snd, err
 }
 
 // consumeEnabled 判断是否接消费循环：有调度配置、有 Brain 路由、且 live 通道开启。

@@ -97,3 +97,25 @@ func TestWithPresenceFallsBackWhenMissing(t *testing.T) {
 		t.Error("inner 为 nil 时应返回 nil")
 	}
 }
+
+func TestWithPresenceBusWrapsPublish(t *testing.T) {
+	table := presence.NewTable()
+	bus := &fakeBus{}
+	wrapped := withPresenceBus(bus, table)
+	if _, err := wrapped.Publish(context.Background(), event.Event{Channel: event.ChLive, Session: "30308220"}); err != nil {
+		t.Fatalf("Publish 失败：%v", err)
+	}
+	if got := table.Summary(time.Now()); got != "在看直播 30308220" {
+		t.Errorf("摘要 = %q，期望记录 watching", got)
+	}
+}
+
+func TestWithPresenceBusFallsBackWhenMissing(t *testing.T) {
+	bus := &fakeBus{}
+	if got := withPresenceBus(bus, nil); got != event.Bus(bus) {
+		t.Error("table 为 nil 时应原样返回总线")
+	}
+	if got := withPresenceBus(nil, presence.NewTable()); got != nil {
+		t.Error("bus 为 nil 时应返回 nil")
+	}
+}

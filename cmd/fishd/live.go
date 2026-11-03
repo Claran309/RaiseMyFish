@@ -1,12 +1,14 @@
 package main
 
 import (
-	"context"
+	"fmt"
 	"time"
 
-	"RaiseMyFish/internal/collector"
+	"RaiseMyFish/internal/channel"
+	channellive "RaiseMyFish/internal/channel/live"
 	livecollector "RaiseMyFish/internal/collector/live"
 	"RaiseMyFish/internal/config"
+	"RaiseMyFish/internal/sender"
 	"go.uber.org/zap"
 )
 
@@ -41,17 +43,20 @@ func buildLive(cfg config.Config, log *zap.Logger) (*livecollector.Collector, er
 	return livecollector.New(o, log)
 }
 
-// serveWithCollector单通道暂停不结束基础设施；取消基础设施后等待采集子进程退出。
-func serveWithCollector(ctx context.Context, c collector.Collector, bus collector.Publisher, timeout time.Duration, log *zap.Logger, serve func(context.Context) error) error {
-	child, cancel := context.WithCancel(ctx)
-	finished := make(chan struct{}, 1)
-	go func() {
-		defer func() { finished <- struct{}{} }()
-		if err := collector.RunToBus(child, c, bus, timeout, log); err != nil {
-			log.Error("直播采集已暂停，需处理后重启通道", zap.String("action", "collector_paused"))
-		}
-	}()
-	defer func() { cancel(); <-finished }()
-	log.Info("已装配直播采集到事件总线，未启动模型消费或发送", zap.String("action", "collector_bus_start"))
-	return serve(ctx)
+// buildChannelRegistry 注册当前启用的通道；live 未启用时返回空注册表。
+//
+// snd 允许为 nil（只采集、未装配消费循环），此时 live 通道的 Send 会明确报错。
+func buildChannelRegistry(live *livecollector.Collector, snd sender.Sender, timeout time.Duration, log *zap.Logger) (*channel.Registry, error) {
+	registry := channel.NewRegistry()
+	if live == nil {
+		return registry, nil
+	}
+	ch, err := channellive.New(live, snd, timeout, log)
+	if err != nil {
+		return nil, fmt.Errorf("装配 live 通道失败：%w", err)
+	}
+	if err := registry.Register(ch); err != nil {
+		return nil, fmt.Errorf("注册 live 通道失败：%w", err)
+	}
+	return registry, nil
 }

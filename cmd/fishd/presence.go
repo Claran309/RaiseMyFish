@@ -35,3 +35,21 @@ func (p presencePublisher) Publish(ctx context.Context, ev event.Event) (bool, e
 	}
 	return p.inner.Publish(ctx, ev)
 }
+
+// presenceBus 在完整事件总线上覆写 Publish，其余方法原样透传。
+type presenceBus struct {
+	event.Bus
+	inner collector.Publisher
+}
+
+func (p presenceBus) Publish(ctx context.Context, ev event.Event) (bool, error) {
+	return p.inner.Publish(ctx, ev)
+}
+
+// withPresenceBus 让 channel.Collect 在写入总线前记录 watching；nil 参数原样返回。
+func withPresenceBus(bus event.Bus, table *presence.Table) event.Bus {
+	if bus == nil || table == nil {
+		return bus
+	}
+	return presenceBus{Bus: bus, inner: withPresence(bus, table)}
+}

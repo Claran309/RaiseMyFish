@@ -1,64 +1,55 @@
 package main
 
 import (
-	"RaiseMyFish/internal/collector"
-	"RaiseMyFish/internal/config"
-	"RaiseMyFish/internal/event"
-	"context"
-	"errors"
-	"go.uber.org/zap"
 	"testing"
 	"time"
+
+	livecollector "RaiseMyFish/internal/collector/live"
+	"RaiseMyFish/internal/config"
+	"RaiseMyFish/internal/event"
+	"go.uber.org/zap"
 )
 
-type pausedCollector struct {
-	started chan struct{}
-	stopped chan struct{}
-}
-
-func (c *pausedCollector) Name() string             { return "paused-fixture" }
-func (c *pausedCollector) Health() collector.Health { return collector.Health{} }
-func (c *pausedCollector) Start(context.Context, chan<- event.Event, chan<- error) error {
-	close(c.started)
-	close(c.stopped)
-	return errors.New("private-error-canary")
-}
-
-type noPublish struct{}
-
-func (noPublish) Publish(context.Context, event.Event) (bool, error) { return false, nil }
-func TestLivePausedDoesNotStopInfrastructure(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c := &pausedCollector{started: make(chan struct{}), stopped: make(chan struct{})}
-	done := make(chan error, 1)
-	go func() {
-		done <- serveWithCollector(ctx, c, noPublish{}, time.Second, zap.NewNop(), func(ctx context.Context) error { <-ctx.Done(); return nil })
-	}()
-	select {
-	case <-c.started:
-	case <-time.After(time.Second):
-		t.Fatal("采集没启动")
-	}
-	select {
-	case err := <-done:
-		t.Fatal("单通道暂停结束了基础设施", err)
-	case <-time.After(20 * time.Millisecond):
-	}
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("服务取消未退出")
-	}
-}
 func TestBuildLiveDisabledDoesNotStartNode(t *testing.T) {
 	var cfg config.Config
 	c, err := buildLive(cfg, zap.NewNop())
 	if err != nil || c != nil {
 		t.Fatal("关闭还装配采集")
+	}
+}
+
+func TestBuildChannelRegistryWithoutLive(t *testing.T) {
+	registry, err := buildChannelRegistry(nil, nil, time.Second, zap.NewNop())
+	if err != nil {
+		t.Fatalf("空注册表装配失败：%v", err)
+	}
+	if len(registry.All()) != 0 {
+		t.Fatal("未启用 live 时不应注册通道")
+	}
+	if _, ok := registry.Get(event.ChLive); ok {
+		t.Fatal("未启用 live 时不应能查到通道")
+	}
+}
+
+func TestBuildChannelRegistryRegistersLive(t *testing.T) {
+	// 只做静态校验，不读取凭据文件、不执行 Node 子进程。
+	o := livecollector.DefaultOptions()
+	o.RoomID = "30308220"
+	o.SelfID = "3747574135655903"
+	o.Cookie = "SESSDATA=test"
+	c, err := livecollector.New(o, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := buildChannelRegistry(c, nil, time.Second, zap.NewNop())
+	if err != nil {
+		t.Fatalf("注册 live 通道失败：%v", err)
+	}
+	ch, ok := registry.Get(event.ChLive)
+	if !ok || ch.Name() != event.ChLive {
+		t.Fatalf("live 通道未按名字注册：ok=%v ch=%v", ok, ch)
+	}
+	if len(registry.All()) != 1 {
+		t.Fatalf("通道数量不符：%d", len(registry.All()))
 	}
 }

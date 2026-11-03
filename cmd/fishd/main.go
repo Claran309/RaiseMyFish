@@ -17,6 +17,7 @@ import (
 	"RaiseMyFish/internal/brain/provider"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
+	"RaiseMyFish/internal/event"
 	eventbus "RaiseMyFish/internal/event/bus"
 	"RaiseMyFish/internal/infra"
 	"RaiseMyFish/internal/memory"
@@ -151,7 +152,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
-	consume, err := buildConsume(cfg, resources, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, logger)
+	consume, snd, err := buildConsume(cfg, resources, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, logger)
 	if err != nil {
 		return err
 	}
@@ -177,7 +178,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	defer stopWatch()
 	stopProactive := startProactive(ctx, cfg, resources, routes, pack, knowledgeRuntime.Reader, presenceTable, logger)
 	defer stopProactive()
-	return serveWithCollector(ctx, liveCollector, withPresence(bus, presenceTable), timeout, logger, servePipeline)
+	// 通道经注册表获取；Collect 异步启动，stop 在返回时取消并等待采集退出。
+	registry, err := buildChannelRegistry(liveCollector, snd, timeout, logger)
+	if err != nil {
+		return err
+	}
+	liveChannel, ok := registry.Get(event.ChLive)
+	if !ok {
+		return errors.New("live 通道未注册")
+	}
+	stopCollect, err := liveChannel.Collect(ctx, withPresenceBus(bus, presenceTable))
+	if err != nil {
+		return fmt.Errorf("启动直播采集失败：%w", err)
+	}
+	defer stopCollect()
+	logger.Info("已装配直播采集到事件总线，未启动模型消费或发送", zap.String("action", "collector_bus_start"))
+	return servePipeline(ctx)
 }
 
 // serve 不启动额外后台goroutine；所有探活有超时，取消后更新状态再释放连接。
