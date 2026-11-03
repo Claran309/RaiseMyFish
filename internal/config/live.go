@@ -6,9 +6,10 @@ import (
 	"strings"
 )
 
-// Collectors仅包含本轮已实现的live采集设置，不引入其它平台实现。
+// Collectors仅包含已实现的采集设置；私信/QQ仍不可启用。
 type Collectors struct {
-	Live LiveCollector `toml:"live"`
+	Live    LiveCollector    `toml:"live"`
+	Comment CommentCollector `toml:"comment"`
 }
 
 // LiveCollector凭据只从环境解析，禁止TOML/JSON回显。

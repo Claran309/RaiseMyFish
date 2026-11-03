@@ -104,7 +104,8 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 		Gift:      defaultGift(),
 		Memory:    defaultMemory(),
 		Web:       defaultWeb(),
-		Collector: Collectors{Live: defaultLiveCollector()},
+		// 评论采集默认关闭；interval 先补默认值，开启后省略也能工作。
+		Collector: Collectors{Live: defaultLiveCollector(), Comment: defaultCommentCollector()},
 	}
 	if path != "" {
 		data, err := os.ReadFile(path)
@@ -145,7 +146,9 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 		}
 	}
 	cfg.LLM.resolveEnvironment(lookup)
-	cfg.Collector.Live.resolveEnvironment(lookup, cfg.Channels.Live.Enabled)
+	// 评论采集/发送与直播共用同一账号的 B站凭据；live 关闭时也要为评论解析。
+	commentCredentials := cfg.Collector.Comment.Enabled || (cfg.Sender != nil && cfg.Sender.Comment != nil && cfg.Sender.Comment.Enabled)
+	cfg.Collector.Live.resolveEnvironment(lookup, cfg.Channels.Live.Enabled || commentCredentials)
 	// 主动弹幕复用看直播的截帧与视觉模型，因此也需要解析同一份凭据。
 	cfg.Watch.resolveEnvironment(lookup, cfg.Watch.Enabled || cfg.Proactive.Enabled)
 	cfg.Gift.resolveEnvironment(lookup, cfg.Gift.Enabled)
@@ -178,8 +181,31 @@ func (c Config) validate(strictLive bool) error {
 	if err := c.Presence.Validate(); err != nil {
 		return err
 	}
-	if c.Channels.Comment.Enabled || c.Channels.DM.Enabled || c.Channels.QQ.Enabled {
-		return errors.New("评论/私信/QQ尚未装配，请关闭对应通道开关")
+	if c.Channels.DM.Enabled || c.Channels.QQ.Enabled {
+		return errors.New("私信/QQ尚未装配，请关闭对应通道开关")
+	}
+	if err := c.Collector.Comment.Validate(); err != nil {
+		return err
+	}
+	if c.Collector.Comment.Enabled {
+		if !c.Channels.Comment.Enabled {
+			return errors.New("评论采集启用需要先开启[channels.comment]")
+		}
+		if c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
+			return errors.New("评论采集启用需要B站凭据")
+		}
+		// 没有本账号 UID 就无法跳过自己发出的回复，会形成自回复循环。
+		if id := c.commentSelfID(); id == "" || !positiveSenderID.MatchString(id) || strings.Trim(id, "0") == "" {
+			return errors.New("评论采集启用需要本账号 self_id（避免回复自己的评论）")
+		}
+	}
+	if c.Sender != nil && c.Sender.Comment != nil && c.Sender.Comment.Enabled {
+		if !c.Channels.Comment.Enabled {
+			return errors.New("评论发送启用需要先开启[channels.comment]")
+		}
+		if c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
+			return errors.New("评论发送启用需要B站凭据")
+		}
 	}
 	// CLI 只读命令不需要直播采集运行时；跳过这一项，但保留其余严格校验。
 	if strictLive {

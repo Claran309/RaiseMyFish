@@ -17,7 +17,6 @@ import (
 	"RaiseMyFish/internal/brain/provider"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
-	"RaiseMyFish/internal/event"
 	eventbus "RaiseMyFish/internal/event/bus"
 	"RaiseMyFish/internal/infra"
 	"RaiseMyFish/internal/memory"
@@ -112,6 +111,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
+	commentCollector, err := buildComment(cfg, logger)
+	if err != nil {
+		return err
+	}
 	if checkAll {
 		return printCheckDiagnostic(cfg, routes, knowledgeRuntime, stdout)
 	}
@@ -141,7 +144,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	// 消费循环：只有 [scheduler] 存在、有 Brain 路由且 live 通道开启时才装配；
 	// 否则保持「只采集」的现状。
 	wantConsume := consumeEnabled(cfg, routes)
-	if liveCollector == nil && !wantConsume {
+	if liveCollector == nil && commentCollector == nil && !wantConsume {
 		return serveRuntime(ctx)
 	}
 	events, err := database.NewEventRepo(resources.DB)
@@ -171,28 +174,29 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		if cfg.Watch.Enabled {
 			logger.Warn("看直播未启动：直播采集未启用", zap.String("action", "watch"))
 		}
-		return servePipeline(ctx)
+	} else {
+		// watch/active 都是旁路：装配失败只记日志，不阻塞采集/调度。
+		stopWatch := startWatch(ctx, cfg, logger)
+		defer stopWatch()
+		stopProactive := startProactive(ctx, cfg, resources, routes, pack, knowledgeRuntime.Reader, presenceTable, logger)
+		defer stopProactive()
 	}
-	// watch/active 都是旁路：装配失败只记日志，不阻塞采集/调度。
-	stopWatch := startWatch(ctx, cfg, logger)
-	defer stopWatch()
-	stopProactive := startProactive(ctx, cfg, resources, routes, pack, knowledgeRuntime.Reader, presenceTable, logger)
-	defer stopProactive()
 	// 通道经注册表获取；Collect 异步启动，stop 在返回时取消并等待采集退出。
-	registry, err := buildChannelRegistry(liveCollector, snd, timeout, logger)
+	registry, err := buildChannelRegistry(liveCollector, commentCollector, snd, timeout, logger)
 	if err != nil {
 		return err
 	}
-	liveChannel, ok := registry.Get(event.ChLive)
-	if !ok {
-		return errors.New("live 通道未注册")
+	channels := registry.All()
+	for _, ch := range channels {
+		stop, err := ch.Collect(ctx, withPresenceBus(bus, presenceTable))
+		if err != nil {
+			return fmt.Errorf("启动 %s 采集失败：%w", ch.Name(), err)
+		}
+		defer stop()
 	}
-	stopCollect, err := liveChannel.Collect(ctx, withPresenceBus(bus, presenceTable))
-	if err != nil {
-		return fmt.Errorf("启动直播采集失败：%w", err)
+	if len(channels) > 0 {
+		logger.Info("已装配采集通道到事件总线", zap.String("action", "collector_bus_start"), zap.Int("channels", len(channels)))
 	}
-	defer stopCollect()
-	logger.Info("已装配直播采集到事件总线，未启动模型消费或发送", zap.String("action", "collector_bus_start"))
 	return servePipeline(ctx)
 }
 

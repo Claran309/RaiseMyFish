@@ -30,6 +30,7 @@ import (
 	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
+	sendercomment "RaiseMyFish/internal/sender/comment"
 	senderlive "RaiseMyFish/internal/sender/live"
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
@@ -176,8 +177,8 @@ func resolveSenderWiring(cfg config.Config, minInterval time.Duration) (senderWi
 	return senderWiring{Node: node, Service: service}, nil
 }
 
-// buildSender 用 `[sender]` 配置装配 live 发送器。
-func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger) (sender.Sender, error) {
+// buildLiveSender 用 `[sender]` 配置装配 live 发送器。
+func buildLiveSender(cfg config.Config, resources *infra.Resources, log *zap.Logger) (sender.Sender, error) {
 	policy := sender.DefaultPolicy()
 	if cfg.Scheduler != nil {
 		if live, ok := cfg.Scheduler.Channels[event.ChLive]; ok && live.CooldownMS > 0 {
@@ -201,6 +202,42 @@ func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger)
 		return nil, fmt.Errorf("装配发送通道失败：%w", err)
 	}
 	return senderlive.New(repo, transport, wiring.Service, log)
+}
+
+// buildSender 按已启用通道装配发送路由；Generate/Deliver 仍只看到一个 sender.Sender。
+//
+// live 走既有 Node 传输与投递账本；comment 走纯 Go HTTP（1条/分钟硬限频）。
+// 两者都没有启用时明确报错，避免消费循环「能生成却不能发」。
+func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger) (sender.Sender, error) {
+	if cfg.Sender == nil {
+		return nil, errors.New("未配置 [sender] 发送通道，无法装配发送器")
+	}
+	routes := make(map[event.Channel]sender.Sender, 2)
+	if cfg.Channels.Live.Enabled {
+		liveSender, err := buildLiveSender(cfg, resources, log)
+		if err != nil {
+			return nil, err
+		}
+		routes[event.ChLive] = liveSender
+	}
+	if cfg.Sender.Comment != nil && cfg.Sender.Comment.Enabled {
+		o := sendercomment.DefaultOptions()
+		o.Cookie = cfg.Collector.Live.Cookie
+		o.CookieFile = cfg.Collector.Live.CookieFile
+		if cfg.Sender.HTTPTimeoutMS > 0 {
+			o.HTTPTimeout = time.Duration(cfg.Sender.HTTPTimeoutMS) * time.Millisecond
+		}
+		o.MinInterval = time.Minute
+		commentSender, err := sendercomment.New(o, log)
+		if err != nil {
+			return nil, fmt.Errorf("装配评论发送通道失败：%w", err)
+		}
+		routes[event.ChComment] = commentSender
+	}
+	if cfg.Collector.Comment.Enabled && routes[event.ChComment] == nil {
+		log.Warn("评论采集已启用但未配置评论发送，评论事件将无法回复", zap.String("action", "comment_sender_missing"))
+	}
+	return newSendRouter(routes)
 }
 
 // defaultOwnerMID 是主人的 B站 UID（派发单给定）：永不取关、私信默认允许。
@@ -325,9 +362,9 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	return sched, snd, err
 }
 
-// consumeEnabled 判断是否接消费循环：有调度配置、有 Brain 路由、且 live 通道开启。
+// consumeEnabled 判断是否接消费循环：有调度配置、有 Brain 路由、且至少一个通道开启。
 func consumeEnabled(cfg config.Config, routes map[string]brain.Brain) bool {
-	return cfg.Scheduler != nil && len(routes) > 0 && cfg.Channels.Live.Enabled
+	return cfg.Scheduler != nil && len(routes) > 0 && (cfg.Channels.Live.Enabled || cfg.Channels.Comment.Enabled)
 }
 
 // withScheduler 让调度循环与服务主循环并行运行；任一返回就整体收敛。

@@ -43,6 +43,15 @@ backoff_max_ms = 60000
 stable_after_ms = 30000
 max_failures = 8
 
+# 评论采集（P1）：轮询视频评论区（最新回复优先），按 rpid 去重后写 channel=comment 事件。
+# 默认关闭；启用需要 [channels.comment] enabled=true、FISH_BILI_COOKIE/_FILE 凭据，
+# 以及本账号 UID（[sender].self_id 或 [collector.live].self_id）用于跳过自己发的评论。
+# videos 填视频 oid（av 号数字）；interval_seconds 范围 10-3600。
+[collector.comment]
+enabled = false
+videos = []
+interval_seconds = 60
+
 # 弹幕发送通道：与采集脚本分开——采集是 danmaku-await.mjs（长连监听），
 # 发送是 danmaku.mjs（一次性 POST）。凭据复用 [collector.live] 解析到的 FISH_BILI_COOKIE（同一账号）。
 [sender]
@@ -50,6 +59,11 @@ node_path = "node"
 script_path = "tools/bili-whale/danmaku.mjs"
 self_id = "3747574135655903"
 http_timeout_ms = 35000
+
+# 评论回复发送（P1）：独立开关，默认关闭；发送限频 1 条/分钟（评论风控严）。
+# 凭据与 csrf（bili_jct）复用 [collector.live] 解析到的同一账号 Cookie。
+[sender.comment]
+enabled = false
 
 # 只装配Brain与无调用诊断；通道仍必须关闭。
 [llm]
@@ -200,6 +214,18 @@ reply_mention_back = true
 max_reply_runes = 40
 self_names = ["大肥鱼", "Claranの大肥鱼"]
 self_ids = ["3747574135655903"]
+
+# 评论回复的调度策略：启用 [collector.comment]/[sender.comment] 时必须同时配置，
+# 否则调度器不认识 comment 通道，评论事件只会排队不被消费。
+# max_reply_runes 上限 200（评论正文长度），rate 建议保持 1/分钟。
+# [scheduler.channels.comment]
+# brain = "default"
+# rate_per_minute = 1
+# burst = 1
+# daily_quota = 50
+# cooldown_ms = 60000
+# min_runes = 2
+# max_reply_runes = 200
 
 # 观众档案（认人）：从 events 聚合「谁说过什么/鱼怎么回」，按 from_id 注入 prompt。
 # 只给 hits ≥ min_hits 的人建档；每小时节流重建，且只在直播活跃时跑。

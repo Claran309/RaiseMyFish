@@ -26,11 +26,13 @@ const (
 var positiveSenderID = regexp.MustCompile(`^[0-9]{1,128}$`)
 
 // Sender 是弹幕发送通道配置；nil 表示未配置发送。
+// Comment 是 [sender.comment] 子表，nil 表示未配置评论发送。
 type Sender struct {
-	NodePath      string `toml:"node_path"`
-	ScriptPath    string `toml:"script_path"`
-	SelfID        string `toml:"self_id"`
-	HTTPTimeoutMS int    `toml:"http_timeout_ms"`
+	NodePath      string         `toml:"node_path"`
+	ScriptPath    string         `toml:"script_path"`
+	SelfID        string         `toml:"self_id"`
+	HTTPTimeoutMS int            `toml:"http_timeout_ms"`
+	Comment       *CommentSender `toml:"comment"`
 }
 
 // DefaultSender 返回一份可直接使用的默认发送配置。
