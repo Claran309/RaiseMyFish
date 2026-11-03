@@ -566,7 +566,7 @@ func runReact(ctx context.Context, factory reactFactory, scope memory.Scope, pac
 // buildReasonerFactory 装配 ReAct：模型走主路由，工具走记忆/知识/状态/历史。
 //
 // 返回 nil 表示不启用（配置关闭、没模型、或一个工具都装不起来）——此时 serve 仍走单步。
-func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, events *database.EventRepo, quota reasoning.QuotaSource, usage store.UsageRepo, log *zap.Logger) (reactFactory, error) {
+func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, events *database.EventRepo, quota reasoning.QuotaSource, exec toolExecutors, usage store.UsageRepo, log *zap.Logger) (reactFactory, error) {
 	if !cfg.Reasoning.Enabled {
 		log.Info("ReAct 未启用（配置关闭）", zap.String("action", "react_disabled"))
 		return nil, nil
@@ -603,8 +603,12 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 		readonly, err := reasoning.BuildReadOnlyTools(reasoning.ReadOnlyDeps{
 			Viewer:     events,
 			Replies:    events,
+			Live:       exec.Live,
 			Quota:      quota,
 			QuotaLimit: cfg.Gift.DailyLimit,
+			Frame:      exec.Frame,
+			FrameRead:  exec.FrameRead,
+			Search:     exec.Search,
 			Room:       scope.Session,
 			Now:        time.Now,
 		})
@@ -614,7 +618,7 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 		boxes := []*reasoning.Toolbox{recall, readonly}
 		// 副作用 5 个：默认关；关了就不注册，模型连选项都看不见
 		if cfg.Reasoning.AllowSideEffectTools {
-			side, err := reasoning.BuildSideEffectTools(sideEffectDeps(cfg, quota, scope.Session, log))
+			side, err := reasoning.BuildSideEffectTools(sideEffectDeps(cfg, quota, exec, scope.Session, log))
 			if err != nil {
 				return nil, err
 			}
@@ -906,9 +910,11 @@ func buildGiftQuota(cfg config.Config, log *zap.Logger) reasoning.QuotaSource {
 //
 // 注意：平台执行器（送礼/关注/点赞/私信/动态）本批尚未接入，置 nil 时工具会明确回「未配置」，
 // 但护栏（开关/白名单/额度/限频/不取关主人）全部生效并有单测覆盖。
-func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, room string, log *zap.Logger) reasoning.SideEffectDeps {
+func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExecutors, room string, log *zap.Logger) reasoning.SideEffectDeps {
 	return reasoning.SideEffectDeps{
 		Enabled:          cfg.Reasoning.AllowSideEffectTools,
+		Gift:             exec.Gift,
+		Social:           exec.Social,
 		QuotaView:        quota,
 		GiftEnabled:      cfg.Gift.Enabled,
 		GiftReal:         cfg.Gift.Real,
@@ -960,7 +966,8 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 		return nil, fmt.Errorf("装配用量账本失败：%w", err)
 	}
 	quota := buildGiftQuota(cfg, log)
-	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, quota, usageRepo, log)
+	execs := buildToolExecutors(cfg, log)
+	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, quota, execs, usageRepo, log)
 	if err != nil {
 		return nil, err
 	}

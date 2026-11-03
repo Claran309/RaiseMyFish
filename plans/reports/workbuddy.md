@@ -1979,3 +1979,87 @@ send_gap_seconds = 30
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。
+
+---
+
+## 接真实 B站客户端（0.22，2026-11-03，Asia/Shanghai）
+
+把 ReAct 工具的 nil 执行器换成真实客户端。未改 contracts、未碰调度/发送语义、测试全程 httptest mock、未执行 git。
+
+| 路径 | 动作 | SHA256 | 字节 |
+|---|---|---|---|
+| `internal/bili/bili.go` | 新增（B站客户端） | `72409F73270F9D8F4C7D57B24CC25E8DB7A9289E9ADB2797C8D1E3EEBBE30F50` | 9460 |
+| `internal/bili/bili_test.go` | 新增（12 用例，httptest） | `A67DB6E23414D793CFEB2C69B143E30CA62111449A62EF581C9D94D50074B1C3` | 9191 |
+| `cmd/fishd/executors.go` | 新增（装配 + 适配器） | `70E913E138D9BFBCC306A844992D9F95335ADE5061C7809239B6F5A6EB0CD88E` | 5170 |
+| `cmd/fishd/executors_test.go` | 新增（3 用例） | `C7E19E8E6B4D1B0EE44E04EDF6D261965739FEDF626E3238200E6ADB4ADF2B7C` | 2871 |
+| `cmd/fishd/serve.go` | 修改（注入执行器） | `6D31122871E655473F0B799E85526287E789D3917F5118C9109549DD5BF9F735` | 38764 |
+| `cmd/fishd/proactive.go` | 修改（注入执行器） | `04E6E4C6942D01521DFC2A837D6D5E8188A9300A2A78CAC046E54476C405C064` | 6448 |
+
+### 执行器清单
+
+| 工具 | 接口 | 实现 | API | 状态 |
+|---|---|---|---|---|
+| `live_status` | `LiveStatusSource` | `bili.Client.LiveStatus` | `GET /room/v1/Room/get_info?room_id=` | ✅ 已接 |
+| `follow` / `dm` | `SocialExecutor` | `bili.Client.Follow/Unfollow/SendDM` | `POST /x/relation/modify`（fid/act/re_src=11/csrf）、`POST /web_im/v1/web_im/send_msg` | ✅ 已接（需 bili_jct） |
+| `like` | `SocialExecutor.Like` | `bili.Client.Like` | `POST /room/v1/Room/like`（room_id/count/csrf） | ✅ 已接 |
+| `post_dynamic` | `SocialExecutor.PostDynamic` | `bili.Client.PostDynamic` | `POST /dynamic_svr/v1/dynamic_svr/create` | ✅ 已接（工具默认关） |
+| `gift` | `GiftExecutor` | `giftExecutor{*gift.NodeSender}` | 既有 gift.mjs | ✅ 已接（dry-run 由 `[gift] real`） |
+| `vision` | `FrameSource`+`FrameReader` | `watch.StreamRecorder` + `OpenAIDescriber`（`VisionPrompt`） | 本地 ffmpeg + 视觉模型 | ✅ 已接 |
+| `web_search` | `WebSearcher` | — | 无 | ❌ **未接**（返回「未配置搜索源」） |
+
+### 风控底线
+
+| 要求 | 落实 |
+|---|---|
+| 限频不放宽 | 工具层护栏原样保留（follow/like/dm 1 分钟、post_dynamic 10 分钟） |
+| 首次 dry-run | `[gift] real=false` → gift.mjs 走 dry-run；`post_dynamic` 工具级默认关 |
+| 失败不重试 | 客户端 `do()` 只发一次请求；工具层失败即返回 |
+| 凭据缺失不报错 | `bili.New` 返回 `ErrNoCredential`；`buildToolExecutors` 只记 `reason=no_cookie` 并保持 nil |
+| 日志不打凭据 | 客户端日志/错误只含 `op/code/status`；测试用例专门断言日志不含 `secret-sess`/`csrf-token-123` |
+| 缺 csrf 降级 | 只有 SESSDATA 时装配只读，写操作保持 nil + 告警 `no_csrf` |
+
+### 装配
+
+`cmd/fishd/executors.go`：
+
+```
+cookie 空            → 全部 nil + 「未配置凭据」
+cookie 有、无 bili_jct → Live 可用、Social 为 nil + 告警
+cookie 有 + bili_jct  → Live/Social（+Gift/Frame/FrameRead 各自独立降级）
+```
+
+日志 `action="tool_executor_setup"`，字段 `live_status/social/gift/vision/web_search` 布尔 + `reason`。
+
+### 测试
+
+`internal/bili`（12 个，httptest）：无 cookie → `ErrNoCredential`、Cookie 换行注入被拒、csrf 解析、
+`live_status` 断言 path/room_id/cookie 与摘要、`relation/modify` 断言 POST+fid/act/re_src/csrf、
+取关 act=2、点赞 path+count+csrf、私信 sender/receiver/type/content JSON、动态 content+csrf、
+平台 code≠0 → 安全错误（不含凭据）、缺 csrf 时写操作本地拒绝且不发请求、HTTP 429 与网络错误。
+
+`cmd/fishd`（3 个）：无凭据全 nil + 日志 `no_cookie`、有凭据（含 csrf）装配 Live/Social 且**日志不含凭据**、
+只有 SESSDATA 时 Social 为 nil + 告警。
+
+既有护栏测试全过（额度/限频/黑名单/不取关主人）。
+
+| 命令 | 结果 |
+|---|---|
+| `gofmt -l`（改动包） | 无输出 |
+| `go build ./...` / `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **28 个包全绿** |
+| `golangci-lint run ./internal/bili/...` | **0 issues** |
+| `go test -race ./internal/bili/... ./cmd/fishd/ ./internal/reasoning/` | **ok 2.274s / 6.870s / 1.528s** |
+
+### 未做项 / 风险
+
+| 项 | 说明 |
+|---|---|
+| `web_search` 未接 | 派发单允许先 stub；config 也没有 `[web] search_url`，保持「未配置」 |
+| 点赞接口路径 | 用派发单给的 `room/v1/Room/like`；B站另有一条 `xlive/web-ucenter/...`，验收时若 code 非 0 需要换路径（改一处常量即可） |
+| 私信 `sender_uid` | 取自 `[sender] self_id`（缺失回落采集侧）；两者都空时私信直接返回「缺少本账号UID」 |
+| 真实平台联调 | 按派发单要求不写进测试，留验收时用主人账号跑一次 dry-run 观察 |
+| `cmd/fishd` 历史 lint | `main_test.go:63`、`memory_test.go:31` 仍是别人留下的问题，未动 |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。
