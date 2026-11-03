@@ -36,6 +36,15 @@ const (
 	recentLimit        = 20
 )
 
+// ReAct 触发模式（`[proactive] react_trigger`）。
+const (
+	// TriggerAlways 表示只要拿到画面描述就走 ReAct（默认）：主动弹幕频率低（30s+），
+	// 视觉描述又是自由文本，靠关键词判断会漏触发。
+	TriggerAlways = "always"
+	// TriggerKeyword 回退旧行为：用 reasoning.Decide 的静态词表判断。
+	TriggerKeyword = "keyword"
+)
+
 // 跳过原因，写入日志字段 reason。
 const (
 	ReasonSimilar = "similar"
@@ -64,8 +73,10 @@ type Options struct {
 	SendGap time.Duration
 	// RoomID 是合成事件与记忆范围的会话标识（直播间号）。
 	RoomID string
-	Logger *zap.Logger
-	Now    func() time.Time
+	// ReactTrigger 是 ReAct 触发模式：always（默认）/ keyword。
+	ReactTrigger string
+	Logger       *zap.Logger
+	Now          func() time.Time
 }
 
 // Result 描述本轮结果，便于日志与测试断言。
@@ -90,6 +101,7 @@ type Runner struct {
 	react    ReactFactory
 	sender   Sender
 	room     string
+	trigger  string
 	limiter  *gapLimiter
 	recent   *recent
 	log      *zap.Logger
@@ -121,6 +133,14 @@ func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack 
 	if log == nil {
 		log = zap.NewNop()
 	}
+	trigger := strings.TrimSpace(opts.ReactTrigger)
+	switch trigger {
+	case "":
+		trigger = TriggerAlways
+	case TriggerAlways, TriggerKeyword:
+	default:
+		return nil, errors.New("主动弹幕 react_trigger 只能是 always 或 keyword")
+	}
 	now := opts.Now
 	if now == nil {
 		now = time.Now
@@ -134,6 +154,7 @@ func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack 
 		react:    react,
 		sender:   snd,
 		room:     opts.RoomID,
+		trigger:  trigger,
 		limiter:  newGapLimiter(gap),
 		recent:   newRecent(recentLimit),
 		log:      log,
@@ -266,6 +287,11 @@ func (r *Runner) shouldUseReAct(visual string) bool {
 	if r.react == nil {
 		return false
 	}
+	// always：有画面描述就查（不依赖关键词）；空描述只能单步
+	if r.trigger == TriggerAlways {
+		return strings.TrimSpace(visual) != ""
+	}
+	// keyword：旧行为，靠静态词表
 	decision := reasoning.Decide(SyntheticEventText + " " + visual)
 	return decision.NeedMemory || decision.NeedKnowledge
 }

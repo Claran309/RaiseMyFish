@@ -429,13 +429,14 @@ func TestRunOnceUsesReactWhenVisualHintsFact(t *testing.T) {
 
 // TestRunOnceSkipsReactWithoutHint 画面没有事实线索 → 单步，ReAct 工厂不被调用。
 func TestRunOnceSkipsReactWithoutHint(t *testing.T) {
+	// keyword 模式：画面没有事实线索 → 单步（这是 0.20 的旧行为，保留断言）
 	f := newFixture(t)
 	f.vision.text = "画面里一个人安静地坐着喝茶。"
 	llm := &stubLLM{reply: `{"thought":"t","action":"final","final":"不该用"}`}
 	factory, factoryCalls := reactFixture(t, llm)
 
 	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, factory, f.snd, Options{
-		SendGap: 30 * time.Second, RoomID: "30308220",
+		SendGap: 30 * time.Second, RoomID: "30308220", ReactTrigger: TriggerKeyword,
 		Now: func() time.Time { return *f.clock },
 	})
 	if err != nil {
@@ -528,5 +529,97 @@ func TestRunOnceNilReactAlwaysSingleStep(t *testing.T) {
 	}
 	if f.engine.calls != 1 {
 		t.Errorf("应走单步 1 次，实际 %d", f.engine.calls)
+	}
+}
+
+// ---------- ReAct 触发模式 ----------
+
+// TestShouldUseReActAlways 默认模式：只要有画面描述就查，不看关键词。
+func TestShouldUseReActAlways(t *testing.T) {
+	f := newFixture(t)
+	llm := &stubLLM{reply: `{"thought":"t","action":"final","final":"好"}`}
+	factory, _ := reactFixture(t, llm)
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, factory, f.snd, Options{
+		SendGap: 30 * time.Second, RoomID: "30308220",
+		Now: func() time.Time { return *f.clock },
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	// 没有任何词表关键词，但只要有画面就该查
+	if !runner.shouldUseReAct("画面里一个人在喝水") {
+		t.Error("always 模式：有画面描述应走 ReAct（不依赖关键词）")
+	}
+	if !runner.shouldUseReAct("画面里的人在讲段子") {
+		t.Error("always 模式：描述不含「梗」也应走 ReAct")
+	}
+	// 空描述只能单步
+	if runner.shouldUseReAct("") {
+		t.Error("always 模式：空描述应单步")
+	}
+	if runner.shouldUseReAct("   ") {
+		t.Error("always 模式：空白描述应单步")
+	}
+}
+
+// TestShouldUseReActKeyword 回退模式：仍靠静态词表。
+func TestShouldUseReActKeyword(t *testing.T) {
+	f := newFixture(t)
+	llm := &stubLLM{reply: `{"thought":"t","action":"final","final":"好"}`}
+	factory, _ := reactFixture(t, llm)
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, factory, f.snd, Options{
+		SendGap: 30 * time.Second, RoomID: "30308220", ReactTrigger: TriggerKeyword,
+		Now: func() time.Time { return *f.clock },
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	if runner.shouldUseReAct("画面里一个人在喝水") {
+		t.Error("keyword 模式：无关键词应单步")
+	}
+	if !runner.shouldUseReAct("画面里的人在讲梗") {
+		t.Error("keyword 模式：命中关键词应走 ReAct")
+	}
+}
+
+// TestRunOnceAlwaysUsesReactWithoutKeyword always 模式下无梗词也走 ReAct。
+func TestRunOnceAlwaysUsesReactWithoutKeyword(t *testing.T) {
+	f := newFixture(t)
+	f.vision.text = "画面里一个人安静地坐着喝茶。" // 不含任何关键词
+	llm := &stubLLM{reply: `{"thought":"看够了","action":"final","final":"在喝茶呢"}`}
+	factory, factoryCalls := reactFixture(t, llm)
+
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, factory, f.snd, Options{
+		SendGap: 30 * time.Second, RoomID: "30308220",
+		Now: func() time.Time { return *f.clock },
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	got, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if *factoryCalls != 1 {
+		t.Errorf("always 模式应走 ReAct，工厂调用 %d 次", *factoryCalls)
+	}
+	if f.engine.calls != 0 {
+		t.Errorf("走 ReAct 时不应再调单步 Brain：%d", f.engine.calls)
+	}
+	if !got.React || got.Text != "在喝茶呢" {
+		t.Errorf("结果不符：%+v", got)
+	}
+}
+
+// TestNewRejectsBadTrigger 非法触发模式构造期报错。
+func TestNewRejectsBadTrigger(t *testing.T) {
+	f := newFixture(t)
+	if _, err := New(f.snap, f.vision, f.engine, testPack(), nil, nil, f.snd, Options{
+		SendGap: 30 * time.Second, RoomID: "30308220", ReactTrigger: "sometimes",
+	}); err == nil {
+		t.Error("非法 react_trigger 应报错")
 	}
 }

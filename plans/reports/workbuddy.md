@@ -2381,3 +2381,61 @@ WHERE memory_records.kind = 'fact'
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。
+
+---
+
+## 主动弹幕 ReAct 触发判定（2026-11-03，Asia/Shanghai）
+
+背景：`reasoning.Decide` 靠静态词表（梗/刚才/上次…），视觉描述自由（「讲了个段子」不含「梗」）→ 漏触发。
+改为**默认只要有画面就走 ReAct**（主动弹幕频率低 30s+，值得查）。未改 contracts、未碰调度/发送、未执行 git。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `internal/proactive/proactive.go` | 修改（触发模式） | `EB2592533B813007` | 12061 |
+| `internal/proactive/runner_test.go` | 修改（+4 用例） | `73103E35566D0B95` | 19175 |
+| `internal/config/proactive.go` | 修改（react_trigger） | `B001373B311BAF5A` | 1681 |
+| `cmd/fishd/proactive.go` | 修改（传入配置） | `1021009E3793BEA1` | 6566 |
+| `config/fishd.toml` | 修改 | `D0A2E2362879598E` | 7533 |
+
+### 行为
+
+```toml
+[proactive]
+react_trigger = "always"   # 默认；keyword 回退旧行为
+```
+
+| 模式 | 判定 |
+|---|---|
+| `always`（默认） | 画面描述非空 → 走 ReAct（**跳过 Decide**）；空/空白 → 单步 |
+| `keyword` | 保持旧行为：`reasoning.Decide(占位文本 + visual)` 命中才走 |
+
+降级不变：ReAct 失败/超时/空回复 → 回落单步（`TestRunOnceReactFactoryErrorFallsBack` 等仍绿）。
+`use_react=false` 时 `react` 为 nil，两种模式都单步。
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestShouldUseReActAlways` | 「在喝水」「在讲段子」（无任何关键词）→ true；空串/空白 → false |
+| `TestShouldUseReActKeyword` | 无关键词 → false；含「梗」→ true（旧行为保留） |
+| `TestRunOnceAlwaysUsesReactWithoutKeyword` | always 下无梗词仍走 ReAct：工厂 1 次、**单步 Brain 0 次**、`React=true` |
+| `TestNewRejectsBadTrigger` | 非法值（`sometimes`）构造期报错 |
+| `TestRunOnceSkipsReactWithoutHint` | 改为显式 `keyword`，旧断言（无线索单步）保留 |
+
+| 命令 | 结果 |
+|---|---|
+| `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **28 个包全绿**（proactive 19 个用例全 PASS） |
+| `golangci-lint ./internal/proactive/... ./internal/config/...` | **0 issues** |
+| `go test -race ./internal/proactive/... ./internal/config/` | **ok 13.402s / 125.575s** |
+
+### 未做项 / 代价
+
+| 项 | 说明 |
+|---|---|
+| 成本上升 | always 模式下每次主动弹幕（≥30s 间隔）都会走一次 ReAct，模型调用量比 keyword 高；这是有意的取舍 |
+| 句子级触发 | 没有做「画面值不值得查」的二次判断；若成本成问题，可加 `if len(visual) < N` 之类的廉价门槛 |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。

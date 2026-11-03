@@ -14,10 +14,12 @@ type Proactive struct {
 	// UseReact 控制主动弹幕是否可以用 ReAct 多步查证（默认 true）。
 	// 关掉时永远走单步 Brain，行为等同 0.19 第一批。
 	UseReact bool `toml:"use_react"`
+	// ReactTrigger 是 ReAct 触发模式：always（默认，有画面就查）/ keyword（回到静态词表）。
+	ReactTrigger string `toml:"react_trigger"`
 }
 
 func defaultProactive() Proactive {
-	return Proactive{IntervalSeconds: 20, SendGapSeconds: 30, UseReact: true}
+	return Proactive{IntervalSeconds: 20, SendGapSeconds: 30, UseReact: true, ReactTrigger: "always"}
 }
 
 // Validate 只检查参数范围；凭据、直播流与发送通道在装配阶段检查。
@@ -30,6 +32,9 @@ func (p Proactive) Validate() error {
 	}
 	if p.SendGapSeconds < 1 || p.SendGapSeconds > 3600 {
 		return errors.New("主动弹幕发送间隔必须在1至3600秒之间")
+	}
+	if p.ReactTrigger != "" && p.ReactTrigger != "always" && p.ReactTrigger != "keyword" {
+		return errors.New("主动弹幕 react_trigger 只能是 always 或 keyword")
 	}
 	return nil
 }

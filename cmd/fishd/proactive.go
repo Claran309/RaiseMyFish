@@ -103,9 +103,10 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 		return nil, err
 	}
 	return proactive.New(recorder, vision, engine, pack, memReader, react, psender, proactive.Options{
-		SendGap: time.Duration(cfg.Proactive.SendGapSeconds) * time.Second,
-		RoomID:  cfg.Collector.Live.RoomID,
-		Logger:  logger,
+		SendGap:      time.Duration(cfg.Proactive.SendGapSeconds) * time.Second,
+		RoomID:       cfg.Collector.Live.RoomID,
+		ReactTrigger: cfg.Proactive.ReactTrigger,
+		Logger:       logger,
 	})
 }
 
@@ -184,6 +185,7 @@ func startProactive(ctx context.Context, cfg config.Config, resources *infra.Res
 		zap.Int("interval_seconds", cfg.Proactive.IntervalSeconds),
 		zap.Int("send_gap_seconds", cfg.Proactive.SendGapSeconds),
 		zap.Bool("use_react", cfg.Proactive.UseReact),
+		zap.String("react_trigger", cfg.Proactive.ReactTrigger),
 	)
 	return func() {
 		cancel()
