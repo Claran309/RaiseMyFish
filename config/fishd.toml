@@ -82,6 +82,15 @@ enabled = true
 dir = "personas/dafeiyu/knowledge"
 budget_percent = 10
 
+# 联网搜索（ReAct 的 web_search 工具）：留空表示未配置，工具明确回「未配置搜索源」。
+# 协议：POST {"query": "..."} → {"results": [{"title","snippet","url"}]}，
+# 可接 Serper/Bing/自建服务；search_key 可选，作为 Authorization: Bearer。
+# 地址只允许 HTTPS 或本机 HTTP（localhost/127.0.0.1）。
+# 注意：本文件会被提交，真实密钥不要写在这里。
+[web]
+search_url = ""
+search_key = ""
+
 # ReAct 思考链（C 档）：两段式判断为「要查事实」时才走多步，
 # 简单弹幕仍单步生成（延迟维持 1 秒级）。
 # 预算纪律：步数 3、总超时 8 秒；步数/超时/解析失败一律降级，不拖成半分钟。

@@ -27,6 +27,7 @@ type Config struct {
 	Proactive Proactive  `toml:"proactive"`
 	Gift      Gift       `toml:"gift"`
 	Memory    Memory     `toml:"memory"`
+	Web       Web        `toml:"web"`
 	Collector Collectors `toml:"collector"`
 	// Scheduler 为 nil 表示「不接消费循环」，只采集。
 	Scheduler *Scheduler `toml:"scheduler"`
@@ -101,6 +102,7 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 		Proactive: defaultProactive(),
 		Gift:      defaultGift(),
 		Memory:    defaultMemory(),
+		Web:       defaultWeb(),
 		Collector: Collectors{Live: defaultLiveCollector()},
 	}
 	if path != "" {
@@ -206,6 +208,9 @@ func (c Config) validate(strictLive bool) error {
 		return err
 	}
 	if err := c.Memory.Validate(); err != nil {
+		return err
+	}
+	if err := c.Web.Validate(); err != nil {
 		return err
 	}
 	if err := c.LLM.Validate(); err != nil {

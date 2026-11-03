@@ -19,6 +19,7 @@ import (
 	"RaiseMyFish/internal/proactive"
 	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/watch"
+	"RaiseMyFish/internal/webtools"
 	"go.uber.org/zap"
 )
 
@@ -35,11 +36,26 @@ type toolExecutors struct {
 // buildToolExecutors 按环境装配执行器；任何一项装配失败只降级该项。
 func buildToolExecutors(cfg config.Config, log *zap.Logger) toolExecutors {
 	var execs toolExecutors
+	// 搜索不依赖B站凭据：先装配，保证无 cookie 时也能联网查证。
+	if cfg.Web.SearchURL != "" {
+		searcher, err := webtools.NewHTTP(webtools.Options{URL: cfg.Web.SearchURL, Key: cfg.Web.SearchKey})
+		if err != nil {
+			log.Warn("搜索执行器未装配",
+				zap.String("action", "tool_executor_setup"),
+				zap.String("reason", "bad_search_url"),
+				zap.Error(err),
+			)
+		} else {
+			execs.Search = searcher
+		}
+	}
+
 	cookie := cfg.Collector.Live.Cookie
 	if cookie == "" {
 		log.Info("工具执行器未装配：未配置凭据",
 			zap.String("action", "tool_executor_setup"),
 			zap.String("reason", "no_cookie"),
+			zap.Bool("web_search", execs.Search != nil),
 		)
 		return execs
 	}
@@ -94,7 +110,6 @@ func buildToolExecutors(cfg config.Config, log *zap.Logger) toolExecutors {
 		}
 	}
 
-	// 搜索源本批未接（config 里也没有），保持 nil → 工具回「未配置搜索源」
 	log.Info("工具执行器装配完成",
 		zap.String("action", "tool_executor_setup"),
 		zap.Bool("live_status", execs.Live != nil),

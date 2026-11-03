@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"RaiseMyFish/internal/database"
+	"RaiseMyFish/internal/knowledge"
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
 )
@@ -114,7 +115,16 @@ func TestKnowledgeCheckWithRealPostgresNoModelOrUsage(t *testing.T) {
 		BrainRoutes    int                 `json:"brain_routes"`
 		Knowledge      knowledgeDiagnostic `json:"knowledge"`
 	}
-	if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.ProviderCalled || result.UsageWritten || result.BrainRoutes != 1 || result.Knowledge.Entries != 500 || !result.Knowledge.Assembled || result.Knowledge.PipelineConnected {
+	// 语料会随梗库扩充，期望条数取真实快照而不是硬编码。
+	snapshot, err := knowledge.NewFileReader(ctx, knowledgeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := snapshot.SnapshotInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.ProviderCalled || result.UsageWritten || result.BrainRoutes != 1 || result.Knowledge.Entries != info.Entries || info.Entries <= 0 || !result.Knowledge.Assembled || result.Knowledge.PipelineConnected {
 		t.Fatal("无调用诊断状态错误")
 	}
 	if _, err := os.Stat(state); !os.IsNotExist(err) {
