@@ -642,8 +642,8 @@ func TestSendMigrationV2UpgradePreservesAuditAndChecksums(t *testing.T) {
 	if err := db.Raw("SELECT version,checksum FROM schema_migrations ORDER BY version").Scan(&receipts).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(receipts) != 3 {
-		t.Fatal("迁移账本错误")
+	if len(receipts) != len(steps) {
+		t.Fatalf("迁移账本错误：%d 条，期望 %d", len(receipts), len(steps))
 	}
 	for i, receipt := range receipts {
 		if receipt.Checksum != steps[i].Checksum {

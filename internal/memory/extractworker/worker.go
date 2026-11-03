@@ -94,6 +94,15 @@ type Options struct {
 	ProfileRecentReplies int
 	// ProfileActiveWindow 是「直播活跃」判定窗口，<=0 用 5 分钟。
 	ProfileActiveWindow time.Duration
+	// Recent 提供同 session 最近事件，用于给 LLM 提炼喂上下文；nil 则不喂。
+	Recent RecentEventsSource
+	// ContextLimit 是喂给提炼器的上下文条数，<=0 用 5。
+	ContextLimit int
+}
+
+// RecentEventsSource 提供某会话最近的事件（database.EventRepo 满足）。
+type RecentEventsSource interface {
+	RecentEvents(ctx context.Context, ch event.Channel, session string, limit int) ([]event.Event, error)
 }
 
 // ProfileSource 是观众档案重建所需的最小能力（由 database.ViewerRepo 实现）。
@@ -167,6 +176,12 @@ func New(source DoneSource, repo store.MemoryRepo, wm Watermark, opts Options) (
 	}
 	if opts.ProfileActiveWindow <= 0 {
 		opts.ProfileActiveWindow = 5 * time.Minute
+	}
+	if opts.Extractor == nil {
+		opts.Extractor = memory.NewRuleExtractor()
+	}
+	if opts.ContextLimit <= 0 {
+		opts.ContextLimit = 5
 	}
 	opts.Source = strings.TrimSpace(opts.Source)
 
@@ -304,6 +319,12 @@ func (w *Worker) handleEvent(ctx context.Context, ev event.Event, stats *Stats) 
 		IsFirstNick:  false,
 		AllowPrivate: w.opts.AllowPrivate,
 	}
+	// 上下文：取同 session 最近几条（去掉当前这条），失败降级为无上下文
+	if w.opts.Recent != nil {
+		if recent, err := w.opts.Recent.RecentEvents(ctx, ev.Channel, ev.Session, w.opts.ContextLimit+1); err == nil {
+			extractOpts.Context = withoutCurrent(recent, ev.ID)
+		}
+	}
 	extractor := w.opts.Extractor
 	if extractor == nil {
 		extractor = memory.NewRuleExtractor()
@@ -333,6 +354,18 @@ func (w *Worker) handleEvent(ctx context.Context, ev event.Event, stats *Stats) 
 	return next, nil
 }
 
+// withoutCurrent 去掉当前这条事件，保留旧→新顺序。
+func withoutCurrent(rows []event.Event, currentID string) []event.Event {
+	out := make([]event.Event, 0, len(rows))
+	for i := len(rows) - 1; i >= 0; i-- { // 查询是倒序，翻转成旧→新
+		if rows[i].ID == currentID {
+			continue
+		}
+		out = append(out, rows[i])
+	}
+	return out
+}
+
 // buildRecord 把候选装配成持久化记录。
 func (w *Worker) buildRecord(ev event.Event, c memory.Candidate) store.MemoryRecord {
 	source := w.opts.Source
@@ -351,9 +384,11 @@ func (w *Worker) buildRecord(ev event.Event, c memory.Candidate) store.MemoryRec
 			EventIDs:   []string{ev.ID},
 			ValidFrom:  w.validFrom(ev.At),
 		},
-		Source: source,
-		Kind:   storeKind(c.Kind),
-		Title:  c.Title,
+		Source:   source,
+		Kind:     storeKind(c.Kind),
+		Title:    c.Title,
+		FromID:   strings.TrimSpace(c.FromID),
+		FromName: strings.TrimSpace(c.FromName),
 		// Body 留空：摘要已经够召回用，不把完整正文写进记忆库
 		Body: "",
 	}

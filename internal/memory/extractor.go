@@ -170,6 +170,12 @@ func buildLLMInput(ev event.Event, opts ExtractOptions) string {
 	if owner := strings.TrimSpace(opts.OwnerName); owner != "" {
 		fmt.Fprintf(&sb, "（主播/主人昵称：%s）\n", owner)
 	}
+	if len(opts.Context) > 0 {
+		sb.WriteString("最近上下文（旧→新）：\n")
+		for _, prev := range opts.Context {
+			fmt.Fprintf(&sb, "- %s: %s\n", strings.TrimSpace(prev.FromName), strings.TrimSpace(prev.Text))
+		}
+	}
 	fmt.Fprintf(&sb, "弹幕：%s\n", strings.TrimSpace(ev.Text))
 	return sb.String()
 }

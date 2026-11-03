@@ -53,9 +53,17 @@ func (r *MemoryRepo) InsertRecord(ctx context.Context, m store.MemoryRecord) (bo
 	}
 	// 数组通过JSON参数转TEXT[]，避免拼接事件ID，也不引入另一套PG驱动。
 	result := r.db.WithContext(ctx).Exec(`INSERT INTO memory_records
- (id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids)
- VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))))
- ON CONFLICT (id) DO NOTHING`, m.ID, m.Source, m.Kind, m.Title, m.Summary, m.Body, m.Importance, m.Confidence, m.Private, m.Channel, m.Session, m.ValidFrom, string(ids))
+(id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name)
+VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''))
+ON CONFLICT (id) DO UPDATE SET
+  summary    = EXCLUDED.summary,
+  confidence = EXCLUDED.confidence,
+  valid_from = now(),
+  event_ids  = EXCLUDED.event_ids,
+  from_id    = COALESCE(EXCLUDED.from_id, memory_records.from_id),
+  from_name  = COALESCE(EXCLUDED.from_name, memory_records.from_name)
+WHERE memory_records.kind = 'fact'
+  AND memory_records.summary IS DISTINCT FROM EXCLUDED.summary`, m.ID, m.Source, m.Kind, m.Title, m.Summary, m.Body, m.Importance, m.Confidence, m.Private, m.Channel, m.Session, m.ValidFrom, string(ids), m.FromID, m.FromName)
 	if result.Error != nil {
 		return false, &safeError{"写入记忆失败", result.Error}
 	}
@@ -253,6 +261,58 @@ func validateMemoryRecordQuery(ctx context.Context, limit int) error {
 //
 // 缺少 channel/session 的行按契约「未观测的事实省略」处理，直接不返回；
 // 返回前用 memory.SharedState.Validate 再核一遍范围与字段。
+// FactsByViewer 按观众 uid 查事实（认人用），新的在前。
+func (r *MemoryRepo) FactsByViewer(ctx context.Context, fromID string, limit int) ([]store.MemoryRecord, error) {
+	if ctx == nil || strings.TrimSpace(fromID) == "" || limit < 1 || limit > 50 {
+		return nil, store.ErrInvalid
+	}
+	return r.queryFacts(ctx, "from_id = ? AND kind = 'fact' AND valid_to IS NULL AND NOT archived", fromID, limit)
+}
+
+func (r *MemoryRepo) queryFacts(ctx context.Context, where string, arg any, limit int) ([]store.MemoryRecord, error) {
+	var rows []struct {
+		ID         string
+		Source     string
+		Kind       string
+		Title      string
+		Summary    string
+		Body       string
+		Importance float64
+		Confidence float64
+		Private    bool
+		Channel    event.Channel
+		Session    string
+		FromID     string
+		FromName   string
+		ValidFrom  time.Time
+		CreatedAt  time.Time
+		IDs        json.RawMessage
+	}
+	err := r.db.WithContext(ctx).Table("memory_records").Where(where, arg).
+		Select("id, source, kind, title, summary, body, importance, confidence, private, COALESCE(channel,'') AS channel, COALESCE(session,'') AS session, COALESCE(from_id,'') AS from_id, COALESCE(from_name,'') AS from_name, valid_from, created_at, to_json(event_ids) AS ids").
+		Order("valid_from DESC, id DESC").Limit(limit).Find(&rows).Error
+	if err != nil {
+		return nil, &safeError{"读取事实失败", err}
+	}
+	out := make([]store.MemoryRecord, 0, len(rows))
+	for _, row := range rows {
+		var ids []string
+		if len(row.IDs) > 0 {
+			_ = json.Unmarshal(row.IDs, &ids)
+		}
+		out = append(out, store.MemoryRecord{
+			Record: memory.Record{
+				ID: row.ID, Channel: row.Channel, Session: row.Session, Summary: row.Summary,
+				Importance: row.Importance, Confidence: row.Confidence, Private: row.Private,
+				EventIDs: ids, ValidFrom: row.ValidFrom,
+			},
+			Source: row.Source, Kind: row.Kind, Title: row.Title, Body: row.Body,
+			FromID: row.FromID, FromName: row.FromName, CreatedAt: row.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
 func (r *MemoryRepo) Facts(ctx context.Context, s memory.Scope, limit int) ([]memory.Fact, error) {
 	if err := validateRecall(ctx, s, limit); err != nil {
 		return nil, err

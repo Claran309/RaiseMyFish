@@ -15,6 +15,9 @@ type MemoryRecord struct {
 	Kind   string
 	Title  string
 	Body   string
+	// FromID/FromName 是事实的主体（观众 uid/昵称）；非事实类可留空。
+	FromID   string
+	FromName string
 	// CreatedAt 只由 ListRecords/SearchRecords 填充，用于运维查看；写入时忽略。
 	CreatedAt time.Time
 }

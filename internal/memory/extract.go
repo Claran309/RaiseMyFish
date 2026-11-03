@@ -99,6 +99,9 @@ type Candidate struct {
 	Importance float64
 	// Confidence 置信度，0..1。
 	Confidence float64
+	// FromID/FromName 是这条候选的主体（观众），由事件带出。
+	FromID   string
+	FromName string
 }
 
 // ExtractOptions 是提炼所需的调用方上下文。
@@ -112,6 +115,9 @@ type ExtractOptions struct {
 	IsFirstNick bool
 	// AllowPrivate 为 true 时才允许提炼 Private 事件（0.9b 起）。
 	AllowPrivate bool
+	// Context 是同 session 的最近若干条事件（旧→新），供 LLM 理解上下文；
+	// 规则版忽略它。
+	Context []Event
 }
 
 // Extract 按规则从一条事件提炼候选，返回顺序固定为规则优先级：
@@ -195,6 +201,11 @@ func Extract(ev Event, opts ExtractOptions) []Candidate {
 	}
 
 	// 规则 4：默认不提炼（out 为 nil 时直接返回空）
+	// 统一带上主体：所有候选都属于这条事件的发送者
+	for i := range out {
+		out[i].FromID = strings.TrimSpace(ev.FromID)
+		out[i].FromName = strings.TrimSpace(ev.FromName)
+	}
 	return out
 }
 

@@ -2303,3 +2303,81 @@ llm_extract_max_per_hour = 30 # 限流
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。
+
+---
+
+## 记忆补全（1.4，2026-11-03，Asia/Shanghai）
+
+三项：LLM 提炼喂上下文 / fact 加 from_id / fact 时效。未改 contracts 语义、未碰调度/发送、未执行 git。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `migrations/0005_memory_from_id.sql` | 新增（加列+索引） | `622C71A095B8BF1C` | 397 |
+| `internal/database/migration.go` | 修改（step 5） | `DF7A7C95AABB3691` | 5116 |
+| `internal/store/memory.go` | 修改（FromID/FromName） | `9C3D2A7FC75A81B2` | 3197 |
+| `internal/memory/extract.go` | 修改（Candidate 主体 + Context） | `BA83FD92413CE4A8` | 10933 |
+| `internal/memory/extractor.go` | 修改（prompt 拼上下文） | `76C04FE648A8060E` | 8126 |
+| `internal/memory/context_test.go` | 新增（2 用例） | `A5CECC94336514B3` | 1616 |
+| `internal/memory/extractworker/worker.go` | 修改（上下文 + 主体落库） | `F32DB50743A7DE77` | 15930 |
+| `internal/database/memories.go` | 修改（插入 SQL + FactsByViewer） | `75BE94890EBD2FF2` | 14967 |
+| `internal/database/memory_facts_integration_test.go` | 新增（2 用例） | `E01FC5C6502F2255` | 3347 |
+| `internal/database/send_integration_test.go` | 修改（账本条数断言） | — | — |
+
+### 1. LLM 提炼喂上下文
+
+- worker 新增 `Recent RecentEventsSource`（`database.EventRepo` 满足）+ `ContextLimit`（默认 5）；
+  调 `Extractor.Extract` 前取同 session 最近 N+1 条，去掉当前这条、翻成旧→新，塞进 `ExtractOptions.Context`。
+- **取失败降级为无上下文**（`if err == nil` 才填），不中断提炼。
+- `buildLLMInput` 把 Context 拼成「最近上下文（旧→新）」段；规则版忽略 Context。
+
+### 2. fact 加 from_id
+
+- 迁移 0005：`memory_records` 加 `from_id`/`from_name` + `idx_mem_from_id(from_id, kind)`，幂等（IF NOT EXISTS）。
+- `memory.Candidate` 与 `store.MemoryRecord` 加字段；`Extract` 统一回填事件的 FromID/FromName。
+- worker 写入带 from_id/from_name；`InsertRecord` SQL 增加两列（`NULLIF(?,'')` 归一空串）。
+- 新增 `MemoryRepo.FactsByViewer(ctx, fromID, limit)`：只查 `kind='fact' AND valid_to IS NULL AND NOT archived`，新的在前。
+
+### 3. fact 时效
+
+`InsertRecord` 的冲突子句改为：
+
+```sql
+ON CONFLICT (id) DO UPDATE SET
+  summary = EXCLUDED.summary, confidence = EXCLUDED.confidence,
+  valid_from = now(), event_ids = EXCLUDED.event_ids,
+  from_id = COALESCE(EXCLUDED.from_id, memory_records.from_id),
+  from_name = COALESCE(EXCLUDED.from_name, memory_records.from_name)
+WHERE memory_records.kind = 'fact'
+  AND memory_records.summary IS DISTINCT FROM EXCLUDED.summary
+```
+
+- 同 fact（id = `fact:<uid>:<hash(title)>`）+ 同摘要 → `WHERE` 不成立 → `RowsAffected=0` → **幂等**；
+- 同 fact + 摘要变了（「大二」→「大三」）→ 覆盖更新并刷新 `valid_from` → `RowsAffected=1`；
+- 非 fact 记录 → `kind='fact'` 不成立 → 仍等价于原来的 DO NOTHING。
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestLLMPromptIncludesContext` | 上下文段进 prompt、内容带到 |
+| `TestRuleExtractorIgnoresContext` | 规则版不受上下文影响；候选带主体 |
+| `TestMemoryRecordFromIDAndFactsByViewer`（集成） | 写入带 from_id；按 uid 查回；陌生人空 |
+| `TestFactTemporalSemantics`（集成） | 相同摘要幂等（0 行）、不同摘要覆盖（1 行）且 valid_from 前移 |
+
+| 命令 | 结果 |
+|---|---|
+| `go build ./...` / `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **28 个包全绿** |
+| `go test -tags=integration ./internal/database/` | **ok 47.09s** |
+| `golangci-lint ./internal/memory/... ./internal/database/... ./internal/store/...` | **0 issues** |
+| `go test -race ./internal/memory/... ./internal/database/` | ok |
+
+### 需要说明
+
+- `TestSendMigrationV2UpgradePreservesAuditAndChecksums` 原来硬编码「账本 3 条」，加迁移后必须改成 `len(steps)`；
+  这是测试跟随迁移数量，不是放宽断言。
+- 迁移给老记录留 `from_id=NULL`（未知主体），`FactsByViewer` 不会命中它们。
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。
