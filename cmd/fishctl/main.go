@@ -53,8 +53,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if len(action) >= 1 && action[0] == "gift" {
 		return runGift(ctx, *path, *envPath, action[1:], stdout, stderr)
 	}
+	if len(action) >= 1 && action[0] == "knowledge" {
+		return runKnowledge(ctx, *path, *envPath, action[1:], stdout, stderr)
+	}
 	if len(action) != 1 || (action[0] != "status" && action[0] != "tail") {
-		return errors.New("用法：fishctl [--config 路径] [--env-file 路径] status|tail|persona eval|memory list|search|stats|freeze|unfreeze|gift send")
+		return errors.New("用法：fishctl [--config 路径] [--env-file 路径] status|tail|persona eval|memory list|search|stats|freeze|unfreeze|gift send|knowledge embed")
 	}
 	// status/tail 只读本机运行信息；live 配置缺失不直接报错。
 	cfg, err := config.LoadForCLI(*path, *envPath)
