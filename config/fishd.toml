@@ -235,3 +235,15 @@ min_hits = 2
 recent_texts = 15
 recent_replies = 10
 rebuild_interval_seconds = 3600
+
+# 私信通道（P1）：默认关——私信风控极严，护栏优先。
+# 采集：轮询私信会话 → 按 msg_id 去重 → 写事件（channel=dm、session=对方 mid）
+[collector.dm]
+enabled = false
+interval_seconds = 120   # 10-3600
+
+# 发送护栏：只发主人/白名单、一天最多 1 个收信人、10 分钟限频、必须互关（attribute==6）
+[sender.dm]
+enabled = false
+# allowed_mids 至少含主人 mid；空列表且 enabled=true 会被配置校验拒绝。
+allowed_mids = ["313591854"]

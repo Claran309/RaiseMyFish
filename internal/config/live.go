@@ -10,6 +10,7 @@ import (
 type Collectors struct {
 	Live    LiveCollector    `toml:"live"`
 	Comment CommentCollector `toml:"comment"`
+	DM      DMCollector      `toml:"dm"`
 }
 
 // LiveCollector凭据只从环境解析，禁止TOML/JSON回显。

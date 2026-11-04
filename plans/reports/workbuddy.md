@@ -2439,3 +2439,80 @@ react_trigger = "always"   # 默认；keyword 回退旧行为
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未执行 git 命令、未提交、未 push。交 DSH 验收。
+
+---
+
+## 推送积压提交（2026-11-04）
+
+- `git push origin master` 成功：`b2625aa..8a627ad`，退出码 0，凭据无报错。
+- 推送后 `git status -sb` = `## master...origin/master`（无 ahead/behind）。
+- `git ls-remote origin master` = **`8a627ad42c23c7ca58d452dac56d39bea14a903c`**。
+- 23 个提交一次性推送，未改远端配置、未强推。
+
+---
+
+## 私信通道 P1（2026-11-04，Asia/Shanghai）
+
+按 `plans/p1-dm-channel.md`。未改 contracts、未碰调度/Brain 语义、测试全 mock、未执行 git。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `internal/collector/dm/dm.go` | 新增（采集） | `AA7A18AEF9CCEDF5` | 8302 |
+| `internal/collector/dm/dm_test.go` | 新增（6 用例） | `5289C4FA51184953` | 4684 |
+| `internal/sender/dm/dm.go` | 新增（发送+护栏） | `895D9D4BE96DE0A8` | 7317 |
+| `internal/sender/dm/dm_test.go` | 新增（8 用例） | `DF48BC72F54D2211` | 6099 |
+| `internal/channel/dm/dm.go` | 新增（通道适配） | `F69C3D8B03D62D19` | 2324 |
+| `internal/channel/dm/dm_test.go` | 新增（3 用例） | `B140039E0AE78CBB` | 3976 |
+| `internal/config/dm.go` | 新增（`[collector.dm]`/`[sender.dm]`） | `CBA08C2800050BDE` | 1364 |
+| `internal/config/live.go` | 修改（Collectors 加 DM） | `A06AA37FD66781E2` | 2948 |
+| `internal/config/sender.go` | 修改（Sender 加 DM） | `C8894DDD65F1BB6F` | 2944 |
+| `internal/config/config.go` | 修改（默认值+校验） | `1AEAAC2A52C04166` | 9850 |
+| `config/fishd.toml` | 修改（两个配置段） | `63B1ADB25FDC965C` | 10242 |
+
+### 采集
+
+- `Fetcher` 接口 + `ParseSessions`（兼容 uid/msg_key 的字符串与数字两种 JSON 形态；跳过自己发的消息）。
+- 去重：`msg_id` 有界集合（上限 8192，超限重建），事件 ID 固定 `dm:{peer}:{msg_id}` → 天然幂等。
+- 事件：`channel=dm`、`session=对端 mid`、`from_id/from_name` 带上；空 id/peer/text 直接丢弃。
+- 鉴权错误（code≠0）→ `errAuth` 哨兵 → **Start 上报并停止采集**；其余错误等下一轮。
+- 轮询间隔默认 120s，校验区间 10s–1h。
+
+### 发送护栏（按顺序拦）
+
+| 顺序 | 护栏 | 行为 |
+|---|---|---|
+| 1 | 白名单 | 不在 `allowed_mids` → input 拒绝 |
+| 2 | 当日收信人锁定 | 当天换人 → 拒绝（隔天自动重置） |
+| 3 | 限频 | 同人 10 分钟内第二条 → 拒绝 |
+| 4 | 互关检查 | `relation.attribute != 6` → 拒绝 |
+| 5 | 正文 | 空/超 200 字 → 拒绝 |
+| — | 失败分类 | auth / retry / uncertain（不重试；`Resume` 明确不支持） |
+
+### 测试
+
+采集 6：会话解析（字符串/数字 uid、跳过自己、空正文）、鉴权 code 分类、msg_id 去重、空字段过滤、参数校验、鉴权停采集。
+发送 8：白名单拦截、当日收信人锁定（换人拒绝/隔天恢复）、10 分钟限频、非互关拒发、正文校验、错误分类三态、白名单校验、Resume 不重投。
+通道 3：Collect 转发到总线 + stop 幂等、Send 透传/未装配报错、构造期校验。
+
+| 命令 | 结果 |
+|---|---|
+| `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **37 个包全绿** |
+| `golangci-lint`（三个新包 + config） | **0 issues** |
+
+### 踩坑记录
+
+- `Sender.Validate()` 里加 DM 校验时插在 `if s == nil` **之前** → `cfg.Sender` 为 nil 的路径直接 nil 解引用 panic
+  （`TestCommentDefaultsOff` / `TestRunGiftDryRunOutput` 抓到）。已把校验移到 nil 守卫之后。
+
+### 未做项
+
+| 项 | 说明 |
+|---|---|
+| HTTP 采集/发送实现 | 本批只做 `Fetcher` / `Transporter` 接口与护栏；未写 `/msg/sessions`、`/msg/send` 的真实 HTTP 客户端（下一批接，复用 bili 包的 cookie/csrf） |
+| cmd 装配 | 通道未注册进 `cmd/fishd` 的 Registry/sendRouter；配置项已就绪（默认 false） |
+| 收信人锁定的持久化 | 当日锁定是进程内状态，重启后重置（与「一天 1 人」严格语义有差距，需要落库才彻底） |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未提交、未 push（除任务 1 的推送）。

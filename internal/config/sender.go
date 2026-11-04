@@ -33,6 +33,7 @@ type Sender struct {
 	SelfID        string         `toml:"self_id"`
 	HTTPTimeoutMS int            `toml:"http_timeout_ms"`
 	Comment       *CommentSender `toml:"comment"`
+	DM            DMSender       `toml:"dm"`
 }
 
 // DefaultSender 返回一份可直接使用的默认发送配置。
@@ -64,6 +65,9 @@ func (s *Sender) ApplyDefaults() {
 func (s *Sender) Validate() error {
 	if s == nil {
 		return nil
+	}
+	if err := s.DM.Validate(); err != nil {
+		return err
 	}
 	if strings.TrimSpace(s.ScriptPath) == "" {
 		return errors.New("发送通道 script_path 不能为空")

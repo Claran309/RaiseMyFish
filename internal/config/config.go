@@ -105,7 +105,7 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 		Memory:    defaultMemory(),
 		Web:       defaultWeb(),
 		// 评论采集默认关闭；interval 先补默认值，开启后省略也能工作。
-		Collector: Collectors{Live: defaultLiveCollector(), Comment: defaultCommentCollector()},
+		Collector: Collectors{Live: defaultLiveCollector(), Comment: defaultCommentCollector(), DM: defaultDMCollector()},
 	}
 	if path != "" {
 		data, err := os.ReadFile(path)
@@ -226,6 +226,9 @@ func (c Config) validate(strictLive bool) error {
 		return err
 	}
 	if err := c.Scheduler.Validate(); err != nil {
+		return err
+	}
+	if err := c.Collector.DM.Validate(); err != nil {
 		return err
 	}
 	if err := c.Sender.Validate(); err != nil {
