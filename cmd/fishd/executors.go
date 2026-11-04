@@ -38,7 +38,7 @@ func buildToolExecutors(cfg config.Config, log *zap.Logger) toolExecutors {
 	var execs toolExecutors
 	// 搜索不依赖B站凭据：先装配，保证无 cookie 时也能联网查证。
 	if cfg.Web.SearchURL != "" {
-		searcher, err := webtools.NewHTTP(webtools.Options{URL: cfg.Web.SearchURL, Key: cfg.Web.SearchKey})
+		searcher, err := webtools.NewHTTP(webtools.Options{URL: cfg.Web.SearchURL, Key: cfg.Web.ResolveKey()})
 		if err != nil {
 			log.Warn("搜索执行器未装配",
 				zap.String("action", "tool_executor_setup"),

@@ -109,11 +109,12 @@ func TestFileQuotaConcurrentReservations(t *testing.T) {
 			defer wg.Done()
 			err := quota.Reserve("2026-11-02", 1, limit)
 			var typed *Error
-			if err == nil {
+			switch {
+			case err == nil:
 				atomic.AddInt32(&success, 1)
-			} else if errors.As(err, &typed) && typed.Message == "送礼超过每日限额" {
+			case errors.As(err, &typed) && typed.Message == "送礼超过每日限额":
 				atomic.AddInt32(&limited, 1)
-			} else {
+			default:
 				t.Errorf("意外错误：%v", err)
 			}
 		}()

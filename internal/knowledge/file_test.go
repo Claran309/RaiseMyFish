@@ -43,7 +43,7 @@ func TestLoadFilesAndRawRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.entries) != 1 || !strings.Contains(r.entries[0].item.Text, "第一行\n  第二行") || strings.Contains(r.entries[0].item.Text, "维护说明") {
+	if len(r.current().entries) != 1 || !strings.Contains(r.current().entries[0].item.Text, "第一行\n  第二行") || strings.Contains(r.current().entries[0].item.Text, "维护说明") {
 		t.Fatal("正文未保留或混入维护说明")
 	}
 	var input strings.Builder
@@ -56,7 +56,7 @@ func TestLoadFilesAndRawRevision(t *testing.T) {
 		fmt.Fprintf(&input, "%s\t%x\n", name, sha256.Sum256(data))
 	}
 	want := fmt.Sprintf("%x", sha256.Sum256([]byte(input.String())))
-	if r.revision != want {
+	if r.current().revision != want {
 		t.Fatal("Revision不符合原始字节算法")
 	}
 	other := knowledgeDir(t)
@@ -65,7 +65,7 @@ func TestLoadFilesAndRawRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r2.revision != want {
+	if r2.current().revision != want {
 		t.Fatal("绝对目录污染版本")
 	}
 	writeKnowledge(t, dir, "memes.md", "\ufeff"+strings.ReplaceAll(sampleFile, "\n", "\r\n"))
@@ -73,7 +73,7 @@ func TestLoadFilesAndRawRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r3.revision == want || r3.entries[0].item.Text != r.entries[0].item.Text {
+	if r3.current().revision == want || r3.current().entries[0].item.Text != r.current().entries[0].item.Text {
 		t.Fatal("原始换行变化未改变版本或改变正文")
 	}
 }
@@ -142,7 +142,7 @@ func TestLoadRequiredAndBatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.entries) != 2 {
+	if len(r.current().entries) != 2 {
 		t.Fatal("没有按白名单加载批次")
 	}
 	if _, err := NewFileReader(nil, dir); err == nil { //nolint:staticcheck // 专门验证非法nil输入的错误路径。

@@ -84,6 +84,7 @@ func helperCommand(mode string, spawns *int32) func(context.Context, string, str
 		if spawns != nil {
 			atomic.AddInt32(spawns, 1)
 		}
+		//nolint:gosec // 测试固定用当前测试二进制，参数里没有外部输入
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestGiftHelperProcess")
 		cmd.Env = append(os.Environ(),
 			"GO_WANT_GIFT_HELPER=1",
@@ -353,6 +354,7 @@ func TestSendInputValidationDoesNotSpawn(t *testing.T) {
 		}
 	}
 	var typed *Error
+	//nolint:staticcheck // 故意传 nil 上下文，验证拒绝路径
 	if _, err := s.Send(nil, helperRoom, helperGift, 1); !errors.As(err, &typed) {
 		t.Fatal("nil上下文未被拒绝")
 	}
@@ -441,6 +443,7 @@ func TestStartFailureReleasesReservation(t *testing.T) {
 	o := realOptions()
 	s := newSender(t, o)
 	s.command = func(ctx context.Context, room, giftID string, num int) *exec.Cmd {
+		//nolint:gosec // 测试用不可执行的临时路径模拟启动失败
 		return exec.CommandContext(ctx, filepath.Join(t.TempDir(), "definitely-missing-node"))
 	}
 	if _, err := s.Send(context.Background(), helperRoom, helperGift, 1); err == nil {

@@ -119,13 +119,14 @@ func (r *FileReader) Recall(ctx context.Context, query Query) (Context, error) {
 	if len(query.Text) > 4<<20 {
 		return Context{}, errors.New("知识查询超过字节上限")
 	}
-	result := Context{Scope: query.Scope, Revision: r.revision}
+	st := r.current()
+	result := Context{Scope: query.Scope, Revision: st.revision}
 	text := normalize(query.Text)
 	if !hasWord(text) {
 		return result, nil
 	}
 	hits := make([]hit, 0, 3)
-	for _, e := range r.entries {
+	for _, e := range st.entries {
 		if err := checkContext(ctx); err != nil {
 			return Context{}, err
 		}

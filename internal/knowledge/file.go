@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"RaiseMyFish/internal/event"
@@ -31,10 +32,40 @@ type entry struct {
 	tags     []string
 }
 
-// FileReader 是构造时完整校验的不可变快照，无全局缓存或文件监听。
-type FileReader struct {
+// snapshotState 是某一时刻的不可变快照；Reload 只做指针替换，读到旧指针的请求不受影响。
+type snapshotState struct {
 	revision string
 	entries  []entry
+}
+
+// FileReader 持有原子快照：读路径无锁，Reload 原子替换。
+type FileReader struct {
+	dir   string
+	state atomic.Pointer[snapshotState]
+}
+
+// Reload 重新扫描目录并原子替换快照；失败时保留旧快照并把错误返回给调用方。
+func (r *FileReader) Reload(ctx context.Context) error {
+	if err := checkContext(ctx); err != nil {
+		return err
+	}
+	if r == nil || r.dir == "" {
+		return errors.New("知识目录未初始化")
+	}
+	fresh, err := NewFileReader(ctx, r.dir)
+	if err != nil {
+		return err
+	}
+	r.state.Store(fresh.state.Load())
+	return nil
+}
+
+// current 返回当前快照；未初始化时返回空快照（不 panic）。
+func (r *FileReader) current() *snapshotState {
+	if st := r.state.Load(); st != nil {
+		return st
+	}
+	return &snapshotState{}
 }
 
 type diskScope struct {
@@ -132,7 +163,7 @@ func NewFileReader(ctx context.Context, dir string) (*FileReader, error) {
 		return nil, fmt.Errorf("检查知识批次目录：%w", statErr)
 	}
 	sort.Strings(names)
-	r := &FileReader{}
+	st := &snapshotState{}
 	seen := make(map[string]bool)
 	version := sha256.New()
 	_, _ = io.WriteString(version, "fish-knowledge/v1\n")
@@ -163,8 +194,8 @@ func NewFileReader(ctx context.Context, dir string) (*FileReader, error) {
 				return nil, errors.New("知识库条目标识重复")
 			}
 			seen[item.item.ID] = true
-			r.entries = append(r.entries, item)
-			if len(r.entries) > maxEntries {
+			st.entries = append(st.entries, item)
+			if len(st.entries) > maxEntries {
 				return nil, errors.New("知识库超过条目上限")
 			}
 		}
@@ -172,7 +203,9 @@ func NewFileReader(ctx context.Context, dir string) (*FileReader, error) {
 	if err := checkContext(ctx); err != nil {
 		return nil, err
 	}
-	r.revision = fmt.Sprintf("%x", version.Sum(nil))
+	st.revision = fmt.Sprintf("%x", version.Sum(nil))
+	r := &FileReader{dir: root}
+	r.state.Store(st)
 	return r, nil
 }
 

@@ -13,5 +13,6 @@ func (r *FileReader) SnapshotInfo() (SnapshotInfo, error) {
 	if r == nil {
 		return SnapshotInfo{}, errors.New("知识Reader不能为空")
 	}
-	return SnapshotInfo{Revision: r.revision, Entries: len(r.entries)}, nil
+	st := r.current()
+	return SnapshotInfo{Revision: st.revision, Entries: len(st.entries)}, nil
 }

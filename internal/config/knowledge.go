@@ -14,10 +14,14 @@ type Knowledge struct {
 	MemeLearn bool `toml:"meme_learn"`
 	// MemeLearnMaxPerDay 是每个自然日（UTC）最多学习的条数，持久化在 learned.md 的 ID 前缀里。
 	MemeLearnMaxPerDay int `toml:"meme_learn_max_per_day"`
+	// HotReload 开启目录轮询热重载（梗白学习写入后不必重启）。
+	HotReload bool `toml:"hot_reload"`
+	// ReloadIntervalSeconds 是轮询间隔（默认 30s）。
+	ReloadIntervalSeconds int `toml:"reload_interval_seconds"`
 }
 
 func defaultKnowledge() Knowledge {
-	return Knowledge{Dir: "personas/dafeiyu/knowledge", BudgetPercent: 10, MemeLearnMaxPerDay: 10}
+	return Knowledge{Dir: "personas/dafeiyu/knowledge", BudgetPercent: 10, MemeLearnMaxPerDay: 10, HotReload: true, ReloadIntervalSeconds: 30}
 }
 
 // Validate 不访问文件，目录检查由显式启用后的装配执行。

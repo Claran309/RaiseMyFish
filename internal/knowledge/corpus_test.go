@@ -11,10 +11,10 @@ func TestFirstBatchLoadsAndRecallsEveryTitle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.entries) < 500 {
+	if len(r.current().entries) < 500 {
 		t.Fatal("已审核首批500条缺失")
 	}
-	for _, e := range r.entries {
+	for _, e := range r.current().entries {
 		got := recallIDs(t, r, publicScope(), e.title)
 		found := false
 		for _, id := range got {

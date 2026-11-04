@@ -548,10 +548,10 @@ func TestShouldUseReActAlways(t *testing.T) {
 	}
 
 	// 没有任何词表关键词，但只要有画面就该查
-	if !runner.shouldUseReAct("画面里一个人在喝水") {
+	if !runner.shouldUseReAct("画面里一个人坐在桌边安静地喝茶") {
 		t.Error("always 模式：有画面描述应走 ReAct（不依赖关键词）")
 	}
-	if !runner.shouldUseReAct("画面里的人在讲段子") {
+	if !runner.shouldUseReAct("画面里的人正在讲一个挺长的段子") {
 		t.Error("always 模式：描述不含「梗」也应走 ReAct")
 	}
 	// 空描述只能单步
@@ -621,5 +621,33 @@ func TestNewRejectsBadTrigger(t *testing.T) {
 		SendGap: 30 * time.Second, RoomID: "30308220", ReactTrigger: "sometimes",
 	}); err == nil {
 		t.Error("非法 react_trigger 应报错")
+	}
+}
+
+// TestVisualTooShortSkipsReact 描述 <10 字直接单步（省钱门槛）。
+func TestVisualTooShortSkipsReact(t *testing.T) {
+	f := newFixture(t)
+	llm := &stubLLM{reply: `{"thought":"t","action":"final","final":"好"}`}
+	factory, factoryCalls := reactFixture(t, llm)
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, factory, f.snd, Options{
+		SendGap: 30 * time.Second, RoomID: "30308220",
+		Now: func() time.Time { return *f.clock },
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	if runner.shouldUseReAct("画面里有人在喝水") {
+		t.Error("8 字描述应直接单步")
+	}
+	if runner.shouldUseReAct("在喝水") {
+		t.Error("3 字描述应直接单步")
+	}
+	// 10 字及以上才走 ReAct
+	if !runner.shouldUseReAct("画面里有人安静坐在桌边喝水") {
+		t.Error("13 字描述应走 ReAct")
+	}
+	if *factoryCalls != 0 {
+		t.Errorf("shouldUseReAct 本身不应触发生成：%d", *factoryCalls)
 	}
 }

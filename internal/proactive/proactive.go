@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/event"
@@ -102,10 +103,12 @@ type Runner struct {
 	sender   Sender
 	room     string
 	trigger  string
-	limiter  *gapLimiter
-	recent   *recent
-	log      *zap.Logger
-	now      func() time.Time
+	// minVisualRunes 是 always 模式下的描述长度门槛（默认 10）。
+	minVisualRunes int
+	limiter        *gapLimiter
+	recent         *recent
+	log            *zap.Logger
+	now            func() time.Time
 }
 
 // New 校验依赖与参数；构造期不截帧、不调用模型、不发送。
@@ -146,19 +149,20 @@ func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack 
 		now = time.Now
 	}
 	return &Runner{
-		snapshot: snapshot,
-		vision:   vision,
-		brain:    engine,
-		pack:     pack,
-		mem:      mem,
-		react:    react,
-		sender:   snd,
-		room:     opts.RoomID,
-		trigger:  trigger,
-		limiter:  newGapLimiter(gap),
-		recent:   newRecent(recentLimit),
-		log:      log,
-		now:      now,
+		snapshot:       snapshot,
+		vision:         vision,
+		brain:          engine,
+		pack:           pack,
+		mem:            mem,
+		react:          react,
+		sender:         snd,
+		room:           opts.RoomID,
+		trigger:        trigger,
+		minVisualRunes: 10,
+		limiter:        newGapLimiter(gap),
+		recent:         newRecent(recentLimit),
+		log:            log,
+		now:            now,
 	}, nil
 }
 
@@ -287,9 +291,14 @@ func (r *Runner) shouldUseReAct(visual string) bool {
 	if r.react == nil {
 		return false
 	}
-	// always：有画面描述就查（不依赖关键词）；空描述只能单步
+	// always：有画面描述就查（不依赖关键词）；
+	// 但太短的描述（<10 字）信息量不足，直接单步省钱——这是成本门槛，不是语义判断。
 	if r.trigger == TriggerAlways {
-		return strings.TrimSpace(visual) != ""
+		visual = strings.TrimSpace(visual)
+		if visual == "" || utf8.RuneCountInString(visual) < r.minVisualRunes {
+			return false
+		}
+		return true
 	}
 	// keyword：旧行为，靠静态词表
 	decision := reasoning.Decide(SyntheticEventText + " " + visual)

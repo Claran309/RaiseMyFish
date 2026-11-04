@@ -2682,3 +2682,76 @@ soul_path = "personas/dafeiyu/knowledge/soul-memories.md"
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。
+
+---
+
+## 知识热重载 + 小修包（2026-11-04，Asia/Shanghai）
+
+两块一起交付：知识热重载（不必重启就能学到新梗）+ leftovers 三条小修。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `internal/knowledge/file.go` | 修改（原子快照 + Reload） | `F203FEEAF1770B96` | 12613 |
+| `internal/knowledge/recall.go` | 修改（读快照指针） | `6C90DCC72421FE96` | 4402 |
+| `internal/knowledge/snapshot.go` | 修改（读快照指针） | `27943B0D7F45E48D` | 518 |
+| `internal/knowledge/reload_test.go` | 新增（3 用例） | `531EA4A4F4A6BBF0` | 3319 |
+| `cmd/fishd/knowledge_reload.go` | 新增（mtime 轮询） | `3212037F45642975` | 2583 |
+| `cmd/fishd/main.go` | 修改（启动 goroutine） | `BB153B676A589199` | 15809 |
+| `internal/config/knowledge.go` | 修改（hot_reload 两项） | `DCDC82B63D315F76` | 1626 |
+| `internal/config/web.go` | 修改（search_key_env） | `EA94332E63A0E884` | 1391 |
+| `internal/proactive/proactive.go` | 修改（<10 字门槛） | `90D76DDD7E9C54B8` | 12502 |
+| `internal/gift/gift_test.go` / `quota_test.go` | 修改（lint 清零） | `7ACE3FE340BDF556` / `63C34AAC2232762E` | 16960 / 7712 |
+| `config/fishd.toml` | 修改（hot_reload / search_key_env） | `1FC60D3DBF76A6B9` | 10559 |
+
+### 一、知识热重载
+
+- `FileReader` 从「构造时不可变字段」改成 `atomic.Pointer[snapshotState]`：
+  读路径 `current()` 取指针（无锁），`Reload(ctx)` 重建后**只做指针替换**——正在读旧快照的请求不受影响。
+- 重建走完整的 `NewFileReader`（校验/上限/去重全都照旧），失败**保留旧快照**并把错误返回。
+- `cmd/fishd` 新增 `startKnowledgeHotReload`：每 `reload_interval_seconds` 扫目录求「最大 mtime + 文件数」指纹，
+  变了才 Reload；失败只 `Warn` 不阻塞；`ctx.Done()` 退出。
+- 配置：`[knowledge] hot_reload = true`、`reload_interval_seconds = 30`（校验 5–600）。
+
+### 二、小修包
+
+| # | 项 | 做法 |
+|---|---|---|
+| 15 | always 触发门槛 | `minVisualRunes = 10`：描述 <10 字直接单步，不调 ReAct（省钱） |
+| 12 | search_key env | `config.Web.SearchKeyEnv` + `ResolveKey()`：**环境变量优先**，字面 `search_key` 保留兼容 |
+| 20 | gift lint | 4 条清零：`quota_test` if-else→switch；`gift_test` 两处 `//nolint:gosec`、一处 `//nolint:staticcheck` |
+
+顺带把 `cmd/fishd` 的 2 条**既有** lint 也修了（`main_test.go` errcheck、`memory_test.go` De Morgan）。
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestReloadPicksUpNewMeme` | 新增 `memes/learned.md` → Reload → 条目数 1（新梗进快照） |
+| `TestReloadFailureKeepsOldSnapshot` | 写坏 YAML → Reload 报错 → 旧快照仍 1 条且可召回 |
+| `TestReloadConcurrentWithRecall` | 4 读 + 5 次 Reload 并发（配 `-race`） |
+| `TestVisualTooShortSkipsReact` | 8 字/3 字单步、13 字走 ReAct |
+
+| 命令 | 结果 |
+|---|---|
+| `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **37 个包全绿** |
+| `golangci-lint`（knowledge/config/proactive/gift/cmd.fishd） | **0 issues**（含修掉 cmd 的 2 条旧账） |
+
+### 踩坑记录
+
+- `FileReader` 测试直接读 `r.entries`/`r.revision`，改成原子快照后要改 `r.current().entries`；
+  注意 `SnapshotInfo.Entries` 是 int，`Context.Items` 才是列表——批量替换时混过一次。
+- 并发 Reload 测试里 `memes.md` 与 `memes/learned.md` 用了同一个 `id` → 加载期报「条目标识重复」；
+  测试数据必须给不同 id。
+
+### 未做项
+
+| 项 | 说明 |
+|---|---|
+| fsnotify | 仍用轮询（30s 粒度），不引新依赖 |
+| 指纹只看 mtime+文件数 | 同一秒内改内容且大小不变的情况理论上漏检（实际写入是新文件/改长度，风险很低） |
+| `soul-memories.md` 不在热重载范围 | 它是每轮 `LoadSoul` 直接读文件，天然实时 |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。

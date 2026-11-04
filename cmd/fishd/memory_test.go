@@ -28,7 +28,7 @@ type memoryTestSource struct {
 func (s *memoryTestSource) ListDoneAfter(_ context.Context, after extractworker.Cursor, limit int) ([]event.Event, error) {
 	var out []event.Event
 	for _, ev := range s.events {
-		if !after.IsZero() && !ev.At.After(after.At) && !(ev.At.Equal(after.At) && ev.ID > after.ID) {
+		if !after.IsZero() && (ev.At.Before(after.At) || (ev.At.Equal(after.At) && ev.ID <= after.ID)) {
 			continue
 		}
 		out = append(out, ev)

@@ -60,7 +60,7 @@ func TestServePublishesPresenceSummary(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			cancel()
-			<-done
+			<-done //nolint:errcheck // 只为等 goroutine 退出，不关心它的返回值
 			t.Fatalf("状态文件未写入 presence：%v / %+v", err, state)
 		}
 		time.Sleep(10 * time.Millisecond)

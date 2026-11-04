@@ -114,6 +114,8 @@ meme_learn_max_per_day = 10
 [web]
 search_url = ""
 search_key = ""
+# 推荐用环境变量（优先于 search_key 字面值）：search_key_env = "FISH_SEARCH_KEY"
+search_key_env = ""
 
 # ReAct 思考链（C 档）：两段式判断为「要查事实」时才走多步，
 # 简单弹幕仍单步生成（延迟维持 1 秒级）。
