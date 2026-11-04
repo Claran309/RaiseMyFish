@@ -261,6 +261,56 @@ func validateMemoryRecordQuery(ctx context.Context, limit int) error {
 //
 // 缺少 channel/session 的行按契约「未观测的事实省略」处理，直接不返回；
 // 返回前用 memory.SharedState.Validate 再核一遍范围与字段。
+// SoulCandidates 选「够格进灵魂记忆」的记录：fact/preference 且 importance 达标。
+//
+// 只取有效、未归档的记录；排序按重要度与新鲜度，供上层去重后截断。
+func (r *MemoryRepo) SoulCandidates(ctx context.Context, minImportance float64, limit int) ([]store.MemoryRecord, error) {
+	if ctx == nil || minImportance <= 0 || minImportance > 1 || limit < 1 || limit > 200 {
+		return nil, store.ErrInvalid
+	}
+	var rows []struct {
+		ID         string
+		Source     string
+		Kind       string
+		Title      string
+		Summary    string
+		Importance float64
+		Confidence float64
+		Private    bool
+		Channel    event.Channel
+		Session    string
+		FromID     string
+		FromName   string
+		ValidFrom  time.Time
+		CreatedAt  time.Time
+		IDs        json.RawMessage
+	}
+	err := r.db.WithContext(ctx).Table("memory_records").
+		Where("kind IN ? AND valid_to IS NULL AND NOT archived AND importance >= ?", []string{"fact", "preference"}, minImportance).
+		Select("id, source, kind, title, summary, importance, confidence, private, COALESCE(channel,'') AS channel, COALESCE(session,'') AS session, COALESCE(from_id,'') AS from_id, COALESCE(from_name,'') AS from_name, valid_from, created_at, to_json(event_ids) AS ids").
+		Order("importance DESC, valid_from DESC, id ASC").Limit(limit).Find(&rows).Error
+	if err != nil {
+		return nil, &safeError{"读取灵魂记忆候选失败", err}
+	}
+	out := make([]store.MemoryRecord, 0, len(rows))
+	for _, row := range rows {
+		var ids []string
+		if len(row.IDs) > 0 {
+			_ = json.Unmarshal(row.IDs, &ids)
+		}
+		out = append(out, store.MemoryRecord{
+			Record: memory.Record{
+				ID: row.ID, Channel: row.Channel, Session: row.Session, Summary: row.Summary,
+				Importance: row.Importance, Confidence: row.Confidence, Private: row.Private,
+				EventIDs: ids, ValidFrom: row.ValidFrom,
+			},
+			Source: row.Source, Kind: row.Kind, Title: row.Title,
+			FromID: row.FromID, FromName: row.FromName, CreatedAt: row.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
 // FactsByViewer 按观众 uid 查事实（认人用），新的在前。
 func (r *MemoryRepo) FactsByViewer(ctx context.Context, fromID string, limit int) ([]store.MemoryRecord, error) {
 	if ctx == nil || strings.TrimSpace(fromID) == "" || limit < 1 || limit > 50 {

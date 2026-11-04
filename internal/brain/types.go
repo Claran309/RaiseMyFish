@@ -46,6 +46,8 @@ type ContextInput struct {
 	Visual string
 	// Viewer 是对方档案片段（认人用）；空则不出现 <viewer> 段（陌生人）。
 	Viewer string
+	// Soul 是长期设定（灵魂记忆），每行一条；空则不出现 <longterm> 段。
+	Soul []string
 }
 
 // Reply 不包含原始prompt或模型凭据。

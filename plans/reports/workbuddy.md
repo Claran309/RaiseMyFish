@@ -2584,3 +2584,101 @@ react_trigger = "always"   # 默认；keyword 回退旧行为
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。
+
+---
+
+## P2 记忆正式化（灵魂记忆，2026-11-04，Asia/Shanghai）
+
+把「设定级」长期记忆落成文件并注入 prompt。未改 contracts、未碰调度/发送、未执行 git。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `personas/dafeiyu/knowledge/soul-memories.md` | 新增（K0 YAML，3 条初始设定） | `919663FFAF8296EB` | 854 |
+| `internal/memory/soul.go` | 新增（读写/渲染/去重） | `54881167DBFC93AE` | 5225 |
+| `internal/memory/soul_test.go` | 新增（6 用例） | `A600854C8E416613` | 3549 |
+| `internal/memory/extractworker/soul.go` | 新增（重建子任务） | `63805260A511F912` | 2629 |
+| `internal/memory/extractworker/soul_test.go` | 新增（6 用例） | `098D93CEA1B51F16` | 5480 |
+| `internal/memory/extractworker/worker.go` | 修改（挂子任务+节流） | `DB6A67DAE1C58882` | 16430 |
+| `internal/brain/types.go` | 修改（`Soul []string`） | `4EB27D6CF7BF68A3` | 2968 |
+| `internal/brain/context.go` | 修改（`<longterm>` 注入） | `9F07A00310FB41ED` | 14471 |
+| `internal/brain/knowledge.go` | 修改（传参） | `9A17C74250AE7A48` | 3778 |
+| `internal/database/memories.go` | 修改（`SoulCandidates`） | `6B1E154C3F3F015B` | 16977 |
+| `internal/config/memory.go` | 修改（soul 三项） | `3E4ED0CCEEBF29B3` | 2060 |
+| `cmd/fishd/generate.go` | 修改（每轮注入） | `EE4309F2F585A1D7` | 14921 |
+| `cmd/fishd/serve.go` | 修改（传 soulPath） | `2F0F081307A32A9A` | 16138 |
+| `config/fishd.toml` | 修改（soul 配置） | `F34A532E00972927` | 10442 |
+
+### 文件格式（K0 YAML）
+
+```yaml
+schema: soul-memories/v1
+entries:
+  - title: 主人自称大肥鱼
+    summary: 主人喜欢被叫鱼哥，讨厌被叫老板
+    importance: 0.95
+    valid_from: 2026-11-01T00:00:00Z
+```
+
+### 注入
+
+- `ContextInput.Soul []string` → system 段的 `<longterm>` 段（在 viewer 之后、event 之前）。
+- `RenderSoul` 渲染 ≤500 字；空输入不出现该段；禁 NUL/尖括号，总长校验 500。
+- 超预算丢弃顺序：visual → viewer → **soul 最后丢**（人设级信息优先级最高）；裁剪到 ≤120 字/条。
+- `generate.go` 每轮读文件（<2KB），读失败就不注入，不阻塞回复。
+
+### 重建子任务
+
+- `database.MemoryRepo.SoulCandidates(ctx, minImportance, limit)`：`kind IN (fact,preference) AND valid_to IS NULL AND NOT archived AND importance >= ?`。
+- `extractworker` 新增 `rebuildSoul`：**每小时节流**（独立 `lastSoul`）+ 去重（同 title 保留高重要度）+ 条数上限（默认 20）+ **原子替换**（临时文件 + rename）。
+- 失败记 `SoulSkipped=failed` 但仍记节流时间，避免每轮打库。
+
+### 配置
+
+```toml
+[memory]
+soul_enabled = true
+soul_max_entries = 20
+soul_path = "personas/dafeiyu/knowledge/soul-memories.md"
+```
+
+校验：开启时条数 1–100、路径非空。
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestRenderSoulTruncatesTo500` | 30 条超长渲染 ≤500 字 |
+| `TestRenderSoulEmpty` / `TestSanitizeSoulDedup` | 空输入返回空；同标题保留高重要度 |
+| `TestSoulWriteAndLoad` / `MissingFile` / `BadSchema` | 写入读回一致；缺文件返回空；schema 不符报错 |
+| `TestSoulRebuildSelection` | ≥0.8 入选写出 2 条 |
+| `TestSoulRebuildDedup` | 同标题 2 条 → 1 条且是高重要度版本 |
+| `TestSoulRebuildThrottled` | 半小时节流、满一小时重跑 |
+| `TestSoulRebuildUpdatesOnFactChange` | 大二→大三后文件内容跟着变 |
+| `TestSoulRebuildFailureKeepsThrottle` / `NilSource` | 失败也节流；未装配跳过 |
+| `TestSoulInjectedAsLongterm` / `TestSoulEmptyNoSection` | 注入 `<longterm>`；空设定无该段 |
+
+| 命令 | 结果 |
+|---|---|
+| `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **37 个包全绿** |
+| `go test -tags=integration ./internal/database/` | **ok 48.551s** |
+| `golangci-lint`（memory/brain/database/config） | **0 issues** |
+
+### 踩坑记录
+
+- python heredoc 里 `
+` 会被 shell 吞掉一层，导致 Go 字符串字面量里出现**真实换行**（编译报 "newline in string"）。
+  改用 `chr(92)+'n'` 拼接才稳。同类问题在 ` ` 上也出现过（Soul 校验一度没插进去）。
+- `sanitizeSoul` 是 memory 包内部函数，worker 统计条数时拿不到去重后的结果 → 补 `NormalizeSoul` 导出。
+
+### 未做项
+
+| 项 | 说明 |
+|---|---|
+| 每轮读文件 | 现在是 Generate 每轮 `ReadFile`（<2KB）；高频时可加 mtime 缓存 |
+| 手工编辑入口 | 文件由 worker 覆盖，人手改动会被下次重建冲掉；需要「手写+自动合并」得另做 |
+| `soul_path` 跟随 persona | 现在固定 dafeiyu 路径；多 persona 时应按 pack 派生 |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。

@@ -113,6 +113,7 @@ type generateDeps struct {
 	memory     memory.Reader
 	knowledge  knowledge.Reader
 	viewers    store.ViewerRepo
+	soulPath   string
 	presence   *presence.Table
 	state      func(time.Time) string
 	react      reactFactory
@@ -182,6 +183,13 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 				viewerText = formatViewerProfile(profile)
 			}
 		}
+		// 长期设定：每轮读一次（文件 <2KB），读失败就不注入
+		var soulLines []string
+		if deps.soulPath != "" {
+			if entries, err := memory.LoadSoul(ctx, deps.soulPath); err == nil && len(entries) > 0 {
+				soulLines = strings.Split(memory.RenderSoul(entries), "\n")
+			}
+		}
 		input := brain.ContextInput{
 			Event:     ev,
 			Persona:   deps.pack,
@@ -190,6 +198,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 			Knowledge: knowCtx,
 			State:     stateText,
 			Viewer:    viewerText,
+			Soul:      soulLines,
 		}
 		task := brain.Task{ID: w.Task.ID, EventID: w.Task.EventID, Channel: w.Task.Channel, Session: w.Task.Session}
 

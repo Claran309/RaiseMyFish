@@ -98,6 +98,10 @@ type Options struct {
 	Recent RecentEventsSource
 	// ContextLimit 是喂给提炼器的上下文条数，<=0 用 5。
 	ContextLimit int
+	// Soul 是灵魂记忆重建依赖；nil 表示不跑。
+	Soul SoulSource
+	// SoulOpts 是灵魂记忆参数（路径/条数/门槛/间隔）。
+	SoulOpts SoulOptions
 }
 
 // RecentEventsSource 提供某会话最近的事件（database.EventRepo 满足）。
@@ -129,6 +133,10 @@ type Stats struct {
 	ProfilesRebuilt int
 	// ProfileSkipped 是跳过重建的原因（throttled / idle / none）。
 	ProfileSkipped string
+	// SoulEntries 本轮写入的灵魂条目数（-1 表示跳过）。
+	SoulEntries int
+	// SoulSkipped 是跳过原因（throttled / failed / none）。
+	SoulSkipped string
 }
 
 // Worker 是提炼 worker 本体。
@@ -139,6 +147,8 @@ type Worker struct {
 	opts   Options
 	// 档案重建节流状态（进程内，重启后立刻允许跑一次）
 	lastProfile time.Time
+	// 灵魂记忆重建节流状态
+	lastSoul time.Time
 }
 
 // New 构造 worker，并规范化参数。
@@ -182,6 +192,9 @@ func New(source DoneSource, repo store.MemoryRepo, wm Watermark, opts Options) (
 	}
 	if opts.ContextLimit <= 0 {
 		opts.ContextLimit = 5
+	}
+	if opts.SoulOpts.Interval <= 0 {
+		opts.SoulOpts.Interval = time.Hour
 	}
 	opts.Source = strings.TrimSpace(opts.Source)
 
@@ -264,6 +277,7 @@ func (w *Worker) RunOnce(ctx context.Context) (Stats, error) {
 		return stats, err
 	}
 	w.rebuildProfiles(ctx, &stats)
+	w.rebuildSoul(ctx, &stats)
 	return stats, nil
 }
 

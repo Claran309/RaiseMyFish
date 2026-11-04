@@ -151,3 +151,34 @@ func TestViewerEmptyKeepsPromptClean(t *testing.T) {
 		t.Errorf("空档案不应注入：%s", user)
 	}
 }
+
+// TestSoulInjectedAsLongterm 长期设定注入 <longterm> 段。
+func TestSoulInjectedAsLongterm(t *testing.T) {
+	p := &fakeProvider{}
+	b := makeBrain(t, p, &fakeUsage{}, options())
+
+	task, in := fixture()
+	in.Soul = []string{"- 主人是学生：在读大学", "- 主人爱吃辣"}
+	if _, err := b.Reply(context.Background(), task, in); err != nil {
+		t.Fatalf("Reply 失败：%v", err)
+	}
+	user := p.last().Messages[len(p.last().Messages)-1].Content
+	if !strings.Contains(user, "<longterm>") || !strings.Contains(user, "主人是学生") {
+		t.Fatalf("长期设定未注入：%s", user)
+	}
+}
+
+// TestSoulEmptyNoSection 空设定不出现 longterm 段。
+func TestSoulEmptyNoSection(t *testing.T) {
+	p := &fakeProvider{}
+	b := makeBrain(t, p, &fakeUsage{}, options())
+
+	task, in := fixture()
+	if _, err := b.Reply(context.Background(), task, in); err != nil {
+		t.Fatalf("Reply 失败：%v", err)
+	}
+	user := p.last().Messages[len(p.last().Messages)-1].Content
+	if strings.Contains(user, "<longterm>") {
+		t.Errorf("空设定不应注入：%s", user)
+	}
+}
