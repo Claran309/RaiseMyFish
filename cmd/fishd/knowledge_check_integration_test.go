@@ -66,11 +66,11 @@ func knowledgeCheckTestDSN(t *testing.T) string {
 			t.Fatal("测试DSN格式错误")
 		}
 		q := u.Query()
-		q.Set("search_path", schema)
+		q.Set("search_path", schema+",public")
 		u.RawQuery = q.Encode()
 		return u.String()
 	}
-	return dsn + " search_path=" + schema
+	return dsn + " search_path=" + schema + ",public"
 }
 
 func TestKnowledgeCheckWithRealPostgresNoModelOrUsage(t *testing.T) {

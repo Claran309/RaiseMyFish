@@ -22,7 +22,11 @@ type knowledgeDiagnostic struct {
 }
 
 type knowledgeAssembly struct {
-	Reader     knowledge.Reader
+	Reader knowledge.Reader
+	// Base 始终指向文件快照；热重载与定时增量只操作它，语义包装不改变快照生命周期。
+	Base       *knowledge.FileReader
+	Embedder   knowledge.Embedder
+	Store      knowledge.EmbeddingStore
 	Diagnostic knowledgeDiagnostic
 }
 
@@ -55,6 +59,7 @@ func buildKnowledge(ctx context.Context, cfg config.Knowledge) (knowledgeAssembl
 		return result, &knowledgeSetupError{cause: err}
 	}
 	result.Reader = reader
+	result.Base = reader
 	result.Diagnostic.Assembled = true
 	result.Diagnostic.Revision = info.Revision
 	result.Diagnostic.Entries = info.Entries

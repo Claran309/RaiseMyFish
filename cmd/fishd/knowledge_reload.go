@@ -47,9 +47,8 @@ func scanKnowledgeStamp(dir string) knowledgeStamp {
 // startKnowledgeHotReload 起一个轮询 goroutine；返回 stop 函数（等待退出）。
 //
 // 未开启、reader 为 nil、目录为空时直接返回空 stop（调用方无需判断）。
-func startKnowledgeHotReload(ctx context.Context, rd knowledge.Reader, cfg config.Knowledge, log *zap.Logger) func() {
-	reader, ok := rd.(*knowledge.FileReader)
-	if !ok || reader == nil || !cfg.HotReload || cfg.Dir == "" || log == nil {
+func startKnowledgeHotReload(ctx context.Context, reader *knowledge.FileReader, cfg config.Knowledge, log *zap.Logger) func() {
+	if reader == nil || !cfg.HotReload || cfg.Dir == "" || log == nil {
 		return func() {}
 	}
 	interval := time.Duration(cfg.ReloadIntervalSeconds) * time.Second

@@ -59,11 +59,11 @@ func TestSetupSingletonAndClose(t *testing.T) {
 			t.Fatal("测试DSN格式错误")
 		}
 		q := u.Query()
-		q.Set("search_path", schema)
+		q.Set("search_path", schema+",public")
 		u.RawQuery = q.Encode()
 		cfg.Database.DSN = u.String()
 	} else {
-		cfg.Database.DSN = dsn + " search_path=" + schema
+		cfg.Database.DSN = dsn + " search_path=" + schema + ",public"
 	}
 	one, err := Setup(ctx, cfg)
 	if err != nil {

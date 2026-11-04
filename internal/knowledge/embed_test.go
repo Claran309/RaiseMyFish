@@ -257,7 +257,8 @@ func TestEmbeddingDocumentsExposeFileSourceAndModTime(t *testing.T) {
 		t.Fatalf("读取向量文档失败：%v %d", err, len(documents))
 	}
 	doc := documents[0]
-	if doc.ID != "one" || doc.Source != "memes.md" || doc.Title != "标题一" || !doc.UpdatedAt.Equal(info.ModTime().UTC()) {
+	// PostgreSQL timestamptz 微秒精度：文档时间按同样精度归一化，避免增量误判。
+	if doc.ID != "one" || doc.Source != "memes.md" || doc.Title != "标题一" || !doc.UpdatedAt.Equal(info.ModTime().UTC().Truncate(time.Microsecond)) {
 		t.Fatalf("文档元数据错误：%+v", doc)
 	}
 }

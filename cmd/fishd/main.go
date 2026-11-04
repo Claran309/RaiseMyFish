@@ -110,6 +110,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
+	// 语义召回是增强能力：装配失败只降级为关键词，不影响启动。
+	if err := attachKnowledgeSemantic(cfg, resources.DB, &knowledgeRuntime, logger); err != nil {
+		logger.Warn("知识语义召回装配失败，回落纯关键词", zap.String("action", "knowledge_semantic"), zap.Error(err))
+	}
 	liveCollector, err := buildLive(cfg, logger)
 	if err != nil {
 		return err
@@ -127,6 +131,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	// 记忆提炼是增强能力：初始化失败只记日志并降级，不阻塞采集/消费主链路。
 	stopMemory := startMemoryExtractor(ctx, cfg, resources.DB, logger)
 	defer stopMemory()
+	stopEmbeddingRefresh := startKnowledgeEmbeddingRefresh(ctx, cfg, knowledgeRuntime, logger)
+	defer stopEmbeddingRefresh()
 	stopMemeLearn := startMemeLearn(ctx, cfg, resources.DB, knowledgeRuntime, logger)
 	defer stopMemeLearn()
 	stopHeartbeatLike := startHeartbeatLike(ctx, cfg, logger)
@@ -199,8 +205,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	stopWeb := startWebPanel(ctx, cfg, resources, logger)
 	defer stopWeb()
 
-	// 知识热重载：梗白学习写入 learned.md 后不必重启
-	if stopReload := startKnowledgeHotReload(ctx, knowledgeRuntime.Reader, cfg.Knowledge, logger); stopReload != nil {
+	// 知识热重载：梗白学习写入 learned.md 后不必重启；语义包装不影响底层快照。
+	if stopReload := startKnowledgeHotReload(ctx, knowledgeRuntime.Base, cfg.Knowledge, logger); stopReload != nil {
 		defer stopReload()
 	}
 	registry, err := buildChannelRegistry(liveCollector, commentCollector, dmCollector, snd, timeout, logger)

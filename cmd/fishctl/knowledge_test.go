@@ -81,11 +81,6 @@ func writeCLIKnowledge(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "memes.md"), []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
-	reader, err := knowledge.NewFileReader(context.Background(), dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = reader
 	return dir
 }
 

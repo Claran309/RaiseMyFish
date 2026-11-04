@@ -60,11 +60,11 @@ func TestRuntimeWithRealPostgres(t *testing.T) {
 			t.Fatal("DSN格式错误")
 		}
 		q := u.Query()
-		q.Set("search_path", schema)
+		q.Set("search_path", schema+",public")
 		u.RawQuery = q.Encode()
 		dsn = u.String()
 	} else {
-		dsn += " search_path=" + schema
+		dsn += " search_path=" + schema + ",public"
 	}
 	t.Setenv("FISH_DB_DSN", dsn)
 	dir := t.TempDir()

@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"RaiseMyFish/migrations"
+	"github.com/jackc/pgx/v5"
 	"gorm.io/gorm"
 )
 
@@ -88,6 +89,22 @@ func checkMigrationPrefix(rows []migrationReceipt, steps []migrationStep) error 
 	return nil
 }
 
+// migrationSchema 返回当前schema；账本与表检查都锁定它，避免search_path中其他schema的残留对象干扰。
+func migrationSchema(db *gorm.DB) (string, error) {
+	var schema string
+	if err := db.Raw("SELECT current_schema()").Scan(&schema).Error; err != nil {
+		return "", err
+	}
+	if schema == "" {
+		return "", errors.New("无法确定当前schema")
+	}
+	return schema, nil
+}
+
+func migrationLedger(schema string) string {
+	return pgx.Identifier{schema, "schema_migrations"}.Sanitize()
+}
+
 // Migrate 校验已应用前缀后顺序升级；保留v1原校验值，失败整体回滚。
 func Migrate(ctx context.Context, db *gorm.DB) error {
 	steps, err := migrationSteps()
@@ -98,11 +115,16 @@ func Migrate(ctx context.Context, db *gorm.DB) error {
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(current_database()), hashtext(current_schema() || ':migrate'))").Error; err != nil {
 			return err
 		}
-		if err := tx.Exec("CREATE TABLE IF NOT EXISTS schema_migrations (version bigint PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())").Error; err != nil {
+		schema, err := migrationSchema(tx)
+		if err != nil {
+			return err
+		}
+		ledger := migrationLedger(schema)
+		if err := tx.Exec("CREATE TABLE IF NOT EXISTS " + ledger + " (version bigint PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())").Error; err != nil {
 			return err
 		}
 		var rows []migrationReceipt
-		if err := tx.Raw("SELECT version,checksum FROM schema_migrations ORDER BY version").Scan(&rows).Error; err != nil {
+		if err := tx.Raw("SELECT version,checksum FROM " + ledger + " ORDER BY version").Scan(&rows).Error; err != nil {
 			return err
 		}
 		if err := checkMigrationPrefix(rows, steps); err != nil {
@@ -112,7 +134,7 @@ func Migrate(ctx context.Context, db *gorm.DB) error {
 			if err := tx.Exec(step.Source).Error; err != nil {
 				return err
 			}
-			if err := tx.Exec("INSERT INTO schema_migrations(version,checksum) VALUES (?,?)", step.Version, step.Checksum).Error; err != nil {
+			if err := tx.Exec("INSERT INTO "+ledger+"(version,checksum) VALUES (?,?)", step.Version, step.Checksum).Error; err != nil {
 				return err
 			}
 		}
@@ -130,8 +152,14 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
+	db = db.WithContext(ctx)
+	schema, err := migrationSchema(db)
+	if err != nil {
+		return &safeError{"检查数据库表失败", err}
+	}
+	ledger := migrationLedger(schema)
 	var rows []migrationReceipt
-	if err := db.WithContext(ctx).Raw("SELECT version,checksum FROM schema_migrations ORDER BY version").Scan(&rows).Error; err != nil {
+	if err := db.Raw("SELECT version,checksum FROM " + ledger + " ORDER BY version").Scan(&rows).Error; err != nil {
 		return &safeError{"数据库尚未迁移，请执行 fishd migrate up", err}
 	}
 	if err := checkMigrationPrefix(rows, steps); err != nil {
@@ -141,20 +169,21 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 		return errors.New("数据库需要升级，请执行 fishd migrate up")
 	}
 	var exists bool
-	err = db.WithContext(ctx).Raw(`SELECT bool_and(to_regclass(name) IS NOT NULL) FROM unnest(ARRAY['events','tasks','memory_sources','memory_records','llm_usage','send_log','dlq']) AS name`).Scan(&exists).Error
+	err = db.Raw(`SELECT bool_and(to_regclass(format('%I.%I', ?::text, name)) IS NOT NULL) FROM unnest(ARRAY['events','tasks','memory_sources','memory_records','llm_usage','send_log','dlq']) AS name`, schema).Scan(&exists).Error
 	if err != nil {
 		return &safeError{"检查数据库表失败", err}
 	}
 	if !exists {
 		return errors.New("数据库业务表不完整")
 	}
-	if err := db.WithContext(ctx).Exec("SELECT stage,status_changed_at,lease_owner,lease_version,lease_until FROM events LIMIT 0").Error; err != nil {
+	table := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
+	if err := db.Exec("SELECT stage,status_changed_at,lease_owner,lease_version,lease_until FROM " + table("events") + " LIMIT 0").Error; err != nil {
 		return &safeError{"数据库租约字段不完整", err}
 	}
-	if err := db.WithContext(ctx).Exec("SELECT p.event_id,a.id,l.attempt_id FROM send_plans p JOIN send_attempts a ON a.event_id=p.event_id LEFT JOIN send_log l ON l.attempt_id=a.id LIMIT 0").Error; err != nil {
+	if err := db.Exec("SELECT p.event_id,a.id,l.attempt_id FROM " + table("send_plans") + " p JOIN " + table("send_attempts") + " a ON a.event_id=p.event_id LEFT JOIN " + table("send_log") + " l ON l.attempt_id=a.id LIMIT 0").Error; err != nil {
 		return &safeError{"发送迁移字段不完整", err}
 	}
-	if err := db.WithContext(ctx).Exec("SELECT id,source,title,updated_at,embedding FROM knowledge_embeddings LIMIT 0").Error; err != nil {
+	if err := db.Exec("SELECT id,source,title,updated_at,embedding FROM " + table("knowledge_embeddings") + " LIMIT 0").Error; err != nil {
 		return &safeError{"知识向量表不完整", err}
 	}
 	return nil

@@ -46,7 +46,7 @@ func isolatedDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatal("测试DSN格式错误")
 	}
-	pc.RuntimeParams["search_path"] = schema
+	pc.RuntimeParams["search_path"] = schema + ",public"
 	db, err := openConfig(ctx, pc, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestMigrationRealPostgres(t *testing.T) {
 	if err := Ready(ctx, db); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"events", "tasks", "memory_sources", "memory_records", "llm_usage", "send_log", "dlq", "schema_migrations"} {
+	for _, table := range []string{"events", "tasks", "memory_sources", "memory_records", "llm_usage", "send_log", "dlq", "schema_migrations", "knowledge_embeddings"} {
 		if !db.Migrator().HasTable(table) {
 			t.Fatalf("缺表 %s", table)
 		}
@@ -104,7 +104,7 @@ func TestMigrationRealPostgres(t *testing.T) {
 	if err := db.WithContext(ctx).Exec("INSERT INTO tasks(id,event_id,channel,session,brain) VALUES ('missing','missing','live','room','openai')").Error; err == nil {
 		t.Fatal("外键未生效")
 	}
-	for _, index := range []string{"idx_events_status", "idx_events_session", "idx_events_private", "idx_tasks_status", "uq_tasks_event", "idx_mem_valid", "idx_mem_channel"} {
+	for _, index := range []string{"idx_events_status", "idx_events_session", "idx_events_private", "idx_tasks_status", "uq_tasks_event", "idx_mem_valid", "idx_mem_channel", "knowledge_embeddings_vec_idx"} {
 		var exists bool
 		if err := db.WithContext(ctx).Raw("SELECT EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname=current_schema() AND indexname=?)", index).Scan(&exists).Error; err != nil || !exists {
 			t.Fatalf("缺索引 %s", index)

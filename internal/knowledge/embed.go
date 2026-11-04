@@ -97,11 +97,12 @@ func (r *FileReader) EmbeddingDocuments(ctx context.Context) ([]EmbeddingDocumen
 			return nil, err
 		}
 		documents = append(documents, EmbeddingDocument{
-			ID:        e.item.ID,
-			Source:    e.file,
-			Title:     e.title,
-			Text:      embeddingText(e),
-			UpdatedAt: e.modTime,
+			ID:     e.item.ID,
+			Source: e.file,
+			Title:  e.title,
+			Text:   embeddingText(e),
+			// PostgreSQL timestamptz 只保留微秒，先截断避免每次增量都被判为更新。
+			UpdatedAt: e.modTime.UTC().Truncate(time.Microsecond),
 		})
 	}
 	return documents, nil

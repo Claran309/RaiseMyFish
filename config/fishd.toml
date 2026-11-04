@@ -48,7 +48,7 @@ max_failures = 8
 # 以及本账号 UID（[sender].self_id 或 [collector.live].self_id）用于跳过自己发的评论。
 # videos 填视频 oid（av 号数字）；interval_seconds 范围 10-3600。
 [collector.comment]
-enabled = true
+enabled = false
 videos = []
 interval_seconds = 60
 
@@ -63,7 +63,7 @@ http_timeout_ms = 35000
 # 评论回复发送（P1）：独立开关，默认关闭；发送限频 1 条/分钟（评论风控严）。
 # 凭据与 csrf（bili_jct）复用 [collector.live] 解析到的同一账号 Cookie。
 [sender.comment]
-enabled = true
+enabled = false
 
 # 只装配Brain与无调用诊断；通道仍必须关闭。
 [llm]
@@ -282,7 +282,7 @@ state_path = "state/dm-recipient.json"
 
 # 看门狗（独立进程 cmd/fishwatchdog）：读心跳判活，冻结/死亡时重启 fishd。
 [watchdog]
-enabled = true
+enabled = false
 interval_seconds = 60        # 检查间隔
 stale_seconds = 120          # 心跳超过这个时间没更新 → 冻结
 unhealthy_threshold = 2      # 连续异常多少次才重启

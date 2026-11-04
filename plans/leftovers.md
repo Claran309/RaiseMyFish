@@ -77,7 +77,7 @@
 
 | # | 项 | 阶段 | 状态 | 说明 |
 |---|---|---|---|---|
-| 21 | 知识库 RAG（K2） | P2 | ⏳ | 无 pgvector 轻量版已做：title/keywords/tags/summary 多字段 + 档位打分；pgvector/嵌入/引用链仍待 P2 |
+| 21 | 知识库 RAG（K2） | P2 | ✅ | pgvector(1024)+embedding-3 客户端；`fishctl knowledge embed` 增量入库；混合召回（关键词档位+α·余弦）与不可用降级；auto_refresh 按 revision 增量；真实 PG 集成通过（真实 6834 条入库待密钥） |
 | 22 | Watchdog（自愈） | P4 | ⏳ | 检测异常（冻结/崩溃）→ 重启 |
 | 23 | Web 面板（可视化） | P5 | ⏳ | status/记忆编辑/活动查看 |
 | 24 | 常驻 Edge 截图 | 0.13c | ⏳ | 浏览器自动化（大工程） |
