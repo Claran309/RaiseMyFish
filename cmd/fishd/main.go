@@ -188,6 +188,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return fmt.Errorf("装配私信采集失败：%w", err)
 	}
+	// 运维面板（只监听回环）：默认关，开启后独立 goroutine 跑
+	stopWeb := startWebPanel(ctx, cfg, resources, logger)
+	defer stopWeb()
+
 	// 知识热重载：梗白学习写入 learned.md 后不必重启
 	if stopReload := startKnowledgeHotReload(ctx, knowledgeRuntime.Reader, cfg.Knowledge, logger); stopReload != nil {
 		defer stopReload()

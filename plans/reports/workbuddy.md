@@ -2985,3 +2985,84 @@ meme_learn_min_occurrences = 2    # 最低出现次数（1–100）
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。
+
+---
+
+## P5 Web 面板（2026-11-04，Asia/Shanghai）
+
+net/http + embed 内联页面，零前端依赖。默认关，只允许回环监听。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `internal/web/server.go` | 新增（路由/安全） | `B87B1D0DB71EE38E` | 10050 |
+| `internal/web/server_test.go` | 新增（9 用例） | `21F601F580256461` | 8085 |
+| `internal/web/static/index.html` | 新增（概览） | `5E3240C05AFFD8BE` | 2906 |
+| `internal/web/static/memory.html` | 新增（记忆） | `B741A8C3C520F012` | 3382 |
+| `internal/web/static/activity.html` | 新增（活动） | `3519FF51BC4B9934` | 3637 |
+| `internal/store/web.go` | 新增（面板接口） | `46809DB466877766` | 1811 |
+| `internal/database/web.go` | 新增（SQL 实现） | `EDC0930C00A1316C` | 6229 |
+| `internal/config/web.go` | 修改（enabled/addr） | `73F2BDF7419666A8` | 2012 |
+| `cmd/fishd/web.go` | 新增（装配） | `22181F6431E56D53` | 1382 |
+| `cmd/fishd/main.go` | 修改（启动面板） | `47B77FE61A4E819A` | 16194 |
+| `config/fishd.toml` | 修改 | `94E75DE92CDA9CF6` | 10803 |
+
+### 页面（内联 CSS/JS，无构建链）
+
+| 路径 | 内容 |
+|---|---|
+| `/` | 概览：事件总数/待处理、记忆条数与分类、发送总数/失败、累计费用；15s 自动刷新 |
+| `/memory` | 记忆列表：关键词搜索 + 类型筛选 + 逐条删除（浏览器 confirm → `confirm=yes`） |
+| `/activity` | 活动流水：方向筛选 + 50/100/200 条；下方附最近 20 条发送记录 |
+
+### API
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/status` | 8 个字段：events_total/pending、memory_total/by_kind、send_total/failed、cost_usd、generated_at |
+| GET | `/api/memory?kind=&q=&limit=` | 列表，正文截断 ≤200 字 |
+| DELETE | `/api/memory/{id}?confirm=yes` | **软删除**（archived=true + valid_to=now）；缺 confirm 返回 400 |
+| GET | `/api/events?dir=&limit=` | dir 只接受 in/out，其他 400 |
+| GET | `/api/send_log?limit=` | 发送记录 |
+
+### 安全
+
+| 项 | 做法 |
+|---|---|
+| 只回环 | `ValidateAddr`：仅 127.0.0.1 / ::1 / localhost；`0.0.0.0`、`:8090`、内网 IP 全部拒绝 |
+| 删要确认 | 必须 `confirm=yes`，前端还加了一层 `confirm()` |
+| 截断正文 | 列表统一 `clip()` 到 200 字（防长文本/敏感内容整段外泄） |
+| 不暴露凭据 | 查询只选展示字段，响应里没有 cookie/token/prompt |
+| 路径安全 | 页面白名单三分支，其他 404；`X-Content-Type-Options: nosniff` |
+
+### 测试（9 个，全 httptest）
+
+`TestStatusJSON`（8 字段齐全 + 数值）、`TestMemoryListTruncates`（500 字截到 ≤200）、
+`TestMemoryDeleteRequiresConfirm`（缺 confirm 400 且不删；带 confirm 才归档）、
+`TestMemoryDeleteNotFound`（404）、`TestEventsJSON`（字段 + 非法 dir 400）、
+`TestSendLogJSON`、`TestPagesRender`（三页 200 且含内联样式，未知路径 404）、
+`TestAddrMustBeLoopback`（8 种地址）+ 构造期拦截、`TestMethodNotAllowed`（405）。
+
+| 命令 | 结果 |
+|---|---|
+| `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **38 个包全绿** |
+| `golangci-lint`（web/store/database/config/cmd.fishd） | **0 issues** |
+
+### 踩坑记录
+
+- `server.go` 第一版漏了 `package web` 声明（注释写在文件头后直接 import），编译直接报 `expected 'package'`。
+- lint 两条：`contextcheck`（Shutdown 必须用独立 context，加函数级 nolint 说明理由）、
+  `ineffassign`（`name` 初值冗余，改成 `var name string`）。
+
+### 未做项
+
+| 项 | 说明 |
+|---|---|
+| 鉴权 | 回环地址 + 无登录，本机其他进程可访问；如需多用户再加 token |
+| 分页 | 只有 limit 没有 offset/游标，超过 200 条看不到更早的 |
+| 概览 presence | 没接 presence.Table（在内存态，跨进程读不到）；如需展示要写进状态文件 |
+| 硬删除 | 只做软删除（archived），物理清理要另开命令 |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。

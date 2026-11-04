@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>活动 · 大肥鱼面板</title>
+<style>
+:root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--bad:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.6 -apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header b{font-size:15px}
+nav a{color:var(--muted);text-decoration:none;margin-right:14px}
+nav a.on{color:var(--accent)}
+main{padding:20px;max-width:1080px;margin:0 auto}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:12px}
+input,select,button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+button{cursor:pointer}
+.bar{display:flex;gap:8px;margin-bottom:12px;align-items:center}
+.muted{color:var(--muted)}
+.tag{font-size:12px;color:var(--muted)}
+h3{font-size:14px;color:#8b93a1;margin-top:22px}
+</style>
+</head>
+<body>
+<header>
+  <b>🐟 大肥鱼面板</b>
+  <nav><a href="/">概览</a><a href="/memory">记忆</a><a class="on" href="/activity">活动</a></nav>
+</header>
+<main>
+  <div class="bar">
+    <select id="dir">
+      <option value="">全部方向</option>
+      <option value="in">in</option>
+      <option value="out">out</option>
+    </select>
+    <select id="limit">
+      <option value="50">50 条</option>
+      <option value="100">100 条</option>
+      <option value="200">200 条</option>
+    </select>
+    <button onclick="load()">刷新</button>
+    <span class="muted" id="cnt"></span>
+  </div>
+  <table>
+    <thead><tr><th>时间</th><th>方向</th><th>通道</th><th>会话</th><th>来自</th><th>内容</th><th>状态</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <h3>最近发送</h3>
+  <table>
+    <thead><tr><th>时间</th><th>通道</th><th>OK</th><th>msg_id</th><th>事件</th></tr></thead>
+    <tbody id="sends"></tbody>
+  </table>
+</main>
+<script>
+function esc(s) {
+  return (s || '').replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+async function load() {
+  var dir = document.getElementById('dir').value;
+  var limit = document.getElementById('limit').value;
+  var d = await (await fetch('/api/events?dir=' + dir + '&limit=' + limit)).json();
+  document.getElementById('cnt').textContent = (d.count || 0) + ' 条';
+  document.getElementById('rows').innerHTML = (d.items || []).map(function (e) {
+    return '<tr><td class="tag">' + esc(e.at) + '</td><td class="tag">' + esc(e.dir) + '</td>' +
+      '<td class="tag">' + esc(e.channel) + '</td><td class="tag">' + esc(e.session) + '</td>' +
+      '<td>' + esc(e.from_name) + '</td><td>' + esc(e.text) + '</td>' +
+      '<td class="tag">' + esc(e.status) + '</td></tr>';
+  }).join('');
+
+  var s = await (await fetch('/api/send_log?limit=20')).json();
+  document.getElementById('sends').innerHTML = (s.items || []).map(function (e) {
+    return '<tr><td class="tag">' + esc(e.at) + '</td><td class="tag">' + esc(e.channel) + '</td>' +
+      '<td>' + (e.ok ? '✅' : '❌') + '</td><td class="tag">' + esc(e.msg_id) + '</td>' +
+      '<td class="tag">' + esc(e.event_id) + '</td></tr>';
+  }).join('');
+}
+load();
+</script>
+</body>
+</html>

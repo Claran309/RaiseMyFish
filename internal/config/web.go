@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net"
 	"os"
 	"strings"
 )
@@ -9,6 +10,10 @@ import (
 // Web 是 ReAct 联网工具的外部服务配置（`[web]`）。
 // search_url 为空表示未配置搜索源，工具会明确回复「未配置」而不是编造结果。
 type Web struct {
+	// Enabled 控制运维修 panel 是否启动（默认关）。
+	Enabled bool `toml:"enabled"`
+	// Addr 是面板监听地址，只允许回环（127.0.0.1 / ::1 / localhost）。
+	Addr      string `toml:"addr"`
 	SearchURL string `toml:"search_url"`
 	// SearchKey 作为 Authorization: Bearer，不序列化、不记日志。
 	SearchKey string `toml:"search_key" json:"-"`
@@ -16,7 +21,7 @@ type Web struct {
 	SearchKeyEnv string `toml:"search_key_env" json:"-"`
 }
 
-func defaultWeb() Web { return Web{} }
+func defaultWeb() Web { return Web{Addr: "127.0.0.1:8090"} }
 
 // ResolveKey 返回实际使用的 key：环境变量优先，其次字面值（兼容旧配置）。
 func (w Web) ResolveKey() string {
@@ -34,6 +39,17 @@ func (w Web) Validate() error {
 	if raw != "" {
 		if valid, _ := validEndpoint(raw); !valid {
 			return errors.New("搜索服务地址必须是HTTPS或本机HTTP地址")
+		}
+	}
+	if w.Enabled {
+		host, port, err := net.SplitHostPort(strings.TrimSpace(w.Addr))
+		if err != nil || port == "" {
+			return errors.New("面板地址必须形如 127.0.0.1:8090")
+		}
+		h := strings.Trim(host, "[]")
+		ip := net.ParseIP(h)
+		if !strings.EqualFold(h, "localhost") && (ip == nil || !ip.IsLoopback()) {
+			return errors.New("面板只允许监听回环地址")
 		}
 	}
 	if strings.ContainsAny(w.SearchKey, "\r\n\x00") || strings.ContainsAny(w.SearchKeyEnv, "\r\n\x00") {

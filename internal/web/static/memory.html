@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>记忆 · 大肥鱼面板</title>
+<style>
+:root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--bad:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.6 -apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header b{font-size:15px}
+nav a{color:var(--muted);text-decoration:none;margin-right:14px}
+nav a.on{color:var(--accent)}
+main{padding:20px;max-width:1080px;margin:0 auto}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:12px}
+input,select,button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+button{cursor:pointer}
+button.danger{color:var(--bad);border-color:#3a2a2a}
+.bar{display:flex;gap:8px;margin-bottom:12px;align-items:center}
+.muted{color:var(--muted)}
+.tag{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <b>🐟 大肥鱼面板</b>
+  <nav><a href="/">概览</a><a class="on" href="/memory">记忆</a><a href="/activity">活动</a></nav>
+</header>
+<main>
+  <div class="bar">
+    <input id="q" placeholder="搜索标题/摘要" size="26">
+    <select id="kind">
+      <option value="">全部类型</option>
+      <option value="fact">fact</option>
+      <option value="preference">preference</option>
+      <option value="promise">promise</option>
+      <option value="first_seen">first_seen</option>
+    </select>
+    <button onclick="load()">查询</button>
+    <span class="muted" id="cnt"></span>
+  </div>
+  <table>
+    <thead><tr><th>类型</th><th>标题</th><th>摘要</th><th>重要度</th><th>时间</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+<script>
+function esc(s) {
+  return (s || '').replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+async function load() {
+  var q = encodeURIComponent(document.getElementById('q').value);
+  var k = encodeURIComponent(document.getElementById('kind').value);
+  var r = await fetch('/api/memory?q=' + q + '&kind=' + k + '&limit=100');
+  var d = await r.json();
+  document.getElementById('cnt').textContent = (d.count || 0) + ' 条';
+  document.getElementById('rows').innerHTML = (d.items || []).map(function (m) {
+    return '<tr><td class="tag">' + esc(m.kind) + '</td><td>' + esc(m.title) + '</td>' +
+      '<td class="muted">' + esc(m.summary) + '</td><td>' + m.importance + '</td>' +
+      '<td class="tag">' + esc(m.created_at) + '</td>' +
+      '<td><button class="danger" onclick="del(\'' + esc(m.id) + '\')">删除</button></td></tr>';
+  }).join('');
+}
+async function del(id) {
+  if (!confirm('确认删除这条记忆？')) return;
+  var r = await fetch('/api/memory/' + encodeURIComponent(id) + '?confirm=yes', { method: 'DELETE' });
+  if (!r.ok) { var e = await r.json(); alert(e.error || '删除失败'); return; }
+  load();
+}
+load();
+</script>
+</body>
+</html>
