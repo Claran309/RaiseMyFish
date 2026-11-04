@@ -20,7 +20,7 @@
 | 6 | ~~知识 Reader 启动快照~~ | 1.7 | ✅ | 已做热重载（原子快照 30s 轮询） | — |
 | 7 | ~~Channel 无 Resume~~ | 1.9 | ✅ | 已收敛（发送也走 Channel，保留 sender 兜底） | — |
 | 8 | **soul_path 固定 dafeiyu** | 1.13 | ⏳ | 多 persona 时应按 pack 派生 | 多 persona 时改 |
-| 9 | **手工改 soul-memories.md 会被覆盖** | 1.13 | ⏳ | 文件由 worker 重建，手写内容下次被冲掉 | 手写+自动合并 |
+| 9 | ~~手工改 soul-memories.md 会被覆盖~~ | 1.13 | ✅ | 已做 Manual 标记 + MergeSoul（手写全留） | — |
 | 10 | **执行器缺配置返回「未配置」** | 0.21 | 📄 | 功能可用性依赖配置（凭据/URL） | 文档说明 |
 | 11 | **评论不配 scheduler 不回复** | 1.10 | 📄 | `[scheduler.channels.comment]` 未配则只采集不回复 | 文档/默认值 |
 
@@ -32,10 +32,10 @@
 | 13 | **web_search 无重试/白名单/内容过滤** | 1.6 | ⏳ | 失败由 ReAct 降级处理 | 按需加 |
 | 14 | **web_search 未接 Serper/Bing 专用协议** | 1.6 | ⏳ | 用通用协议（POST {query}） | 按需接 |
 | 15 | ~~always 触发多花钱~~ | 1.5 | ✅ | 已加 <10 字单步门槛 | — |
-| 16 | **每轮读 soul 文件** | 1.13 | ⏳ | <2KB，高频时可加 mtime 缓存 | 优化时加 |
-| 17 | **梗白学习扫描固定 live** | 1.7 | ⏳ | 回看窗口/最低次数未暴露 TOML | 按需暴露 |
-| 18 | **learned.md 只增不清理** | 1.7 | ⏳ | 仅受 1MiB 上限与每日配额约束 | 定期清理 |
-| 19 | **常驻点赞只支持环境变量 cookie** | 0.13c | ⏳ | 不支持 `_FILE` | 统一凭据源 |
+| 16 | ~~每轮读 soul 文件~~ | 1.13 | ✅ | 已加 mtime 缓存（没变不读盘） | — |
+| 17 | ~~梗白学习扫描固定 live~~ | 1.7 | ✅ | 已暴露 window_hours/min_occurrences | — |
+| 18 | ~~learned.md 只增不清理~~ | 1.7 | ✅ | 已加 trimMemeDoc（200 条/256KB 清理） | — |
+| 19 | ~~常驻点赞只支持环境变量 cookie~~ | 0.13c | ✅ | 已支持 CookieFile（_FILE） | — |
 | 20 | ~~gift 既有 4 条 lint~~ | 0.21 | ✅ | 已清零（cmd/fishd 旧账也清了） | — |
 
 ## ⚪ 远期 / 阶段任务
