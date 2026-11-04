@@ -5,6 +5,7 @@ package dm
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,11 +49,24 @@ func (f *fakeSender) Resume(context.Context, event.Claim) (sender.Result, error)
 	return sender.Result{}, errors.New("no resume")
 }
 
-type fakeBus struct{ got []event.Event }
+// fakeBus 的 got 由采集 goroutine 写、测试线程读，必须加锁（race 测试要求）。
+type fakeBus struct {
+	mu  sync.Mutex
+	got []event.Event
+}
 
 func (f *fakeBus) Publish(_ context.Context, ev event.Event) (bool, error) {
+	f.mu.Lock()
 	f.got = append(f.got, ev)
+	f.mu.Unlock()
 	return true, nil
+}
+
+// events 返回 got 的快照，供测试线程安全读取。
+func (f *fakeBus) events() []event.Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]event.Event(nil), f.got...)
 }
 func (f *fakeBus) ClaimPending(context.Context, int) ([]event.Claim, error) { return nil, nil }
 func (f *fakeBus) Mark(context.Context, event.Claim, []event.Status, event.Status) error {
@@ -86,11 +100,12 @@ func TestChannelCollectForwards(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for len(bus.got) == 0 && time.Now().Before(deadline) {
+	for len(bus.events()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if len(bus.got) != 1 || bus.got[0].ID != "dm:2002:1" {
-		t.Fatalf("未转发事件：%+v", bus.got)
+	got := bus.events()
+	if len(got) != 1 || got[0].ID != "dm:2002:1" {
+		t.Fatalf("未转发事件：%+v", got)
 	}
 	stop()
 	stop() // 重复调用不应 panic

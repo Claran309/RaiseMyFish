@@ -2824,3 +2824,77 @@ soul_path = "personas/dafeiyu/knowledge/soul-memories.md"
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。
+
+---
+
+## Channel Resume 收敛（leftovers #7，2026-11-04，Asia/Shanghai）
+
+发送路径从「直连 sender」收敛到「走 Channel」，**行为零变化**。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `internal/channel/channel.go` | 修改（接口加 Resume） | `4268BFA1D131330E` | 2577 |
+| `internal/channel/channel_test.go` | 修改（fake 补 Resume） | `D9AD10D7181CD7E0` | 2371 |
+| `internal/channel/live/live.go` | 修改（实现 Resume） | `F2CD9665E28B235E` | 2630 |
+| `internal/channel/comment/comment.go` | 修改（实现 Resume） | `1106464D440011A7` | 2472 |
+| `internal/channel/dm/dm.go` | 修改（实现 Resume） | `881E7F5C035CA9B7` | 2622 |
+| `cmd/fishd/dispatch.go` | 新增（通道解析） | `7BCCCD2760A11E22` | 2295 |
+| `cmd/fishd/dispatch_test.go` | 新增（3 用例） | `DBA0EF7044053969` | 3940 |
+| `cmd/fishd/generate.go` | 修改（Send 走通道） | `2F06872DAA584B3E` | 15325 |
+| `cmd/fishd/deliver.go` | 修改（Resume 走通道） | `E51C6F3E5D0A5163` | 1885 |
+| `cmd/fishd/serve.go` | 修改（透传 channelSet） | `ED94AA1DB8779E4B` | 16238 |
+| `cmd/fishd/main.go` | 修改（绑定注册表） | `7B99BFBA59837C4A` | 16039 |
+
+### 做法
+
+1. `channel.Channel` 增加 `Resume(ctx, claim) (Result, error)`；
+   live / comment / dm 三个适配器都实现为「转给底层 sender」，未装配 sender 时明确报错。
+2. `cmd/fishd/dispatch.go` 引入 `channelSet`（`RWMutex` + `*channel.Registry`）与 `dispatcher` 窄接口：
+   ```go
+   Channel 与 sender.Sender 的公共发送面：Send + Resume
+   ```
+   解析顺序：**注册表通道优先 → 回落直连 sender**。
+3. `main` 在 `buildChannelRegistry` 之后、`Collect` 之前调用 `chans.Set(registry)`，
+   所以「后注册」不会引入启动竞态；`buildConsumeWorkers` 只拿指针，签名只多一个参数。
+
+### 为什么保留 sender 兜底（而不是移除）
+
+| 理由 | 说明 |
+|---|---|
+| 注册表只登记「采集器启用的通道」 | 只开发送不开采集时（私信当前默认关采集）通道不存在，没有兜底就发不出去 |
+| 测试大量直传 fake sender | 全部改造代价大且无收益 |
+| 主路径必命中通道 | 正常装配下 resolve 一定返回通道，行为与改造前逐字节一致 |
+
+### 测试
+
+| 用例 | 断言 |
+|---|---|
+| `TestChannelSetPrefersRegistry` | 通道命中 → `sends=1`、**sender 0 次**、返回通道的 msgID；Resume 同理 |
+| `TestChannelSetFallsBackToSender` | 通道未注册 → 回落 sender（Send/Resume 各 1 次） |
+| `TestChannelSetWithoutRegistryOrSender` | 两者皆无 → 明确失败不 panic；nil 集合 + 有 sender 仍能兜底 |
+| 既有 37 包测试 | **全部通过**（证明行为不变） |
+
+| 命令 | 结果 |
+|---|---|
+| `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **37 个包全绿** |
+| `golangci-lint`（internal/channel/... + cmd/fishd/...） | **0 issues** |
+
+### 踩坑记录
+
+- `channel.Channel` 加方法后，`channel_test.go` 的 `fakeChannel` 与三处 `Collect(nil, …)` 测试
+  都会编译/lint 失败：前者补 `Resume`，后者补 `//nolint:staticcheck`（故意传 nil 测拒绝）。
+- `buildConsumeWorkers` 多一个参数 → 33 处测试调用需要补 `nil`：
+  用「顶层逗号切分 + 按位置插入」脚本改，比手改稳。
+
+### 未做项
+
+| 项 | 说明 |
+|---|---|
+| verify.go | 目前不调 Send/Resume（只结算状态），无需改 |
+| 通道级重试策略 | Channel 只是转发，重试语义仍在 sender/scheduler，未动 |
+| 移除 sender 兜底 | 需要先把「只开发送」场景的通道也注册进表，另开一批更稳 |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。

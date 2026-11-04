@@ -114,6 +114,7 @@ type generateDeps struct {
 	knowledge  knowledge.Reader
 	viewers    store.ViewerRepo
 	soulPath   string
+	channels   *channelSet
 	presence   *presence.Table
 	state      func(time.Time) string
 	react      reactFactory
@@ -247,7 +248,13 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		}
 
 		// Scope 必须显式带上：sender.Reply.Validate 要求与事件通道/会话一致
-		res, err := deps.sender.Send(ctx, w.Claim, sender.Reply{Text: formatReplyText(ev, reply.Text, deps.live), Scope: scope})
+		// 发送走通道：注册表优先，取不到回落直连 sender（行为与改造前一致）
+		disp, ok := deps.channels.resolve(ev.Channel, deps.sender)
+		if !ok {
+			deps.log.Error("找不到可用的发送通道", zap.String("action", "channel_missing"), zap.String("channel", string(ev.Channel)))
+			return scheduler.Result{}, errors.New("找不到可用的发送通道")
+		}
+		res, err := disp.Send(ctx, w.Claim, sender.Reply{Text: formatReplyText(ev, reply.Text, deps.live), Scope: scope})
 		if err != nil {
 			// sender 在自身事务里已把输入事件结清并释放租约（Settled=true）；
 			// 再拿旧 claim 走 Bus 必然报「事件租约已失效」，这不是需要重试的失败。

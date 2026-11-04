@@ -25,6 +25,8 @@ type Channel interface {
 	Collect(ctx context.Context, bus event.Bus) (stop func(), err error)
 	// Send 发送一条回复；claim 是调度器当前租约快照，底层 sender 用它原子结清输入事件。
 	Send(ctx context.Context, claim event.Claim, reply Reply) (Result, error)
+	// Resume 核验并结清已投递的发送（Deliver/Verify 阶段用）。
+	Resume(ctx context.Context, claim event.Claim) (Result, error)
 }
 
 // Registry 是按通道名索引的注册表；零值可直接使用。

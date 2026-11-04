@@ -74,3 +74,11 @@ func (c *Channel) Send(ctx context.Context, claim event.Claim, reply channel.Rep
 	}
 	return c.sender.Send(ctx, claim, reply)
 }
+
+// Resume 转给底层发送器；未装配发送器时明确报错。
+func (c *Channel) Resume(ctx context.Context, claim event.Claim) (channel.Result, error) {
+	if c.sender == nil {
+		return channel.Result{}, errors.New("评论通道未装配发送器")
+	}
+	return c.sender.Resume(ctx, claim)
+}

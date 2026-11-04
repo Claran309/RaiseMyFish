@@ -155,7 +155,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
-	consume, snd, err := buildConsume(cfg, resources, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, logger)
+	// 发送通道表：buildConsume 先用空壳，注册表建好后再绑定（Collect 之前完成）
+	chans := &channelSet{}
+	consume, snd, err := buildConsume(cfg, resources, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, chans, logger)
 	if err != nil {
 		return err
 	}
@@ -194,6 +196,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
+	// 发送路径改用通道：此后 Generate/Deliver 优先走注册表
+	chans.Set(registry)
 	channels := registry.All()
 	for _, ch := range channels {
 		stop, err := ch.Collect(ctx, withPresenceBus(bus, presenceTable))

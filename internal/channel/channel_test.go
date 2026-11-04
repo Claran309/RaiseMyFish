@@ -22,6 +22,10 @@ func (f *fakeChannel) Send(context.Context, event.Claim, Reply) (Result, error) 
 	return Result{}, nil
 }
 
+func (f *fakeChannel) Resume(context.Context, event.Claim) (Result, error) {
+	return Result{}, nil
+}
+
 func TestRegistryRegisterAndGet(t *testing.T) {
 	var registry Registry // 零值可用
 	live := &fakeChannel{name: event.ChLive}

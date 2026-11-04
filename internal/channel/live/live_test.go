@@ -145,6 +145,7 @@ func TestCollectRejectsInvalidArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	//nolint:staticcheck // 故意传 nil 上下文，验证拒绝路径
 	if _, err := ch.Collect(nil, newFakeBus()); err == nil {
 		t.Fatal("nil 上下文应被拒绝")
 	}

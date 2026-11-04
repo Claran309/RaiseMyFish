@@ -15,6 +15,7 @@ import (
 // resumeDeps 是 Deliver / Verify handler 的只读依赖投影。
 type resumeDeps struct {
 	sender     sender.Sender
+	channels   *channelSet
 	bus        event.Bus
 	retryDelay time.Duration
 }
@@ -26,7 +27,12 @@ func deliverHandler(deps resumeDeps) scheduler.Handler {
 		// （deliver/verify 阶段领取时状态本来就是 queued）。
 		from := []event.Status{event.StatusQueued}
 
-		res, err := deps.sender.Resume(ctx, w.Claim)
+		// Resume 同样走通道：注册表优先，取不到回落直连 sender
+		disp, ok := deps.channels.resolve(w.Claim.Event.Channel, deps.sender)
+		if !ok {
+			return scheduler.Result{}, errors.New("找不到可用的发送通道")
+		}
+		res, err := disp.Resume(ctx, w.Claim)
 		if err != nil {
 			// 同 Send：sender 已结清并释放租约时不能再拿旧 claim 二次结清。
 			if sender.Handled(err) {
