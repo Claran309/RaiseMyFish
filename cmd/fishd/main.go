@@ -141,6 +141,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	serveRuntime := func(ctx context.Context) error {
 		return serve(ctx, cfg.Runtime.StateFile, time.Duration(cfg.Runtime.HeartbeatSeconds)*time.Second, logger, check, presenceTable.Summary)
 	}
+	// 心跳独立于状态文件，供独立进程 fishwatchdog 判断冻结/死亡。
+	// 放在初始化完成之后启动：启动阶段卡死时不刷新心跳，看门狗才有机会介入。
+	stopHeartbeat := startHeartbeat(ctx, cfg.Watchdog.HeartbeatPath, logger)
+	defer stopHeartbeat()
 	// 消费循环：只有 [scheduler] 存在、有 Brain 路由且 live 通道开启时才装配；
 	// 否则保持「只采集」的现状。
 	wantConsume := consumeEnabled(cfg, routes)

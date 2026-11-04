@@ -37,3 +37,10 @@
 ## 五、交付格式
 
 - 文件列表、测试结果、配置说明、未做项、是否暂停写入
+
+## 六、交付结果（2026-11-04）
+
+- 已完成：fishd 30s 心跳；watchdog 判定（冻结/死亡）、阈值、冷却、杀旧进程、重启日志；配置校验；独立 fishwatchdog 进程；单测覆盖全部派发场景。
+- 验证：gofmt/vet 干净；`go test ./...` 全绿；race 全绿（knowledge 单独跑 455.161s）；`-tags integration -p 1 ./...` 全绿；arch-check 三项通过；`go build ./...` 通过。
+- 未做：未写入 docker-compose/systemd 示例；未在真实 systemd 环境演练重启；Web 面板展示属 P5 范围。
+- 状态：待 DSH 验收，写入暂停。
