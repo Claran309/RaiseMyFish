@@ -59,7 +59,7 @@
 |---|---|---|---|
 | 37 | **ReAct 默认化**（可用性优先） | 所有弹幕默认走 ReAct；短句（<6字）单步；结果 5 分钟缓存 | Qoder/WorkBuddy |
 | 38 | **长期记忆/观众档案向量化召回** | memory_records + viewer_profiles 加 embedding(1024)，语义召回（依赖 K2 RAG） | Qoder/WorkBuddy |
-| 39 | **Web 管理功能**（大） | 直播间链接→开始/停止看直播；评论/私信监听开关+最近收发列表；互动记录（弹幕/送礼/点赞）；配置编辑；实时日志；事件详情 | Qoder/WorkBuddy |
+| 39 | **Web 全套管理**（见 `plans/p5-web-full.md`） | 7 页：概览/直播通道/记忆(观众档案+灵魂)/知识库(编辑+召回测试)/活动(送礼+主动弹幕+点赞)/实时日志/配置编辑；只读先行，写操作白名单+confirm | Qoder/WorkBuddy |
 | 40 | **梗白学习 hot15** | 每天不设上限，按弹幕出现次数取 Top15（真热点优先）；学到的梗最终走向量入库（learned.md 保留为源文件） | Qoder/WorkBuddy |
 | 41 | **定时送礼**（未来） | 当前够用；之后由 ReAct LLM 主动送礼（工具已就绪） | 未来 |
 | 42 | **web_search 搜索源** | 主人之后给（Serper/Bing/自建） | **主人** |
