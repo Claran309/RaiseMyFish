@@ -19,7 +19,7 @@ func TestBuildLiveDisabledDoesNotStartNode(t *testing.T) {
 }
 
 func TestBuildChannelRegistryWithoutLive(t *testing.T) {
-	registry, err := buildChannelRegistry(nil, nil, nil, time.Second, zap.NewNop())
+	registry, err := buildChannelRegistry(nil, nil, nil, nil, time.Second, zap.NewNop())
 	if err != nil {
 		t.Fatalf("空注册表装配失败：%v", err)
 	}
@@ -44,7 +44,7 @@ func TestBuildChannelRegistryRegistersLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry, err := buildChannelRegistry(c, nil, nil, time.Second, zap.NewNop())
+	registry, err := buildChannelRegistry(c, nil, nil, nil, time.Second, zap.NewNop())
 	if err != nil {
 		t.Fatalf("注册 live 通道失败：%v", err)
 	}

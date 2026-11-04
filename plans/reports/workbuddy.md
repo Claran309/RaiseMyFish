@@ -2516,3 +2516,71 @@ react_trigger = "always"   # 默认；keyword 回退旧行为
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未提交、未 push（除任务 1 的推送）。
+
+---
+
+## 私信通道真实客户端 + 装配（2026-11-04，Asia/Shanghai）
+
+把上一批的 `Fetcher`/`Transporter` 接口接到真实 B站接口，并注册进通道表与发送路由。
+未改 contracts、未碰调度/Brain、测试全 httptest mock、未执行 git。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `internal/bili/dm.go` | 新增（会话/发信/关系） | `AE68E4AB8665F6D6` | 4019 |
+| `internal/bili/dm_test.go` | 新增（5 用例） | `28C58F33DB173F7E` | 4764 |
+| `internal/collector/dm/bili.go` | 新增（BiliFetcher） | `D7F6E1D3FFE4F547` | 1461 |
+| `internal/sender/dm/bili.go` | 新增（Transporter/Relation） | `F8F72E56042E2ADC` | 1222 |
+| `cmd/fishd/dm.go` | 新增（装配） | `5CBFC1B333157664` | 2738 |
+| `cmd/fishd/live.go` | 修改（registry 加 dm） | `09C88CF419508AD0` | 2946 |
+| `cmd/fishd/serve.go` | 修改（router 加 dm 路由） | `0835B501E08CF40B` | 16076 |
+| `cmd/fishd/main.go` | 修改（建 dm 采集器） | `651E8E7D6049DF4A` | 15601 |
+
+### 真实接口
+
+| 方法 | 接口 | 说明 |
+|---|---|---|
+| `DMSessions(ctx, limit)` | `GET /session_svr/v1/session_svr/get_sessions` | 解析 `session_list[].last_msg`，兼容字符串/数字 uid |
+| `SendMessage(ctx, mid, text)` | `POST /web_im/v1/web_im/send_msg` | `msg[sender_uid/receiver_id/type/content]` + `csrf`；缺 csrf 本地拒绝 |
+| `RelationAttribute(ctx, mid)` | `GET /x/relation?fid=` | 返回 attribute（6=互关） |
+
+全部复用 bili 包的 cookie/csrf 装配：**只发一次、不重试**、错误只带 op/code，不带凭据。
+
+### 装配
+
+```
+[collector.dm].enabled 且 cookie 可用 → buildDMCollector → 注册 dm 通道
+[sender.dm].enabled 且 cookie+bili_jct  → buildDMSender → sendRouter[event.ChDM]
+两者都关 → 什么都不装（默认关）
+```
+
+- 白名单 = `allowed_mids` + 自动并入主人 mid（去重由 `New` 内部 map 处理）。
+- 缺 cookie / 缺 csrf：只记日志（`dm_setup` 带 `reason=no_cookie|no_csrf`），保持未装配，**不报错**。
+- 采集开而发送没装：`Warn` 提示「私信事件将无法回复」。
+- 护栏未改动：白名单 → 当日收信人锁定 → 10 分钟限频 → 互关 → 正文。
+
+### 测试
+
+`internal/bili`（5 个 httptest）：
+- `TestDMSessionsParses`：路径 `/session_svr/.../get_sessions`、带 cookie、解析两种 uid 形态；
+- `TestSendMessageParams`：POST、`msg[sender_uid]`/`receiver_id`/`content` JSON、`csrf=csrf-1`、返回 msg_key；
+- `TestSendMessagePlatformCode`：code=21019 → 错误码透传且**不泄漏 cookie/csrf**；
+- `TestSendMessageNeedsCSRF`：缺 `bili_jct` 本地拒绝且不发请求；
+- `TestRelationAttribute`：`/x/relation?fid=`、attribute=6。
+
+| 命令 | 结果 |
+|---|---|
+| `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **37 个包全绿** |
+| `golangci-lint`（bili/collector.dm/sender.dm/cmd.fishd） | 仅 2 条**既有**问题（`cmd/fishd/main_test.go:63` errcheck、`memory_test.go:31` staticcheck），非本批引入 |
+
+### 未做项
+
+| 项 | 说明 |
+|---|---|
+| 会话列表分页 | `get_sessions` 只取首屏（≤20）；消息多的会话需要 `get_session_msgs` 拉详情，下一批补 |
+| 当日收信人锁定持久化 | 仍是进程内状态，重启重置 |
+| 真实联调 | 按派发单不写进测试；验收时建议先只开 collector 观察日志，再开 sender 对主人发一条 |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。

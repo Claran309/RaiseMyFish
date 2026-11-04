@@ -237,6 +237,15 @@ func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger)
 	if cfg.Collector.Comment.Enabled && routes[event.ChComment] == nil {
 		log.Warn("评论采集已启用但未配置评论发送，评论事件将无法回复", zap.String("action", "comment_sender_missing"))
 	}
+	// 私信：只在 [sender.dm] 开启且凭据可用时注册路由
+	if dmSender, err := buildDMSender(cfg, log); err != nil {
+		return nil, fmt.Errorf("装配私信发送通道失败：%w", err)
+	} else if dmSender != nil {
+		routes[event.ChDM] = dmSender
+	}
+	if cfg.Collector.DM.Enabled && routes[event.ChDM] == nil {
+		log.Warn("私信采集已启用但未装配私信发送，私信事件将无法回复", zap.String("action", "dm_sender_missing"))
+	}
 	return newSendRouter(routes)
 }
 

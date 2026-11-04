@@ -77,7 +77,7 @@ func TestBuildChannelRegistryRegistersBoth(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	registry, err := buildChannelRegistry(live, comments, nil, time.Second, zap.NewNop())
+	registry, err := buildChannelRegistry(live, comments, nil, nil, time.Second, zap.NewNop())
 	if err != nil {
 		t.Fatalf("注册通道失败：%v", err)
 	}

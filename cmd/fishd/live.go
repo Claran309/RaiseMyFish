@@ -6,8 +6,10 @@ import (
 
 	"RaiseMyFish/internal/channel"
 	channelcomment "RaiseMyFish/internal/channel/comment"
+	channeldm "RaiseMyFish/internal/channel/dm"
 	channellive "RaiseMyFish/internal/channel/live"
 	commentcollector "RaiseMyFish/internal/collector/comment"
+	dmcollector "RaiseMyFish/internal/collector/dm"
 	livecollector "RaiseMyFish/internal/collector/live"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/sender"
@@ -48,7 +50,7 @@ func buildLive(cfg config.Config, log *zap.Logger) (*livecollector.Collector, er
 // buildChannelRegistry 注册当前启用的通道；两个采集器都为 nil 时返回空注册表。
 //
 // snd 允许为 nil（只采集、未装配消费循环），此时通道的 Send 会明确报错。
-func buildChannelRegistry(live *livecollector.Collector, comments *commentcollector.Collector, snd sender.Sender, timeout time.Duration, log *zap.Logger) (*channel.Registry, error) {
+func buildChannelRegistry(live *livecollector.Collector, comments *commentcollector.Collector, dms *dmcollector.Collector, snd sender.Sender, timeout time.Duration, log *zap.Logger) (*channel.Registry, error) {
 	registry := channel.NewRegistry()
 	if live != nil {
 		ch, err := channellive.New(live, snd, timeout, log)
@@ -66,6 +68,15 @@ func buildChannelRegistry(live *livecollector.Collector, comments *commentcollec
 		}
 		if err := registry.Register(ch); err != nil {
 			return nil, fmt.Errorf("注册 comment 通道失败：%w", err)
+		}
+	}
+	if dms != nil {
+		ch, err := channeldm.New(dms, snd, timeout, log)
+		if err != nil {
+			return nil, fmt.Errorf("装配 dm 通道失败：%w", err)
+		}
+		if err := registry.Register(ch); err != nil {
+			return nil, fmt.Errorf("注册 dm 通道失败：%w", err)
 		}
 	}
 	return registry, nil

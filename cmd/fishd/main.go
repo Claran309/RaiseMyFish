@@ -182,7 +182,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		defer stopProactive()
 	}
 	// 通道经注册表获取；Collect 异步启动，stop 在返回时取消并等待采集退出。
-	registry, err := buildChannelRegistry(liveCollector, commentCollector, snd, timeout, logger)
+	dmCollector, err := buildDMCollector(cfg, logger)
+	if err != nil {
+		return fmt.Errorf("装配私信采集失败：%w", err)
+	}
+	registry, err := buildChannelRegistry(liveCollector, commentCollector, dmCollector, snd, timeout, logger)
 	if err != nil {
 		return err
 	}
