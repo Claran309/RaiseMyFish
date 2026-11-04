@@ -138,3 +138,4 @@ deployment/          docker-compose 等交付物
 - 2026-10-31：初版，吸收 ClaranAIM / lanmei-dream / ClaranCloudDisk 的**码风**（中文注释、构造函数注入、`%w` 错误包装、zap 日志、infra 统一、目录结构、Makefile）。
 - 2026-10-31：提交改为直接 push，不走 PR 流程（个人项目）。
 - 2026-10-31：明确「码风参考，不照搬选型」——数据访问用 GORM（关键 SQL 手写），LLM 编排 P0 自写，WS 库与 eino 按需再评估。
+- 2026-11-04：**Web 面板（`internal/web`）必须随功能跟进**——新增可观测数据（统计/状态/列表）时同步更新面板页面与 API（`/api/*` + `static/*.html`），新 API 必须配 httptest；页面改动必须配「页面包含 X」断言（纯前端无编译期保护）。
