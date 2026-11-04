@@ -61,12 +61,18 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取记忆主体迁移：%w", err)
 	}
 	memFromHash := sha256.Sum256(memFrom)
+	knowledgeEmbeddings, err := migrations.Files.ReadFile("0006_knowledge_embeddings.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取知识向量迁移：%w", err)
+	}
+	knowledgeEmbeddingsHash := sha256.Sum256(knowledgeEmbeddings)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
 		{3, string(delivery), hex.EncodeToString(deliveryHash[:])},
 		{4, string(viewers), hex.EncodeToString(viewersHash[:])},
 		{5, string(memFrom), hex.EncodeToString(memFromHash[:])},
+		{6, string(knowledgeEmbeddings), hex.EncodeToString(knowledgeEmbeddingsHash[:])},
 	}, nil
 }
 
@@ -147,6 +153,9 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	}
 	if err := db.WithContext(ctx).Exec("SELECT p.event_id,a.id,l.attempt_id FROM send_plans p JOIN send_attempts a ON a.event_id=p.event_id LEFT JOIN send_log l ON l.attempt_id=a.id LIMIT 0").Error; err != nil {
 		return &safeError{"发送迁移字段不完整", err}
+	}
+	if err := db.WithContext(ctx).Exec("SELECT id,source,title,updated_at,embedding FROM knowledge_embeddings LIMIT 0").Error; err != nil {
+		return &safeError{"知识向量表不完整", err}
 	}
 	return nil
 }

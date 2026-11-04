@@ -160,43 +160,67 @@ func cloneItem(item Item) Item {
 
 // Recall 先查权限再匹配，返回独立副本；快照构造后不再接触文件系统。
 func (r *FileReader) Recall(ctx context.Context, query Query) (Context, error) {
-	if err := checkContext(ctx); err != nil {
+	text, st, err := r.prepare(ctx, query)
+	if err != nil {
 		return Context{}, err
 	}
-	if r == nil {
-		return Context{}, errors.New("知识Reader不能为空")
-	}
-	if err := ValidateScope(query.Scope); err != nil {
-		return Context{}, err
-	}
-	if !utf8.ValidString(query.Text) {
-		return Context{}, errors.New("知识查询不是UTF-8")
-	}
-	if len(query.Text) > 4<<20 {
-		return Context{}, errors.New("知识查询超过字节上限")
-	}
-	st := r.current()
 	result := Context{Scope: query.Scope, Revision: st.revision}
-	text := normalize(query.Text)
 	if !hasWord(text) {
 		return result, nil
 	}
+	hits, err := r.keywordHits(ctx, text, st, query.Scope)
+	if err != nil {
+		return Context{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return Context{}, err
+	}
+	sortHits(hits)
+	return contextFromHits(query.Scope, st.revision, hits), nil
+}
+
+// prepare 统一做 Reader 非空、Scope、UTF-8 与长度校验，并返回归一化文本与当前快照。
+func (r *FileReader) prepare(ctx context.Context, query Query) (string, *snapshotState, error) {
+	if err := checkContext(ctx); err != nil {
+		return "", nil, err
+	}
+	if r == nil {
+		return "", nil, errors.New("知识Reader不能为空")
+	}
+	if err := ValidateScope(query.Scope); err != nil {
+		return "", nil, err
+	}
+	if !utf8.ValidString(query.Text) {
+		return "", nil, errors.New("知识查询不是UTF-8")
+	}
+	if len(query.Text) > 4<<20 {
+		return "", nil, errors.New("知识查询超过字节上限")
+	}
+	return normalize(query.Text), r.current(), nil
+}
+
+// keywordHits 返回所有范围内的关键词命中，不做截断，供纯关键词与混合召回共用。
+func (r *FileReader) keywordHits(ctx context.Context, text string, st *snapshotState, scope Scope) ([]hit, error) {
 	hits := make([]hit, 0, 3)
 	for _, e := range st.entries {
 		if err := checkContext(ctx); err != nil {
-			return Context{}, err
+			return nil, err
 		}
-		if !inScope(e.item, query.Scope) {
+		if !inScope(e.item, scope) {
 			continue
 		}
 		score, err := scoreEntry(ctx, text, e)
 		if err != nil {
-			return Context{}, err
+			return nil, err
 		}
 		if score.tier > 0 {
 			hits = append(hits, hit{entry: e, score: score})
 		}
 	}
+	return hits, nil
+}
+
+func sortHits(hits []hit) {
 	sort.Slice(hits, func(i, j int) bool {
 		a, b := hits[i], hits[j]
 		if a.score.tier != b.score.tier {
@@ -213,11 +237,12 @@ func (r *FileReader) Recall(ctx context.Context, query Query) (Context, error) {
 		}
 		return a.entry.item.ID < b.entry.item.ID
 	})
+}
+
+func contextFromHits(scope Scope, revision string, hits []hit) Context {
+	result := Context{Scope: scope, Revision: revision}
 	for i := 0; i < len(hits) && i < 3; i++ {
 		result.Items = append(result.Items, cloneItem(hits[i].entry.item))
 	}
-	if err := checkContext(ctx); err != nil {
-		return Context{}, err
-	}
-	return result, nil
+	return result
 }

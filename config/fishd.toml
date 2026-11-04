@@ -48,7 +48,7 @@ max_failures = 8
 # 以及本账号 UID（[sender].self_id 或 [collector.live].self_id）用于跳过自己发的评论。
 # videos 填视频 oid（av 号数字）；interval_seconds 范围 10-3600。
 [collector.comment]
-enabled = false
+enabled = true
 videos = []
 interval_seconds = 60
 
@@ -63,7 +63,7 @@ http_timeout_ms = 35000
 # 评论回复发送（P1）：独立开关，默认关闭；发送限频 1 条/分钟（评论风控严）。
 # 凭据与 csrf（bili_jct）复用 [collector.live] 解析到的同一账号 Cookie。
 [sender.comment]
-enabled = false
+enabled = true
 
 # 只装配Brain与无调用诊断；通道仍必须关闭。
 [llm]
@@ -103,8 +103,25 @@ budget_percent = 10
 # 梗白学习：从最近 24h 公开弹幕里发现知识库未收录的重复短语，
 # 交给 LLM 判断是否值得收录，结果追加到 memes/learned.md。
 # 默认关闭；启用需同时启用 [llm]。每日上限按 UTC 自然日计，持久化在条目 ID 前缀。
-meme_learn = false
+meme_learn = true
 meme_learn_max_per_day = 10
+
+# 知识语义检索（K2）：向量由智谱 embedding-3 生成，存 pgvector。
+# 密钥只从 key_env 指向的环境变量（或本地 .env）读取，禁止写在本文件。
+# dimension 必须为 1024，与 migrations/0006 的 vector(1024) 对齐。
+# auto_refresh 开启后 fishd 按间隔检查知识库 revision，变化时增量 embedding；
+# CLI 手动入库：fishctl knowledge embed（只算新增/变更条目）。
+[embedding]
+enabled = false
+url = "https://open.bigmodel.cn/api/paas/v4/embeddings"
+model = "embedding-3"
+key_env = "FISH_EMBEDDING_KEY"
+dimension = 1024
+batch_size = 32
+# 混合召回 score = 关键词档位 + alpha * 语义相似度（0~1）。
+alpha = 0.5
+auto_refresh = false
+refresh_interval_seconds = 3600
 
 # 联网搜索（ReAct 的 web_search 工具）：留空表示未配置，工具明确回「未配置搜索源」。
 # 协议：POST {"query": "..."} → {"results": [{"title","snippet","url"}]}，
@@ -112,8 +129,8 @@ meme_learn_max_per_day = 10
 # 地址只允许 HTTPS 或本机 HTTP（localhost/127.0.0.1）。
 # 注意：本文件会被提交，真实密钥不要写在这里。
 [web]
-# 运维面板：默认关；只允许监听回环地址（127.0.0.1 / ::1 / localhost）
-enabled = false
+# 运维面板：开启；只允许监听回环地址（127.0.0.1 / ::1 / localhost）
+enabled = true
 addr = "127.0.0.1:8090"
 search_url = ""
 search_key = ""
@@ -252,12 +269,12 @@ rebuild_interval_seconds = 3600
 # 私信通道（P1）：默认关——私信风控极严，护栏优先。
 # 采集：轮询私信会话 → 按 msg_id 去重 → 写事件（channel=dm、session=对方 mid）
 [collector.dm]
-enabled = false
+enabled = true
 interval_seconds = 120   # 10-3600
 
 # 发送护栏：只发主人/白名单、一天最多 1 个收信人、10 分钟限频、必须互关（attribute==6）
 [sender.dm]
-enabled = false
+enabled = true
 # allowed_mids 至少含主人 mid；空列表且 enabled=true 会被配置校验拒绝。
 allowed_mids = ["313591854"]
 # 当日收信人状态（跨重启保留，防止重启后重复换人）
@@ -265,7 +282,7 @@ state_path = "state/dm-recipient.json"
 
 # 看门狗（独立进程 cmd/fishwatchdog）：读心跳判活，冻结/死亡时重启 fishd。
 [watchdog]
-enabled = false
+enabled = true
 interval_seconds = 60        # 检查间隔
 stale_seconds = 120          # 心跳超过这个时间没更新 → 冻结
 unhealthy_threshold = 2      # 连续异常多少次才重启

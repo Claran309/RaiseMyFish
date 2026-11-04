@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"RaiseMyFish/internal/event"
@@ -32,6 +33,11 @@ type entry struct {
 	tags     []string
 	// summary 只参与召回打分（资料正文），不单独对外暴露。
 	summary string
+	// usage 是接法，供 embedding 输入使用；recall 关键词匹配仍只用 title/keywords/tags/summary。
+	usage string
+	// file 与 modTime 用于 embedding 增量：文件未变时跳过已入库条目。
+	file    string
+	modTime time.Time
 }
 
 // snapshotState 是某一时刻的不可变快照；Reload 只做指针替换，读到旧指针的请求不受影响。
@@ -178,7 +184,7 @@ func NewFileReader(ctx context.Context, dir string) (*FileReader, error) {
 		if err != nil {
 			return nil, fmt.Errorf("定位%s：%w", name, err)
 		}
-		data, err := readBounded(ctx, resolved)
+		data, modTime, err := readBounded(ctx, resolved)
 		if err != nil {
 			return nil, fmt.Errorf("加载%s：%w", name, err)
 		}
@@ -190,6 +196,10 @@ func NewFileReader(ctx context.Context, dir string) (*FileReader, error) {
 		items, err := parseFile(ctx, data, name == "memes.md" || strings.HasPrefix(name, "memes/"))
 		if err != nil {
 			return nil, fmt.Errorf("解析%s：%w", name, err)
+		}
+		for i := range items {
+			items[i].file = name
+			items[i].modTime = modTime
 		}
 		for _, item := range items {
 			if seen[item.item.ID] {
@@ -211,35 +221,36 @@ func NewFileReader(ctx context.Context, dir string) (*FileReader, error) {
 	return r, nil
 }
 
-func readBounded(ctx context.Context, path string) (data []byte, result error) {
+func readBounded(ctx context.Context, path string) (data []byte, modTime time.Time, result error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("检查知识文件：%w", err)
+		return nil, time.Time{}, fmt.Errorf("检查知识文件：%w", err)
 	}
 	if !info.Mode().IsRegular() || info.Size() > maxFileBytes {
-		return nil, errors.New("知识文件类型或大小无效")
+		return nil, time.Time{}, errors.New("知识文件类型或大小无效")
 	}
+	modTime = info.ModTime().UTC()
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("打开知识文件：%w", err)
+		return nil, time.Time{}, fmt.Errorf("打开知识文件：%w", err)
 	}
 	defer func() { result = errors.Join(result, f.Close()) }()
 	var out bytes.Buffer
 	buffer := make([]byte, 32<<10)
 	for {
 		if err := checkContext(ctx); err != nil {
-			return nil, err
+			return nil, time.Time{}, err
 		}
 		n, readErr := f.Read(buffer)
 		out.Write(buffer[:n])
 		if out.Len() > maxFileBytes {
-			return nil, errors.New("知识文件超过单文件上限")
+			return nil, time.Time{}, errors.New("知识文件超过单文件上限")
 		}
 		if errors.Is(readErr, io.EOF) {
-			return out.Bytes(), nil
+			return out.Bytes(), modTime, nil
 		}
 		if readErr != nil {
-			return nil, fmt.Errorf("读取知识文件：%w", readErr)
+			return nil, time.Time{}, fmt.Errorf("读取知识文件：%w", readErr)
 		}
 	}
 }
@@ -436,5 +447,5 @@ func convertEntry(d diskEntry, meme bool) (entry, error) {
 	if n > maxEntryBytes {
 		return entry{}, errors.New("知识条目超过资料上限")
 	}
-	return entry{item: item, title: d.Title, keywords: append([]string(nil), d.Keywords...), tags: append([]string(nil), (*d.Tags)...), summary: d.Summary}, nil
+	return entry{item: item, title: d.Title, keywords: append([]string(nil), d.Keywords...), tags: append([]string(nil), (*d.Tags)...), summary: d.Summary, usage: d.Usage}, nil
 }

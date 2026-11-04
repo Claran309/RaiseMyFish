@@ -22,6 +22,7 @@ type Config struct {
 	Channels  Channels   `toml:"channels"`
 	LLM       LLM        `toml:"llm"`
 	Knowledge Knowledge  `toml:"knowledge"`
+	Embedding Embedding  `toml:"embedding"`
 	Reasoning Reasoning  `toml:"reasoning"`
 	Viewer    Viewer     `toml:"viewer"`
 	Watch     Watch      `toml:"watch"`
@@ -98,6 +99,7 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 		Runtime:   Runtime{StateFile: "data/fishd-status.json", HeartbeatSeconds: 5, StaleSeconds: 20},
 		LLM:       defaultLLM(),
 		Knowledge: defaultKnowledge(),
+		Embedding: defaultEmbedding(),
 		Reasoning: DefaultReasoning(),
 		Viewer:    defaultViewer(),
 		Watch:     defaultWatch(),
@@ -148,6 +150,7 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 		}
 	}
 	cfg.LLM.resolveEnvironment(lookup)
+	cfg.Embedding.resolveEnvironment(lookup)
 	// 评论采集/发送与直播共用同一账号的 B站凭据；live 关闭时也要为评论解析。
 	commentCredentials := cfg.Collector.Comment.Enabled || (cfg.Sender != nil && cfg.Sender.Comment != nil && cfg.Sender.Comment.Enabled)
 	cfg.Collector.Live.resolveEnvironment(lookup, cfg.Channels.Live.Enabled || commentCredentials)
@@ -220,6 +223,12 @@ func (c Config) validate(strictLive bool) error {
 	}
 	if c.Knowledge.MemeLearn && !c.LLM.Enabled {
 		return errors.New("梗白学习启用需要先启用LLM")
+	}
+	if err := c.Embedding.Validate(); err != nil {
+		return err
+	}
+	if c.Embedding.AutoRefresh && !c.Knowledge.Enabled {
+		return errors.New("embedding 定时增量需要先启用知识库")
 	}
 	if err := c.Reasoning.Validate(); err != nil {
 		return err
