@@ -58,7 +58,14 @@ func (w *Worker) rebuildSoul(ctx context.Context, stats *Stats) {
 		stats.SoulSkipped = "failed"
 		return
 	}
-	entries := memory.NormalizeSoul(soulEntriesFrom(records))
+	// 先读旧文件：手写条目要保留，自动条目整体替换
+	existing, err := memory.LoadSoul(ctx, w.opts.SoulOpts.Path)
+	if err != nil {
+		stats.SoulSkipped = "failed"
+		return
+	}
+	generated := memory.NormalizeSoul(soulEntriesFrom(records))
+	entries := memory.MergeSoul(existing, generated)
 	if len(entries) > maxEntries {
 		entries = entries[:maxEntries]
 	}

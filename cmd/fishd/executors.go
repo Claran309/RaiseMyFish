@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"RaiseMyFish/internal/bili"
@@ -51,7 +52,7 @@ func buildToolExecutors(cfg config.Config, log *zap.Logger) toolExecutors {
 	}
 
 	cookie := cfg.Collector.Live.Cookie
-	if cookie == "" {
+	if cookie == "" && strings.TrimSpace(cfg.Collector.Live.CookieFile) == "" {
 		log.Info("工具执行器未装配：未配置凭据",
 			zap.String("action", "tool_executor_setup"),
 			zap.String("reason", "no_cookie"),

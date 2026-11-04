@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +43,8 @@ type Options struct {
 	VCRoot   string
 	// Cookie 是完整 Cookie 头（需含 SESSDATA；副作用还需 bili_jct）。
 	Cookie string
+	// CookieFile 是凭据文件路径；Cookie 为空时从它读（对应 FISH_BILI_COOKIE_FILE）。
+	CookieFile string
 	// SelfMID 是本账号 UID（私信 sender_uid 需要）。
 	SelfMID string
 	Timeout time.Duration
@@ -84,6 +87,14 @@ func (e *Error) Unwrap() error { return e.Cause }
 // New 构造客户端；cookie 为空返回 ErrNoCredential（调用方按「未配置」处理）。
 func New(o Options) (*Client, error) {
 	cookie := strings.TrimSpace(o.Cookie)
+	if cookie == "" && strings.TrimSpace(o.CookieFile) != "" {
+		// 支持 _FILE 形式：读文件内容当 Cookie，失败按未配置处理
+		data, err := os.ReadFile(strings.TrimSpace(o.CookieFile))
+		if err != nil {
+			return nil, ErrNoCredential
+		}
+		cookie = strings.TrimSpace(string(data))
+	}
 	if cookie == "" {
 		return nil, ErrNoCredential
 	}

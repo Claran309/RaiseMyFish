@@ -40,6 +40,9 @@ const (
 	// maxMemeSourceRunes 限制单轮扫过的正文总长，防止异常数据把候选表撑爆。
 	maxMemeSourceRunes = 200000
 	memeRejectTTL      = 24 * time.Hour
+	// learned.md 的容量上限：超了就从最旧的开始删（按 id 里的日期前缀排序）。
+	maxLearnedEntries = 200
+	maxLearnedBytes   = 256 << 10
 )
 
 var memeURLPattern = regexp.MustCompile(`(?i)https?://\S+`)
@@ -396,12 +399,47 @@ func appendMemeDoc(ctx context.Context, path string, doc *diskFile, entry diskEn
 	}
 	entries := append(*doc.Entries, entry)
 	doc.Entries = &entries
+	// 超出条数/字节上限时删最旧的（id 前缀带日期，按字典序≈时间序）
+	if trimmed, dropped := trimMemeDoc(entries); dropped > 0 {
+		doc.Entries = &trimmed
+	}
 	if err := saveMemeDoc(path, *doc); err != nil {
 		trimmed := entries[:len(entries)-1]
 		doc.Entries = &trimmed
 		return fmt.Errorf("写入梗白学习文件：%w", err)
 	}
 	return nil
+}
+
+// trimMemeDoc 按条数与字节上限裁掉最旧条目，返回保留的条目与被删条数。
+func trimMemeDoc(entries []diskEntry) ([]diskEntry, int) {
+	if len(entries) <= maxLearnedEntries {
+		body, err := yaml.Marshal(diskFile{Entries: &entries})
+		if err == nil && len(body) <= maxLearnedBytes {
+			return entries, 0
+		}
+	}
+	sorted := make([]diskEntry, len(entries))
+	copy(sorted, entries)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+
+	keep := sorted
+	dropped := 0
+	for len(keep) > maxLearnedEntries {
+		keep = keep[1:]
+		dropped++
+	}
+	for len(keep) > 1 {
+		body, err := yaml.Marshal(diskFile{Entries: &keep})
+		if err != nil || len(body) <= maxLearnedBytes {
+			break
+		}
+		keep = keep[1:]
+		dropped++
+	}
+	out := make([]diskEntry, len(keep))
+	copy(out, keep)
+	return out, dropped
 }
 
 func saveMemeDoc(path string, doc diskFile) error {

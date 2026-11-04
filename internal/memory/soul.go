@@ -34,6 +34,8 @@ type SoulMemory struct {
 	Summary    string    `yaml:"summary"`
 	Importance float64   `yaml:"importance"`
 	ValidFrom  time.Time `yaml:"valid_from"`
+	// Manual 标记「人写的条目」：重建时不会被自动条目冲掉。
+	Manual bool `yaml:"manual,omitempty"`
 }
 
 type soulFile struct {
@@ -128,6 +130,28 @@ func RenderSoul(entries []SoulMemory) string {
 		}
 	}
 	return truncateRunes(sb.String(), SoulMaxRunes)
+}
+
+// MergeSoul 把自动条目合并到已有条目上，**保留手写条目**。
+//
+// 规则：手写条目永远保留（同标题时手写优先），自动条目整体替换为本次生成的。
+func MergeSoul(existing, generated []SoulMemory) []SoulMemory {
+	out := make([]SoulMemory, 0, len(existing)+len(generated))
+	manual := make(map[string]struct{}, len(existing))
+	for _, e := range existing {
+		if !e.Manual {
+			continue
+		}
+		out = append(out, e)
+		manual[e.Title] = struct{}{}
+	}
+	for _, e := range generated {
+		if _, ok := manual[e.Title]; ok {
+			continue // 手写优先
+		}
+		out = append(out, e)
+	}
+	return sanitizeSoul(out)
 }
 
 // NormalizeSoul 对外暴露的去重排序（写入前用同一套规则数条数）。

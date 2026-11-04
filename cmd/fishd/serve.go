@@ -124,7 +124,7 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 		retryDelay: retryDelay,
 		memory:     mem,
 		knowledge:  know,
-		soulPath:   soulPath,
+		soul:       newSoulCache(soulPath),
 		channels:   channels,
 		viewers:    viewers,
 		presence:   pres,

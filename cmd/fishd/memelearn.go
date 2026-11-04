@@ -53,6 +53,8 @@ func startMemeLearn(ctx context.Context, cfg config.Config, db *gorm.DB, runtime
 	}
 	learner, err := knowledge.NewMemeLearner(cfg.Knowledge.Dir, runtime.Reader, source, llm, knowledge.MemeLearnOptions{
 		MaxPerDay: cfg.Knowledge.MemeLearnMaxPerDay,
+		Window:    time.Duration(cfg.Knowledge.MemeLearnWindowHours) * time.Hour,
+		MinCount:  cfg.Knowledge.MemeLearnMinOccurrences,
 		Channel:   event.ChLive,
 	})
 	if err != nil {

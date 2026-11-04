@@ -2898,3 +2898,90 @@ soul_path = "personas/dafeiyu/knowledge/soul-memories.md"
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。
+
+---
+
+## soul 手写合并 + 优化小包（#9/#16/#17/#18/#19，2026-11-04）
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `internal/memory/soul.go` | 修改（Manual + MergeSoul） | `769B63EDED357566` | 5994 |
+| `internal/memory/soul_test.go` | 修改（+2 用例） | `9CEC3E3FB51C000D` | 5325 |
+| `internal/memory/extractworker/soul.go` | 修改（保留手写） | `FE82F378B0FF6A08` | 2873 |
+| `internal/memory/extractworker/soul_test.go` | 修改（+1 用例） | `450B1AD84E6216CD` | 6912 |
+| `cmd/fishd/soul_cache.go` | 新增（mtime 缓存） | `1920504729155616` | 1694 |
+| `cmd/fishd/soul_cache_test.go` | 新增（3 用例） | `8D275B562D46F4FE` | 2153 |
+| `cmd/fishd/generate.go` | 修改（用缓存） | `95835E08999E1BF2` | 15137 |
+| `internal/knowledge/memelearn.go` | 修改（learned 清理） | `3A122FED19ACE54E` | 18734 |
+| `internal/config/knowledge.go` | 修改（#17 两项） | `6544A1621B93CE8E` | 1945 |
+| `internal/bili/bili.go` | 修改（CookieFile） | `27C3C56DEF69F51B` | 9886 |
+| `internal/bili/dm_test.go` | 修改（+1 用例） | `821261877167C805` | 5672 |
+| `cmd/fishd/dm.go` / `executors.go` | 修改（传 CookieFile） | `9D8F2E40E2B7E957` / `CF7357D4C5E8FFCF` | 2879 / 5661 |
+
+### #9 手写 soul 不被覆盖
+
+- `SoulMemory` 加 `manual: true`（yaml omitempty）。
+- 新增 `memory.MergeSoul(existing, generated)`：**手写条目全保留、同标题手写优先**，自动条目整体替换。
+- `rebuildSoul` 先 `LoadSoul` 读旧文件 → Merge → 写回，所以人写的条目重建后还在。
+- 用法：在 `soul-memories.md` 里给条目加 `manual: true`。
+
+### #16 soul mtime 缓存
+
+`cmd/fishd/soul_cache.go`：按 `mtime + size` 缓存渲染结果，文件没变不重复读盘/解析；
+文件不存在或解析失败也记住时间戳，避免每轮重试；nil 缓存安全返回 nil。
+
+### #17 梗白学习参数暴露
+
+```toml
+[knowledge]
+meme_learn_window_hours = 24      # 回看窗口（1–720）
+meme_learn_min_occurrences = 2    # 最低出现次数（1–100）
+```
+装配时映射到 `MemeLearnOptions.Window / MinCount`。
+
+### #18 learned.md 清理
+
+`trimMemeDoc`：超过 **200 条**或 **256KB** 时，按 `id`（前缀含日期）字典序删最旧的，
+直到回到上限内；`appendMemeDoc` 写入前调用。
+
+### #19 cookie _FILE
+
+`bili.Options` 加 `CookieFile`：`Cookie` 为空时读文件内容（对应 `FISH_BILI_COOKIE_FILE`），
+失败按「未配置」处理；`cmd/fishd` 的 like/dm 装配都传 `cfg.Collector.Live.CookieFile`，
+并且「无 cookie 就不装配」的前置判断也改成「cookie 和 cookie 文件都空才跳过」。
+
+### 测试
+
+| 用例 | 断言 |
+|---|---|
+| `TestMergeSoulKeepsManual` | 3 条（1 手写 + 2 自动），手写内容不变、自动更新、自动新增保留 |
+| `TestMergeSoulManualWinsOnSameTitle` | 同标题手写优先 |
+| `TestSoulRebuildKeepsManualEntries` | 重建后手写在、旧自动被替换 |
+| `TestSoulCacheReusesUntilMtimeChanges` | 篡改内存缓存后仍命中（证明没重读）；改文件后重读 |
+| `TestSoulCacheMissingFile` / `EmptyPath` | 缺失/nil 安全 |
+| `TestNewReadsCookieFile` | 文件读取生效、Cookie 优先、缺失文件返回未配置 |
+
+| 命令 | 结果 |
+|---|---|
+| `go build ./...` / `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **37 个包全绿** |
+| `golangci-lint`（memory/knowledge/bili/config/cmd.fishd） | **0 issues** |
+
+### 踩坑记录
+
+- **并发构建会吐陈旧诊断**：这轮多次出现「build 报上下文/未定义错误，但紧接着 unit=0、37 包全绿」。
+  单独 `go build ./cmd/fishd/` 立刻通过 → 是并行跑 build/test 时的缓存串味，不是代码问题。
+- 又是 heredoc 转义：`"
+"` 写进 Go 字符串变成真换行（`string literal not terminated`）。已一律用 `chr(92)` 拼。
+
+### 未做项
+
+| 项 | 说明 |
+|---|---|
+| 手写条目上限 | 手写条目不受 `soul_max_entries` 保护，写太多会把自动条目挤掉（按重要度排序） |
+| learned 清理的审计 | 删了不记日志，只看文件变化 |
+| CookieFile 热更 | 只在构造时读一次，换文件要重启（cookie 一般长效，可接受） |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -145,5 +147,29 @@ func TestRelationAttribute(t *testing.T) {
 	}
 	if attr != 6 {
 		t.Errorf("attribute = %d，期望 6", attr)
+	}
+}
+
+// TestNewReadsCookieFile Cookie 为空时从 _FILE 读。
+func TestNewReadsCookieFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cookie.txt")
+	if err := os.WriteFile(path, []byte("SESSDATA=from-file; bili_jct=csrf-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(Options{CookieFile: path})
+	if err != nil {
+		t.Fatalf("从文件读凭据失败：%v", err)
+	}
+	if !c.HasCSRF() {
+		t.Error("文件里的 bili_jct 应被识别")
+	}
+	// Cookie 优先于文件
+	c2, err := New(Options{Cookie: "SESSDATA=direct", CookieFile: path})
+	if err != nil || c2.HasCSRF() {
+		t.Errorf("Cookie 非空时应忽略文件：%v / csrf=%v", err, c2.HasCSRF())
+	}
+	// 文件不存在 → 未配置
+	if _, err := New(Options{CookieFile: filepath.Join(t.TempDir(), "nope.txt")}); !errors.Is(err, ErrNoCredential) {
+		t.Errorf("缺失文件应返回 ErrNoCredential：%v", err)
 	}
 }

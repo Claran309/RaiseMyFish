@@ -169,3 +169,43 @@ func TestSoulRebuildNilSource(t *testing.T) {
 		t.Fatalf("未装配应跳过：%+v", stats)
 	}
 }
+
+// TestSoulRebuildKeepsManualEntries 手写条目在重建后仍在，自动条目被替换。
+func TestSoulRebuildKeepsManualEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "soul.md")
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+
+	// 预置：一条手写 + 一条旧自动
+	manual := memory.SoulMemory{Title: "本鱼是鱼", Summary: "手写设定", Importance: 0.9,
+		ValidFrom: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), Manual: true}
+	oldAutp := memory.SoulMemory{Title: "旧自动", Summary: "将被替换", Importance: 0.8,
+		ValidFrom: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)}
+	if err := memory.WriteSoulAtomic(context.Background(), path, []memory.SoulMemory{manual, oldAutp}); err != nil {
+		t.Fatal(err)
+	}
+
+	src := &fakeSoul{records: []store.MemoryRecord{soulRec("a", "主人是学生", "在读大学", 0.9)}}
+	w := newSoulWorker(t, src, path, &now)
+	var stats Stats
+	w.rebuildSoul(context.Background(), &stats)
+	if stats.SoulEntries != 2 {
+		t.Fatalf("应 1 手写 + 1 自动 = 2 条：%+v", stats)
+	}
+	got, err := memory.LoadSoul(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	titles := map[string]bool{}
+	for _, e := range got {
+		titles[e.Title] = true
+	}
+	if !titles["本鱼是鱼"] {
+		t.Error("手写条目被冲掉")
+	}
+	if !titles["主人是学生"] {
+		t.Error("自动条目未写入")
+	}
+	if titles["旧自动"] {
+		t.Error("旧自动条目应被替换掉")
+	}
+}

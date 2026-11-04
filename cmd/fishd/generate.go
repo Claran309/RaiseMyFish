@@ -113,7 +113,7 @@ type generateDeps struct {
 	memory     memory.Reader
 	knowledge  knowledge.Reader
 	viewers    store.ViewerRepo
-	soulPath   string
+	soul       *soulCache
 	channels   *channelSet
 	presence   *presence.Table
 	state      func(time.Time) string
@@ -184,13 +184,8 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 				viewerText = formatViewerProfile(profile)
 			}
 		}
-		// 长期设定：每轮读一次（文件 <2KB），读失败就不注入
-		var soulLines []string
-		if deps.soulPath != "" {
-			if entries, err := memory.LoadSoul(ctx, deps.soulPath); err == nil && len(entries) > 0 {
-				soulLines = strings.Split(memory.RenderSoul(entries), "\n")
-			}
-		}
+		// 长期设定：带 mtime 缓存，文件没变不重复解析
+		soulLines := deps.soul.load(ctx)
 		input := brain.ContextInput{
 			Event:     ev,
 			Persona:   deps.pack,

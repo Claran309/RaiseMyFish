@@ -104,3 +104,45 @@ func TestLoadSoulBadSchema(t *testing.T) {
 		t.Error("schema 不符应报错")
 	}
 }
+
+// TestMergeSoulKeepsManual 手写条目在重建后保留，且同标题手写优先。
+func TestMergeSoulKeepsManual(t *testing.T) {
+	base := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	existing := []SoulMemory{
+		{Title: "本鱼是鱼", Summary: "手写：说话短", Importance: 0.9, ValidFrom: base, Manual: true},
+		{Title: "主人是学生", Summary: "自动旧版", Importance: 0.8, ValidFrom: base},
+	}
+	generated := []SoulMemory{
+		{Title: "主人是学生", Summary: "自动新版", Importance: 0.85, ValidFrom: base.Add(time.Hour)},
+		{Title: "主人爱吃辣", Summary: "自动新增", Importance: 0.8, ValidFrom: base},
+	}
+	got := MergeSoul(existing, generated)
+
+	byTitle := map[string]SoulMemory{}
+	for _, e := range got {
+		byTitle[e.Title] = e
+	}
+	if len(got) != 3 {
+		t.Fatalf("应 3 条（1 手写 + 2 自动），实际 %d：%+v", len(got), got)
+	}
+	if m, ok := byTitle["本鱼是鱼"]; !ok || !m.Manual || m.Summary != "手写：说话短" {
+		t.Errorf("手写条目丢失或被改：%+v", m)
+	}
+	if a := byTitle["主人是学生"]; a.Summary != "自动新版" {
+		t.Errorf("自动条目未更新：%+v", a)
+	}
+	if _, ok := byTitle["主人爱吃辣"]; !ok {
+		t.Error("自动新增条目丢失")
+	}
+}
+
+// TestMergeSoulManualWinsOnSameTitle 同标题时手写优先。
+func TestMergeSoulManualWinsOnSameTitle(t *testing.T) {
+	base := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	existing := []SoulMemory{{Title: "主人是学生", Summary: "手写版", Importance: 0.9, ValidFrom: base, Manual: true}}
+	generated := []SoulMemory{{Title: "主人是学生", Summary: "自动版", Importance: 0.95, ValidFrom: base}}
+	got := MergeSoul(existing, generated)
+	if len(got) != 1 || got[0].Summary != "手写版" {
+		t.Fatalf("手写应优先：%+v", got)
+	}
+}
