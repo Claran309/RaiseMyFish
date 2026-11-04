@@ -102,7 +102,7 @@ func TestNewMemoryWorkerAdvancesWatermark(t *testing.T) {
 	source := &memoryTestSource{events: []event.Event{ev}}
 	repo := &memoryTestRepo{}
 
-	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, repo, nil, nil, path)
+	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, repo, nil, nil, path, "")
 	if err != nil {
 		t.Fatalf("装配 worker 失败：%v", err)
 	}
@@ -198,6 +198,100 @@ func TestRunMemoryExtractLogsAndContinuesAfterError(t *testing.T) {
 	}
 	if !sawSuccess || !sawFailure {
 		t.Fatalf("日志缺少成功或失败记录：success=%v failure=%v", sawSuccess, sawFailure)
+	}
+}
+
+// TestNewMemoryWorkerHonorsConfigAndStateFreeze 装配层要把配置冻结和运行时状态文件都接进 worker。
+func TestNewMemoryWorkerHonorsConfigAndStateFreeze(t *testing.T) {
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	ev := event.Event{
+		ID: "live:room:f1", Channel: event.ChLive, Dir: event.DirIn, Session: "room",
+		FromID: "u1", FromName: "路人", Text: "我保证明天带话", At: at, Status: event.StatusDone,
+	}
+
+	// 配置冻结
+	source := &memoryTestSource{events: []event.Event{ev}}
+	repo := &memoryTestRepo{}
+	wmPath := filepath.Join(t.TempDir(), "watermark.json")
+	freezePath := filepath.Join(t.TempDir(), "state", "memory.frozen")
+	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300, Frozen: true}, source, repo, nil, nil, wmPath, freezePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats, err := worker.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if !stats.Frozen || stats.FrozenReason != "config" || repo.count() != 0 {
+		t.Fatalf("配置冻结未生效：stats=%+v records=%d", stats, repo.count())
+	}
+
+	// 运行时状态文件冻结
+	if err := memory.Freeze(freezePath); err != nil {
+		t.Fatal(err)
+	}
+	worker, err = newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, repo, nil, nil, wmPath, freezePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats, err = worker.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if !stats.Frozen || stats.FrozenReason != "state_file" || repo.count() != 0 {
+		t.Fatalf("状态文件冻结未生效：stats=%+v records=%d", stats, repo.count())
+	}
+
+	// 解冻后恢复提炼
+	if err := memory.Unfreeze(freezePath); err != nil {
+		t.Fatal(err)
+	}
+	stats, err = worker.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if stats.Frozen || stats.Inserted != 1 || repo.count() != 1 {
+		t.Fatalf("解冻后未恢复提炼：stats=%+v records=%d", stats, repo.count())
+	}
+}
+
+// frozenWorker 始终返回冻结统计，用于验证循环日志。
+type frozenWorker struct{}
+
+func (frozenWorker) RunOnce(context.Context) (extractworker.Stats, error) {
+	return extractworker.Stats{Frozen: true, FrozenReason: "state_file"}, nil
+}
+
+// TestRunMemoryExtractLogsFrozen 冻结轮必须打 action=memory_frozen，且不把它记成一次成功提炼。
+func TestRunMemoryExtractLogsFrozen(t *testing.T) {
+	core, logs := observer.New(zapcore.InfoLevel)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runMemoryExtract(ctx, frozenWorker{}, 5*time.Millisecond, zap.New(core))
+	}()
+	deadline := time.After(2 * time.Second)
+	for logs.FilterMessage("记忆已冻结，本轮只读不写").Len() == 0 {
+		select {
+		case <-deadline:
+			cancel()
+			<-done
+			t.Fatalf("未记录冻结日志：%v", logs.All())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+
+	entry := logs.FilterMessage("记忆已冻结，本轮只读不写").All()[0]
+	fields := entry.ContextMap()
+	if fields["action"] != "memory_frozen" || fields["reason"] != "state_file" {
+		t.Fatalf("冻结日志字段不符：%v", fields)
+	}
+	if logs.FilterMessage("记忆提炼完成").Len() != 0 {
+		t.Errorf("冻结轮不应同时记成成功提炼：%v", logs.All())
 	}
 }
 

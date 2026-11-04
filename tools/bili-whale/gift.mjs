@@ -25,13 +25,15 @@ const HTTP_TIMEOUT_MS = 10000
 const UA = 'Mozilla/5.0 RaiseMyFish/0.13'
 
 class GiftError extends Error {
-  constructor(kind, message) {
+  constructor(kind, message, uncertain = false) {
     super(message)
     this.kind = kind
+    // uncertain 表示请求可能已到达平台但结果未知；Go 侧据此保留额度并标记待核对。
+    this.uncertain = uncertain === true
   }
 }
 
-const fatal = message => new GiftError('fatal', message)
+const fatal = (message, uncertain = false) => new GiftError('fatal', message, uncertain)
 const retryable = message => new GiftError('retryable', message)
 
 // 平台 ID 既可能是数字字面量也可能是字符串；统一成可安全放进 JSON 数字的十进制串。
@@ -89,12 +91,15 @@ function safeMessage(error) {
 }
 
 function errorFrame(error) {
-  return {
+  const frame = {
     protocol: PROTOCOL,
     type: 'error',
     kind: error?.kind === 'retryable' ? 'retryable' : 'fatal',
     message: safeMessage(error),
   }
+  // 仅在结果未知时输出该字段；确定失败（参数/预检/平台明确拒绝）不带。
+  if (error?.uncertain === true) frame.uncertain = true
+  return frame
 }
 
 async function readLimited(response) {

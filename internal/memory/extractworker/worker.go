@@ -72,6 +72,11 @@ type Options struct {
 	OwnerName string
 	// AllowPrivate 为 true 时才提炼私密事件；默认 false（fail-closed）。
 	AllowPrivate bool
+	// Frozen 为 true 时整轮跳过：不扫描、不写库、不推进水位（配置级冻结）。
+	Frozen bool
+	// FreezePath 是运行时冻结状态文件；非空时每轮检查，文件存在即冻结。
+	// 配置级 Frozen 优先，删除状态文件不会覆盖它。
+	FreezePath string
 	// Extractor 是提炼器；nil 时用规则版（memory.NewRuleExtractor）。
 	// 传 LLMExtractor 时按触发策略走模型，失败内部回落规则版。
 	Extractor memory.Extractor
@@ -137,6 +142,10 @@ type Stats struct {
 	SoulEntries int
 	// SoulSkipped 是跳过原因（throttled / failed / none）。
 	SoulSkipped string
+	// Frozen 表示本轮因冻结被跳过。
+	Frozen bool
+	// FrozenReason 是冻结来源（config / state_file）。
+	FrozenReason string
 }
 
 // Worker 是提炼 worker 本体。
@@ -240,6 +249,18 @@ func (w *Worker) RunOnce(ctx context.Context) (Stats, error) {
 		return stats, err
 	}
 
+	// 冻结检查必须早于读水位：本轮不消费任何事件，水位保持原样，
+	// 解冻后从冻结点继续，既不丢事件也不会把积压当成已处理。
+	frozen, reason, err := w.frozen()
+	if err != nil {
+		return stats, err
+	}
+	if frozen {
+		stats.Frozen = true
+		stats.FrozenReason = reason
+		return stats, nil
+	}
+
 	start, err := w.wm.Load(ctx)
 	if err != nil {
 		return stats, fmt.Errorf("读取提炼水位：%w", err)
@@ -279,6 +300,30 @@ func (w *Worker) RunOnce(ctx context.Context) (Stats, error) {
 	w.rebuildProfiles(ctx, &stats)
 	w.rebuildSoul(ctx, &stats)
 	return stats, nil
+}
+
+// 冻结来源，用于日志区分「配置写死」与「运行时开关」。
+const (
+	freezeReasonConfig    = "config"
+	freezeReasonStateFile = "state_file"
+)
+
+// frozen 判断本轮是否应跳过；配置冻结优先，其次看运行时状态文件。
+func (w *Worker) frozen() (bool, string, error) {
+	if w.opts.Frozen {
+		return true, freezeReasonConfig, nil
+	}
+	if strings.TrimSpace(w.opts.FreezePath) == "" {
+		return false, "", nil
+	}
+	frozen, err := memory.IsFrozen(w.opts.FreezePath)
+	if err != nil {
+		return false, "", err
+	}
+	if frozen {
+		return true, freezeReasonStateFile, nil
+	}
+	return false, "", nil
 }
 
 // rebuildProfiles 是档案重建子任务：每小时节流 + 只在直播活跃（最近 5 分钟有 in 事件）时跑。

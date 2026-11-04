@@ -13,6 +13,9 @@ type Memory struct {
 	Enabled         bool `toml:"enabled"`
 	IntervalSeconds int  `toml:"interval_seconds"`
 	AllowPrivate    bool `toml:"allow_private"`
+	// Frozen 为 true 时提炼 worker 整轮跳过（只读不写，不推进水位）。
+	// 运行时可另用状态文件 state/memory.frozen 冻结；配置冻结优先，解冻文件不会覆盖它。
+	Frozen bool `toml:"frozen"`
 	// LLMExtract 决定是否对「值得跑」的事件用模型做语义提炼（其余走规则版）。
 	LLMExtract bool `toml:"llm_extract"`
 	// LLMExtractMaxPerHour 是每小时最多调用几次模型（限流，超出回落规则版）。

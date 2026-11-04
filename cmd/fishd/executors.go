@@ -87,7 +87,7 @@ func buildToolExecutors(cfg config.Config, log *zap.Logger) toolExecutors {
 
 	// 送礼复用既有 gift.NodeSender（dry-run/real 由 [gift] 决定）
 	if sender, err := buildGiftSender(cfg); err == nil {
-		execs.Gift = giftExecutor{sender: sender}
+		execs.Gift = giftExecutor{sender: sender, log: log}
 	} else {
 		log.Info("送礼执行器未装配", zap.String("action", "tool_executor_setup"), zap.String("reason", err.Error()))
 	}
@@ -146,10 +146,20 @@ func buildGiftSender(cfg config.Config) (*gift.NodeSender, error) {
 }
 
 // giftExecutor 把 gift.NodeSender 适配成 reasoning.GiftExecutor。
-type giftExecutor struct{ sender *gift.NodeSender }
+type giftExecutor struct {
+	sender *gift.NodeSender
+	log    *zap.Logger
+}
 
 func (g giftExecutor) SendGift(ctx context.Context, req reasoning.GiftRequest) (string, error) {
 	res, err := g.sender.Send(ctx, req.Room, req.GiftID, req.Num)
+	if res.PendingReview && g.log != nil {
+		g.log.Warn("送礼结果未知，额度已保留待核对",
+			zap.String("action", "gift_pending_review"),
+			zap.String("room", req.Room),
+			zap.Int("num", req.Num),
+		)
+	}
 	if err != nil {
 		return "", err
 	}

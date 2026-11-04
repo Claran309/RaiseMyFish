@@ -30,6 +30,9 @@ import (
 // memoryWatermarkPath 是提炼游标的持久化位置；state/ 不随日志轮转清理。
 const memoryWatermarkPath = "state/memory-watermark.json"
 
+// memoryFreezePath 是运行时冻结标记，与 fishctl memory freeze/unfreeze 共用。
+const memoryFreezePath = memory.DefaultFreezePath
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
@@ -278,7 +281,7 @@ type memoryExtractWorker interface {
 }
 
 // newMemoryWorker 只用接口依赖装配 worker，测试可注入 mock 来源与仓库。
-func newMemoryWorker(cfg config.Memory, source extractworker.DoneSource, repo store.MemoryRepo, profiles extractworker.ProfileSource, extractor memory.Extractor, watermarkPath string) (*extractworker.Worker, error) {
+func newMemoryWorker(cfg config.Memory, source extractworker.DoneSource, repo store.MemoryRepo, profiles extractworker.ProfileSource, extractor memory.Extractor, watermarkPath, freezePath string) (*extractworker.Worker, error) {
 	watermark, err := extractworker.NewFileWatermark(watermarkPath)
 	if err != nil {
 		return nil, err
@@ -286,7 +289,13 @@ func newMemoryWorker(cfg config.Memory, source extractworker.DoneSource, repo st
 	// 间隔由 runMemoryExtract 的循环控制；worker 的 Run 不在本装配中使用。
 	// Profiles 非 nil 时会在提炼循环里附带档案重建（每小时节流 + 只在直播活跃时）。
 	// Extractor 非 nil 时按触发策略走 LLM，否则规则版。
-	return extractworker.New(source, repo, watermark, extractworker.Options{AllowPrivate: cfg.AllowPrivate, Profiles: profiles, Extractor: extractor})
+	return extractworker.New(source, repo, watermark, extractworker.Options{
+		AllowPrivate: cfg.AllowPrivate,
+		Frozen:       cfg.Frozen,
+		FreezePath:   freezePath,
+		Profiles:     profiles,
+		Extractor:    extractor,
+	})
 }
 
 // buildMemoryExtractor 构造记忆提炼器：LLM 版（按触发策略）或 nil（规则版）。
@@ -376,6 +385,13 @@ func runMemoryExtract(ctx context.Context, worker memoryExtractWorker, interval 
 			}
 			return
 		}
+		if stats.Frozen {
+			logger.Info("记忆已冻结，本轮只读不写",
+				zap.String("action", "memory_frozen"),
+				zap.String("reason", stats.FrozenReason),
+			)
+			return
+		}
 		logger.Info("记忆提炼完成",
 			zap.String("action", "memory_extract"),
 			zap.Int("scanned", stats.Scanned),
@@ -423,7 +439,7 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, l
 		profiles = nil
 	}
 	extractor := buildMemoryExtractor(cfg, logger)
-	worker, err := newMemoryWorker(cfg.Memory, source, repo, profiles, extractor, memoryWatermarkPath)
+	worker, err := newMemoryWorker(cfg.Memory, source, repo, profiles, extractor, memoryWatermarkPath, memoryFreezePath)
 	if err != nil {
 		logger.Error("记忆提炼初始化失败，降级运行", zap.String("action", "memory_extract"), zap.Error(err))
 		return noop
@@ -435,6 +451,7 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, l
 		zap.Int("interval_seconds", cfg.Memory.IntervalSeconds),
 		zap.Bool("allow_private", cfg.Memory.AllowPrivate),
 		zap.Bool("llm_extract", cfg.Memory.LLMExtract),
+		zap.Bool("frozen", cfg.Memory.Frozen),
 	)
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})

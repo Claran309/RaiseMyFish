@@ -194,6 +194,9 @@ func TestRunGiftRealOutput(t *testing.T) {
 	if got.DryRun || !got.Sent || got.Message != "已发送" {
 		t.Fatalf("真实输出不符：%+v", got)
 	}
+	if got.PendingReview {
+		t.Fatalf("成功送礼不应标记待核对：%+v", got)
+	}
 }
 
 func TestRunGiftUsesConfiguredDefaults(t *testing.T) {
@@ -227,6 +230,31 @@ func TestRunGiftSendFailureKeepsJSON(t *testing.T) {
 	}
 	if got.Sent || got.Error != "礼物价格超过配置上限" {
 		t.Fatalf("失败输出不符：%+v", got)
+	}
+}
+
+func TestRunGiftPendingReviewOutput(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	t.Setenv("FISH_BILI_COOKIE", "SESSDATA=fixture")
+	path := writeGiftConfig(t, "[gift]\nenabled=true\nreal=true\n")
+	boom := &gift.Error{Kind: gift.KindFatal, Message: "送礼子进程超时或取消，结果可能未知", Uncertain: true}
+	factory := func(config.Gift, string) (giftSender, error) {
+		return &fakeGiftSender{
+			result: gift.Result{PendingReview: true, Error: boom.Error()},
+			err:    boom,
+		}, nil
+	}
+	var out bytes.Buffer
+	err := runGiftWith(context.Background(), path, "", []string{"send", "--room", "99"}, &out, io.Discard, factory)
+	if !errors.Is(err, boom) {
+		t.Fatalf("错误未透传：%v", err)
+	}
+	var got giftSendOutput
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("失败时也应输出 JSON：%v\n%s", err, out.String())
+	}
+	if !got.PendingReview || got.Sent || got.Error == "" {
+		t.Fatalf("待核对输出不符：%+v", got)
 	}
 }
 

@@ -1,11 +1,13 @@
 package main
 
-// 本文件实现 `fishctl memory` 只读运维命令：list / search / stats。
+// 本文件实现 `fishctl memory` 运维命令：list / search / stats 只读查询，
+// 以及 freeze / unfreeze 运行时冻结开关。
 //
 // 边界：
 //   - 查询走 store.MemoryRepo 的只读方法，不在命令层写 SQL；
 //   - 输出与 status 一致，使用单行 JSON；
 //   - 这是本机运维视角，会列出私密行；给 Brain 的召回仍由 repository 过滤隐私。
+//   - freeze/unfreeze 只改状态文件，不读配置、不连数据库，PG 不可用时也能操作。
 
 import (
 	"context"
@@ -20,6 +22,7 @@ import (
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/infra"
+	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/store"
 )
 
@@ -28,7 +31,10 @@ const (
 	maxMemoryLimit     = 200
 )
 
-var errMemoryUsage = errors.New("用法：fishctl memory list [--limit N] | memory search --q <关键词> [--limit N] | memory stats")
+var errMemoryUsage = errors.New("用法：fishctl memory list [--limit N] | memory search --q <关键词> [--limit N] | memory stats | memory freeze | memory unfreeze")
+
+// memoryFreezeFile 是冻结状态文件位置；测试可替换，生产固定与 fishd 共用默认路径。
+var memoryFreezeFile = memory.DefaultFreezePath
 
 // memoryReadRepo 是命令依赖的最小只读接口，database.MemoryRepo 直接满足。
 type memoryReadRepo interface {
@@ -63,6 +69,10 @@ func runMemory(ctx context.Context, configPath, envPath string, args []string, o
 	}
 	if spec.Action == "help" {
 		return nil
+	}
+	// 冻结开关是纯本地状态文件操作：不读配置、不连 PG，数据库故障时仍可执行。
+	if spec.Action == "freeze" || spec.Action == "unfreeze" {
+		return executeMemoryFreeze(spec, out)
 	}
 
 	// 只读命令不采集直播，跳过 collector.live 校验，避免凭据缺失时不可用。
@@ -153,9 +163,49 @@ func parseMemoryArgs(args []string, stderr io.Writer) (memoryCommand, error) {
 		}
 		return memoryCommand{Action: "stats", Limit: defaultMemoryLimit}, nil
 
+	case "freeze", "unfreeze":
+		fs := flag.NewFlagSet("memory "+args[0], flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		fs.Usage = func() { fmt.Fprintf(stderr, "用法：fishctl memory %s\n", args[0]) }
+		if err := fs.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return memoryCommand{Action: "help"}, nil
+			}
+			return memoryCommand{}, errMemoryUsage
+		}
+		if fs.NArg() != 0 {
+			return memoryCommand{}, errMemoryUsage
+		}
+		return memoryCommand{Action: args[0]}, nil
+
 	default:
 		return memoryCommand{}, errMemoryUsage
 	}
+}
+
+// executeMemoryFreeze 执行冻结/解冻并输出最终状态；重复调用保持幂等。
+func executeMemoryFreeze(spec memoryCommand, out io.Writer) error {
+	path := memoryFreezeFile
+	switch spec.Action {
+	case "freeze":
+		if err := memory.Freeze(path); err != nil {
+			return err
+		}
+	case "unfreeze":
+		if err := memory.Unfreeze(path); err != nil {
+			return err
+		}
+	default:
+		return errMemoryUsage
+	}
+	summary := struct {
+		Frozen bool   `json:"frozen"`
+		Path   string `json:"path"`
+	}{Frozen: spec.Action == "freeze", Path: path}
+	if err := json.NewEncoder(out).Encode(summary); err != nil {
+		return fmt.Errorf("输出记忆冻结状态：%w", err)
+	}
+	return nil
 }
 
 // executeMemory 执行已解析命令，所有查询错误向上抛，不吞成空数据。

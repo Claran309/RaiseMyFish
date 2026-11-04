@@ -27,16 +27,22 @@ func TestMemoryDefaults(t *testing.T) {
 	if !cfg.Memory.Enabled || cfg.Memory.IntervalSeconds != 300 || cfg.Memory.AllowPrivate {
 		t.Fatalf("记忆默认值不符：%+v", cfg.Memory)
 	}
+	if cfg.Memory.Frozen {
+		t.Fatalf("记忆默认不应冻结：%+v", cfg.Memory)
+	}
 }
 
 // TestMemoryOverrides 显式配置覆盖默认值。
 func TestMemoryOverrides(t *testing.T) {
-	cfg, err := loadMemoryConfig(t, "[memory]\nenabled=true\ninterval_seconds=60\nallow_private=true\n")
+	cfg, err := loadMemoryConfig(t, "[memory]\nenabled=true\ninterval_seconds=60\nallow_private=true\nfrozen=true\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !cfg.Memory.Enabled || cfg.Memory.IntervalSeconds != 60 || !cfg.Memory.AllowPrivate {
 		t.Fatalf("记忆配置未生效：%+v", cfg.Memory)
+	}
+	if !cfg.Memory.Frozen {
+		t.Fatalf("冻结配置未生效：%+v", cfg.Memory)
 	}
 }
 

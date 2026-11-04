@@ -42,6 +42,12 @@ func TestGiftHelperProcess(t *testing.T) {
 	case "fatal":
 		fmt.Print(`{"protocol":1,"type":"error","kind":"fatal","message":"礼物发送被拒绝（code=-400）"}` + "\n")
 		os.Exit(2)
+	case "uncertain":
+		fmt.Print(`{"protocol":1,"type":"error","kind":"fatal","message":"发送结果未知，需人工核对","uncertain":true}` + "\n")
+		os.Exit(2)
+	case "sent-uncertain":
+		fmt.Print(fmt.Sprintf(`{"protocol":1,"type":"sent","gift_id":%q,"num":%s,"uncertain":true}`+"\n", giftID, num))
+		os.Exit(0)
 	case "bad-kind":
 		fmt.Print(`{"protocol":1,"type":"error","kind":"unknown","message":"x"}` + "\n")
 		os.Exit(2)
@@ -232,6 +238,9 @@ func TestSendDryRunDoesNotConsumeLimit(t *testing.T) {
 		if err != nil || !result.Sent || result.GiftID != helperGift || result.Num != 1 {
 			t.Fatalf("dry-run结果不符：%+v %v", result, err)
 		}
+		if result.PendingReview {
+			t.Fatalf("dry-run 成功不应标记待核对：%+v", result)
+		}
 	}
 	if s.used != 0 {
 		t.Fatalf("dry-run不应计数：%d", s.used)
@@ -249,6 +258,9 @@ func TestSendRealSuccessAndDailyLimit(t *testing.T) {
 		if err != nil || !result.Sent {
 			t.Fatalf("第%d次真送失败：%+v %v", i+1, result, err)
 		}
+		if result.PendingReview {
+			t.Fatalf("成功送礼不应标记待核对：%+v", result)
+		}
 	}
 	if s.used != 2 {
 		t.Fatalf("额度计数错误：%d", s.used)
@@ -263,47 +275,67 @@ func TestSendRealSuccessAndDailyLimit(t *testing.T) {
 	}
 }
 
-func TestRetryableFailureReleasesSlotButFatalKeepsIt(t *testing.T) {
+// TestDefiniteFailuresReleaseSlot 确定没送出去的失败（可重试错误/平台明确拒绝）必须退还额度。
+func TestDefiniteFailuresReleaseSlot(t *testing.T) {
 	var spawns int32
-	o := realOptions()
-	s := newSender(t, o)
+	for _, mode := range []string{"retryable", "fatal"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newSender(t, realOptions())
+			s.command = helperCommand(mode, &spawns)
+			result, err := s.Send(context.Background(), helperRoom, helperGift, 1)
+			if err == nil {
+				t.Fatalf("%s 未返回错误", mode)
+			}
+			var typed *Error
+			if !errors.As(err, &typed) || typed.Uncertain {
+				t.Fatalf("%s 应判定为确定失败：%+v %v", mode, result, err)
+			}
+			if result.PendingReview {
+				t.Errorf("%s 确定失败不应标记待核对：%+v", mode, result)
+			}
+			if s.used != 0 {
+				t.Fatalf("%s 确定失败应释放额度：%d", mode, s.used)
+			}
+		})
+	}
+
+	s := newSender(t, realOptions())
 	s.command = helperCommand("retryable", &spawns)
 	if _, err := s.Send(context.Background(), helperRoom, helperGift, 1); err == nil {
 		t.Fatal("retryable未返回错误")
-	} else {
-		var typed *Error
-		if !errors.As(err, &typed) || typed.Kind != KindRetryable {
-			t.Fatalf("分类错误：%v", err)
-		}
-	}
-	if s.used != 0 {
-		t.Fatalf("确定未POST的失败应释放额度：%d", s.used)
 	}
 	s.command = helperCommand("sent", &spawns)
 	if result, err := s.Send(context.Background(), helperRoom, helperGift, 1); err != nil || !result.Sent {
 		t.Fatalf("释放额度后应可重试：%+v %v", result, err)
 	}
+}
 
-	fatalSender := newSender(t, realOptions())
-	fatalSender.command = helperCommand("fatal", &spawns)
-	if _, err := fatalSender.Send(context.Background(), helperRoom, helperGift, 1); err == nil {
-		t.Fatal("fatal未返回错误")
-	} else {
-		var typed *Error
-		if !errors.As(err, &typed) || typed.Kind != KindFatal {
-			t.Fatalf("分类错误：%v", err)
-		}
+// TestUncertainFailureKeepsReservationAndMarksPending 结果未知时保留额度并标记待核对。
+func TestUncertainFailureKeepsReservationAndMarksPending(t *testing.T) {
+	var spawns int32
+	s := newSender(t, realOptions())
+	s.command = helperCommand("uncertain", &spawns)
+	result, err := s.Send(context.Background(), helperRoom, helperGift, 1)
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Kind != KindFatal || !typed.Uncertain {
+		t.Fatalf("结果未知应标记 uncertain：%+v %v", result, err)
 	}
-	if fatalSender.used != 1 {
-		t.Fatal("不确定失败必须保留额度")
+	if !result.PendingReview || result.Error == "" {
+		t.Fatalf("结果未知应标记 pending_review：%+v", result)
 	}
-	if _, err := fatalSender.Send(context.Background(), helperRoom, helperGift, 1); err == nil {
+	if s.used != 1 {
+		t.Fatalf("结果未知必须保留额度：%d", s.used)
+	}
+	if _, err := s.Send(context.Background(), helperRoom, helperGift, 1); err == nil {
 		t.Fatal("保留额度后第二次仍应被限额拒绝")
+	}
+	if atomic.LoadInt32(&spawns) != 1 {
+		t.Fatalf("不确定结果不得自动重试，spawns=%d", spawns)
 	}
 }
 
 func TestProtocolFailuresKeepReservationAndDoNotLeak(t *testing.T) {
-	for _, mode := range []string{"empty", "partial", "protocol-2", "unknown-field", "two-lines", "mismatch", "oversize", "sent-exit-1", "bad-kind", "bad-message", "stderr"} {
+	for _, mode := range []string{"empty", "partial", "protocol-2", "unknown-field", "two-lines", "mismatch", "oversize", "sent-exit-1", "bad-kind", "bad-message", "sent-uncertain", "stderr"} {
 		t.Run(mode, func(t *testing.T) {
 			var spawns int32
 			s := newSender(t, realOptions())
@@ -316,11 +348,17 @@ func TestProtocolFailuresKeepReservationAndDoNotLeak(t *testing.T) {
 				if s.used != 1 {
 					t.Fatalf("成功应计数：%d", s.used)
 				}
+				if result.PendingReview {
+					t.Errorf("协议成功不应标记待核对：%+v", result)
+				}
 				return
 			}
 			var typed *Error
 			if !errors.As(err, &typed) || typed.Kind != KindFatal {
 				t.Fatalf("协议异常应fatal：%+v %v", result, err)
+			}
+			if !typed.Uncertain || !result.PendingReview {
+				t.Fatalf("协议异常应视为结果未知并标记待核对：%+v %v", result, err)
 			}
 			if strings.Contains(err.Error(), "canary") || strings.Contains(err.Error(), "private") {
 				t.Fatal("错误泄露子进程输出")
@@ -426,16 +464,20 @@ func TestTimeoutAndCancelKeepReservation(t *testing.T) {
 	if s.used != 1 {
 		t.Fatal("超时必须保留额度")
 	}
+	if !result.PendingReview {
+		t.Fatal("超时必须标记待核对")
+	}
 
 	cancelled := newSender(t, o)
 	cancelled.command = helperCommand("hang", nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
-	if _, err := cancelled.Send(ctx, helperRoom, helperGift, 1); err == nil {
+	result, err = cancelled.Send(ctx, helperRoom, helperGift, 1)
+	if err == nil {
 		t.Fatal("取消未返回错误")
 	}
-	if cancelled.used != 1 {
-		t.Fatal("取消必须保留额度")
+	if cancelled.used != 1 || !result.PendingReview {
+		t.Fatal("取消必须保留额度并标记待核对")
 	}
 }
 
@@ -446,8 +488,12 @@ func TestStartFailureReleasesReservation(t *testing.T) {
 		//nolint:gosec // 测试用不可执行的临时路径模拟启动失败
 		return exec.CommandContext(ctx, filepath.Join(t.TempDir(), "definitely-missing-node"))
 	}
-	if _, err := s.Send(context.Background(), helperRoom, helperGift, 1); err == nil {
+	result, err := s.Send(context.Background(), helperRoom, helperGift, 1)
+	if err == nil {
 		t.Fatal("启动失败未返回错误")
+	}
+	if result.PendingReview {
+		t.Errorf("启动失败确定未送出，不应标记待核对：%+v", result)
 	}
 	if s.used != 0 {
 		t.Fatalf("未启动进程应释放额度：%d", s.used)

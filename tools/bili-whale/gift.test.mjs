@@ -213,23 +213,36 @@ test('预检失败分类：网络/5xx可重试，鉴权与登录态必须fatal',
 })
 
 test('POST之后任何失败都不得标记retryable，也不泄露平台报文', async () => {
-  for (const deps of [
-    { fetch: async () => { throw Error('credential-private-canary') } },
-    { fetch: async () => response({ code: -500, message: 'private-canary' }) },
-    { fetch: async () => response({ code: 10024, message: 'private-canary' }) },
-    { fetch: async () => response({}, 500) },
-    { fetch: async () => response('not-json') },
-  ]) {
+  const cases = [
+    { name: '网络异常', fetch: async () => { throw Error('credential-private-canary') }, uncertain: true },
+    { name: '平台拒绝 code=-500', fetch: async () => response({ code: -500, message: 'private-canary' }), uncertain: false },
+    { name: '平台拒绝 code=10024', fetch: async () => response({ code: 10024, message: 'private-canary' }), uncertain: false },
+    { name: 'HTTP 500', fetch: async () => response({}, 500), uncertain: true },
+    { name: '响应非JSON', fetch: async () => response('not-json'), uncertain: true },
+  ]
+  for (const item of cases) {
     const baseDeps = preparation()
     const frame = await runGift([...base, '--go'], {
       ...baseDeps,
-      fetch: async (url, init) => (url.includes('/sendGoldMultiUser') ? deps.fetch(url, init) : baseDeps.fetch(url, init)),
+      fetch: async (url, init) => (url.includes('/sendGoldMultiUser') ? item.fetch(url, init) : baseDeps.fetch(url, init)),
     })
-    assert.equal(frame.type, 'error')
-    assert.equal(frame.kind, 'fatal')
-    assert.ok(!JSON.stringify(frame).includes('canary'))
-    assert.ok(!JSON.stringify(frame).includes('fixture'))
+    assert.equal(frame.type, 'error', item.name)
+    assert.equal(frame.kind, 'fatal', item.name)
+    // 只有「可能已送出但结果未知」才带 uncertain；平台明确拒绝属于确定失败，交给 Go 退还额度。
+    assert.equal(frame.uncertain, item.uncertain || undefined, item.name)
+    assert.ok(!JSON.stringify(frame).includes('canary'), item.name)
+    assert.ok(!JSON.stringify(frame).includes('fixture'), item.name)
   }
+})
+
+test('预检失败与成功帧不带uncertain', async () => {
+  const precheck = preparation({ nav: { isLogin: false } })
+  const rejected = await runGift([...base, '--go'], precheck)
+  assert.equal(rejected.type, 'error')
+  assert.equal(rejected.uncertain, undefined)
+
+  const ok = preparation()
+  assert.deepEqual(await runGift([...base, '--go'], ok), { protocol: 1, type: 'sent', gift_id: giftID, num: 1 })
 })
 
 test('凭据只认环境变量且必须包含SESSDATA/bili_jct/buvid3', async () => {

@@ -212,9 +212,49 @@ func TestSendUsesQuotaStoreAcrossSenders(t *testing.T) {
 	}
 }
 
-// TestQuotaStoreReleasesDefiniteFailures 确定未 POST 的失败要归还文件额度。
+// TestQuotaStoreReleasesDefiniteFailures 确定未送出的失败（可重试/平台明确拒绝）要归还文件额度。
 func TestQuotaStoreReleasesDefiniteFailures(t *testing.T) {
-	quota, err := NewFileQuota(filepath.Join(t.TempDir(), "gift-ledger.json"))
+	for _, mode := range []string{"retryable", "fatal"} {
+		t.Run(mode, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "gift-ledger.json")
+			quota, err := NewFileQuota(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			o := realOptions()
+			o.DailyLimit = 1
+			o.Quota = quota
+			sender, err := New(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sender.command = helperCommand(mode, nil)
+			result, err := sender.Send(context.Background(), helperRoom, helperGift, 1)
+			if err == nil {
+				t.Fatalf("%s 未返回错误", mode)
+			}
+			if result.PendingReview {
+				t.Errorf("%s 确定失败不应标记待核对：%+v", mode, result)
+			}
+			if ledger := readLedger(t, path); ledger.Used != 0 {
+				t.Fatalf("%s 失败后账本 used = %d，期望 0", mode, ledger.Used)
+			}
+
+			sender.command = helperCommand("sent", nil)
+			if result, err := sender.Send(context.Background(), helperRoom, helperGift, 1); err != nil || !result.Sent {
+				t.Fatalf("释放额度后应可重试：%+v %v", result, err)
+			}
+			if ledger := readLedger(t, path); ledger.Used != 1 {
+				t.Fatalf("成功送出后账本 used = %d，期望 1", ledger.Used)
+			}
+		})
+	}
+}
+
+// TestQuotaStoreKeepsUncertainFailures 结果未知时不退还文件额度，且保留 pending_review 标记。
+func TestQuotaStoreKeepsUncertainFailures(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gift-ledger.json")
+	quota, err := NewFileQuota(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,13 +265,21 @@ func TestQuotaStoreReleasesDefiniteFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sender.command = helperCommand("retryable", nil)
-	if _, err := sender.Send(context.Background(), helperRoom, helperGift, 1); err == nil {
-		t.Fatal("retryable 未返回错误")
+	sender.command = helperCommand("uncertain", nil)
+	result, err := sender.Send(context.Background(), helperRoom, helperGift, 1)
+	if err == nil {
+		t.Fatal("uncertain 未返回错误")
 	}
+	if !result.PendingReview {
+		t.Fatalf("uncertain 应标记待核对：%+v", result)
+	}
+	if ledger := readLedger(t, path); ledger.Used != 1 {
+		t.Fatalf("uncertain 必须保留额度，账本 used = %d", ledger.Used)
+	}
+
 	sender.command = helperCommand("sent", nil)
-	if result, err := sender.Send(context.Background(), helperRoom, helperGift, 1); err != nil || !result.Sent {
-		t.Fatalf("释放额度后应可重试：%+v %v", result, err)
+	if _, err := sender.Send(context.Background(), helperRoom, helperGift, 1); err == nil {
+		t.Fatal("保留额度后应被每日限额拒绝")
 	}
 }
 

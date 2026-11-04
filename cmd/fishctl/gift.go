@@ -40,13 +40,15 @@ type giftSenderFactory func(config.Gift, string) (giftSender, error)
 
 // giftSendOutput 是给运维看的单行 JSON；dry-run 与真实发送用 dry_run/sent 区分。
 type giftSendOutput struct {
-	DryRun  bool   `json:"dry_run"`
-	Room    string `json:"room"`
-	GiftID  string `json:"gift_id"`
-	Num     int    `json:"num"`
-	Sent    bool   `json:"sent"`
-	Message string `json:"message"`
-	Error   string `json:"error,omitempty"`
+	DryRun bool   `json:"dry_run"`
+	Room   string `json:"room"`
+	GiftID string `json:"gift_id"`
+	Num    int    `json:"num"`
+	Sent   bool   `json:"sent"`
+	// PendingReview 表示结果未知：额度保留，需要人工核对是否真的送出。
+	PendingReview bool   `json:"pending_review"`
+	Message       string `json:"message"`
+	Error         string `json:"error,omitempty"`
 }
 
 // runGift 解析参数、加载配置并执行；factory 仅测试替换。
@@ -88,10 +90,11 @@ func runGiftWith(ctx context.Context, configPath, envPath string, args []string,
 	result, sendErr := sender.Send(ctx, spec.Room, giftID, num)
 
 	output := giftSendOutput{
-		DryRun: !cfg.Gift.Real,
-		Room:   spec.Room,
-		GiftID: giftID,
-		Num:    num,
+		DryRun:        !cfg.Gift.Real,
+		Room:          spec.Room,
+		GiftID:        giftID,
+		Num:           num,
+		PendingReview: result.PendingReview,
 	}
 	switch {
 	case sendErr != nil:

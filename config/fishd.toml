@@ -188,6 +188,10 @@ timeout_ms = 30000
 enabled = true
 interval_seconds = 300
 allow_private = false
+# 冻结开关：true 时提炼 worker 只读不写（不落记忆、不推进水位）。
+# 运行时可改状态文件 state/memory.frozen（fishctl memory freeze/unfreeze），无需重启；
+# 此处为 true 时优先级更高，删除状态文件也不会解冻。
+frozen = false
 # LLM 语义提炼：只对「@鱼/长文本/强互动」跑模型，其余走规则版；超限流回落规则。
 llm_extract = true
 llm_extract_max_per_hour = 30

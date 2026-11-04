@@ -30,6 +30,8 @@ type entry struct {
 	title    string
 	keywords []string
 	tags     []string
+	// summary 只参与召回打分（资料正文），不单独对外暴露。
+	summary string
 }
 
 // snapshotState 是某一时刻的不可变快照；Reload 只做指针替换，读到旧指针的请求不受影响。
@@ -434,5 +436,5 @@ func convertEntry(d diskEntry, meme bool) (entry, error) {
 	if n > maxEntryBytes {
 		return entry{}, errors.New("知识条目超过资料上限")
 	}
-	return entry{item: item, title: d.Title, keywords: append([]string(nil), d.Keywords...), tags: append([]string(nil), (*d.Tags)...)}, nil
+	return entry{item: item, title: d.Title, keywords: append([]string(nil), d.Keywords...), tags: append([]string(nil), (*d.Tags)...), summary: d.Summary}, nil
 }

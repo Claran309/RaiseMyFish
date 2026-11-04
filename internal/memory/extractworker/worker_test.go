@@ -606,3 +606,120 @@ func TestValidFromDefaultClock(t *testing.T) {
 		t.Errorf("ValidFrom = %v 仍在未来，会被 valid_from <= now() 过滤掉", rec.ValidFrom)
 	}
 }
+
+// TestFrozenByConfigSkipsRoundAndKeepsWatermark 配置冻结：整轮跳过，不扫事件、不写库、不推进水位；
+// 解冻后同一批事件能补上，证明冻结期间没有把积压当成已处理。
+func TestFrozenByConfigSkipsRoundAndKeepsWatermark(t *testing.T) {
+	ctx := context.Background()
+	ev := mkEvent("live:1:9001", baseTime, "我保证明天带话", "路人甲", false, event.ChLive, "1")
+	src := &fakeSource{events: []event.Event{ev}}
+	repo := &fakeRepo{}
+	wm := NewMemoryWatermark()
+
+	stats, err := newWorker(t, src, repo, wm, Options{Frozen: true}).RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("冻结轮不应报错：%v", err)
+	}
+	if !stats.Frozen || stats.FrozenReason != "config" {
+		t.Fatalf("统计未标记配置冻结：%+v", stats)
+	}
+	if stats.Scanned != 0 || stats.Inserted != 0 {
+		t.Errorf("冻结轮不应扫描或写入：%+v", stats)
+	}
+	if src.calls != 0 {
+		t.Errorf("冻结轮不应访问事件来源，calls=%d", src.calls)
+	}
+	if n := len(repo.all()); n != 0 {
+		t.Errorf("冻结轮写入了 %d 条记录", n)
+	}
+	if cursor, err := wm.Load(ctx); err != nil || !cursor.IsZero() {
+		t.Fatalf("冻结轮水位 = %+v, err=%v；期望仍为零", cursor, err)
+	}
+
+	// 解冻：新 worker 走正常路径，冻结期间的事件全部补提炼
+	stats, err = newWorker(t, src, repo, wm, Options{}).RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("解冻后 RunOnce 失败：%v", err)
+	}
+	if stats.Scanned != 1 || stats.Inserted != 1 {
+		t.Errorf("解冻后统计 = %+v，期望 Scanned=1 Inserted=1", stats)
+	}
+}
+
+// TestFrozenByStateFileTogglesAtRuntime 状态文件冻结可运行时切换：同一 worker 解冻后立即恢复提炼。
+func TestFrozenByStateFileTogglesAtRuntime(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state", "memory.frozen")
+	if err := memory.Freeze(path); err != nil {
+		t.Fatalf("创建冻结标记失败：%v", err)
+	}
+
+	first := mkEvent("live:1:9101", baseTime, "我保证明天带话", "路人甲", false, event.ChLive, "1")
+	src := &fakeSource{events: []event.Event{first}}
+	repo := &fakeRepo{}
+	w := newWorker(t, src, repo, NewMemoryWatermark(), Options{FreezePath: path})
+
+	stats, err := w.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("冻结轮失败：%v", err)
+	}
+	if !stats.Frozen || stats.FrozenReason != "state_file" {
+		t.Fatalf("统计未标记状态文件冻结：%+v", stats)
+	}
+	if n := len(repo.all()); n != 0 {
+		t.Errorf("冻结轮写入了 %d 条记录", n)
+	}
+
+	// 解冻后同一 worker 的下一轮应处理全部积压
+	if err := memory.Unfreeze(path); err != nil {
+		t.Fatalf("删除冻结标记失败：%v", err)
+	}
+	stats, err = w.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("解冻轮失败：%v", err)
+	}
+	if stats.Frozen || stats.Inserted != 1 {
+		t.Errorf("解冻轮统计 = %+v，期望 Inserted=1 且未冻结", stats)
+	}
+
+	// 再次冻结：新事件只读不写，水位停在原处
+	second := mkEvent("live:1:9102", baseTime.Add(time.Minute), "我答应明天带话", "路人乙", false, event.ChLive, "1")
+	src.add(second)
+	if err := memory.Freeze(path); err != nil {
+		t.Fatalf("再次冻结失败：%v", err)
+	}
+	stats, err = w.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("再次冻结轮失败：%v", err)
+	}
+	if !stats.Frozen || stats.Inserted != 0 {
+		t.Errorf("再次冻结轮统计 = %+v，期望 Frozen=true Inserted=0", stats)
+	}
+	if n := len(repo.all()); n != 1 {
+		t.Errorf("再次冻结后记录数 = %d，期望仍是 1", n)
+	}
+}
+
+// TestConfigFreezeWinsOverStateFile 配置冻结优先：删掉状态文件也不能解冻，避免运维误操作绕过配置。
+func TestConfigFreezeWinsOverStateFile(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "memory.frozen")
+	if err := memory.Freeze(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.Unfreeze(path); err != nil {
+		t.Fatal(err)
+	}
+
+	ev := mkEvent("live:1:9201", baseTime, "我保证明天带话", "路人甲", false, event.ChLive, "1")
+	stats, err := newWorker(t, &fakeSource{events: []event.Event{ev}}, &fakeRepo{}, NewMemoryWatermark(), Options{
+		Frozen:     true,
+		FreezePath: path,
+	}).RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if !stats.Frozen || stats.FrozenReason != "config" {
+		t.Fatalf("统计 = %+v，期望配置冻结且原因 config", stats)
+	}
+}

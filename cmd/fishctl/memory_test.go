@@ -57,7 +57,10 @@ func TestParseMemoryArgs(t *testing.T) {
 		{"search 默认", []string{"search", "--q", "猫"}, memoryCommand{Action: "search", Limit: defaultMemoryLimit, Query: "猫"}},
 		{"search 去空白", []string{"search", "--q", "  带话  ", "--limit", "3"}, memoryCommand{Action: "search", Limit: 3, Query: "带话"}},
 		{"stats", []string{"stats"}, memoryCommand{Action: "stats", Limit: defaultMemoryLimit}},
+		{"freeze", []string{"freeze"}, memoryCommand{Action: "freeze"}},
+		{"unfreeze", []string{"unfreeze"}, memoryCommand{Action: "unfreeze"}},
 		{"help", []string{"list", "--help"}, memoryCommand{Action: "help"}},
+		{"freeze help", []string{"freeze", "--help"}, memoryCommand{Action: "help"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,14 +78,16 @@ func TestParseMemoryArgs(t *testing.T) {
 // TestParseMemoryArgsRejectsBadInput 缺子命令、未知子命令、越界与多余参数都拒绝。
 func TestParseMemoryArgsRejectsBadInput(t *testing.T) {
 	cases := map[string][]string{
-		"缺子命令":        nil,
-		"未知子命令":       {"remove"},
-		"list 越界":     {"list", "--limit", "0"},
-		"list 超上限":    {"list", "--limit", "201"},
-		"list 多余参数":   {"list", "extra"},
-		"search 缺关键词": {"search"},
-		"search 空白词":  {"search", "--q", "   "},
-		"stats 多余参数":  {"stats", "extra"},
+		"缺子命令":          nil,
+		"未知子命令":         {"remove"},
+		"list 越界":       {"list", "--limit", "0"},
+		"list 超上限":      {"list", "--limit", "201"},
+		"list 多余参数":     {"list", "extra"},
+		"search 缺关键词":   {"search"},
+		"search 空白词":    {"search", "--q", "   "},
+		"stats 多余参数":    {"stats", "extra"},
+		"freeze 多余参数":   {"freeze", "extra"},
+		"unfreeze 多余参数": {"unfreeze", "extra"},
 	}
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -263,5 +268,90 @@ func TestRunRoutesMemoryCommand(t *testing.T) {
 	err := run(context.Background(), []string{"memory", "list", "--limit", "0"}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("memory 路由未生效：%v", err)
+	}
+}
+
+// TestExecuteMemoryFreezeTogglesStateFile 冻结/解冻只改状态文件，输出最终状态且重复调用幂等。
+func TestExecuteMemoryFreezeTogglesStateFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "memory.frozen")
+	old := memoryFreezeFile
+	memoryFreezeFile = path
+	t.Cleanup(func() { memoryFreezeFile = old })
+
+	var out bytes.Buffer
+	if err := executeMemoryFreeze(memoryCommand{Action: "freeze"}, &out); err != nil {
+		t.Fatalf("冻结失败：%v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("冻结标记未创建：%v", err)
+	}
+	var got struct {
+		Frozen bool   `json:"frozen"`
+		Path   string `json:"path"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("解析输出失败：%v\n%s", err, out.String())
+	}
+	if !got.Frozen || got.Path != path {
+		t.Fatalf("冻结输出不符：%+v", got)
+	}
+
+	// 重复冻结保持幂等
+	out.Reset()
+	if err := executeMemoryFreeze(memoryCommand{Action: "freeze"}, &out); err != nil {
+		t.Fatalf("重复冻结失败：%v", err)
+	}
+
+	// 解冻并确认文件删除、输出 frozen=false
+	out.Reset()
+	if err := executeMemoryFreeze(memoryCommand{Action: "unfreeze"}, &out); err != nil {
+		t.Fatalf("解冻失败：%v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("解冻后标记仍存在：%v", err)
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("解析输出失败：%v\n%s", err, out.String())
+	}
+	if got.Frozen {
+		t.Fatalf("解冻输出不符：%+v", got)
+	}
+
+	// 重复解冻保持幂等
+	if err := executeMemoryFreeze(memoryCommand{Action: "unfreeze"}, io.Discard); err != nil {
+		t.Fatalf("重复解冻失败：%v", err)
+	}
+
+	if err := executeMemoryFreeze(memoryCommand{Action: "list"}, io.Discard); !errors.Is(err, errMemoryUsage) {
+		t.Errorf("非法 action 未拒绝：%v", err)
+	}
+	fail := failingWriter(func([]byte) (int, error) { return 0, errors.New("写不出去") })
+	if err := executeMemoryFreeze(memoryCommand{Action: "freeze"}, fail); err == nil {
+		t.Error("输出失败未报错")
+	}
+}
+
+// TestRunMemoryFreezeWithoutConfigOrDatabase 冻结开关不依赖配置与数据库，缺配置也能执行。
+func TestRunMemoryFreezeWithoutConfigOrDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "memory.frozen")
+	old := memoryFreezeFile
+	memoryFreezeFile = path
+	t.Cleanup(func() { memoryFreezeFile = old })
+
+	missingConfig := filepath.Join(t.TempDir(), "missing.toml")
+	var out bytes.Buffer
+	if err := runMemory(context.Background(), missingConfig, "", []string{"freeze"}, &out, io.Discard); err != nil {
+		t.Fatalf("缺配置时冻结失败：%v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("冻结标记未创建：%v", err)
+	}
+
+	out.Reset()
+	if err := runMemory(context.Background(), missingConfig, "", []string{"unfreeze"}, &out, io.Discard); err != nil {
+		t.Fatalf("缺配置时解冻失败：%v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("解冻后标记仍存在：%v", err)
 	}
 }

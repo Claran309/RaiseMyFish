@@ -30,7 +30,10 @@ const (
 type Error struct {
 	Kind    Kind
 	Message string
-	Cause   error
+	// Uncertain 表示请求可能已到达平台但结果未知（超时/协议异常/POST 后网络失败）。
+	// 此时额度不退还，避免「可能已送出」的礼物被重复扣费。
+	Uncertain bool
+	Cause     error
 }
 
 func (e *Error) Error() string {
@@ -53,6 +56,8 @@ type Result struct {
 	GiftID string
 	Num    int
 	Error  string
+	// PendingReview 为 true 表示请求可能已送出但结果未知：额度保留，需人工核对账目。
+	PendingReview bool
 }
 
 // Options 是礼物发送的部署配置；凭据不参与 JSON 序列化。
@@ -193,7 +198,7 @@ func (s *NodeSender) reserve(day string, num int) error {
 	return nil
 }
 
-// release 只用于确定未提交 POST 的失败；不确定时宁可占用额度也不重复扣费。
+// release 只用于确定未送出的失败；不确定时宁可占用额度也不重复扣费。
 func (s *NodeSender) release(day string, num int) {
 	if s.options.Quota != nil {
 		s.options.Quota.Release(day, num)
@@ -244,9 +249,19 @@ func (s *NodeSender) Send(ctx context.Context, room string, giftID string, num i
 	}
 	frame, started, err := s.execute(ctx, room, giftID, num)
 	if err != nil {
+		// 只有「确定没送出去」才退额度：启动失败或脚本明确回报（含 fatal 平台拒绝）。
+		// 结果未知时保留额度并标记待核对，避免同一份额度被重复使用、造成重复扣费。
+		uncertain := started
 		var typed *Error
-		if reserved && (!started || (errors.As(err, &typed) && typed.Kind == KindRetryable)) {
-			s.release(day, num)
+		if errors.As(err, &typed) {
+			uncertain = typed.Uncertain
+		}
+		if reserved {
+			if uncertain {
+				result.PendingReview = true
+			} else {
+				s.release(day, num)
+			}
 		}
 		result.Error = err.Error()
 		return result, err
@@ -258,18 +273,20 @@ func (s *NodeSender) Send(ctx context.Context, room string, giftID string, num i
 }
 
 type frame struct {
-	Protocol int    `json:"protocol"`
-	Type     string `json:"type"`
-	GiftID   string `json:"gift_id"`
-	Num      int    `json:"num"`
-	Kind     string `json:"kind"`
-	Message  string `json:"message"`
+	Protocol  int    `json:"protocol"`
+	Type      string `json:"type"`
+	GiftID    string `json:"gift_id"`
+	Num       int    `json:"num"`
+	Kind      string `json:"kind"`
+	Message   string `json:"message"`
+	Uncertain bool   `json:"uncertain"`
 }
 
 const maxOutput = 64 * 1024
 
+// protocolError 都是「已启动子进程但拿不到可信结果」，一律视为结果未知。
 func protocolError(cause error) error {
-	return &Error{Kind: KindFatal, Message: "送礼脚本输出无效", Cause: cause}
+	return &Error{Kind: KindFatal, Message: "送礼脚本输出无效", Uncertain: true, Cause: cause}
 }
 
 // execute 启动一次性子进程并严格解析单行 JSONL；started 用于判断能否安全释放额度。
@@ -288,10 +305,10 @@ func (s *NodeSender) execute(parent context.Context, room, giftID string, num in
 	waitErr := cmd.Wait()
 	if ctx.Err() != nil {
 		// 真实模式下超时/取消发生在POST之后时结果未知，按fatal处理且不自动重试。
-		return frame{}, true, &Error{Kind: KindFatal, Message: "送礼子进程超时或取消，结果可能未知", Cause: errors.Join(ctx.Err(), readErr, waitErr)}
+		return frame{}, true, &Error{Kind: KindFatal, Message: "送礼子进程超时或取消，结果可能未知", Uncertain: true, Cause: errors.Join(ctx.Err(), readErr, waitErr)}
 	}
 	if readErr != nil || len(data) > maxOutput {
-		return frame{}, true, &Error{Kind: KindFatal, Message: "送礼子进程输出失败", Cause: errors.Join(readErr, waitErr)}
+		return frame{}, true, &Error{Kind: KindFatal, Message: "送礼子进程输出失败", Uncertain: true, Cause: errors.Join(readErr, waitErr)}
 	}
 	line := strings.TrimSuffix(string(data), "\n")
 	if line == "" || strings.ContainsAny(line, "\r\n") {
@@ -309,7 +326,7 @@ func (s *NodeSender) execute(parent context.Context, room, giftID string, num in
 	switch f.Type {
 	case "sent":
 		// 声明成功却以非零码退出属于自相矛盾，按未确认处理。
-		if waitErr != nil || f.GiftID != giftID || f.Num != num || f.Kind != "" || f.Message != "" {
+		if waitErr != nil || f.GiftID != giftID || f.Num != num || f.Kind != "" || f.Message != "" || f.Uncertain {
 			return frame{}, true, protocolError(waitErr)
 		}
 		return f, true, nil
@@ -317,7 +334,7 @@ func (s *NodeSender) execute(parent context.Context, room, giftID string, num in
 		if (f.Kind != string(KindRetryable) && f.Kind != string(KindFatal)) || f.GiftID != "" || f.Num != 0 || !safeFrameMessage(f.Message) {
 			return frame{}, true, protocolError(nil)
 		}
-		return frame{}, true, &Error{Kind: Kind(f.Kind), Message: f.Message}
+		return frame{}, true, &Error{Kind: Kind(f.Kind), Message: f.Message, Uncertain: f.Uncertain}
 	default:
 		return frame{}, true, protocolError(nil)
 	}

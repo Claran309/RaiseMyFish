@@ -99,6 +99,85 @@ func TestRecallRankTopThree(t *testing.T) {
 	}
 }
 
+func TestRecallSummaryTierAndMultiField(t *testing.T) {
+	const phrase = "丁戊己的来历"
+	titleEntry := func() diskEntry { return testEntry("title", phrase) }
+	keywordEntry := func() diskEntry {
+		d := testEntry("keyword", "关键词条目")
+		d.Keywords = []string{phrase}
+		return d
+	}
+	tagEntry := func() diskEntry {
+		d := testEntry("tag", "标签条目")
+		tags := []string{phrase}
+		d.Tags = &tags
+		return d
+	}
+	summaryEntry := func() diskEntry {
+		d := testEntry("summary", "摘要条目")
+		d.Summary = "资料正文说：" + phrase + "，仅此而已。"
+		return d
+	}
+	multiEntry := func() diskEntry {
+		d := testEntry("multi", phrase)
+		d.Keywords = []string{phrase}
+		tags := []string{phrase}
+		d.Tags = &tags
+		d.Summary = "资料正文也提到" + phrase
+		return d
+	}
+	tests := []struct {
+		name    string
+		entries []diskEntry
+		want    []string
+	}{
+		{"四字段命中按档位排序", []diskEntry{summaryEntry(), tagEntry(), keywordEntry(), titleEntry()}, []string{"title", "keyword", "tag"}},
+		{"标题优先于摘要", []diskEntry{summaryEntry(), titleEntry()}, []string{"title", "summary"}},
+		{"关键词优先于摘要", []diskEntry{summaryEntry(), keywordEntry()}, []string{"keyword", "summary"}},
+		{"标签优先于摘要", []diskEntry{summaryEntry(), tagEntry()}, []string{"tag", "summary"}},
+		{"同条目多字段命中取最高档", []diskEntry{keywordEntry(), multiEntry()}, []string{"multi", "keyword"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := recallIDs(t, loadEntries(t, test.entries...), publicScope(), phrase); !reflect.DeepEqual(got, test.want) {
+				t.Fatal(got)
+			}
+		})
+	}
+}
+
+func TestRecallSummaryPhraseAndMinimumLength(t *testing.T) {
+	const phrase = "丁戊己的来历"
+	d := testEntry("summary", "摘要条目")
+	d.Summary = "资料正文说：" + phrase + "是什么，这个梗来自测试。"
+	r := loadEntries(t, d)
+	for _, query := range []string{
+		phrase,
+		"请问，" + phrase + "是什么？",
+		"  " + phrase + "  ",
+	} {
+		if got := recallIDs(t, r, publicScope(), query); !reflect.DeepEqual(got, []string{"summary"}) {
+			t.Fatal(query, got)
+		}
+	}
+	for _, query := range []string{"什么", "这个", "资料", "不相关"} {
+		if got := recallIDs(t, r, publicScope(), query); len(got) != 0 {
+			t.Fatal(query, got)
+		}
+	}
+}
+
+func TestRecallEmptyQueryWithSummary(t *testing.T) {
+	d := testEntry("summary", "普通标题")
+	d.Summary = "资料正文提到" + "丁戊己的来历"
+	r := loadEntries(t, d)
+	for _, query := range []string{"", "   ", "\n\t", "？！。", "，。"} {
+		if got := recallIDs(t, r, publicScope(), query); len(got) != 0 {
+			t.Fatal(query, got)
+		}
+	}
+}
+
 func TestRecallMatchStrengthAndBoundaries(t *testing.T) {
 	long, short, multi := testEntry("long", "标题A"), testEntry("short", "标题B"), testEntry("multi", "标题C")
 	long.Keywords = []string{"甲乙丙"}

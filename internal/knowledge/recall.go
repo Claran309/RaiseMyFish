@@ -61,31 +61,87 @@ func genericTag(tag string) bool {
 	}
 }
 
+// 召回匹配档位：标题 > 触发词 > 标签 > 资料正文。
+// 同一条目命中多个字段时取最高档，同一词组只计一次。
+const (
+	tierTitle   = 4
+	tierKeyword = 3
+	tierTag     = 2
+	tierSummary = 1
+)
+
+const (
+	// 资料正文太长，只认至少 3 个字的片段，避免“什么/这个”把无关资料全拉进候选。
+	summaryMinRunes = 3
+	// 超长查询不做资料档切分，避免按标点切出海量片段放大扫描。
+	maxSummaryQueryBytes = 4 << 10
+)
+
+func clauseBreak(r rune) bool { return unicode.IsSpace(r) || unicode.IsPunct(r) }
+
+// summaryMatch 返回资料正文命中的最长片段字数；0 表示未命中。
+// 资料正文是长段文字，不能要求整段出现在查询里，因此反过来找
+// “查询本身或按标点/空白切出的片段”是否出现在资料中。
+func summaryMatch(text, summary string) int {
+	if summary == "" || len(text) > maxSummaryQueryBytes {
+		return 0
+	}
+	textLen := utf8.RuneCountInString(text)
+	if textLen < summaryMinRunes {
+		return 0
+	}
+	if phraseMatch(summary, text) {
+		return textLen
+	}
+	longest := 0
+	for _, part := range strings.FieldsFunc(text, clauseBreak) {
+		n := utf8.RuneCountInString(part)
+		if n < summaryMinRunes || n <= longest {
+			continue
+		}
+		if phraseMatch(summary, part) {
+			longest = n
+		}
+	}
+	return longest
+}
+
 func scoreEntry(ctx context.Context, text string, e entry) (matchScore, error) {
 	var result matchScore
 	seen := make(map[string]bool)
 	groups := []struct {
 		words []string
 		tier  int
-	}{{[]string{e.title}, 3}, {e.keywords, 2}, {e.tags, 1}}
+	}{
+		{[]string{e.title}, tierTitle},
+		{e.keywords, tierKeyword},
+		{e.tags, tierTag},
+		{[]string{e.summary}, tierSummary},
+	}
 	for _, group := range groups {
 		for _, raw := range group.words {
 			if err := checkContext(ctx); err != nil {
 				return matchScore{}, err
 			}
 			word := normalize(raw)
-			if seen[word] || group.tier == 1 && genericTag(word) {
+			if seen[word] || group.tier == tierTag && genericTag(word) {
 				continue
 			}
 			seen[word] = true
-			if !phraseMatch(text, word) {
+			matched := 0
+			if group.tier == tierSummary {
+				matched = summaryMatch(text, word)
+			} else if phraseMatch(text, word) {
+				matched = utf8.RuneCountInString(word)
+			}
+			if matched == 0 {
 				continue
 			}
 			if group.tier > result.tier {
 				result.tier = group.tier
 			}
-			if n := utf8.RuneCountInString(word); n > result.longest {
-				result.longest = n
+			if matched > result.longest {
+				result.longest = matched
 			}
 			result.count++
 		}
