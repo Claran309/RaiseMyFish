@@ -5,25 +5,48 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>概览 · 大肥鱼面板</title>
 <style>
-:root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--bad:#ff6b6b}
+:root{
+  --bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;
+  --accent:#4ea1ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;
+}
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.6 -apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
-header{display:flex;gap:16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header{display:flex;gap:16px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--card)}
 header b{font-size:15px}
 nav a{color:var(--muted);text-decoration:none;margin-right:14px}
 nav a.on{color:var(--accent)}
-main{padding:20px;max-width:1080px;margin:0 auto}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px}
-.card .k{color:var(--muted);font-size:12px}
-.card .v{font-size:22px;margin-top:4px;word-break:break-all}
-table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
-th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
-th{color:var(--muted);font-weight:500;font-size:12px}
-input,select,button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
-button{cursor:pointer}
-button.danger{color:var(--bad);border-color:#3a2a2a}
-.bar{display:flex;gap:8px;margin-bottom:12px;align-items:center}
+.spacer{flex:1}
+.pill{font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.pill.ok{color:var(--ok);border-color:#1d3a26;background:#0f1a12}
+.pill.bad{color:var(--bad);border-color:#3a1d1d;background:#1a0f0f}
+main{padding:20px;max-width:1180px;margin:0 auto}
+.cols{display:grid;grid-template-columns:1.05fr 1fr;gap:16px;align-items:start}
+@media (max-width:860px){.cols{grid-template-columns:1fr}}
+h2{font-size:13px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;margin:18px 0 10px}
+h2:first-child{margin-top:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px 12px 16px;overflow:hidden}
+.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--line)}
+.card.ok::before{background:var(--ok)}.card.bad::before{background:var(--bad)}
+.card.warn::before{background:var(--warn)}.card.info::before{background:var(--accent)}
+.card .k{color:var(--muted);font-size:12px;display:flex;gap:6px;align-items:center}
+.card .v{font-size:21px;margin-top:4px;font-variant-numeric:tabular-nums;word-break:break-all}
+.card .v.small{font-size:13px;line-height:1.5}
+.card .sub{font-size:11px;color:var(--muted);margin-top:2px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0;overflow:hidden}
+.panel .head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted)}
+.panel .head b{color:var(--fg);font-weight:600;font-size:13px}
+.row{display:flex;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);font-size:13px;align-items:baseline}
+.row:last-child{border-bottom:0}
+.row .t{color:var(--muted);font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.row .who{color:var(--accent);white-space:nowrap}
+.row .txt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row.err{background:#160e0e}
+.row .st{font-size:11px;padding:0 6px;border-radius:6px;border:1px solid var(--line);color:var(--muted)}
+.row .st.dead{color:var(--bad);border-color:#3a1d1d}
+.row .st.retry{color:var(--warn);border-color:#3a331d}
+.empty{padding:14px;color:var(--muted);font-size:13px}
+button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 12px;font:inherit;cursor:pointer}
 .muted{color:var(--muted)}
 .tag{font-size:12px;color:var(--muted)}
 </style>
@@ -32,33 +55,108 @@ button.danger{color:var(--bad);border-color:#3a2a2a}
 <header>
   <b>🐟 大肥鱼面板</b>
   <nav><a class="on" href="/">概览</a><a href="/memory">记忆</a><a href="/activity">活动</a></nav>
+  <span class="spacer"></span>
+  <span class="pill" id="health">检测中…</span>
+  <button onclick="load()">刷新</button>
 </header>
 <main>
-  <div class="bar"><button onclick="load()">刷新</button><span class="muted" id="ts"></span></div>
-  <div class="grid" id="cards"></div>
+  <div class="cols">
+    <section>
+      <h2>运行状态</h2>
+      <div class="grid" id="run-cards"></div>
+
+      <h2>数据统计</h2>
+      <div class="grid" id="data-cards"></div>
+    </section>
+
+    <section>
+      <h2>最近动态</h2>
+      <div class="panel">
+        <div class="head">📥 <b>最近事件</b><span class="spacer"></span><span class="tag" id="ev-count"></span></div>
+        <div id="events"></div>
+      </div>
+      <div class="panel" style="margin-top:12px">
+        <div class="head">⚠️ <b>最近错误</b><span class="spacer"></span><span class="tag" id="err-count"></span></div>
+        <div id="errors"></div>
+      </div>
+    </section>
+  </div>
 </main>
 <script>
-function fmt(k, v) {
-  return '<div class="card"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>';
+function esc(s) {
+  return (s || '').replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
 }
-async function load() {
+function card(kind, icon, label, value, sub, small) {
+  return '<div class="card ' + kind + '"><div class="k">' + icon + ' ' + label + '</div>' +
+    '<div class="v' + (small ? ' small' : '') + '">' + value + '</div>' +
+    (sub ? '<div class="sub">' + esc(sub) + '</div>' : '') + '</div>';
+}
+function hhmmss(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return esc(iso);
+  return d.toLocaleTimeString('zh-CN', { hour12: false });
+}
+async function loadStatus() {
   var r = await fetch('/api/status');
-  if (!r.ok) { document.getElementById('cards').innerHTML = '<div class="card">加载失败</div>'; return; }
+  if (!r.ok) { document.getElementById('run-cards').innerHTML = '<div class="card bad">加载失败</div>'; return; }
   var d = await r.json();
-  var kinds = Object.keys(d.memory_by_kind || {}).map(function (k) {
-    return k + ':' + d.memory_by_kind[k];
-  }).join(' / ') || '—';
-  document.getElementById('cards').innerHTML = [
-    fmt('事件总数', d.events_total),
-    fmt('待处理', d.events_pending),
-    fmt('记忆条数', d.memory_total),
-    fmt('记忆分类', kinds),
-    fmt('发送总数', d.send_total),
-    fmt('发送失败', d.send_failed),
-    fmt('累计费用($)', (d.cost_usd || 0).toFixed(4))
+
+  var pending = d.events_pending || 0;
+  var failed = d.send_failed || 0;
+  document.getElementById('run-cards').innerHTML = [
+    card('info', '📨', '事件总数', d.events_total || 0),
+    card(pending > 0 ? 'warn' : 'ok', '⏳', '待处理', pending),
+    card('info', '📤', '发送总数', d.send_total || 0),
+    card(failed > 0 ? 'bad' : 'ok', '❌', '发送失败', failed)
   ].join('');
-  document.getElementById('ts').textContent = '更新于 ' + d.generated_at;
+
+  var kinds = Object.keys(d.memory_by_kind || {}).map(function (k) {
+    return k + ' ' + d.memory_by_kind[k];
+  }).join(' · ') || '暂无';
+  document.getElementById('data-cards').innerHTML = [
+    card('info', '🧠', '记忆条数', d.memory_total || 0),
+    card('info', '🏷️', '记忆分类', kinds, '', true),
+    card('warn', '💸', '累计费用($)', (d.cost_usd || 0).toFixed(4))
+  ].join('');
+
+  var health = document.getElementById('health');
+  if (failed > 0 || pending > 10) {
+    health.className = 'pill bad';
+    health.textContent = '异常';
+  } else {
+    health.className = 'pill ok';
+    health.textContent = '正常';
+  }
 }
+async function loadEvents() {
+  var d = await (await fetch('/api/events?limit=10')).json();
+  document.getElementById('ev-count').textContent = (d.count || 0) + ' 条';
+  var box = document.getElementById('events');
+  if (!d.items || !d.items.length) { box.innerHTML = '<div class="empty">暂无事件</div>'; return; }
+  box.innerHTML = d.items.map(function (e) {
+    return '<div class="row"><span class="t">' + hhmmss(e.at) + '</span>' +
+      '<span class="who">' + esc(e.from_name || e.channel) + '</span>' +
+      '<span class="txt">' + esc(e.text) + '</span>' +
+      '<span class="st">' + esc(e.dir) + '</span></div>';
+  }).join('');
+}
+async function loadErrors() {
+  var d = await (await fetch('/api/errors?limit=5')).json();
+  document.getElementById('err-count').textContent = (d.count || 0) + ' 条';
+  var box = document.getElementById('errors');
+  if (!d.items || !d.items.length) { box.innerHTML = '<div class="empty">没有异常，稳 🎉</div>'; return; }
+  box.innerHTML = d.items.map(function (e) {
+    var cls = e.status === 'dead' ? 'dead' : 'retry';
+    return '<div class="row err"><span class="t">' + hhmmss(e.at) + '</span>' +
+      '<span class="st ' + cls + '">' + esc(e.status) + '</span>' +
+      '<span class="who">' + esc(e.from_name || e.channel) + '</span>' +
+      '<span class="txt">' + esc(e.text) + '</span></div>';
+  }).join('');
+}
+function load() { loadStatus(); loadEvents(); loadErrors(); }
 load();
 setInterval(load, 15000);
 </script>

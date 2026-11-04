@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"net"
 	"net/http"
 	"strconv"
@@ -107,6 +108,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/memory", s.handleMemory)
 	mux.HandleFunc("/api/memory/", s.handleMemoryDelete)
 	mux.HandleFunc("/api/events", s.handleEvents)
+	mux.HandleFunc("/api/errors", s.handleErrors)
 	mux.HandleFunc("/api/send_log", s.handleSendLog)
 	mux.HandleFunc("/", s.handlePage)
 	return mux
@@ -205,13 +207,14 @@ func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 	items := make([]map[string]any, 0, len(rows))
 	for _, m := range rows {
 		items = append(items, map[string]any{
-			"id":         m.ID,
-			"kind":       m.Kind,
-			"title":      clip(m.Title),
-			"summary":    clip(m.Summary),
-			"importance": m.Importance,
-			"valid_from": m.ValidFrom.UTC().Format(time.RFC3339),
-			"created_at": m.CreatedAt.UTC().Format(time.RFC3339),
+			"id":              m.ID,
+			"kind":            m.Kind,
+			"title":           clip(m.Title),
+			"summary":         clip(m.Summary),
+			"importance":      math.Round(m.Importance*100) / 100,
+			"importance_text": strconv.FormatFloat(m.Importance, 'f', 2, 64),
+			"valid_from":      m.ValidFrom.UTC().Format(time.RFC3339),
+			"created_at":      m.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": len(items)})
@@ -268,6 +271,36 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			"channel":   e.Channel,
 			"dir":       e.Dir,
 			"session":   e.Session,
+			"from_name": clip(e.FromName),
+			"text":      clip(e.Text),
+			"at":        e.At.UTC().Format(time.RFC3339),
+			"status":    e.Status,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": len(items)})
+}
+
+// handleErrors 返回最近异常事件（dead/retry）。
+func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "只支持 GET")
+		return
+	}
+	limit := limitParam(r, 5)
+	if limit > 50 {
+		limit = 50
+	}
+	rows, err := s.repo.Errors(r.Context(), limit)
+	if err != nil {
+		s.fail(w, "读取异常事件失败", err)
+		return
+	}
+	items := make([]map[string]any, 0, len(rows))
+	for _, e := range rows {
+		items = append(items, map[string]any{
+			"id":        e.ID,
+			"channel":   e.Channel,
+			"session":   clip(e.Session),
 			"from_name": clip(e.FromName),
 			"text":      clip(e.Text),
 			"at":        e.At.UTC().Format(time.RFC3339),

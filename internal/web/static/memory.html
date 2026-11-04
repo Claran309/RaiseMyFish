@@ -61,7 +61,7 @@ async function load() {
   document.getElementById('cnt').textContent = (d.count || 0) + ' 条';
   document.getElementById('rows').innerHTML = (d.items || []).map(function (m) {
     return '<tr><td class="tag">' + esc(m.kind) + '</td><td>' + esc(m.title) + '</td>' +
-      '<td class="muted">' + esc(m.summary) + '</td><td>' + m.importance + '</td>' +
+      '<td class="muted">' + esc(m.summary) + '</td><td>' + Number(m.importance).toFixed(2) + '</td>' +
       '<td class="tag">' + esc(m.created_at) + '</td>' +
       '<td><button class="danger" onclick="del(\'' + esc(m.id) + '\')">删除</button></td></tr>';
   }).join('');

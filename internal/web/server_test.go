@@ -19,6 +19,7 @@ type fakeRepo struct {
 	status     store.WebStatus
 	memory     []store.WebMemory
 	events     []store.WebEvent
+	errors     []store.WebEvent
 	sends      []store.WebSend
 	archived   []string
 	archiveErr error
@@ -44,6 +45,8 @@ func (f *fakeRepo) Events(_ context.Context, dir string, _ int) ([]store.WebEven
 	}
 	return f.events, nil
 }
+
+func (f *fakeRepo) Errors(context.Context, int) ([]store.WebEvent, error) { return f.errors, nil }
 
 func (f *fakeRepo) SendLogs(context.Context, int) ([]store.WebSend, error) { return f.sends, nil }
 
@@ -248,5 +251,84 @@ func TestMethodNotAllowed(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/status", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("应 405，实际 %d", rec.Code)
+	}
+}
+
+// TestErrorsJSON 异常事件接口：结构 + 默认 5 条 + 截断。
+func TestErrorsJSON(t *testing.T) {
+	long := strings.Repeat("错", 400)
+	repo := &fakeRepo{errors: []store.WebEvent{{
+		ID: "live:1:9", Channel: "live", Dir: "in", Session: "1",
+		FromName: "乙", Text: long, At: time.Now(), Status: "dead",
+	}}}
+	srv := newTestServer(t, repo)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/errors", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d", rec.Code)
+	}
+	var body struct {
+		Items []map[string]any `json:"items"`
+		Count int              `json:"count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Count != 1 {
+		t.Fatalf("解析失败：%v / %+v", err, body)
+	}
+	for _, k := range []string{"id", "channel", "session", "from_name", "text", "at", "status"} {
+		if _, ok := body.Items[0][k]; !ok {
+			t.Errorf("缺少字段 %s", k)
+		}
+	}
+	if body.Items[0]["status"] != "dead" {
+		t.Errorf("status 不符：%v", body.Items[0]["status"])
+	}
+	if n := len([]rune(body.Items[0]["text"].(string))); n > maxTextRunes+1 {
+		t.Errorf("正文未截断：%d", n)
+	}
+}
+
+// TestMemoryImportanceTwoDecimals 重要度保留两位（数值 + 文本）。
+func TestMemoryImportanceTwoDecimals(t *testing.T) {
+	repo := &fakeRepo{memory: []store.WebMemory{{
+		ID: "m1", Kind: "fact", Title: "t", Summary: "s", Importance: 0.6000000000000001,
+		ValidFrom: time.Now(), CreatedAt: time.Now(),
+	}}}
+	srv := newTestServer(t, repo)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/memory", nil))
+
+	var body struct {
+		Items []struct {
+			Importance     float64 `json:"importance"`
+			ImportanceText string  `json:"importance_text"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Items[0].Importance != 0.6 {
+		t.Errorf("数值未取两位：%v", body.Items[0].Importance)
+	}
+	if body.Items[0].ImportanceText != "0.60" {
+		t.Errorf("文本格式应为 0.60，实际 %q", body.Items[0].ImportanceText)
+	}
+}
+
+// TestOverviewPageBlocks 概览页包含新分区，记忆页用 toFixed(2)。
+func TestOverviewPageBlocks(t *testing.T) {
+	srv := newTestServer(t, &fakeRepo{})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := rec.Body.String()
+	for _, want := range []string{"运行状态", "数据统计", "最近动态", "最近错误", "/api/errors", "最近事件"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("概览页缺少 %q", want)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/memory", nil))
+	if !strings.Contains(rec.Body.String(), "toFixed(2)") {
+		t.Error("记忆页未做两位小数格式化")
 	}
 }

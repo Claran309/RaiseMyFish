@@ -64,6 +64,8 @@ type WebRepo interface {
 	ArchiveMemory(ctx context.Context, id string) error
 	// Events 取最近事件（dir 为空表示不筛）。
 	Events(ctx context.Context, dir string, limit int) ([]WebEvent, error)
+	// Errors 取最近异常事件（status 为 dead/retry）。
+	Errors(ctx context.Context, limit int) ([]WebEvent, error)
 	// SendLogs 取最近发送记录。
 	SendLogs(ctx context.Context, limit int) ([]WebSend, error)
 }

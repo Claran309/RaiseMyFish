@@ -3066,3 +3066,71 @@ net/http + embed 内联页面，零前端依赖。默认关，只允许回环监
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。
+
+---
+
+## Web 面板前端改进（2026-11-04，Asia/Shanghai）
+
+三个改进：重要度两位小数、概览补「最近事件/最近错误」、去扁平化设计。仍零前端依赖。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `internal/web/static/index.html` | 重写（两列 + 分组 + 状态色） | `2C75C8B4E43AA9A0` | 7633 |
+| `internal/web/static/memory.html` | 修改（重要度 toFixed(2)） | `4E05DB1E395BD336` | 3401 |
+| `internal/web/server.go` | 修改（`/api/errors` + 两位小数） | `161130899228DB95` | 11079 |
+| `internal/web/server_test.go` | 修改（+3 用例） | `2AB52A9A5CB5AD38` | 11068 |
+| `internal/database/web.go` | 修改（`Errors` + `round2`） | `368C3DF2F9AF2E5A` | 8026 |
+| `internal/store/web.go` | 修改（接口加 `Errors`） | `B4C469215AD06355` | 1934 |
+
+### 1. 重要度格式化
+
+- 后端：`round2()` 把 float 收到两位（`0.6000000000000001` → `0.6`），
+  额外给 `importance_text`（`"0.60"`）方便直接展示；前端再 `toFixed(2)` 兜底。
+
+### 2. 概览页新增两大区块
+
+- **最近事件（10 条）**：复用 `/api/events?limit=10`，同一行显示「时间 · 昵称 · 内容 · 方向」。
+- **最近错误（5 条）**：新增 `/api/errors?limit=`（默认 5，上限 50），
+  查 `events.status IN ('dead','retry')`，按时间倒序；行底色微红 + 状态徽章（dead 红 / retry 黄）。
+
+### 3. 反扁平设计
+
+| 层次 | 做法 |
+|---|---|
+| 顶部状态条 | 🐟 标题 + 导航 + 右上「正常/异常」胶囊（失败数或积压 >10 转红） |
+| 两列布局 | 左：统计卡（`grid` 自适应）；右：最近动态；窄屏 <860px 自动单列 |
+| 分组标题 | 「运行状态」「数据统计」「最近动态」（小号大写、字距加宽） |
+| 卡片状态色 | 左侧 3px 色条 + 图标：成功绿 / 失败红 / 积压黄 / 中性蓝 |
+| 排版细节 | 数字用 `tabular-nums` 对齐；长分类名降级为 13px 小字两行 |
+
+### 测试
+
+| 用例 | 断言 |
+|---|---|
+| `TestErrorsJSON` | 字段齐全（id/channel/session/from_name/text/at/status）、status=dead、正文截断 |
+| `TestMemoryImportanceTwoDecimals` | `importance` = 0.6、`importance_text` = `"0.60"` |
+| `TestOverviewPageBlocks` | 概览页含「运行状态/数据统计/最近动态/最近错误/最近事件//api/errors」；记忆页含 `toFixed(2)` |
+| 既有 9 用例 | 全过（行为未变） |
+
+| 命令 | 结果 |
+|---|---|
+| `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **38 个包全绿**（web 12 用例全 PASS） |
+| `golangci-lint`（web/database/store） | **0 issues** |
+
+### 踩坑记录
+
+- 概览页 JS 里先写了 `e.input_or_dir(e)` 这种不存在的调用，已改成 `esc(e.dir)`——
+  纯前端逻辑没有编译期保护，只能靠页面测试断言关键字兜底。
+
+### 未做项
+
+| 项 | 说明 |
+|---|---|
+| 错误趋势图 | 只有列表，没有按小时聚合的趋势 |
+| 删除的撤销 | 软删除后无「恢复」按钮（数据还在库里，可手工改 archived） |
+| 深色/浅色切换 | 目前只有深色（跟 IDE 主题一致） |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。

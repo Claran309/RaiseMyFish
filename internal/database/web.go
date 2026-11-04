@@ -6,6 +6,7 @@ package database
 
 import (
 	"context"
+	"math"
 	"strings"
 	"time"
 
@@ -116,7 +117,8 @@ func (r *WebRepo) Memory(ctx context.Context, kind, query string, limit int) ([]
 	for _, row := range rows {
 		out = append(out, store.WebMemory{
 			ID: row.ID, Kind: row.Kind, Title: row.Title, Summary: row.Summary,
-			Importance: row.Importance, ValidFrom: row.ValidFrom, CreatedAt: row.CreatedAt,
+			// 展示用：保留两位小数，避免 0.6000000000000001 这种
+			Importance: round2(row.Importance), ValidFrom: row.ValidFrom, CreatedAt: row.CreatedAt,
 		})
 	}
 	return out, nil
@@ -174,6 +176,40 @@ func (r *WebRepo) Events(ctx context.Context, dir string, limit int) ([]store.We
 	}
 	return out, nil
 }
+
+// Errors 取最近异常事件：status 为 dead/retry 的（按时间倒序）。
+func (r *WebRepo) Errors(ctx context.Context, limit int) ([]store.WebEvent, error) {
+	if ctx == nil || limit < 1 || limit > webMaxLimit {
+		return nil, store.ErrInvalid
+	}
+	var rows []struct {
+		ID       string
+		Channel  string
+		Dir      string
+		Session  string
+		FromName string
+		Text     string
+		At       time.Time
+		Status   string
+	}
+	if err := r.db.WithContext(ctx).Table("events").
+		Where("status IN ?", []string{"dead", "retry"}).
+		Select("id, COALESCE(channel,'') AS channel, dir, COALESCE(session,'') AS session, COALESCE(from_name,'') AS from_name, COALESCE(text,'') AS text, at, status").
+		Order("at DESC, id ASC").Limit(limit).Find(&rows).Error; err != nil {
+		return nil, &safeError{"查询异常事件失败", err}
+	}
+	out := make([]store.WebEvent, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, store.WebEvent{
+			ID: row.ID, Channel: row.Channel, Dir: row.Dir, Session: row.Session,
+			FromName: row.FromName, Text: row.Text, At: row.At, Status: row.Status,
+		})
+	}
+	return out, nil
+}
+
+// round2 保留两位小数（展示用）。
+func round2(v float64) float64 { return math.Round(v*100) / 100 }
 
 // SendLogs 取最近发送记录。
 func (r *WebRepo) SendLogs(ctx context.Context, limit int) ([]store.WebSend, error) {
