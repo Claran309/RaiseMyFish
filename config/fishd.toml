@@ -282,10 +282,10 @@ state_path = "state/dm-recipient.json"
 
 # 看门狗（独立进程 cmd/fishwatchdog）：读心跳判活，冻结/死亡时重启 fishd。
 [watchdog]
-enabled = false
+enabled = true
 interval_seconds = 60        # 检查间隔
 stale_seconds = 120          # 心跳超过这个时间没更新 → 冻结
 unhealthy_threshold = 2      # 连续异常多少次才重启
 cooldown_seconds = 300       # 重启后冷却，防风暴
-restart_command = ""         # 例如 "systemctl restart fishd"
+restart_command = "bin/fishd.exe --env-file .env"         # 例如 "systemctl restart fishd"
 heartbeat_path = "state/fishd.heartbeat"

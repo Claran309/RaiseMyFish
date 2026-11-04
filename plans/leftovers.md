@@ -73,6 +73,17 @@
 | 46 | **DSH 历史数据迁移**（稳定版测试前） | 主人将提供：弹幕对话记录/原脚本/观众人格档案(170人)/提示词/部分记忆/文档 → 迁移进本项目（events 历史导入、viewer_profiles、人格参考） | **本鱼**（等数据） |
 | 47 | **稳定版测试（合并 2h 测试）** | P0 缺的 2 小时验收合并进稳定版测试：稳定性+功能全链路+异常注入，通过后才打包 | **本鱼 + 主人** |
 
+
+## 🔧 K2 RAG 遗留（2026-11-05）
+
+| # | 项 | 说明 | 归属 |
+|---|---|---|---|
+| 48 | **真实 6834 条 embedding 未跑** | 需 `FISH_EMBEDDING_KEY` + `[embedding] enabled=true` 后跑 `fishctl knowledge embed` | 本鱼（明天） |
+| 49 | **面板无 embedding 状态** | 概览/知识库页展示入库进度/同步时间 | Qoder/WorkBuddy |
+| 50 | **评论通道待启用**（videos 空会校验失败） | 需主人给评论视频 oid 列表后 `[collector.comment] enabled=true` | 主人 + 本鱼 |
+| 51 | **私信通道待启用**（默认关） | 需配白名单后开 | 主人 + 本鱼 |
+| 52 | **watchdog 已配 restart_command**（bin/fishd.exe） | 需先编译 bin/fishd.exe 才有效 | 本鱼（明天） |
+
 ## ⚪ 远期 / 阶段任务
 
 | # | 项 | 阶段 | 状态 | 说明 |
