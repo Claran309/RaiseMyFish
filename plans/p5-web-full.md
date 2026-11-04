@@ -11,8 +11,15 @@
 |---|---|---|
 | 看直播（watch） | 输入直播间链接/room_id → 开始/停止；显示监控房间/状态 | POST /api/watch/start、/api/watch/stop |
 | 直播采集开关 | 显示状态 + 启停（热生效） | /api/channels/{live}/toggle |
+
+## 1.5 消息管理（`/message`，评论/私信领域，与 /live 分开）
+
+| 功能 | Web 操作 | 后端 API |
+|---|---|---|
 | 评论监听 | 开关 + 视频 oid 列表编辑 | /api/channels/comment/toggle、/api/comment/videos |
 | 私信监听 | 开关 + 白名单编辑 | /api/channels/dm/toggle、/api/dm/whitelist |
+| **最近评论收发** | 收到的评论 / 已回复的评论列表 | /api/comment/recent |
+| **最近私信收发** | 收到的私信 / 已回复的私信列表 | /api/dm/recent |
 | 通道健康 | 各通道最近事件时间/失败率 | /api/channels |
 
 ### 2. 互动管理（送礼/主动弹幕/点赞）
@@ -78,7 +85,8 @@
 
 ```
 /            概览（状态/统计/最近事件/错误/健康）
-/live        直播/通道管理
+/live        直播管理（看直播/watch/直播采集/通道健康）
+/message     消息管理（评论/私信监听 + 最近收发）
 /memory      记忆（列表/观众档案/灵魂记忆/冻结）
 /knowledge   知识库（列表/编辑/召回测试/embedding）
 /activity    活动（事件/发送/送礼/主动弹幕/点赞）
