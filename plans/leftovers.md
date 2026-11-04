@@ -38,6 +38,20 @@
 | 19 | ~~常驻点赞只支持环境变量 cookie~~ | 0.13c | ✅ | 已支持 CookieFile（_FILE） | — |
 | 20 | ~~gift 既有 4 条 lint~~ | 0.21 | ✅ | 已清零（cmd/fishd 旧账也清了） | — |
 
+
+## 🔧 写了但没装配/没做（用户要求入档）
+
+| # | 项 | 说明 | 需要谁 |
+|---|---|---|---|
+| 29 | **两段式判断改默认 ReAct**（可用性优先） | 现在关键词判断错就查不到记忆 | Qoder/WorkBuddy |
+| 30 | **记忆/观众档案向量化召回** | memory_records + viewer_profiles 走语义检索（知识库 RAG 同套） | Qoder/WorkBuddy（等 K2 RAG） |
+| 31 | **定时任务框架（cron）** | 定时送礼/评论巡检/私信巡检（现在只有主动弹幕+点赞） | Qoder/WorkBuddy |
+| 32 | **私信翻页**（get_session_msgs） | 首屏 20 会话不够 | Qoder/WorkBuddy |
+| 33 | **评论多级回复** | root/parent 存了 Meta 但未用 | Qoder/WorkBuddy |
+| 34 | **web_search 搜索源** | 需配置 search_url（Serper/Bing/自建） | **主人** |
+| 35 | **常驻 Edge 截图** | 浏览器自动化 | Qoder/WorkBuddy（大） |
+| 36 | **pending_review 核对** | gift 不确定时人工核对 | 主人 + 工具 |
+
 ## ⚪ 远期 / 阶段任务
 
 | # | 项 | 阶段 | 状态 | 说明 |
