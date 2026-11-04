@@ -57,6 +57,8 @@ type Options struct {
 	RateLimit time.Duration
 	// Now 可注入时钟（测试用，日期切换也靠它）。
 	Now func() time.Time
+	// RecipientPath 是当日收信人状态文件；空用 state/dm-recipient.json。
+	RecipientPath string
 }
 
 // Sender 实现 sender.Sender 的发送部分；Resume 交给上层（本通道不做重投）。
@@ -67,10 +69,11 @@ type Sender struct {
 	rate      time.Duration
 	now       func() time.Time
 
-	mu        sync.Mutex
-	day       string
-	recipient string
-	lastSent  map[string]time.Time
+	store *RecipientStore
+
+	mu       sync.Mutex
+	state    recipientState
+	lastSent map[string]time.Time
 }
 
 var _ sender.Sender = (*Sender)(nil)
@@ -105,7 +108,22 @@ func New(t Transporter, r Relation, o Options) (*Sender, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Sender{transport: t, relation: r, allowed: allowed, rate: rate, now: now, lastSent: make(map[string]time.Time)}, nil
+	path := strings.TrimSpace(o.RecipientPath)
+	if path == "" {
+		path = "state/dm-recipient.json"
+	}
+	store, err := NewRecipientStore(path)
+	if err != nil {
+		return nil, err
+	}
+	state, err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+	return &Sender{
+		transport: t, relation: r, allowed: allowed, rate: rate, now: now,
+		store: store, state: state, lastSent: make(map[string]time.Time),
+	}, nil
 }
 
 // Name 返回通道名。
@@ -159,6 +177,10 @@ func (s *Sender) Send(ctx context.Context, claim event.Claim, reply sender.Reply
 		return sender.Result{}, classify(err)
 	}
 	s.markSent(mid)
+	// 发送成功才占用当天名额；失败不影响后续
+	if err := s.commitRecipient(mid); err != nil {
+		return sender.Result{OK: true, MsgID: msgID, Verified: msgID != ""}, &Error{Kind: KindUncertain, Cause: errors.New("私信已发出但收信人状态未落盘")}
+	}
 	return sender.Result{OK: true, MsgID: msgID, Verified: msgID != ""}, nil
 }
 
@@ -170,17 +192,27 @@ func (s *Sender) allowedMID(mid string) bool {
 
 // reserveRecipient 实现「一天最多 1 个收信人」：换人就拒绝，同人放行。
 func (s *Sender) reserveRecipient(mid string) error {
-	day := s.now().Format("2006-01-02")
+	day := dayKey(s.now())
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.day != day {
-		s.day = day
-		s.recipient = ""
+	// 跨天：允许并视为未锁定（真正覆盖发生在发送成功后）
+	if s.state.Date == day && s.state.Peer != "" && s.state.Peer != mid {
+		return &Error{Kind: KindInput, Cause: errors.New("今天已锁定收信人")}
 	}
-	if s.recipient != "" && s.recipient != mid {
-		return &Error{Kind: KindInput, Cause: errors.New("今天已经给别的收信人发过私信")}
+	return nil
+}
+
+// commitRecipient 在发送成功后才落盘，失败不占用当天名额。
+func (s *Sender) commitRecipient(mid string) error {
+	st := recipientState{Date: dayKey(s.now()), Peer: mid}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.store.Save(st); err != nil {
+		// 落盘失败不回滚已发出的私信，只让调用方知道状态可能不准
+		s.state = st
+		return err
 	}
-	s.recipient = mid
+	s.state = st
 	return nil
 }
 

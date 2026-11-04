@@ -70,7 +70,7 @@ func buildDMSender(cfg config.Config, log *zap.Logger) (sender.Sender, error) {
 	snd, err := senderdm.New(
 		senderdm.NewBiliTransporter(client),
 		senderdm.NewBiliRelation(client),
-		senderdm.Options{AllowedMIDs: allowed},
+		senderdm.Options{AllowedMIDs: allowed, RecipientPath: cfg.Sender.DM.StatePath},
 	)
 	if err != nil {
 		return nil, err

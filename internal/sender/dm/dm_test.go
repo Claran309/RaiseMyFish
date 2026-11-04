@@ -5,6 +5,7 @@ package dm
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -42,9 +43,10 @@ func newSender(t *testing.T, clock *time.Time) (*Sender, *fakeTransport, *fakeRe
 	tr := &fakeTransport{}
 	rel := &fakeRelation{attribute: mutualAttribute}
 	s, err := New(tr, rel, Options{
-		AllowedMIDs: []string{"313591854", "777"},
-		RateLimit:   10 * time.Minute,
-		Now:         func() time.Time { return *clock },
+		AllowedMIDs:   []string{"313591854", "777"},
+		RateLimit:     10 * time.Minute,
+		Now:           func() time.Time { return *clock },
+		RecipientPath: filepath.Join(t.TempDir(), "dm-recipient.json"),
 	})
 	if err != nil {
 		t.Fatal(err)

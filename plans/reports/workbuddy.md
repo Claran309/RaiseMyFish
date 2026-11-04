@@ -2755,3 +2755,72 @@ soul_path = "personas/dafeiyu/knowledge/soul-memories.md"
 ### 是否暂停写入
 
 - **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。
+
+---
+
+## 私信收信人落库（leftovers #3，2026-11-04，Asia/Shanghai）
+
+把「一天一个收信人」从进程内状态改成文件持久化，重启不再重置。
+
+| 路径 | 动作 | SHA256(前16) | 字节 |
+|---|---|---|---|
+| `internal/sender/dm/recipient.go` | 新增（状态存储） | `0896AEDB17C54DAB` | 3225 |
+| `internal/sender/dm/recipient_test.go` | 新增（5 用例） | `35FC65962018B6E2` | 5076 |
+| `internal/sender/dm/dm.go` | 修改（接 store） | `DD92553866235C2D` | 8402 |
+| `internal/sender/dm/dm_test.go` | 修改（用临时目录） | `F3AF8F572202DBD3` | 6188 |
+| `internal/config/dm.go` | 修改（state_path） | `5EB65BD97F49353D` | 1513 |
+| `cmd/fishd/dm.go` | 修改（传路径） | `EA684754597A1C23` | 2778 |
+| `config/fishd.toml` | 修改 | `2916D8D4FD0259CB` | 10673 |
+
+### 语义
+
+`state/dm-recipient.json`：
+
+```json
+{"date":"2026-11-04","peer":"313591854"}
+```
+
+| 情况 | 行为 |
+|---|---|
+| 同 UTC 日期 + 不同 peer | **拒绝**（「今天已锁定收信人」） |
+| 同 UTC 日期 + 同 peer | 放行（限频/额度另算） |
+| 跨天 | 允许并覆盖 |
+| 发送失败 | **不写盘**（不占当天名额） |
+| 文件损坏 | 降级为空记录（宁可放过一天，不永久卡死） |
+
+写入：临时文件 → `Sync` → `Rename`；进程内 `mutex` 串行（fishd 单进程）。
+
+### 测试
+
+| 用例 | 覆盖 |
+|---|---|
+| `TestRecipientPersistsAcrossRestart` | 发送后文件有 `date/peer`；**新建 Sender 模拟重启**→ 同日换人拒绝、同人放行 |
+| `TestRecipientCrossDayAllowed` | 23:50 → 次日 00:10 跨天换人成功且文件被覆盖 |
+| `TestRecipientNotWrittenOnFailure` | 传输失败不写盘，恢复后仍可换人 |
+| `TestRecipientStoreRoundTrip` | 缺失/正常/坏 JSON 三种读法 |
+| `TestRecipientStoreRejectsEmptyPath` | 空路径构造期拒绝 |
+
+| 命令 | 结果 |
+|---|---|
+| `go vet ./...` | 通过 |
+| `go test ./... -count=1` | **37 个包全绿** |
+| `go test -race ./internal/sender/dm/` | **ok 1.974s** |
+| `golangci-lint`（sender/dm、config、cmd.fishd） | **0 issues** |
+
+### 踩坑记录
+
+- 默认路径 `state/dm-recipient.json` 是相对 CWD 的，测试没设路径时会在包目录里建 `internal/sender/dm/state/`。
+  已把所有 dm 测试改成 `t.TempDir()`，并删掉了误建的目录。
+- 失败用例里第二次发送仍带 `tr.err` → 报的是传输错误而不是「换人成功」，测试需先清 `tr.err`。
+
+### 未做项 / 注意
+
+| 项 | 说明 |
+|---|---|
+| 状态文件不含时间戳 | 只有日期，无法审计「几点锁的」；需要时加 `locked_at` |
+| 手动清空 | 运维想当天改发别人，删文件即可（无 CLI 入口） |
+| 多进程 | 若将来多实例跑 fishd，mutex 不够，需要文件锁 |
+
+### 是否暂停写入
+
+- **是。** 本轮写入结束；未提交、未 push。交 DSH 验收。

@@ -253,3 +253,5 @@ interval_seconds = 120   # 10-3600
 enabled = false
 # allowed_mids 至少含主人 mid；空列表且 enabled=true 会被配置校验拒绝。
 allowed_mids = ["313591854"]
+# 当日收信人状态（跨重启保留，防止重启后重复换人）
+state_path = "state/dm-recipient.json"

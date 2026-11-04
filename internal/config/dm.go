@@ -31,6 +31,8 @@ func (d DMCollector) Validate() error {
 type DMSender struct {
 	Enabled     bool     `toml:"enabled"`
 	AllowedMIDs []string `toml:"allowed_mids"`
+	// StatePath 是「当日收信人」状态文件（跨重启保留），空则用 state/dm-recipient.json。
+	StatePath string `toml:"state_path"`
 }
 
 // Validate 只检查白名单格式。
