@@ -53,6 +53,7 @@ func startMemeLearn(ctx context.Context, cfg config.Config, db *gorm.DB, runtime
 	}
 	learner, err := knowledge.NewMemeLearner(cfg.Knowledge.Dir, runtime.Reader, source, llm, knowledge.MemeLearnOptions{
 		MaxPerDay: cfg.Knowledge.MemeLearnMaxPerDay,
+		HotLimit:  cfg.Knowledge.MemeLearnHotLimit,
 		Window:    time.Duration(cfg.Knowledge.MemeLearnWindowHours) * time.Hour,
 		MinCount:  cfg.Knowledge.MemeLearnMinOccurrences,
 		Channel:   event.ChLive,
@@ -65,6 +66,7 @@ func startMemeLearn(ctx context.Context, cfg config.Config, db *gorm.DB, runtime
 	logger.Info("梗白学习已启动",
 		zap.String("action", memeLearnAction),
 		zap.String("model", model),
+		zap.Int("hot_limit", cfg.Knowledge.MemeLearnHotLimit),
 		zap.Int("max_per_day", cfg.Knowledge.MemeLearnMaxPerDay),
 		zap.Duration("interval", memeLearnInterval),
 	)

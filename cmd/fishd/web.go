@@ -15,7 +15,7 @@ import (
 )
 
 // startWebPanel 启动面板；返回的 stop 会等待服务退出（未启用时是空函数）。
-func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Resources, log *zap.Logger) func() {
+func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Resources, runtime knowledgeAssembly, log *zap.Logger) func() {
 	if !cfg.Web.Enabled {
 		return func() {}
 	}
@@ -24,7 +24,18 @@ func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Reso
 		log.Warn("面板未启动：数据源装配失败", zap.String("action", "web_setup"), zap.Error(err))
 		return func() {}
 	}
-	srv, err := web.New(web.Options{Addr: cfg.Web.Addr, Repo: repo, Log: log})
+	var knowledgeInfo web.KnowledgeInfo
+	if runtime.Base != nil {
+		knowledgeInfo = func() (int, string) {
+			info, err := runtime.Base.SnapshotInfo()
+			if err != nil {
+				log.Warn("读取知识快照状态失败", zap.String("action", "web_knowledge"), zap.Error(err))
+				return 0, ""
+			}
+			return info.Entries, info.Revision
+		}
+	}
+	srv, err := web.New(web.Options{Addr: cfg.Web.Addr, Repo: repo, Log: log, KnowledgeInfo: knowledgeInfo})
 	if err != nil {
 		log.Warn("面板未启动：参数不合法", zap.String("action", "web_setup"), zap.Error(err))
 		return func() {}

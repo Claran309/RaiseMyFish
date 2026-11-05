@@ -54,10 +54,29 @@ type WebSend struct {
 	At      time.Time
 }
 
+// WebEmbeddingSection 是单个来源的向量入库进度；知识来源的 Revision 由快照注入。
+type WebEmbeddingSection struct {
+	Total       int64
+	Embedded    int64
+	Pending     int64
+	LastUpdated time.Time
+	Revision    string
+}
+
+// WebEmbeddingStatus 是知识/记忆/档案三路向量入库状态。
+type WebEmbeddingStatus struct {
+	Knowledge   WebEmbeddingSection
+	Memory      WebEmbeddingSection
+	Viewer      WebEmbeddingSection
+	GeneratedAt time.Time
+}
+
 // WebRepo 是面板的数据访问口。
 type WebRepo interface {
 	// Status 汇总计数与累计费用。
 	Status(ctx context.Context) (WebStatus, error)
+	// EmbeddingStatus 汇总知识/记忆/档案的向量入库进度。
+	EmbeddingStatus(ctx context.Context) (WebEmbeddingStatus, error)
 	// Memory 按 kind/关键词过滤记忆（新的在前）。
 	Memory(ctx context.Context, kind, query string, limit int) ([]WebMemory, error)
 	// ArchiveMemory 软删除一条记忆（归档 + 置失效时间）。

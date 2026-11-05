@@ -36,6 +36,9 @@ const (
 	defaultLimit = 50
 )
 
+// KnowledgeInfo 返回知识库快照的条目数与 revision；知识未启用时可为 nil。
+type KnowledgeInfo func() (entries int, revision string)
+
 // Options 是面板参数。
 type Options struct {
 	// Addr 形如 127.0.0.1:8090；只允许回环。
@@ -46,14 +49,17 @@ type Options struct {
 	Log *zap.Logger
 	// Now 可注入时钟（测试用）。
 	Now func() time.Time
+	// KnowledgeInfo 可选：注入当前知识快照的条目数与 revision。
+	KnowledgeInfo KnowledgeInfo
 }
 
 // Server 是面板本体。
 type Server struct {
-	addr string
-	repo store.WebRepo
-	log  *zap.Logger
-	now  func() time.Time
+	addr          string
+	repo          store.WebRepo
+	log           *zap.Logger
+	now           func() time.Time
+	knowledgeInfo KnowledgeInfo
 }
 
 // New 校验地址与依赖；非回环地址直接拒绝。
@@ -75,7 +81,7 @@ func New(o Options) (*Server, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Server{addr: addr, repo: o.Repo, log: o.Log, now: now}, nil
+	return &Server{addr: addr, repo: o.Repo, log: o.Log, now: now, knowledgeInfo: o.KnowledgeInfo}, nil
 }
 
 // ValidateAddr 只允许回环监听，避免把运维面板暴露到公网。
@@ -105,6 +111,7 @@ func ValidateAddr(addr string) error {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/embedding/status", s.handleEmbeddingStatus)
 	mux.HandleFunc("/api/memory", s.handleMemory)
 	mux.HandleFunc("/api/memory/", s.handleMemoryDelete)
 	mux.HandleFunc("/api/events", s.handleEvents)
@@ -153,6 +160,8 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		name = "static/index.html"
 	case "/memory":
 		name = "static/memory.html"
+	case "/knowledge":
+		name = "static/knowledge.html"
 	case "/activity":
 		name = "static/activity.html"
 	default:
@@ -190,6 +199,56 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"cost_usd":       st.CostUSD,
 		"generated_at":   st.GeneratedAt.UTC().Format(time.RFC3339),
 	})
+}
+
+// handleEmbeddingStatus 返回知识/记忆/档案的向量入库进度。
+//
+// 知识条目总数来自文件快照（数据库只知道已入库的向量），因此在这里用
+// KnowledgeInfo 覆盖 repo 给出的近似值；知识未启用时 knowledgeInfo 为 nil，
+// 此时总数按已入库数量展示，待嵌入为 0。
+func (s *Server) handleEmbeddingStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "只支持 GET")
+		return
+	}
+	st, err := s.repo.EmbeddingStatus(r.Context())
+	if err != nil {
+		s.fail(w, "读取向量入库状态失败", err)
+		return
+	}
+	if s.knowledgeInfo != nil {
+		entries, revision := s.knowledgeInfo()
+		st.Knowledge.Total = int64(entries)
+		st.Knowledge.Revision = revision
+		st.Knowledge.Pending = st.Knowledge.Total - st.Knowledge.Embedded
+	}
+	if st.Knowledge.Pending < 0 {
+		st.Knowledge.Pending = 0
+	}
+	if st.GeneratedAt.IsZero() {
+		st.GeneratedAt = s.now()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"knowledge":    embeddingSectionJSON(st.Knowledge),
+		"memory":       embeddingSectionJSON(st.Memory),
+		"viewer":       embeddingSectionJSON(st.Viewer),
+		"generated_at": st.GeneratedAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// embeddingSectionJSON 统一字段；最后同步时间未知时返回空字符串。
+func embeddingSectionJSON(s store.WebEmbeddingSection) map[string]any {
+	last := ""
+	if !s.LastUpdated.IsZero() {
+		last = s.LastUpdated.UTC().Format(time.RFC3339)
+	}
+	return map[string]any{
+		"total":        s.Total,
+		"embedded":     s.Embedded,
+		"pending":      s.Pending,
+		"last_updated": last,
+		"revision":     s.Revision,
+	}
 }
 
 // handleMemory 列出记忆。

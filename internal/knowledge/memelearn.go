@@ -6,7 +6,7 @@ package knowledge
 // 边界：
 //   - 只读公开入向事件，私密内容在查询层就已排除；
 //   - 模型只负责判断与措辞，落盘前仍按 K0 规则完整解析校验；
-//   - learned.md 由机器维护，同 title 幂等；每日条数用 ID 的日期前缀持久化限流。
+//   - learned.md 由机器维护，同 title 幂等；每日条数可选，用 ID 的日期前缀持久化限流（0=不限）。
 
 import (
 	"context"
@@ -63,9 +63,9 @@ type MemeLearnOptions struct {
 	Window time.Duration
 	// MinCount 是候选至少出现的次数（默认 2）。
 	MinCount int
-	// MaxCandidates 是单轮最多判断几个候选（默认 10）。
-	MaxCandidates int
-	// MaxPerDay 是每个 UTC 自然日最多学习几条（配置项，默认 10）。
+	// HotLimit 是单轮按弹幕出现次数排序后最多判断几个候选（默认 15）。
+	HotLimit int
+	// MaxPerDay 是每个 UTC 自然日最多学习几条；0 表示不限（默认）。
 	MaxPerDay int
 	// Channel 是扫描的通道（默认 live）。
 	Channel event.Channel
@@ -127,14 +127,14 @@ func NewMemeLearner(dir string, reader Reader, source MemeEventSource, llm MemeL
 	if opts.MinCount > 20 {
 		return nil, errors.New("梗白学习最低出现次数不能超过20")
 	}
-	if opts.MaxCandidates <= 0 {
-		opts.MaxCandidates = 10
+	if opts.HotLimit <= 0 {
+		opts.HotLimit = 15
 	}
-	if opts.MaxCandidates > 50 {
+	if opts.HotLimit > 50 {
 		return nil, errors.New("梗白学习单轮候选上限不能超过50")
 	}
-	if opts.MaxPerDay <= 0 {
-		opts.MaxPerDay = 10
+	if opts.MaxPerDay < 0 {
+		return nil, errors.New("梗白学习每日上限不能为负")
 	}
 	if opts.MaxPerDay > 100 {
 		return nil, errors.New("梗白学习每日上限不能超过100")
@@ -166,7 +166,7 @@ func (l *MemeLearner) RunOnce(ctx context.Context) (MemeLearnStats, error) {
 		return stats, fmt.Errorf("读取梗白事件窗口：%w", err)
 	}
 	stats.Scanned = len(events)
-	candidates := extractMemeCandidates(events, l.opts.MinCount, l.opts.MaxCandidates)
+	candidates := extractMemeCandidates(events, l.opts.MinCount, l.opts.HotLimit)
 	stats.Candidates = len(candidates)
 	if len(candidates) == 0 {
 		return stats, nil
@@ -199,7 +199,7 @@ func (l *MemeLearner) RunOnce(ctx context.Context) (MemeLearnStats, error) {
 		if err := checkContext(ctx); err != nil {
 			return stats, err
 		}
-		if learnedToday >= l.opts.MaxPerDay {
+		if l.opts.MaxPerDay > 0 && learnedToday >= l.opts.MaxPerDay {
 			stats.Limited++
 			break
 		}
@@ -485,7 +485,8 @@ func writeMemeFile(path string, data []byte) error {
 	return nil
 }
 
-// extractMemeCandidates 统计 2-8 字重复短语；纯数字、标点和单字重复不算候选。
+// extractMemeCandidates 统计 2-8 字重复短语，按出现次数从高到低取前 maxCandidates；
+// 纯数字、标点和单字重复不算候选。
 func extractMemeCandidates(events []event.Event, minCount, maxCandidates int) []memeCandidate {
 	counts := make(map[string]int)
 	samples := make(map[string][]string)

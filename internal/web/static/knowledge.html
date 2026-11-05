@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>知识 · 大肥鱼面板</title>
+<style>
+:root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--ok:#3fb950;--warn:#d29922}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.6 -apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header b{font-size:15px}
+nav a{color:var(--muted);text-decoration:none;margin-right:14px}
+nav a.on{color:var(--accent)}
+main{padding:20px;max-width:1080px;margin:0 auto}
+h2{font-size:13px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;margin:0 0 10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.card .k{color:var(--muted);font-size:12px}
+.card .v{font-size:20px;margin-top:4px;font-variant-numeric:tabular-nums}
+.card .sub{font-size:11px;color:var(--muted);margin-top:4px;word-break:break-all}
+.bar{height:6px;background:#0b0d12;border-radius:999px;margin-top:8px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ok);border-radius:999px}
+.card.warn .bar i{background:var(--warn)}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:12px}
+td.num{font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.tag{font-size:12px;color:var(--muted)}
+.note{color:var(--muted);font-size:12px;margin:0 0 16px}
+</style>
+</head>
+<body>
+<header>
+  <b>🐟 大肥鱼面板</b>
+  <nav><a href="/">概览</a><a href="/memory">记忆</a><a class="on" href="/knowledge">知识</a><a href="/activity">活动</a></nav>
+</header>
+<main>
+  <h2>向量入库</h2>
+  <p class="note">知识、长期记忆、观众档案的 embedding 入库进度；最后同步时间为最近一次成功写入向量的时间，知识 revision 来自当前文件快照。</p>
+  <div class="grid" id="cards"></div>
+  <table>
+    <thead><tr><th>来源</th><th>已嵌入 / 总数</th><th>待嵌入</th><th>最后同步</th><th>revision</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+<script>
+function esc(s) {
+  return (s || '').replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+function pct(s) {
+  var total = Number(s.total) || 0;
+  if (total <= 0) return 0;
+  return Math.min(100, Math.round((Number(s.embedded) || 0) * 100 / total));
+}
+function when(iso) {
+  if (!iso) return '—';
+  var d = new Date(iso);
+  if (isNaN(d.getTime()) || d.getFullYear() < 2000) return '—';
+  return d.toLocaleString('zh-CN', { hour12: false });
+}
+function rev(s) {
+  if (!s.revision) return '—';
+  return '<span title="' + esc(s.revision) + '">' + esc(s.revision.slice(0, 16)) + '…</span>';
+}
+function card(name, icon, s) {
+  var p = pct(s), pending = Number(s.pending) || 0;
+  return '<div class="card ' + (pending > 0 ? 'warn' : '') + '">' +
+    '<div class="k">' + icon + ' ' + name + '</div>' +
+    '<div class="v">' + (Number(s.embedded) || 0) + ' / ' + (Number(s.total) || 0) + ' (' + p + '%)</div>' +
+    '<div class="bar"><i style="width:' + p + '%"></i></div>' +
+    '<div class="sub">待嵌入 ' + pending + ' · 最后同步 ' + esc(when(s.last_updated)) +
+    (s.revision ? ' · revision ' + esc(s.revision.slice(0, 12)) : '') + '</div></div>';
+}
+async function load() {
+  var r = await fetch('/api/embedding/status');
+  if (!r.ok) {
+    document.getElementById('cards').innerHTML = '<div class="card">加载失败</div>';
+    document.getElementById('rows').innerHTML = '';
+    return;
+  }
+  var d = await r.json();
+  var sources = [
+    { key: 'knowledge', name: '知识库', icon: '📚' },
+    { key: 'memory', name: '长期记忆', icon: '🧠' },
+    { key: 'viewer', name: '观众档案', icon: '👤' }
+  ];
+  document.getElementById('cards').innerHTML = sources.map(function (x) {
+    return card(x.name, x.icon, d[x.key] || {});
+  }).join('');
+  document.getElementById('rows').innerHTML = sources.map(function (x) {
+    var s = d[x.key] || {};
+    return '<tr><td>' + x.icon + ' ' + x.name + '</td>' +
+      '<td class="num">' + (Number(s.embedded) || 0) + ' / ' + (Number(s.total) || 0) + '</td>' +
+      '<td class="num">' + (Number(s.pending) || 0) + '</td>' +
+      '<td class="tag">' + esc(when(s.last_updated)) + '</td>' +
+      '<td class="tag">' + rev(s) + '</td></tr>';
+  }).join('');
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>

@@ -102,9 +102,12 @@ dir = "personas/dafeiyu/knowledge"
 budget_percent = 10
 # 梗白学习：从最近 24h 公开弹幕里发现知识库未收录的重复短语，
 # 交给 LLM 判断是否值得收录，结果追加到 memes/learned.md。
-# 默认关闭；启用需同时启用 [llm]。每日上限按 UTC 自然日计，持久化在条目 ID 前缀。
+# 默认关闭；启用需同时启用 [llm]。
+# 候选按弹幕出现次数从高到低取 Top15（meme_learn_hot_limit）。
+# 每日上限按 UTC 自然日计，持久化在条目 ID 前缀；0=不限（默认）。
 meme_learn = true
-meme_learn_max_per_day = 10
+meme_learn_hot_limit = 15
+meme_learn_max_per_day = 0
 
 # 知识语义检索（K2）：向量由智谱 embedding-3 生成，存 pgvector。
 # 密钥只从 key_env 指向的环境变量（或本地 .env）读取，禁止写在本文件。

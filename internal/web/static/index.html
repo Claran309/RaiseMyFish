@@ -54,7 +54,7 @@ button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-ra
 <body>
 <header>
   <b>🐟 大肥鱼面板</b>
-  <nav><a class="on" href="/">概览</a><a href="/memory">记忆</a><a href="/activity">活动</a></nav>
+  <nav><a class="on" href="/">概览</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/activity">活动</a></nav>
   <span class="spacer"></span>
   <span class="pill" id="health">检测中…</span>
   <button onclick="load()">刷新</button>
@@ -67,6 +67,9 @@ button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-ra
 
       <h2>数据统计</h2>
       <div class="grid" id="data-cards"></div>
+
+      <h2>向量入库</h2>
+      <div class="grid" id="embed-cards"></div>
     </section>
 
     <section>
@@ -98,6 +101,28 @@ function hhmmss(iso) {
   var d = new Date(iso);
   if (isNaN(d.getTime())) return esc(iso);
   return d.toLocaleTimeString('zh-CN', { hour12: false });
+}
+function when(iso) {
+  if (!iso) return '—';
+  var d = new Date(iso);
+  if (isNaN(d.getTime()) || d.getFullYear() < 2000) return '—';
+  return d.toLocaleString('zh-CN', { hour12: false });
+}
+async function loadEmbeddingStatus() {
+  var box = document.getElementById('embed-cards');
+  var r = await fetch('/api/embedding/status');
+  if (!r.ok) { box.innerHTML = '<div class="card bad">向量状态加载失败</div>'; return; }
+  var d = await r.json();
+  function one(icon, label, s) {
+    var total = Number(s.total) || 0, embedded = Number(s.embedded) || 0, pending = Number(s.pending) || 0;
+    var p = total > 0 ? Math.min(100, Math.round(embedded * 100 / total)) : 0;
+    var sub = '待嵌入 ' + pending + ' · 最后同步 ' + when(s.last_updated);
+    if (s.revision) sub += ' · revision ' + s.revision.slice(0, 12);
+    return card(pending > 0 ? 'warn' : 'ok', icon, label, embedded + '/' + total + ' (' + p + '%)', sub, true);
+  }
+  box.innerHTML = one('📚', '知识', d.knowledge || {}) +
+    one('🧠', '记忆', d.memory || {}) +
+    one('👤', '档案', d.viewer || {});
 }
 async function loadStatus() {
   var r = await fetch('/api/status');
@@ -156,7 +181,7 @@ async function loadErrors() {
       '<span class="txt">' + esc(e.text) + '</span></div>';
   }).join('');
 }
-function load() { loadStatus(); loadEvents(); loadErrors(); }
+function load() { loadStatus(); loadEmbeddingStatus(); loadEvents(); loadErrors(); }
 load();
 setInterval(load, 15000);
 </script>

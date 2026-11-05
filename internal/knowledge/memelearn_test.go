@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,6 +118,49 @@ func TestExtractMemeCandidates(t *testing.T) {
 	for _, bad := range []string{"666", "单次词", "私密词", "小明", "example"} {
 		if _, ok := byText[bad]; ok {
 			t.Fatalf("不应出现候选 %q：%+v", bad, got)
+		}
+	}
+}
+
+// hotTestWords 是 20 个互不包含的英文整词，避免 n-gram 与包含去重干扰排序断言。
+var hotTestWords = []string{
+	"alpha", "bravo", "charlie", "delta", "echo",
+	"foxtrot", "golf", "hotel", "india", "juliet",
+	"kilo", "lima", "mike", "november", "oscar",
+	"papa", "quebec", "romeo", "sierra", "tango",
+}
+
+// hotTestEvents 让第 i 个词出现 20-i 次，构造严格的次数降序。
+func hotTestEvents(now time.Time) []event.Event {
+	events := make([]event.Event, 0, len(hotTestWords))
+	for i, word := range hotTestWords {
+		events = append(events, memeEvent(fmt.Sprintf("hot-%d", i), strings.Repeat(word+" ", 20-i), now, false))
+	}
+	return events
+}
+
+// TestExtractMemeCandidatesTopHot15 候选按出现次数降序，且只保留前 15。
+func TestExtractMemeCandidatesTopHot15(t *testing.T) {
+	got := extractMemeCandidates(hotTestEvents(time.Now().UTC()), 1, 15)
+	if len(got) != 15 {
+		t.Fatalf("候选数量 = %d，期望 15：%+v", len(got), got)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i-1].count < got[i].count {
+			t.Fatalf("候选未按出现次数降序：%+v", got)
+		}
+	}
+	for i, want := range hotTestWords[:15] {
+		if got[i].text != want {
+			t.Fatalf("第 %d 个候选 = %q，期望 %q：%+v", i, got[i].text, want, got)
+		}
+	}
+	if got[0].count != 20 || got[14].count != 6 {
+		t.Fatalf("Top15 次数不符：first=%d last=%d", got[0].count, got[14].count)
+	}
+	for _, cand := range got {
+		if cand.text == hotTestWords[15] {
+			t.Fatalf("第 16 名不应进入 Top15：%+v", cand)
 		}
 	}
 }
@@ -248,6 +292,48 @@ func TestMemeLearnerDailyLimit(t *testing.T) {
 	}
 }
 
+// TestMemeLearnerHot15UnlimitedDaily Top15 截断；MaxPerDay=0 时不限每日（可超过旧默认 10 条）。
+func TestMemeLearnerHot15UnlimitedDaily(t *testing.T) {
+	dir := knowledgeDir(t)
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	llm := &memeTestLLM{reply: learnEveryCandidate()}
+	learner, err := NewMemeLearner(dir, &memeTestReader{}, &memeTestSource{events: hotTestEvents(now)}, llm, MemeLearnOptions{
+		MinCount:  1,
+		HotLimit:  15,
+		MaxPerDay: 0,
+		Now:       func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats, err := learner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Candidates != 15 || stats.Learned != 15 || stats.Limited != 0 || llm.count() != 15 {
+		t.Fatalf("Top15/不限每日不符：stats=%+v calls=%d", stats, llm.count())
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "memes", "learned.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, hotTestWords[0]) {
+		t.Fatalf("最高频候选未学习：%s", text)
+	}
+	if strings.Contains(text, hotTestWords[15]) {
+		t.Fatalf("第 16 名之后的候选不应学习：%s", text)
+	}
+	reader, err := NewFileReader(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("写入的文件未通过 K0 校验：%v", err)
+	}
+	info, err := reader.SnapshotInfo()
+	if err != nil || info.Entries != 15 {
+		t.Fatalf("学习条数不符：%+v %v", info, err)
+	}
+}
+
 func TestMemeLearnerSkipsKnownKnowledge(t *testing.T) {
 	dir := knowledgeDir(t)
 	now := time.Now().UTC()
@@ -349,7 +435,7 @@ func TestNewMemeLearnerValidatesOptions(t *testing.T) {
 		"窗口过短":   {Window: time.Minute, Now: now},
 		"窗口过长":   {Window: 8 * 24 * time.Hour, Now: now},
 		"最低次数过大": {MinCount: 21, Now: now},
-		"候选过多":   {MaxCandidates: 51, Now: now},
+		"候选过多":   {HotLimit: 51, Now: now},
 		"每日过多":   {MaxPerDay: 101, Now: now},
 		"坏通道":    {Channel: "bad", Now: now},
 	}

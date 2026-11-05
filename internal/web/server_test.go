@@ -17,6 +17,7 @@ import (
 
 type fakeRepo struct {
 	status     store.WebStatus
+	embedding  store.WebEmbeddingStatus
 	memory     []store.WebMemory
 	events     []store.WebEvent
 	errors     []store.WebEvent
@@ -26,6 +27,10 @@ type fakeRepo struct {
 }
 
 func (f *fakeRepo) Status(context.Context) (store.WebStatus, error) { return f.status, nil }
+
+func (f *fakeRepo) EmbeddingStatus(context.Context) (store.WebEmbeddingStatus, error) {
+	return f.embedding, nil
+}
 
 func (f *fakeRepo) Memory(context.Context, string, string, int) ([]store.WebMemory, error) {
 	return f.memory, nil
@@ -85,6 +90,73 @@ func TestStatusJSON(t *testing.T) {
 	}
 	if body["events_total"].(float64) != 10 || body["cost_usd"].(float64) != 0.42 {
 		t.Errorf("数值不符：%+v", body)
+	}
+}
+
+// TestEmbeddingStatusJSON 三路状态字段齐全；知识总数与 revision 由快照覆盖。
+func TestEmbeddingStatusJSON(t *testing.T) {
+	last := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	repo := &fakeRepo{embedding: store.WebEmbeddingStatus{
+		Knowledge:   store.WebEmbeddingSection{Total: 8, Embedded: 8, LastUpdated: last},
+		Memory:      store.WebEmbeddingSection{Total: 5, Embedded: 4, Pending: 1, LastUpdated: last.Add(time.Minute)},
+		Viewer:      store.WebEmbeddingSection{Total: 3, Embedded: 1, Pending: 2},
+		GeneratedAt: last,
+	}}
+	srv, err := New(Options{
+		Addr: "127.0.0.1:8090", Repo: repo, Log: zap.NewNop(),
+		KnowledgeInfo: func() (int, string) { return 10, strings.Repeat("a", 64) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/embedding/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d", rec.Code)
+	}
+	var body struct {
+		Knowledge struct {
+			Total       int64  `json:"total"`
+			Embedded    int64  `json:"embedded"`
+			Pending     int64  `json:"pending"`
+			LastUpdated string `json:"last_updated"`
+			Revision    string `json:"revision"`
+		} `json:"knowledge"`
+		Memory struct {
+			Total    int64 `json:"total"`
+			Embedded int64 `json:"embedded"`
+			Pending  int64 `json:"pending"`
+		} `json:"memory"`
+		Viewer struct {
+			Total    int64 `json:"total"`
+			Embedded int64 `json:"embedded"`
+			Pending  int64 `json:"pending"`
+		} `json:"viewer"`
+		GeneratedAt string `json:"generated_at"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("响应不是 JSON：%v", err)
+	}
+	if body.Knowledge.Total != 10 || body.Knowledge.Embedded != 8 || body.Knowledge.Pending != 2 {
+		t.Errorf("知识状态不符：%+v", body.Knowledge)
+	}
+	if body.Knowledge.Revision != strings.Repeat("a", 64) || body.Knowledge.LastUpdated == "" {
+		t.Errorf("知识 revision/最后同步缺失：%+v", body.Knowledge)
+	}
+	if body.Memory.Total != 5 || body.Memory.Embedded != 4 || body.Memory.Pending != 1 {
+		t.Errorf("记忆状态不符：%+v", body.Memory)
+	}
+	if body.Viewer.Total != 3 || body.Viewer.Embedded != 1 || body.Viewer.Pending != 2 {
+		t.Errorf("档案状态不符：%+v", body.Viewer)
+	}
+	if body.GeneratedAt == "" {
+		t.Error("缺少 generated_at")
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/embedding/status", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("非 GET 应 405，实际 %d", rec.Code)
 	}
 }
 
@@ -191,10 +263,10 @@ func TestSendLogJSON(t *testing.T) {
 	}
 }
 
-// TestPagesRender 三个页面都能 200 且含内联样式。
+// TestPagesRender 四个页面都能 200 且含内联样式。
 func TestPagesRender(t *testing.T) {
 	srv := newTestServer(t, &fakeRepo{})
-	for _, path := range []string{"/", "/memory", "/activity"} {
+	for _, path := range []string{"/", "/memory", "/knowledge", "/activity"} {
 		rec := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusOK {
@@ -320,7 +392,7 @@ func TestOverviewPageBlocks(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := rec.Body.String()
-	for _, want := range []string{"运行状态", "数据统计", "最近动态", "最近错误", "/api/errors", "最近事件"} {
+	for _, want := range []string{"运行状态", "数据统计", "向量入库", "最近动态", "最近错误", "/api/errors", "最近事件"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("概览页缺少 %q", want)
 		}
@@ -330,5 +402,24 @@ func TestOverviewPageBlocks(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/memory", nil))
 	if !strings.Contains(rec.Body.String(), "toFixed(2)") {
 		t.Error("记忆页未做两位小数格式化")
+	}
+}
+
+// TestEmbeddingPagesShowProgress 概览与知识页都必须展示入库进度、同步时间与 revision。
+func TestEmbeddingPagesShowProgress(t *testing.T) {
+	srv := newTestServer(t, &fakeRepo{})
+	for _, path := range []string{"/", "/knowledge"} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s 状态码 = %d", path, rec.Code)
+			continue
+		}
+		body := rec.Body.String()
+		for _, want := range []string{"向量入库", "/api/embedding/status", "待嵌入", "最后同步", "revision"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s 缺少 %q", path, want)
+			}
+		}
 	}
 }

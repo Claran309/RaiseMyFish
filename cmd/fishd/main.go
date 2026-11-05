@@ -210,7 +210,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		return fmt.Errorf("装配私信采集失败：%w", err)
 	}
 	// 运维面板（只监听回环）：默认关，开启后独立 goroutine 跑
-	stopWeb := startWebPanel(ctx, cfg, resources, logger)
+	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, logger)
 	defer stopWeb()
 
 	// 知识热重载：梗白学习写入 learned.md 后不必重启；语义包装不影响底层快照。
