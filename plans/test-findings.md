@@ -55,6 +55,29 @@
 - X奇迹与你X：档案 161 句；但 21:54:43 回复「不认识，本鱼没听过这号人」；21:56:15「X奇迹与你X 是谁」→ 21:56:17 回「本鱼啊，大肥鱼一条」（意图误判）。
 - @ 发送：out 文本「@X奇迹与你X ...」纯文本；protocol.mjs 有 reply_mid 解析（收），但 danmaku.mjs 发送无 reply_mid 参数。
 
+
+### H7 扩展：ReAct 上下文完整清单（设计）
+
+> 核心：ReAct 的 prompt 应 = 单步 Brain 的完整上下文（当前只有 System+Question）。
+
+| 组 | 项 | 来源 |
+|---|---|---|
+| **状态** | 当前在干什么（watching/replying/sending） | presence 状态表 |
+| | 分身在干什么（多状态并存） | presence |
+| | 当前时间 | 时钟 |
+| | 直播间上下文（主播/房间/在播什么） | watch |
+| **对话** | 最近回复的人（本条发送者） | events |
+| | 该观众最近发言（5-10 条） | events/viewer |
+| | 鱼最近回复（避免重复/接续） | events out |
+| | 直播间最近 N 条弹幕（10-20） | events |
+| | 跨通道最近 | memory.CrossChannel |
+| **记忆** | 回复人档案（老熟人） | viewer_profiles |
+| | 记忆召回（相关记忆） | memory.Records |
+| | 知识召回（梗库 RAG） | knowledge |
+| | 长期设定 | soul |
+| **现场** | 直播画面描述 | vision |
+| | 观众名单（谁在说话） | events |
+
 ## 四、下一步（交 Qoder/WorkBuddy）
 
 ```
