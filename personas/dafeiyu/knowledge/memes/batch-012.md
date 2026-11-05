@@ -1434,13 +1434,13 @@ entries:
   - id: "meme-batch-c8fcafdb963e"
     title: "魔鱼爽"
     channel: ["live", "comment", "dm", "qq_private", "qq_group"]
-    keywords: []
-    tags: ["谐音梗 肥鱼 主动"]
+    keywords: ["魔", "魔鱼", "魔鱼爽", "魔芋爽"]
+    tags: ["谐音梗 魔鱼 主动"]
     priority: 50
     visibility: "public"
     source: "meme-sqlite:dsh"
-    summary: "魔芋爽谐音"
-    usage: "魔芋爽的谐音。被叫「肥鱼 / 大肥鱼」时的首选回法，单独一句就够，越干脆越好。"
+    summary: "魔芋爽谐音；只由「魔鱼」触发"
+    usage: "被叫「魔鱼」时回「魔鱼爽」（魔芋爽谐音），单独一句就够。注意：肥鱼/大肥鱼不接这个（那是大飞鱼/肥鱼翻身）。"
   - id: "meme-batch-2886909ddbf0"
     title: "绝对的强者"
     channel: ["live", "comment", "dm", "qq_private", "qq_group"]
