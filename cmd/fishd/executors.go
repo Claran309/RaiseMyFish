@@ -52,7 +52,7 @@ func buildToolExecutors(cfg config.Config, log *zap.Logger) toolExecutors {
 	}
 
 	cookie := cfg.Collector.Live.Cookie
-	if cookie == "" && strings.TrimSpace(cfg.Collector.Live.CookieFile) == "" {
+	if cfg.BiliResolver == nil && cookie == "" && strings.TrimSpace(cfg.Collector.Live.CookieFile) == "" {
 		log.Info("工具执行器未装配：未配置凭据",
 			zap.String("action", "tool_executor_setup"),
 			zap.String("reason", "no_cookie"),
@@ -62,9 +62,10 @@ func buildToolExecutors(cfg config.Config, log *zap.Logger) toolExecutors {
 	}
 
 	client, err := bili.New(bili.Options{
-		Cookie:  cookie,
-		SelfMID: selfMID(cfg),
-		Timeout: 10 * time.Second,
+		Cookie:   cookie,
+		Resolver: cfg.BiliResolver,
+		SelfMID:  selfMID(cfg),
+		Timeout:  10 * time.Second,
 	})
 	if err != nil {
 		log.Warn("工具执行器未装配：凭据不可用",

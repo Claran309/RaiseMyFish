@@ -5,12 +5,14 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"RaiseMyFish/internal/account"
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
 )
@@ -54,6 +56,65 @@ func (f *fakeRepo) Events(_ context.Context, dir string, _ int) ([]store.WebEven
 func (f *fakeRepo) Errors(context.Context, int) ([]store.WebEvent, error) { return f.errors, nil }
 
 func (f *fakeRepo) SendLogs(context.Context, int) ([]store.WebSend, error) { return f.sends, nil }
+
+type fakeAccounts struct {
+	rows        []account.Account
+	loadErr     error
+	addErr      error
+	activateErr error
+	deleteErr   error
+	checkErr    error
+	addCalls    int
+	addCookie   string
+	addNote     string
+	activated   []string
+	deleted     []string
+	checked     []string
+	checkResult account.Account
+}
+
+func (f *fakeAccounts) Load(context.Context) ([]account.Account, error) {
+	return f.rows, f.loadErr
+}
+
+func (f *fakeAccounts) Add(_ context.Context, cookie, note string) (account.Account, error) {
+	f.addCalls++
+	f.addCookie, f.addNote = cookie, note
+	if f.addErr != nil {
+		return account.Account{}, f.addErr
+	}
+	return account.Account{
+		ID: "account-new", MID: "123", Name: "新号", Cookie: cookie, Status: account.StatusActive,
+		LastCheck: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC), IsActive: true, Note: note,
+	}, nil
+}
+
+func (f *fakeAccounts) Activate(_ context.Context, id string) error {
+	f.activated = append(f.activated, id)
+	return f.activateErr
+}
+
+func (f *fakeAccounts) Delete(_ context.Context, id string) error {
+	f.deleted = append(f.deleted, id)
+	return f.deleteErr
+}
+
+func (f *fakeAccounts) Check(_ context.Context, id string) (account.Account, error) {
+	f.checked = append(f.checked, id)
+	if f.checkErr != nil {
+		return f.checkResult, f.checkErr
+	}
+	return f.checkResult, nil
+}
+
+func newTestServerWithAccounts(t *testing.T, repo store.WebRepo, accounts AccountService) *Server {
+	t.Helper()
+	s, err := New(Options{Addr: "127.0.0.1:8090", Repo: repo, Log: zap.NewNop(), Accounts: accounts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
 
 func newTestServer(t *testing.T, repo store.WebRepo) *Server {
 	t.Helper()
@@ -266,7 +327,7 @@ func TestSendLogJSON(t *testing.T) {
 // TestPagesRender 四个页面都能 200 且含内联样式。
 func TestPagesRender(t *testing.T) {
 	srv := newTestServer(t, &fakeRepo{})
-	for _, path := range []string{"/", "/memory", "/knowledge", "/activity"} {
+	for _, path := range []string{"/", "/memory", "/knowledge", "/activity", "/accounts"} {
 		rec := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusOK {
@@ -402,6 +463,222 @@ func TestOverviewPageBlocks(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/memory", nil))
 	if !strings.Contains(rec.Body.String(), "toFixed(2)") {
 		t.Error("记忆页未做两位小数格式化")
+	}
+}
+
+// TestAccountsListMasksCookie 列表只返回脱敏凭据与状态字段。
+func TestAccountsListMasksCookie(t *testing.T) {
+	const raw = "SESSDATA=canary-sess; bili_jct=canary-csrf; buvid3=canary-buvid"
+	fake := &fakeAccounts{rows: []account.Account{{
+		ID: "account-1", MID: "42", Name: "小鱼", Cookie: raw, CSRF: "canary-csrf",
+		Status: account.StatusInvalid, LastCheck: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC),
+		Note: "备用", IsActive: true,
+	}}}
+	srv := newTestServerWithAccounts(t, &fakeRepo{}, fake)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/accounts", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "canary") {
+		t.Fatalf("响应泄漏凭据：%s", body)
+	}
+	for _, want := range []string{"cookie_masked", "SESSDATA=***", "bili_jct=***", "buvid3=***", "account-1", `"mid":"42"`, `"status":"invalid"`, `"is_active":true`, "2026-11-05T12:00:00Z"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("响应缺少 %q：%s", want, body)
+		}
+	}
+	var parsed struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &parsed); err != nil || parsed.Count != 1 {
+		t.Errorf("列表结构不符：%v %+v", err, parsed)
+	}
+}
+
+// TestAccountsAddRequiresConfirm 添加必须 confirm=yes，且响应不含 cookie 原值。
+func TestAccountsAddRequiresConfirm(t *testing.T) {
+	const raw = "SESSDATA=canary-sess; bili_jct=canary-csrf"
+	fake := &fakeAccounts{}
+	srv := newTestServerWithAccounts(t, &fakeRepo{}, fake)
+	payload := `{"cookie":"` + raw + `","note":"主号"}`
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts", strings.NewReader(payload)))
+	if rec.Code != http.StatusBadRequest || fake.addCalls != 0 {
+		t.Fatalf("缺 confirm 应 400 且不落库：%d calls=%d", rec.Code, fake.addCalls)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts?confirm=yes", strings.NewReader("not json")))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("非法 JSON 应 400，实际 %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts?confirm=yes", strings.NewReader(`{"cookie":"  "}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("空 cookie 应 400，实际 %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts?confirm=yes", strings.NewReader(payload)))
+	if rec.Code != http.StatusCreated || fake.addCalls != 1 || fake.addCookie != raw || fake.addNote != "主号" {
+		t.Fatalf("添加失败：%d calls=%d cookie=%q note=%q", rec.Code, fake.addCalls, fake.addCookie, fake.addNote)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "canary") || !strings.Contains(body, "SESSDATA=***") {
+		t.Fatalf("添加响应凭据处理不符：%s", body)
+	}
+}
+
+// TestAccountAddErrors 非法 cookie/验证失败映射为 400/502。
+func TestAccountAddErrors(t *testing.T) {
+	payload := `{"cookie":"SESSDATA=x; bili_jct=y"}`
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"格式非法", account.ErrInvalidCookie, http.StatusBadRequest},
+		{"验证失败", account.ErrVerify, http.StatusBadGateway},
+		{"其它错误", errors.New("db down"), http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServerWithAccounts(t, &fakeRepo{}, &fakeAccounts{addErr: tc.err})
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts?confirm=yes", strings.NewReader(payload)))
+			if rec.Code != tc.want {
+				t.Fatalf("状态码 = %d，期望 %d", rec.Code, tc.want)
+			}
+		})
+	}
+}
+
+// TestAccountsActivateAndDelete 切换/删除写操作必须 confirm；活跃删除冲突 409。
+func TestAccountsActivateAndDelete(t *testing.T) {
+	fake := &fakeAccounts{}
+	srv := newTestServerWithAccounts(t, &fakeRepo{}, fake)
+	id := "account-1"
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/accounts/"+id+"/activate", nil))
+	if rec.Code != http.StatusBadRequest || len(fake.activated) != 0 {
+		t.Fatalf("缺 confirm 应拒绝切换：%d %v", rec.Code, fake.activated)
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/accounts/"+id+"/activate?confirm=yes", nil))
+	if rec.Code != http.StatusOK || len(fake.activated) != 1 || fake.activated[0] != id {
+		t.Fatalf("切换失败：%d %v", rec.Code, fake.activated)
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/accounts/"+id+"/activate?confirm=yes", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("切换只允许 PUT，实际 %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/accounts/"+id, nil))
+	if rec.Code != http.StatusBadRequest || len(fake.deleted) != 0 {
+		t.Fatalf("缺 confirm 应拒绝删除：%d %v", rec.Code, fake.deleted)
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/accounts/"+id+"?confirm=yes", nil))
+	if rec.Code != http.StatusOK || len(fake.deleted) != 1 || fake.deleted[0] != id {
+		t.Fatalf("删除失败：%d %v", rec.Code, fake.deleted)
+	}
+
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{{account.ErrActiveAccount, http.StatusConflict}, {account.ErrNotFound, http.StatusNotFound}} {
+		srv = newTestServerWithAccounts(t, &fakeRepo{}, &fakeAccounts{deleteErr: tc.err})
+		rec = httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/accounts/"+id+"?confirm=yes", nil))
+		if rec.Code != tc.want {
+			t.Errorf("删除错误 %v 应 %d，实际 %d", tc.err, tc.want, rec.Code)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/accounts/"+id+"/bogus", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("未知操作应 404，实际 %d", rec.Code)
+	}
+}
+
+// TestAccountsCheck 测试连接：成功 verified=true，失败仍返回最新账号状态。
+func TestAccountsCheck(t *testing.T) {
+	const raw = "SESSDATA=canary-sess; bili_jct=canary-csrf"
+	fake := &fakeAccounts{checkResult: account.Account{
+		ID: "account-1", MID: "42", Name: "小鱼", Cookie: raw, Status: account.StatusActive, IsActive: true,
+	}}
+	srv := newTestServerWithAccounts(t, &fakeRepo{}, fake)
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts/account-1/check", nil))
+	if rec.Code != http.StatusBadRequest || len(fake.checked) != 0 {
+		t.Fatalf("缺 confirm 应拒绝测试：%d %v", rec.Code, fake.checked)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts/account-1/check?confirm=yes", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"verified":true`) {
+		t.Fatalf("测试成功响应不符：%d %s", rec.Code, rec.Body.String())
+	}
+
+	fake.checkErr = account.ErrVerify
+	fake.checkResult.Status = account.StatusInvalid
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts/account-1/check?confirm=yes", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `"verified":false`) ||
+		!strings.Contains(body, `"status":"invalid"`) || strings.Contains(body, "canary") {
+		t.Fatalf("测试失败响应不符：%d %s", rec.Code, body)
+	}
+
+	fake.checkErr = account.ErrNotFound
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts/missing/check?confirm=yes", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("不存在应 404，实际 %d", rec.Code)
+	}
+}
+
+// TestAccountsUnavailable 未装配账号服务时接口 503，但页面仍可访问。
+func TestAccountsUnavailable(t *testing.T) {
+	srv := newTestServer(t, &fakeRepo{})
+	for _, req := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/api/accounts", nil),
+		httptest.NewRequest(http.MethodPost, "/api/accounts?confirm=yes", strings.NewReader(`{"cookie":"x"}`)),
+	} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s %s 应 503，实际 %d", req.Method, req.URL.Path, rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/accounts", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("账号页应可访问，实际 %d", rec.Code)
+	}
+}
+
+// TestAccountsPageBlocks 账号页必须包含关键区块与脱敏提示。
+func TestAccountsPageBlocks(t *testing.T) {
+	srv := newTestServer(t, &fakeRepo{})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/accounts", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"B站账号管理", "添加账号", "/api/accounts", "cookie_masked", "测试连接", "切换活跃", "删除", "明文保存在本机数据库"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("账号页缺少 %q", want)
+		}
 	}
 }
 

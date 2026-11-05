@@ -73,9 +73,6 @@ func (c *Client) DMSessions(ctx context.Context, limit int) ([]DMSession, error)
 
 // SendMessage 发一条私信，返回平台 msg_key。
 func (c *Client) SendMessage(ctx context.Context, mid, text string) (string, error) {
-	if err := c.writable("dm_send"); err != nil {
-		return "", err
-	}
 	if !isDigits(mid) {
 		return "", errors.New("mid 必须是纯数字")
 	}
@@ -83,7 +80,14 @@ func (c *Client) SendMessage(ctx context.Context, mid, text string) (string, err
 	if text == "" {
 		return "", errors.New("私信内容不能为空")
 	}
-	if c.selfMID == "" || !isDigits(c.selfMID) {
+	cred, err := c.resolve(ctx)
+	if err != nil {
+		return "", wrapResolveError("dm_send", err)
+	}
+	if err := requireCSRF("dm_send", cred.csrf); err != nil {
+		return "", err
+	}
+	if cred.selfMID == "" || !isDigits(cred.selfMID) {
 		return "", errors.New("缺少本账号UID，无法发私信")
 	}
 	content, err := json.Marshal(map[string]string{"content": text})
@@ -91,18 +95,18 @@ func (c *Client) SendMessage(ctx context.Context, mid, text string) (string, err
 		return "", errors.New("私信内容编码失败")
 	}
 	form := url.Values{}
-	form.Set("msg[sender_uid]", c.selfMID)
+	form.Set("msg[sender_uid]", cred.selfMID)
 	form.Set("msg[receiver_id]", mid)
 	form.Set("msg[receiver_type]", strconv.Itoa(receiverTypeUser))
 	form.Set("msg[msg_type]", strconv.Itoa(msgTypeText))
 	form.Set("msg[content]", string(content))
-	form.Set("csrf", c.csrf)
-	form.Set("csrf_token", c.csrf)
+	form.Set("csrf", cred.csrf)
+	form.Set("csrf_token", cred.csrf)
 
 	var data struct {
 		MsgKey json.RawMessage `json:"msg_key"`
 	}
-	if err := c.do(ctx, "dm_send", http.MethodPost, c.vc+"/web_im/v1/web_im/send_msg", form, &data); err != nil {
+	if err := c.send(ctx, cred, "dm_send", http.MethodPost, c.vc+"/web_im/v1/web_im/send_msg", form, &data); err != nil {
 		return "", err
 	}
 	return rawJSONID(data.MsgKey), nil

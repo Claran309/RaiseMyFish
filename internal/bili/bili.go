@@ -36,6 +36,9 @@ const (
 // ErrNoCredential 表示没有可用 cookie，调用方应保持 nil 而不是报错。
 var ErrNoCredential = errors.New("未配置B站凭据")
 
+// ErrNotLoggedIn 表示接口可达但账号未登录（cookie 失效/过期）。
+var ErrNotLoggedIn = errors.New("B站账号未登录")
+
 // Options 是客户端参数。
 type Options struct {
 	APIRoot  string
@@ -45,6 +48,9 @@ type Options struct {
 	Cookie string
 	// CookieFile 是凭据文件路径；Cookie 为空时从它读（对应 FISH_BILI_COOKIE_FILE）。
 	CookieFile string
+	// Resolver 非空时每次请求都从它取当前凭据，账号切换即时生效；
+	// 此时忽略 Cookie/CookieFile。Resolver 返回的错误必须不含凭据。
+	Resolver func(ctx context.Context) (cookie, selfMID string, err error)
 	// SelfMID 是本账号 UID（私信 sender_uid 需要）。
 	SelfMID string
 	Timeout time.Duration
@@ -56,6 +62,7 @@ type Client struct {
 	api, live, vc string
 	cookie, csrf  string
 	selfMID       string
+	resolver      func(ctx context.Context) (cookie, selfMID string, err error)
 	http          *http.Client
 }
 
@@ -84,22 +91,25 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Cause }
 
-// New 构造客户端；cookie 为空返回 ErrNoCredential（调用方按「未配置」处理）。
+// New 构造客户端；无 Resolver 且 cookie 为空时返回 ErrNoCredential（调用方按「未配置」处理）。
 func New(o Options) (*Client, error) {
-	cookie := strings.TrimSpace(o.Cookie)
-	if cookie == "" && strings.TrimSpace(o.CookieFile) != "" {
-		// 支持 _FILE 形式：读文件内容当 Cookie，失败按未配置处理
-		data, err := os.ReadFile(strings.TrimSpace(o.CookieFile))
-		if err != nil {
+	var cookie string
+	if o.Resolver == nil {
+		cookie = strings.TrimSpace(o.Cookie)
+		if cookie == "" && strings.TrimSpace(o.CookieFile) != "" {
+			// 支持 _FILE 形式：读文件内容当 Cookie，失败按未配置处理
+			data, err := os.ReadFile(strings.TrimSpace(o.CookieFile))
+			if err != nil {
+				return nil, ErrNoCredential
+			}
+			cookie = strings.TrimSpace(string(data))
+		}
+		if cookie == "" {
 			return nil, ErrNoCredential
 		}
-		cookie = strings.TrimSpace(string(data))
-	}
-	if cookie == "" {
-		return nil, ErrNoCredential
-	}
-	if strings.ContainsAny(cookie, "\r\n\x00") {
-		return nil, errors.New("B站凭据格式非法")
+		if strings.ContainsAny(cookie, "\r\n\x00") {
+			return nil, errors.New("B站凭据格式非法")
+		}
 	}
 	timeout := o.Timeout
 	if timeout <= 0 {
@@ -110,18 +120,23 @@ func New(o Options) (*Client, error) {
 		client = &http.Client{Timeout: timeout}
 	}
 	return &Client{
-		api:     orDefault(o.APIRoot, defaultAPIRoot),
-		live:    orDefault(o.LiveRoot, defaultLiveRoot),
-		vc:      orDefault(o.VCRoot, defaultVCRoot),
-		cookie:  cookie,
-		csrf:    parseCSRF(cookie),
-		selfMID: strings.TrimSpace(o.SelfMID),
-		http:    client,
+		api:      orDefault(o.APIRoot, defaultAPIRoot),
+		live:     orDefault(o.LiveRoot, defaultLiveRoot),
+		vc:       orDefault(o.VCRoot, defaultVCRoot),
+		cookie:   cookie,
+		csrf:     parseCSRF(cookie),
+		selfMID:  strings.TrimSpace(o.SelfMID),
+		resolver: o.Resolver,
+		http:     client,
 	}, nil
 }
 
-// HasCSRF 表示凭据里带 bili_jct，可执行写操作。
-func (c *Client) HasCSRF() bool { return c != nil && c.csrf != "" }
+// HasCSRF 表示凭据里带 bili_jct，可执行写操作；
+// 动态解析时无法预知，返回 true，由请求期检查兜底。
+func (c *Client) HasCSRF() bool { return c != nil && (c.csrf != "" || c.resolver != nil) }
+
+// HasResolver 表示凭据在每次请求时动态解析。
+func (c *Client) HasResolver() bool { return c != nil && c.resolver != nil }
 
 // parseCSRF 从 Cookie 头里取 bili_jct（B站写接口的 csrf 参数就是它）。
 func parseCSRF(cookie string) string {
@@ -135,6 +150,58 @@ func parseCSRF(cookie string) string {
 		}
 	}
 	return ""
+}
+
+// credential 是一次请求实际使用的凭据（静态或动态解析所得）。
+type credential struct {
+	cookie  string
+	csrf    string
+	selfMID string
+}
+
+// resolve 取本次请求的凭据；动态模式下每次请求都重新解析，账号切换即时生效。
+func (c *Client) resolve(ctx context.Context) (credential, error) {
+	if c == nil {
+		return credential{}, ErrNoCredential
+	}
+	if c.resolver == nil {
+		return credential{cookie: c.cookie, csrf: c.csrf, selfMID: c.selfMID}, nil
+	}
+	cookie, selfMID, err := c.resolver(ctx)
+	if err != nil {
+		if errors.Is(err, ErrNoCredential) {
+			return credential{}, ErrNoCredential
+		}
+		return credential{}, fmt.Errorf("解析B站凭据失败：%w", err)
+	}
+	cookie = strings.TrimSpace(cookie)
+	if cookie == "" {
+		return credential{}, ErrNoCredential
+	}
+	if strings.ContainsAny(cookie, "\r\n\x00") {
+		return credential{}, errors.New("B站凭据格式非法")
+	}
+	selfMID = strings.TrimSpace(selfMID)
+	if selfMID == "" {
+		selfMID = c.selfMID
+	}
+	return credential{cookie: cookie, csrf: parseCSRF(cookie), selfMID: selfMID}, nil
+}
+
+// wrapResolveError 保留 ErrNoCredential 哨兵，其余错误包装成可安全记录的调用错误。
+func wrapResolveError(op string, err error) error {
+	if errors.Is(err, ErrNoCredential) {
+		return ErrNoCredential
+	}
+	return &Error{Op: op, Cause: err}
+}
+
+// requireCSRF 检查写操作所需 csrf；缺失时直接拒绝，不发出请求。
+func requireCSRF(op, csrf string) error {
+	if csrf == "" {
+		return &Error{Op: op, Cause: errors.New("凭据缺少bili_jct，无法执行写操作")}
+	}
+	return nil
 }
 
 // LiveStatus 查直播间状态，返回一句话摘要。
@@ -162,6 +229,51 @@ func (c *Client) LiveStatus(ctx context.Context, room string) (string, error) {
 	return fmt.Sprintf("%s：%s，人气 %d", state, title, data.Online), nil
 }
 
+// UserInfo 是当前凭据对应的账号身份。
+type UserInfo struct {
+	MID  string
+	Name string
+}
+
+// Nav 调 get_info（/x/web-interface/nav）确认当前凭据身份；
+// 未登录/凭据失效统一返回 ErrNotLoggedIn。
+func (c *Client) Nav(ctx context.Context) (UserInfo, error) {
+	var data struct {
+		IsLogin bool            `json:"isLogin"`
+		MID     json.RawMessage `json:"mid"`
+		UName   string          `json:"uname"`
+	}
+	if err := c.do(ctx, "nav", http.MethodGet, c.api+"/x/web-interface/nav", nil, &data); err != nil {
+		if IsAuthError(err) {
+			return UserInfo{}, ErrNotLoggedIn
+		}
+		return UserInfo{}, err
+	}
+	mid := rawJSONID(data.MID)
+	if !data.IsLogin || mid == "0" || !isDigits(mid) {
+		return UserInfo{}, ErrNotLoggedIn
+	}
+	return UserInfo{MID: mid, Name: strings.TrimSpace(data.UName)}, nil
+}
+
+// IsAuthError 判断错误是否表示凭据失效（未登录/被平台拒绝）。
+func IsAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrNotLoggedIn) {
+		return true
+	}
+	var typed *Error
+	if !errors.As(err, &typed) {
+		return false
+	}
+	if typed.Status == http.StatusUnauthorized || typed.Status == http.StatusForbidden {
+		return true
+	}
+	return typed.Code == -101 || typed.Code == -111
+}
+
 // Follow 关注用户（act=1）。
 func (c *Client) Follow(ctx context.Context, mid string) error {
 	return c.relation(ctx, mid, "1")
@@ -173,50 +285,62 @@ func (c *Client) Unfollow(ctx context.Context, mid string) error {
 }
 
 func (c *Client) relation(ctx context.Context, mid, act string) error {
-	if err := c.writable("relation"); err != nil {
-		return err
-	}
 	if !isDigits(mid) {
 		return errors.New("mid 必须是纯数字")
+	}
+	cred, err := c.resolve(ctx)
+	if err != nil {
+		return wrapResolveError("relation", err)
+	}
+	if err := requireCSRF("relation", cred.csrf); err != nil {
+		return err
 	}
 	form := url.Values{}
 	form.Set("fid", mid)
 	form.Set("act", act)
 	form.Set("re_src", relationReSrc)
-	form.Set("csrf", c.csrf)
-	return c.do(ctx, "relation", http.MethodPost, c.api+"/x/relation/modify", form, nil)
+	form.Set("csrf", cred.csrf)
+	return c.send(ctx, cred, "relation", http.MethodPost, c.api+"/x/relation/modify", form, nil)
 }
 
 // Like 给直播间点赞。
 func (c *Client) Like(ctx context.Context, room string, count int) error {
-	if err := c.writable("like"); err != nil {
-		return err
-	}
 	if !isDigits(room) {
 		return errors.New("房间号必须是纯数字")
 	}
 	if count < 1 || count > 3 {
 		return errors.New("点赞次数需为1至3")
 	}
+	cred, err := c.resolve(ctx)
+	if err != nil {
+		return wrapResolveError("like", err)
+	}
+	if err := requireCSRF("like", cred.csrf); err != nil {
+		return err
+	}
 	form := url.Values{}
 	form.Set("room_id", room)
 	form.Set("count", strconv.Itoa(count))
-	form.Set("csrf", c.csrf)
-	return c.do(ctx, "like", http.MethodPost, c.live+"/room/v1/Room/like", form, nil)
+	form.Set("csrf", cred.csrf)
+	return c.send(ctx, cred, "like", http.MethodPost, c.live+"/room/v1/Room/like", form, nil)
 }
 
 // SendDM 发私信（只允许由工具层白名单放行后的调用）。
 func (c *Client) SendDM(ctx context.Context, mid, text string) error {
-	if err := c.writable("dm"); err != nil {
-		return err
-	}
 	if !isDigits(mid) {
 		return errors.New("mid 必须是纯数字")
 	}
 	if strings.TrimSpace(text) == "" {
 		return errors.New("私信内容不能为空")
 	}
-	if c.selfMID == "" || !isDigits(c.selfMID) {
+	cred, err := c.resolve(ctx)
+	if err != nil {
+		return wrapResolveError("dm", err)
+	}
+	if err := requireCSRF("dm", cred.csrf); err != nil {
+		return err
+	}
+	if cred.selfMID == "" || !isDigits(cred.selfMID) {
 		return errors.New("缺少本账号UID，无法发私信")
 	}
 	content, err := json.Marshal(map[string]string{"content": text})
@@ -224,43 +348,36 @@ func (c *Client) SendDM(ctx context.Context, mid, text string) error {
 		return errors.New("私信内容编码失败")
 	}
 	form := url.Values{}
-	form.Set("msg[sender_uid]", c.selfMID)
+	form.Set("msg[sender_uid]", cred.selfMID)
 	form.Set("msg[receiver_id]", mid)
 	form.Set("msg[receiver_type]", strconv.Itoa(receiverTypeUser))
 	form.Set("msg[msg_type]", strconv.Itoa(msgTypeText))
 	form.Set("msg[content]", string(content))
-	form.Set("csrf", c.csrf)
-	form.Set("csrf_token", c.csrf)
-	return c.do(ctx, "dm", http.MethodPost, c.vc+"/web_im/v1/web_im/send_msg", form, nil)
+	form.Set("csrf", cred.csrf)
+	form.Set("csrf_token", cred.csrf)
+	return c.send(ctx, cred, "dm", http.MethodPost, c.vc+"/web_im/v1/web_im/send_msg", form, nil)
 }
 
 // PostDynamic 发一条纯文本动态（默认由工具层开关关掉）。
 func (c *Client) PostDynamic(ctx context.Context, text string) error {
-	if err := c.writable("dynamic"); err != nil {
-		return err
-	}
 	if strings.TrimSpace(text) == "" {
 		return errors.New("动态内容不能为空")
+	}
+	cred, err := c.resolve(ctx)
+	if err != nil {
+		return wrapResolveError("dynamic", err)
+	}
+	if err := requireCSRF("dynamic", cred.csrf); err != nil {
+		return err
 	}
 	form := url.Values{}
 	form.Set("dynamic_id", "0")
 	form.Set("type", "4")
 	form.Set("rid", "0")
 	form.Set("content", text)
-	form.Set("csrf", c.csrf)
-	form.Set("csrf_token", c.csrf)
-	return c.do(ctx, "dynamic", http.MethodPost, c.vc+"/dynamic_svr/v1/dynamic_svr/create", form, nil)
-}
-
-// writable 检查写操作所需凭据（csrf 缺失时直接拒绝，不打任何凭据）。
-func (c *Client) writable(op string) error {
-	if c == nil {
-		return ErrNoCredential
-	}
-	if c.csrf == "" {
-		return &Error{Op: op, Cause: errors.New("凭据缺少bili_jct，无法执行写操作")}
-	}
-	return nil
+	form.Set("csrf", cred.csrf)
+	form.Set("csrf_token", cred.csrf)
+	return c.send(ctx, cred, "dynamic", http.MethodPost, c.vc+"/dynamic_svr/v1/dynamic_svr/create", form, nil)
 }
 
 // envelope 是 B站统一响应壳。
@@ -270,8 +387,17 @@ type envelope struct {
 	Data    json.RawMessage `json:"data"`
 }
 
-// do 发一次请求并解析 code；永不重试。
+// do 解析当前凭据后发一次请求；永不重试。
 func (c *Client) do(ctx context.Context, op, method, endpoint string, form url.Values, out any) error {
+	cred, err := c.resolve(ctx)
+	if err != nil {
+		return wrapResolveError(op, err)
+	}
+	return c.send(ctx, cred, op, method, endpoint, form, out)
+}
+
+// send 用给定凭据发一次请求并解析 code。
+func (c *Client) send(ctx context.Context, cred credential, op, method, endpoint string, form url.Values, out any) error {
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())
@@ -280,7 +406,7 @@ func (c *Client) do(ctx context.Context, op, method, endpoint string, form url.V
 	if err != nil {
 		return &Error{Op: op, Cause: errors.New("构造请求失败")}
 	}
-	req.Header.Set("Cookie", c.cookie)
+	req.Header.Set("Cookie", cred.cookie)
 	req.Header.Set("Referer", "https://live.bilibili.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) RaiseMyFish/0.22")
 	if form != nil {

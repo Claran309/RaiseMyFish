@@ -3,6 +3,7 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -36,6 +37,9 @@ type Config struct {
 	Scheduler *Scheduler `toml:"scheduler"`
 	// Sender 为 nil 表示「未配置发送」。
 	Sender *Sender `toml:"sender"`
+	// BiliResolver 由 fishd 在数据库就绪后注入：每次请求从账号服务取当前活跃凭据。
+	// 不属于配置文件，不参与 TOML/JSON 序列化。
+	BiliResolver func(ctx context.Context) (cookie, selfMID string, err error) `toml:"-" json:"-"`
 }
 
 // Database 的连接串只从环境/本地dotenv读取，不能序列化输出。

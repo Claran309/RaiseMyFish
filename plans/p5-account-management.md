@@ -72,3 +72,16 @@ Account（账号实体）
 
 - 不改 contracts、不碰调度/发送语义
 - 密钥/凭据不进日志与 API 明文
+
+## 九、实施状态（2026-11-05，批次 #44）
+
+- [x] 迁移 `0008_accounts.sql`：accounts 表 + 唯一活跃索引；`database.Ready` 校验列。
+- [x] `internal/account`：`Load/Active/Ensure/Validate/Add/Activate/Delete/Check/Resolve`。
+- [x] `internal/database.AccountRepo`：Raw 参数化 CRUD、按 mid 幂等 upsert、首个账号自动激活。
+- [x] `internal/bili`：`Options.Resolver` 每请求解析凭据；新增 `Nav` 身份校验与 `IsAuthError`。
+- [x] fishd 装配：启动时回填 Node/截帧静态配置；Go 客户端走动态 Resolver；DB 读失败保留环境静态凭据。
+- [x] Web `/accounts`：列表（脱敏）、添加（nav 验证 UID）、切换、删除、测试连接；写操作 confirm=yes，仅回环。
+- [x] 测试：account/bili/database(真实 PG 集成)/web(httptest+页面断言)/fishd 装配；浏览器实测列表、测试连接、切换、添加、删除。
+- 限制：配置校验仍要求启用直播/评论时提供环境变量 cookie，暂不支持纯 DB 启动；
+  静态消费方（Node 采集/送礼、评论采集/发送、截帧）切换账号后需重启 fishd 生效；
+  本阶段不做多账号池与采集/发送账号分离。

@@ -1,9 +1,10 @@
 package web
 
-// Package web 是运维面板：概览 / 记忆 / 活动流水。
+// Package web 是运维面板：概览 / 记忆 / 活动流水 / B站账号。
 //
 // 边界：
-//   - 只读为主，唯一的写操作是「归档一条记忆」，且必须带 confirm=yes；
+//   - 写操作（归档记忆、账号增删切换/测试）必须带 confirm=yes；
+//   - 账号接口只返回 cookie_masked，绝不回显 cookie/csrf 原值；
 //   - 只监听回环地址（127.0.0.1 / ::1 / localhost），拒绝 0.0.0.0；
 //   - 列表统一截断正文，响应里不出现任何凭据/完整 prompt。
 
@@ -22,6 +23,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"RaiseMyFish/internal/account"
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
 )
@@ -39,6 +41,15 @@ const (
 // KnowledgeInfo 返回知识库快照的条目数与 revision；知识未启用时可为 nil。
 type KnowledgeInfo func() (entries int, revision string)
 
+// AccountService 是面板账号管理依赖（*account.Service 实现）。
+type AccountService interface {
+	Load(ctx context.Context) ([]account.Account, error)
+	Add(ctx context.Context, cookie, note string) (account.Account, error)
+	Activate(ctx context.Context, id string) error
+	Delete(ctx context.Context, id string) error
+	Check(ctx context.Context, id string) (account.Account, error)
+}
+
 // Options 是面板参数。
 type Options struct {
 	// Addr 形如 127.0.0.1:8090；只允许回环。
@@ -51,6 +62,8 @@ type Options struct {
 	Now func() time.Time
 	// KnowledgeInfo 可选：注入当前知识快照的条目数与 revision。
 	KnowledgeInfo KnowledgeInfo
+	// Accounts 可选：账号管理服务；nil 时 /accounts 接口返回 503。
+	Accounts AccountService
 }
 
 // Server 是面板本体。
@@ -60,6 +73,7 @@ type Server struct {
 	log           *zap.Logger
 	now           func() time.Time
 	knowledgeInfo KnowledgeInfo
+	accounts      AccountService
 }
 
 // New 校验地址与依赖；非回环地址直接拒绝。
@@ -81,7 +95,7 @@ func New(o Options) (*Server, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Server{addr: addr, repo: o.Repo, log: o.Log, now: now, knowledgeInfo: o.KnowledgeInfo}, nil
+	return &Server{addr: addr, repo: o.Repo, log: o.Log, now: now, knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts}, nil
 }
 
 // ValidateAddr 只允许回环监听，避免把运维面板暴露到公网。
@@ -117,6 +131,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/errors", s.handleErrors)
 	mux.HandleFunc("/api/send_log", s.handleSendLog)
+	mux.HandleFunc("/api/accounts", s.handleAccounts)
+	mux.HandleFunc("/api/accounts/", s.handleAccountAction)
 	mux.HandleFunc("/", s.handlePage)
 	return mux
 }
@@ -164,6 +180,8 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		name = "static/knowledge.html"
 	case "/activity":
 		name = "static/activity.html"
+	case "/accounts":
+		name = "static/accounts.html"
 	default:
 		http.NotFound(w, r)
 		return
@@ -305,6 +323,212 @@ func (s *Server) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("面板删除记忆", zap.String("action", "web_memory_delete"), zap.String("id", id))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
+}
+
+// handleAccounts 处理账号列表与添加。
+func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.listAccounts(w, r)
+	case http.MethodPost:
+		s.addAccount(w, r)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "只支持 GET/POST")
+	}
+}
+
+// listAccounts 只返回脱敏凭据，绝不回显 cookie/csrf 原值。
+func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
+	if s.accounts == nil {
+		writeError(w, http.StatusServiceUnavailable, "账号服务未启用")
+		return
+	}
+	rows, err := s.accounts.Load(r.Context())
+	if err != nil {
+		s.fail(w, "读取账号列表失败", err)
+		return
+	}
+	items := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, accountView(row))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": len(items)})
+}
+
+// addAccount 接收粘贴的 cookie，验证身份后落库；写操作必须 confirm=yes。
+func (s *Server) addAccount(w http.ResponseWriter, r *http.Request) {
+	if s.accounts == nil {
+		writeError(w, http.StatusServiceUnavailable, "账号服务未启用")
+		return
+	}
+	if !confirmYes(w, r, "添加账号") {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	var req struct {
+		Cookie string `json:"cookie"`
+		Note   string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "请求体必须是 JSON（cookie/note）")
+		return
+	}
+	if strings.TrimSpace(req.Cookie) == "" {
+		writeError(w, http.StatusBadRequest, "缺少 cookie")
+		return
+	}
+	stored, err := s.accounts.Add(r.Context(), req.Cookie, req.Note)
+	if err != nil {
+		s.accountFailure(w, "添加账号失败", err)
+		return
+	}
+	s.log.Info("面板添加B站账号",
+		zap.String("action", "web_account_add"),
+		zap.String("id", stored.ID),
+		zap.String("mid", stored.MID),
+		zap.Bool("active", stored.IsActive),
+	)
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "account": accountView(stored)})
+}
+
+// handleAccountAction 处理 /api/accounts/{id}[/activate|/check]。
+func (s *Server) handleAccountAction(w http.ResponseWriter, r *http.Request) {
+	if s.accounts == nil {
+		writeError(w, http.StatusServiceUnavailable, "账号服务未启用")
+		return
+	}
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/accounts/"), "/")
+	parts := strings.Split(rest, "/")
+	id := strings.TrimSpace(parts[0])
+	if id == "" || len(id) > 64 {
+		writeError(w, http.StatusNotFound, "缺少账号 id")
+		return
+	}
+	if len(parts) == 1 {
+		if r.Method != http.MethodDelete {
+			writeError(w, http.StatusMethodNotAllowed, "只支持 DELETE")
+			return
+		}
+		s.deleteAccount(w, r, id)
+		return
+	}
+	if len(parts) != 2 {
+		writeError(w, http.StatusNotFound, "未知的账号操作")
+		return
+	}
+	switch parts[1] {
+	case "activate":
+		if r.Method != http.MethodPut {
+			writeError(w, http.StatusMethodNotAllowed, "只支持 PUT")
+			return
+		}
+		s.activateAccount(w, r, id)
+	case "check":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "只支持 POST")
+			return
+		}
+		s.checkAccount(w, r, id)
+	default:
+		writeError(w, http.StatusNotFound, "未知的账号操作")
+	}
+}
+
+func (s *Server) activateAccount(w http.ResponseWriter, r *http.Request, id string) {
+	if !confirmYes(w, r, "切换活跃账号") {
+		return
+	}
+	if err := s.accounts.Activate(r.Context(), id); err != nil {
+		s.accountFailure(w, "切换活跃账号失败", err)
+		return
+	}
+	s.log.Info("面板切换B站活跃账号", zap.String("action", "web_account_activate"), zap.String("id", id))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id, "active": true})
+}
+
+func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request, id string) {
+	if !confirmYes(w, r, "删除账号") {
+		return
+	}
+	if err := s.accounts.Delete(r.Context(), id); err != nil {
+		s.accountFailure(w, "删除账号失败", err)
+		return
+	}
+	s.log.Info("面板删除B站账号", zap.String("action", "web_account_delete"), zap.String("id", id))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
+}
+
+// checkAccount 重新验证凭据；验证失败也返回 200 + verified=false，
+// 让前端能看到最新状态（invalid 或保持原状态），而不是只能看到一个错误。
+func (s *Server) checkAccount(w http.ResponseWriter, r *http.Request, id string) {
+	if !confirmYes(w, r, "测试连接") {
+		return
+	}
+	stored, err := s.accounts.Check(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, account.ErrVerify) {
+			s.log.Info("面板账号测试未通过",
+				zap.String("action", "web_account_check"),
+				zap.String("id", stored.ID),
+				zap.String("status", stored.Status),
+			)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok": true, "verified": false, "account": accountView(stored),
+				"message": "验证失败，账号状态已更新",
+			})
+			return
+		}
+		s.accountFailure(w, "测试连接失败", err)
+		return
+	}
+	s.log.Info("面板账号测试通过",
+		zap.String("action", "web_account_check"),
+		zap.String("id", stored.ID),
+		zap.String("status", stored.Status),
+	)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "verified": true, "account": accountView(stored)})
+}
+
+// accountFailure 把账号领域错误映射成合适的 HTTP 状态；不输出凭据。
+func (s *Server) accountFailure(w http.ResponseWriter, message string, err error) {
+	switch {
+	case errors.Is(err, account.ErrInvalidCookie):
+		writeError(w, http.StatusBadRequest, "cookie 格式无效（需包含 SESSDATA）")
+	case errors.Is(err, account.ErrVerify):
+		writeError(w, http.StatusBadGateway, "B站账号验证失败，请检查 cookie 是否过期")
+	case errors.Is(err, account.ErrNotFound):
+		writeError(w, http.StatusNotFound, "账号不存在")
+	case errors.Is(err, account.ErrActiveAccount):
+		writeError(w, http.StatusConflict, "不能删除当前活跃账号，请先切换")
+	default:
+		s.fail(w, message, err)
+	}
+}
+
+// accountView 是账号的对外展示结构：只含脱敏凭据。
+func accountView(a account.Account) map[string]any {
+	last := ""
+	if !a.LastCheck.IsZero() {
+		last = a.LastCheck.UTC().Format(time.RFC3339)
+	}
+	return map[string]any{
+		"id":            a.ID,
+		"mid":           a.MID,
+		"name":          a.Name,
+		"status":        a.Status,
+		"last_check":    last,
+		"note":          a.Note,
+		"is_active":     a.IsActive,
+		"cookie_masked": account.MaskCookie(a.Cookie),
+	}
+}
+
+func confirmYes(w http.ResponseWriter, r *http.Request, action string) bool {
+	if r.URL.Query().Get("confirm") != "yes" {
+		writeError(w, http.StatusBadRequest, action+"需要 confirm=yes")
+		return false
+	}
+	return true
 }
 
 // handleEvents 返回活动流水。

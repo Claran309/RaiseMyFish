@@ -106,6 +106,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
+	// 账号解析链：DB 活跃账号优先，环境变量兜底；随后静态消费方回填、Go 客户端动态解析。
+	accountService, err := buildAccountService(cfg, resources.DB, logger)
+	if err != nil {
+		return fmt.Errorf("装配B站账号服务失败：%w", err)
+	}
+	applyActiveAccount(ctx, &cfg, accountService, logger)
 	usage, err := database.NewUsageRepo(resources.DB)
 	if err != nil {
 		return err
@@ -210,7 +216,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		return fmt.Errorf("装配私信采集失败：%w", err)
 	}
 	// 运维面板（只监听回环）：默认关，开启后独立 goroutine 跑
-	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, logger)
+	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, accountService, logger)
 	defer stopWeb()
 
 	// 知识热重载：梗白学习写入 learned.md 后不必重启；语义包装不影响底层快照。

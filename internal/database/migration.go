@@ -72,6 +72,11 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取记忆档案向量迁移：%w", err)
 	}
 	memoryViewerEmbeddingsHash := sha256.Sum256(memoryViewerEmbeddings)
+	accounts, err := migrations.Files.ReadFile("0008_accounts.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取账号管理迁移：%w", err)
+	}
+	accountsHash := sha256.Sum256(accounts)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -80,6 +85,7 @@ func migrationSteps() ([]migrationStep, error) {
 		{5, string(memFrom), hex.EncodeToString(memFromHash[:])},
 		{6, string(knowledgeEmbeddings), hex.EncodeToString(knowledgeEmbeddingsHash[:])},
 		{7, string(memoryViewerEmbeddings), hex.EncodeToString(memoryViewerEmbeddingsHash[:])},
+		{8, string(accounts), hex.EncodeToString(accountsHash[:])},
 	}, nil
 }
 
@@ -197,6 +203,9 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	}
 	if err := db.Exec("SELECT profile_embedding,profile_embedding_hash,profile_embedding_updated_at FROM " + table("viewer_profiles") + " LIMIT 0").Error; err != nil {
 		return &safeError{"档案向量字段不完整", err}
+	}
+	if err := db.Exec("SELECT id,mid,name,cookie,csrf,status,last_check,note,is_active FROM " + table("accounts") + " LIMIT 0").Error; err != nil {
+		return &safeError{"账号管理表不完整", err}
 	}
 	return nil
 }

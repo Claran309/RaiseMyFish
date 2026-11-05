@@ -43,14 +43,14 @@ func startHeartbeatLike(ctx context.Context, cfg config.Config, logger *zap.Logg
 		)
 		return noop
 	}
-	if cfg.Collector.Live.Cookie == "" {
+	if cfg.BiliResolver == nil && cfg.Collector.Live.Cookie == "" {
 		logger.Info("常驻点赞未启动：未配置凭据",
 			zap.String("action", heartbeatLikeAction),
 			zap.String("reason", "no_cookie"),
 		)
 		return noop
 	}
-	client, err := bili.New(bili.Options{Cookie: cfg.Collector.Live.Cookie, Timeout: heartbeatLikeTimeout})
+	client, err := bili.New(bili.Options{Cookie: cfg.Collector.Live.Cookie, Resolver: cfg.BiliResolver, Timeout: heartbeatLikeTimeout})
 	if err != nil {
 		logger.Warn("常驻点赞未启动：凭据不可用",
 			zap.String("action", heartbeatLikeAction),

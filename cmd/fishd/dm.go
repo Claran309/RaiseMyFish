@@ -20,11 +20,11 @@ import (
 // buildBiliClientForDM 复用 bili 包的 cookie/csrf 装配；无凭据返回 nil（不报错）。
 func buildBiliClientForDM(cfg config.Config, log *zap.Logger) *bili.Client {
 	cookie := cfg.Collector.Live.Cookie
-	if strings.TrimSpace(cookie) == "" && strings.TrimSpace(cfg.Collector.Live.CookieFile) == "" {
+	if cfg.BiliResolver == nil && strings.TrimSpace(cookie) == "" && strings.TrimSpace(cfg.Collector.Live.CookieFile) == "" {
 		log.Info("私信通道未装配：未配置凭据", zap.String("action", "dm_setup"), zap.String("reason", "no_cookie"))
 		return nil
 	}
-	client, err := bili.New(bili.Options{Cookie: cookie, CookieFile: cfg.Collector.Live.CookieFile, SelfMID: selfMID(cfg), Timeout: 10 * time.Second})
+	client, err := bili.New(bili.Options{Cookie: cookie, CookieFile: cfg.Collector.Live.CookieFile, Resolver: cfg.BiliResolver, SelfMID: selfMID(cfg), Timeout: 10 * time.Second})
 	if err != nil {
 		log.Warn("私信通道未装配：凭据不可用", zap.String("action", "dm_setup"), zap.String("reason", "bad_cookie"), zap.Error(err))
 		return nil

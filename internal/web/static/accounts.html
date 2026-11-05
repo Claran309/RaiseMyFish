@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>账号 · 大肥鱼面板</title>
+<style>
+:root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.6 -apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:16px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header b{font-size:15px}
+nav a{color:var(--muted);text-decoration:none;margin-right:14px}
+nav a.on{color:var(--accent)}
+main{padding:20px;max-width:1100px;margin:0 auto}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+th{color:var(--muted);font-weight:500;font-size:12px}
+input,textarea,button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+textarea{width:100%;min-height:64px;resize:vertical}
+button{cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+.form{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:18px}
+.form h3{margin:0 0 10px;font-size:14px;color:var(--muted)}
+.form .row{display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.form input{flex:1;min-width:180px}
+.muted{color:var(--muted)}
+.tag{font-size:12px;color:var(--muted)}
+.st{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.st.active{color:var(--ok);border-color:#1d3a26;background:#0f1a12}
+.st.invalid{color:var(--bad);border-color:#3a1d1d;background:#1a0f0f}
+.st.disabled{color:var(--warn);border-color:#3a331d;background:#1a170f}
+.act{display:flex;gap:6px;flex-wrap:wrap}
+.act button{padding:3px 9px;font-size:12px}
+#msg{min-height:20px;margin:8px 0;font-size:13px}
+#msg.err{color:var(--bad)}
+#msg.ok{color:var(--ok)}
+.mask{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--muted)}
+.empty{padding:16px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <b>🐟 大肥鱼面板</b>
+  <nav><a href="/">概览</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/activity">活动</a><a class="on" href="/accounts">账号</a></nav>
+</header>
+<main>
+  <h2 class="muted" style="font-size:13px;letter-spacing:.04em;margin:0 0 10px">B站账号管理</h2>
+  <div class="form">
+    <h3>添加账号</h3>
+    <textarea id="cookie" placeholder="从浏览器复制完整 Cookie（必须包含 SESSDATA；写操作还需要 bili_jct）"></textarea>
+    <div class="row">
+      <input id="note" placeholder="备注，如「主号」「备用」">
+      <button onclick="addAccount()">添加账号</button>
+      <span class="tag">添加前会调用 B站接口验证 UID，失败不会落库</span>
+    </div>
+  </div>
+
+  <div id="msg"></div>
+  <table>
+    <thead><tr><th>状态</th><th>昵称</th><th>MID</th><th>备注</th><th>凭据</th><th>最后验证</th><th>操作</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <p class="tag">cookie 以明文保存在本机数据库，不会通过接口返回；列表只显示脱敏字段。切换活跃账号后，Go 侧 bili 客户端下一次请求即生效；Node 采集/送礼、评论采集/发送与截帧在重启后生效。</p>
+</main>
+<script>
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+function fmtTime(s) {
+  return s ? esc(String(s).replace('T', ' ').replace('Z', ' UTC')) : '—';
+}
+function show(text, ok) {
+  var el = document.getElementById('msg');
+  el.textContent = text;
+  el.className = ok ? 'ok' : 'err';
+}
+async function call(url, opts) {
+  var resp = await fetch(url, opts);
+  var data = {};
+  try { data = await resp.json(); } catch (e) {}
+  if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+  return data;
+}
+function statusBadge(a) {
+  var label = { active: '可用', invalid: '失效', disabled: '停用' }[a.status] || a.status || '未知';
+  var cls = { active: 'active', invalid: 'invalid', disabled: 'disabled' }[a.status] || '';
+  var extra = a.is_active ? ' <span class="st active">活跃</span>' : '';
+  return '<span class="st ' + cls + '">' + esc(label) + '</span>' + extra;
+}
+function actionButtons(a) {
+  var html = '<div class="act">';
+  html += '<button onclick="checkAccount(\'' + esc(a.id) + '\')" title="调用 B站接口验证当前 cookie">测试连接</button>';
+  if (a.is_active) {
+    html += '<button disabled>当前活跃</button>';
+  } else {
+    html += '<button onclick="activateAccount(\'' + esc(a.id) + '\')">切换活跃</button>';
+    html += '<button onclick="deleteAccount(\'' + esc(a.id) + '\')">删除</button>';
+  }
+  return html + '</div>';
+}
+async function load() {
+  try {
+    var d = await call('/api/accounts');
+    var rows = d.items || [];
+    document.getElementById('rows').innerHTML = rows.length ? rows.map(function (a) {
+      return '<tr><td>' + statusBadge(a) + '</td>' +
+        '<td>' + esc(a.name) + '</td>' +
+        '<td class="tag">' + esc(a.mid) + '</td>' +
+        '<td>' + esc(a.note) + '</td>' +
+        '<td class="mask">' + esc(a.cookie_masked) + '</td>' +
+        '<td class="tag">' + fmtTime(a.last_check) + '</td>' +
+        '<td>' + actionButtons(a) + '</td></tr>';
+    }).join('') : '<tr><td colspan="7" class="empty">还没有账号；添加后会优先于环境变量使用。</td></tr>';
+  } catch (e) {
+    show('读取账号失败：' + e.message, false);
+  }
+}
+async function addAccount() {
+  var cookie = document.getElementById('cookie').value.trim();
+  var note = document.getElementById('note').value.trim();
+  if (!cookie) { show('请先粘贴 cookie', false); return; }
+  if (!window.confirm('添加该账号？会调用 B站接口验证 UID。')) return;
+  try {
+    var d = await call('/api/accounts?confirm=yes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cookie: cookie, note: note })
+    });
+    document.getElementById('cookie').value = '';
+    document.getElementById('note').value = '';
+    show('已添加 ' + d.account.name + '（UID ' + d.account.mid + '）', true);
+    load();
+  } catch (e) {
+    show('添加失败：' + e.message, false);
+  }
+}
+async function checkAccount(id) {
+  try {
+    var d = await call('/api/accounts/' + encodeURIComponent(id) + '/check?confirm=yes', { method: 'POST' });
+    show(d.verified ? '连接正常' : (d.message || '验证失败'), d.verified);
+    load();
+  } catch (e) {
+    show('测试失败：' + e.message, false);
+  }
+}
+async function activateAccount(id) {
+  if (!window.confirm('切换到这个账号？后续请求会使用它的 cookie。')) return;
+  try {
+    await call('/api/accounts/' + encodeURIComponent(id) + '/activate?confirm=yes', { method: 'PUT' });
+    show('已切换活跃账号', true);
+    load();
+  } catch (e) {
+    show('切换失败：' + e.message, false);
+  }
+}
+async function deleteAccount(id) {
+  if (!window.confirm('删除该账号？凭据将从本机数据库移除，不可恢复。')) return;
+  try {
+    await call('/api/accounts/' + encodeURIComponent(id) + '?confirm=yes', { method: 'DELETE' });
+    show('已删除', true);
+    load();
+  } catch (e) {
+    show('删除失败：' + e.message, false);
+  }
+}
+load();
+</script>
+</body>
+</html>
