@@ -112,7 +112,7 @@ meme_learn_max_per_day = 10
 # auto_refresh 开启后 fishd 按间隔检查知识库 revision，变化时增量 embedding；
 # CLI 手动入库：fishctl knowledge embed（只算新增/变更条目）。
 [embedding]
-enabled = false
+enabled = true
 url = "https://open.bigmodel.cn/api/paas/v4/embeddings"
 model = "embedding-3"
 key_env = "FISH_EMBEDDING_KEY"

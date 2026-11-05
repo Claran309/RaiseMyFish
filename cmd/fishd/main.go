@@ -62,7 +62,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if len(action) > 0 && !migrate && !checkBrain && !checkAll {
 		return errors.New("用法：fishd [--config 路径] [--env-file 路径] [migrate up|check|check-brain]；不支持破坏性回滚")
 	}
-	cfg, err := config.Load(*path, *envPath)
+	// migrate 只操作数据库，不该被直播采集/送礼等运行时配置拦住：
+	// 用 LoadForCLI（跳过 live 校验）让迁移能在任何配置状态下执行。
+	var err error
+	var cfg config.Config
+	if migrate {
+		cfg, err = config.LoadForCLI(*path, *envPath)
+	} else {
+		cfg, err = config.Load(*path, *envPath)
+	}
 	if err != nil {
 		return err
 	}
