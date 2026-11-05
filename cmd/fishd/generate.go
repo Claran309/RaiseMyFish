@@ -117,7 +117,7 @@ type generateDeps struct {
 	channels   *channelSet
 	presence   *presence.Table
 	state      func(time.Time) string
-	react      reactFactory
+	react      *reactRuntime
 	log        *zap.Logger
 }
 
@@ -153,9 +153,9 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		}()
 
 		scope := memory.Scope{Channel: ev.Channel, Session: ev.Session, Private: ev.Private}
-		// 两段式第一段：先判断需不需要额外召回，简单弹幕直接单步生成。
+		// 召回判断仍保留：短句单步与 ReAct 失败回落时，Brain 需要 memory/knowledge 注入。
 		decision := reasoning.Decide(ev.Text)
-		deps.log.Info("两段式判断完成",
+		deps.log.Info("召回判断完成",
 			zap.String("action", "reasoning"),
 			zap.Bool("need_memory", decision.NeedMemory),
 			zap.Bool("need_knowledge", decision.NeedKnowledge),
@@ -198,13 +198,13 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		}
 		task := brain.Task{ID: w.Task.ID, EventID: w.Task.EventID, Channel: w.Task.Channel, Session: w.Task.Session}
 
-		// ReAct：只有两段式判断为「要查事实」时才走多步；简单弹幕保持单步（延迟维持 1 秒级）。
+		// ReAct：默认除短句外全部走多步（default_react=true），短句保持单步以维持 1 秒级延迟。
 		// 工具要按**当前事件**的 Scope 查（并发 worker 共享一个可变 Scope 会串会话），
-		// 所以 Agent 由工厂按事件现造。
+		// 所以 Agent 由工厂按事件现造；相同问题 5 分钟内直接复用结果。
 		var reply brain.Reply
 		var err error
 		reactText := ""
-		if deps.react != nil && shouldUseReAct(decision) {
+		if deps.react != nil && deps.react.factory != nil && shouldUseReAct(ev.Text, deps.react.defaultReact) {
 			reactText, err = runReact(ctx, deps.react, scope, deps.pack, ev, deps.log)
 			if err != nil {
 				// ReAct 是增强：失败就回落单步，不能把弹幕卡死

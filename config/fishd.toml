@@ -137,12 +137,14 @@ search_key = ""
 # 推荐用环境变量（优先于 search_key 字面值）：search_key_env = "FISH_SEARCH_KEY"
 search_key_env = ""
 
-# ReAct 思考链（C 档）：两段式判断为「要查事实」时才走多步，
-# 简单弹幕仍单步生成（延迟维持 1 秒级）。
+# ReAct 思考链（C 档）：默认全部弹幕走多步（可用性优先），
+# 只有短句（少于 6 个字符，如「哈哈」「在吗」）保持单步。
 # 预算纪律：步数 3、总超时 8 秒；步数/超时/解析失败一律降级，不拖成半分钟。
 # 只有 [llm] enabled 且路由存在时才会真正装配。
 [reasoning]
 enabled = true
+# true：除短句外全部走 ReAct；false：回到旧两段式（命中召回词表才走）。
+default_react = true
 max_steps = 3
 timeout_ms = 8000
 # 副作用工具（送礼/关注/点赞/私信/发动态）总开关：默认关，开了模型才看得见这些工具。

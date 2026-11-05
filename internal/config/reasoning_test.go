@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestReasoningDefaults 缺段/缺字段时用默认值（默认开启，3 步 / 8 秒）。
+// TestReasoningDefaults 缺段/缺字段时用默认值（默认开启、默认 ReAct，3 步 / 8 秒）。
 func TestReasoningDefaults(t *testing.T) {
 	cfg, err := loadWithScheduler(t, "[log]\nlevel='info'\n")
 	if err != nil {
@@ -16,8 +16,22 @@ func TestReasoningDefaults(t *testing.T) {
 	if !cfg.Reasoning.Enabled {
 		t.Error("默认应开启 ReAct")
 	}
+	if !cfg.Reasoning.DefaultReact {
+		t.Error("默认应所有弹幕走 ReAct")
+	}
 	if cfg.Reasoning.MaxSteps != 3 || cfg.Reasoning.TimeoutMS != 8000 {
 		t.Errorf("默认预算不符：%+v", cfg.Reasoning)
+	}
+}
+
+// TestReasoningDefaultReactCanBeDisabled 显式 default_react=false 回到旧两段式。
+func TestReasoningDefaultReactCanBeDisabled(t *testing.T) {
+	cfg, err := loadWithScheduler(t, "[reasoning]\ndefault_react = false\n")
+	if err != nil {
+		t.Fatalf("加载失败：%v", err)
+	}
+	if cfg.Reasoning.DefaultReact {
+		t.Error("显式关闭默认 ReAct 未生效")
 	}
 }
 

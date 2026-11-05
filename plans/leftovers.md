@@ -57,7 +57,7 @@
 
 | # | 项 | 决策 | 归属 |
 |---|---|---|---|
-| 37 | **ReAct 默认化**（可用性优先） | 所有弹幕默认走 ReAct；短句（<6字）单步；结果 5 分钟缓存 | Qoder/WorkBuddy |
+| 37 | **ReAct 默认化**（可用性优先） | 所有弹幕默认走 ReAct；短句（<6字）单步；结果 5 分钟缓存 | ✅ Qoder（default_react=true；缓存按 Scope+问题文本） |
 | 38 | **长期记忆/观众档案向量化召回** | memory_records + viewer_profiles 加 embedding(1024)，语义召回（依赖 K2 RAG） | Qoder/WorkBuddy |
 | 39 | **Web 全套管理**（见 `plans/p5-web-full.md`） | 8 页：概览/直播(/live)/消息(/message，评论私信)/记忆/知识库/活动/实时日志/配置；只读先行，写操作白名单+confirm | Qoder/WorkBuddy |
 | 40 | **梗白学习 hot15** | 每天不设上限，按弹幕出现次数取 Top15（真热点优先）；学到的梗最终走向量入库（learned.md 保留为源文件） | Qoder/WorkBuddy |

@@ -17,6 +17,9 @@ var memoryCues = []string{"刚才", "之前", "上次", "上回", "你说", "你
 var knowledgeCues = []string{"梗", "什么意思", "什么梗", "啥意思", "知道吗", "那个梗", "拉拉", "给给", "何意味", "魔鱼", "队友呼吸机", "不烧心", "胆子肥嘟嘟"}
 
 // Decide 判断事件是否需要额外召回；纯函数、无网络、无模型。
+//
+// 默认 ReAct 模式（[reasoning].default_react=true）下它不再决定是否多步，
+// 只用于短句单步时的 Brain 召回注入；default_react=false 时才回退为多步门槛。
 func Decide(text string) Decision {
 	if strings.TrimSpace(text) == "" {
 		return Decision{}

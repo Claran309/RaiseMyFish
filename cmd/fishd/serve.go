@@ -98,7 +98,7 @@ func resolveRoutes(policies map[event.Channel]scheduler.ChannelPolicy, routes ma
 //
 // Generate / Deliver / Verify 三个 handler 都必须设置：scheduler.launch 按 claim 的 stage 分派，
 // 任一为 nil 都会在对应阶段裸奔调用。
-func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, viewers store.ViewerRepo, soulPath string, pres *presence.Table, state func(time.Time) string, react reactFactory, channels *channelSet, log *zap.Logger) (scheduler.Workers, error) {
+func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, viewers store.ViewerRepo, soulPath string, pres *presence.Table, state func(time.Time) string, react *reactRuntime, channels *channelSet, log *zap.Logger) (scheduler.Workers, error) {
 	if snd == nil {
 		return scheduler.Workers{}, errors.New("发送器不能为 nil")
 	}
@@ -362,7 +362,16 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, nil, err
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(pres, cfg.Watch), react, channels, log)
+	// ReAct 运行期策略：默认全量走多步，结果按 Scope + 问题文本缓存 5 分钟。
+	var reactCfg *reactRuntime
+	if react != nil {
+		reactCfg = &reactRuntime{
+			factory:      react,
+			defaultReact: cfg.Reasoning.DefaultReact,
+			cache:        newReactCache(time.Now),
+		}
+	}
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(pres, cfg.Watch), reactCfg, channels, log)
 	if err != nil {
 		return nil, nil, err
 	}

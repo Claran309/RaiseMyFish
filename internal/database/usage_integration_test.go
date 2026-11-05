@@ -109,6 +109,8 @@ func TestBrainHTTPAttemptsReachRealUsageLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := brain.DefaultOptions()
+	// 本用例验证 HTTP 重试是否落账，不验证预算裁剪；现人格已超过 8192，按生产配置放宽。
+	o.MaxPromptTokens = 16384
 	o.Model = "model"
 	o.Backoff = time.Millisecond
 	b, err := brain.New(p, repo, o, zap.NewNop())
