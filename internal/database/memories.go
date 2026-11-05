@@ -39,7 +39,10 @@ func NewMemoryRepo(db *gorm.DB) (*MemoryRepo, error) {
 	return &MemoryRepo{db: db}, nil
 }
 
-// InsertRecord 不覆盖已有ID的记录。
+// InsertRecord 写入记录；同 ID 只在「同类事实 + 同范围 + 时间不倒退」时更新。
+//
+// 返回 false 表示没有新增也没有更新：既包括内容幂等，也包括冲突被拒绝
+// （范围不一致、非事实类、旧事件晚到）。拒绝时原行保持不动，绝不跨范围覆盖。
 func (r *MemoryRepo) InsertRecord(ctx context.Context, m store.MemoryRecord) (bool, error) {
 	if ctx == nil {
 		return false, store.ErrInvalid
@@ -52,17 +55,30 @@ func (r *MemoryRepo) InsertRecord(ctx context.Context, m store.MemoryRecord) (bo
 		return false, &safeError{"编码记忆来源失败", err}
 	}
 	// 数组通过JSON参数转TEXT[]，避免拼接事件ID，也不引入另一套PG驱动。
+	//
+	// 冲突更新的四道闸门（缺一不可）：
+	//  1. 新旧都必须是 fact（非事实类仍保持按事件幂等）；
+	//  2. private/channel/session 必须完全一致，公共行与 DM-A、DM-B 互不覆盖；
+	//  3. 新记录的 valid_from 必须更晚，逆序补提炼的旧事件不能盖掉新事实；
+	//  4. 摘要确实变化才更新，重复提炼保持幂等。
+	// valid_from 取 EXCLUDED 的事件时间而不是 now()：否则「更新时间」会顶替
+	// 「事实发生时间」，让第 3 道的先后比较失真。
 	result := r.db.WithContext(ctx).Exec(`INSERT INTO memory_records
 (id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name)
 VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''))
 ON CONFLICT (id) DO UPDATE SET
   summary    = EXCLUDED.summary,
   confidence = EXCLUDED.confidence,
-  valid_from = now(),
+  valid_from = EXCLUDED.valid_from,
   event_ids  = EXCLUDED.event_ids,
   from_id    = COALESCE(EXCLUDED.from_id, memory_records.from_id),
   from_name  = COALESCE(EXCLUDED.from_name, memory_records.from_name)
 WHERE memory_records.kind = 'fact'
+  AND EXCLUDED.kind = 'fact'
+  AND memory_records.private = EXCLUDED.private
+  AND COALESCE(memory_records.channel,'') = COALESCE(EXCLUDED.channel,'')
+  AND COALESCE(memory_records.session,'') = COALESCE(EXCLUDED.session,'')
+  AND EXCLUDED.valid_from > memory_records.valid_from
   AND memory_records.summary IS DISTINCT FROM EXCLUDED.summary`, m.ID, m.Source, m.Kind, m.Title, m.Summary, m.Body, m.Importance, m.Confidence, m.Private, m.Channel, m.Session, m.ValidFrom, string(ids), m.FromID, m.FromName)
 	if result.Error != nil {
 		return false, &safeError{"写入记忆失败", result.Error}

@@ -6,8 +6,9 @@
 // 边界：
 //   - 不调用模型、不做语义理解，规则全在 memory.Extract。
 //   - 不碰 SQL：读写都走注入的接口（DoneSource / store.MemoryRepo）。
-//   - 幂等靠记录主键：ID 由 event_id + kind + title 派生，配合
-//     INSERT ... ON CONFLICT (id) DO NOTHING，同一事件重扫不会产生重复行。
+//   - 幂等靠记录主键：非事实类由 event_id + kind + title 派生，事实类由
+//     「可见域 + 主体 + 标题」派生；写入层用 ON CONFLICT 更新，且只允许
+//     同范围、更晚事件覆盖，公共域与私密域不会互相改写。
 //   - 隐私边界 fail-closed：未授权的私密事件在拼上下文、调提炼器之前直接跳过；
 //     是否授权由调用方的 AllowPrivate 决定，默认拒绝。
 package extractworker
@@ -496,19 +497,28 @@ func (w *Worker) saveIfAdvanced(ctx context.Context, from, to Cursor) error {
 	return nil
 }
 
-// recordID 由 event_id + kind + title 派生稳定的主键，实现幂等。
-//
-// 用 sha256 前 12 字节（96 位）足够避免碰撞，且长度可控；
-// 分隔符用 \x1f 防止「ab+c」与「a+bc」拼接后撞车。
 // recordIDFor 生成记录主键。
 //
-// 事实类按「同一个人 + 同一句事实」去重（而不是按事件）：同一个人在不同时间
-// 重复说「我是学生」，只该留一条。其他类别仍按事件去重。
+// 事实类按「同一个人 + 同一句事实 + 同一可见域」去重（而不是按事件）：
+// 同一个人在不同时间重复说「我是学生」，同一域内只该留一条。
+// 公开域跨房间/跨平台共用主键；私密域必须带 channel+session，
+// 否则公共行、DM-A、DM-B 会共享主键，后续摘要可能写进错误范围。
 func recordIDFor(ev event.Event, c memory.Candidate) string {
 	if c.Kind == memory.KindFact && strings.TrimSpace(ev.FromID) != "" {
-		return "fact:" + strings.TrimSpace(ev.FromID) + ":" + shortHash(c.Title)
+		return "fact:" + factDomain(ev) + ":" + strings.TrimSpace(ev.FromID) + ":" + shortHash(c.Title)
 	}
 	return recordID(ev.ID, c.Kind, c.Title)
+}
+
+// factDomain 是事实去重主键里的可见域段。
+//
+// 公开事实在所有公开通道间共享（同一个人跨平台说同一句事实仍算一条）；
+// 私密事实按 channel+session 分域，DM-A 与 DM-B 不能互相覆盖。
+func factDomain(ev event.Event) string {
+	if ev.Private {
+		return "private:" + string(ev.Channel) + ":" + ev.Session
+	}
+	return "public"
 }
 
 // shortHash 取摘要前 12 个十六进制字符，足够在同一人下区分不同事实。
@@ -517,6 +527,10 @@ func shortHash(s string) string {
 	return hex.EncodeToString(sum[:])[:12]
 }
 
+// recordID 由 event_id + kind + title 派生稳定的主键，实现幂等。
+//
+// 用 sha256 前 12 字节（96 位）足够避免碰撞，且长度可控；
+// 分隔符用 \x1f 防止「ab+c」与「a+bc」拼接后撞车。
 func recordID(eventID, kind, title string) string {
 	sum := sha256.Sum256([]byte(eventID + "\x1f" + kind + "\x1f" + title))
 	return "mem_" + hex.EncodeToString(sum[:12])
