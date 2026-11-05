@@ -34,6 +34,53 @@ func TestWebValidate(t *testing.T) {
 	}
 }
 
+// TestWebProtocolAndAllowedDomains 协议枚举与域名白名单格式。
+func TestWebProtocolAndAllowedDomains(t *testing.T) {
+	good := []Web{
+		{Protocol: ""},
+		{Protocol: "generic"},
+		{Protocol: "serper"},
+		{Protocol: "BING"},
+		{AllowedDomains: []string{"example.com", "sub.bilibili.com", "127.0.0.1"}},
+	}
+	for _, w := range good {
+		if err := w.Validate(); err != nil {
+			t.Errorf("配置 %+v 应合法：%v", w, err)
+		}
+	}
+	bad := []Web{
+		{Protocol: "google"},
+		{AllowedDomains: []string{""}},
+		{AllowedDomains: []string{"https://example.com"}},
+		{AllowedDomains: []string{"*.example.com"}},
+		{AllowedDomains: []string{"example.com:443"}},
+		{AllowedDomains: []string{"-bad.example.com"}},
+		{AllowedDomains: []string{"exa mple.com"}},
+	}
+	for _, w := range bad {
+		if err := w.Validate(); err == nil {
+			t.Errorf("配置 %+v 应被拒绝", w)
+		}
+	}
+}
+
+// TestLoadWebProtocolAndDomains 新字段能从 TOML 加载。
+func TestLoadWebProtocolAndDomains(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fish:private@localhost/fish")
+	p := filepath.Join(t.TempDir(), "fishd.toml")
+	body := "[web]\nsearch_url='https://api.serper.dev/search'\nprotocol='serper'\nallowed_domains=['bilibili.com','zhihu.com']\n"
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p, "")
+	if err != nil {
+		t.Fatalf("加载失败：%v", err)
+	}
+	if cfg.Web.Protocol != "serper" || len(cfg.Web.AllowedDomains) != 2 || cfg.Web.AllowedDomains[0] != "bilibili.com" {
+		t.Fatalf("新字段未加载：%+v", cfg.Web)
+	}
+}
+
 // TestLoadWebConfigAndKeyNotSerialized 配置能加载，密钥不进入 JSON。
 func TestLoadWebConfigAndKeyNotSerialized(t *testing.T) {
 	t.Setenv("FISH_DB_DSN", "postgres://fish:private@localhost/fish")

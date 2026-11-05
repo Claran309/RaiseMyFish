@@ -32,6 +32,37 @@ func TestMemoryDefaults(t *testing.T) {
 	}
 }
 
+// TestSoulPathDerivedFromPersonaDir 未填 soul_path 时跟随人格包，换 persona 自动换路径。
+func TestSoulPathDerivedFromPersonaDir(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	cfg, err := Load("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Memory.SoulPath != "personas/dafeiyu/knowledge/soul-memories.md" {
+		t.Errorf("默认 soul_path = %q", cfg.Memory.SoulPath)
+	}
+
+	cfg, err = loadMemoryConfig(t, "[llm]\npersona_dir=\"personas/other\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Memory.SoulPath != "personas/other/knowledge/soul-memories.md" {
+		t.Errorf("persona 派生 soul_path = %q", cfg.Memory.SoulPath)
+	}
+}
+
+// TestSoulPathExplicitWins 显式配置优先于人格包派生。
+func TestSoulPathExplicitWins(t *testing.T) {
+	cfg, err := loadMemoryConfig(t, "[llm]\npersona_dir=\"personas/other\"\n[memory]\nsoul_path=\"custom/soul.md\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Memory.SoulPath != "custom/soul.md" {
+		t.Errorf("显式 soul_path 被覆盖：%q", cfg.Memory.SoulPath)
+	}
+}
+
 // TestMemoryOverrides 显式配置覆盖默认值。
 func TestMemoryOverrides(t *testing.T) {
 	cfg, err := loadMemoryConfig(t, "[memory]\nenabled=true\ninterval_seconds=60\nallow_private=true\nfrozen=true\n")

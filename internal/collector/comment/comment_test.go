@@ -207,6 +207,38 @@ func TestCollectorParsesFiltersAndDeduplicates(t *testing.T) {
 	cancel()
 }
 
+// TestCollectorTopLevelZeroRoot 顶层评论 root/parent=0：不能把整批解析打挂，Meta 省略空字段。
+func TestCollectorTopLevelZeroRoot(t *testing.T) {
+	fixture, srv := newCommentServer(t)
+	fixture.add("123", replyJSON{
+		"rpid":    2001,
+		"mid":     42,
+		"ctime":   1700000000,
+		"root":    0,
+		"parent":  0,
+		"member":  map[string]any{"mid": 42, "uname": "路人"},
+		"content": map[string]any{"message": "顶层评论"},
+	})
+	c := newCollector(t, srv.URL, []string{"123"}, 20*time.Millisecond)
+	cancel, out, _, _ := startCollector(t, c)
+	defer cancel()
+
+	ev := awaitEvent(t, out)
+	if ev.ID != "comment:123:2001" || ev.ReplyTo != "2001" {
+		t.Fatalf("顶层评论事件不符：%+v", ev)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(ev.Meta, &meta); err != nil {
+		t.Fatalf("Meta 不是合法 JSON：%v", err)
+	}
+	if _, ok := meta["root"]; ok {
+		t.Errorf("顶层评论不应带 root：%s", ev.Meta)
+	}
+	if _, ok := meta["parent"]; ok {
+		t.Errorf("顶层评论不应带 parent：%s", ev.Meta)
+	}
+}
+
 // TestCollectorAutoDiscoverMergesTargets 覆盖：手动+视频+动态合并、动态 type=17 与 comment_type。
 func TestCollectorAutoDiscoverMergesTargets(t *testing.T) {
 	fixture, srv := newCommentServer(t)

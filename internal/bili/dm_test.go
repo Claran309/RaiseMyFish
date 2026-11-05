@@ -61,6 +61,52 @@ func TestDMSessionsParses(t *testing.T) {
 	}
 }
 
+// TestDMSessionMessagesParses 断言会话详情路径/参数与内层 JSON 正文解析。
+func TestDMSessionMessagesParses(t *testing.T) {
+	var path, talker, sessionType, size string
+	c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		talker = r.URL.Query().Get("talker_id")
+		sessionType = r.URL.Query().Get("session_type")
+		size = r.URL.Query().Get("size")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"messages":[
+			{"msg_key":"9001","sender_uid":"2002","content":"{\"content\":\"第一条\"}","timestamp":1700000000},
+			{"msg_key":9002,"sender_uid":2002,"content":"{\"content\":\"第二条\"}","timestamp":1700000001},
+			{"msg_key":"9003","sender_uid":"2002","content":"{\"type\":1}","timestamp":1700000002}
+		]}}`))
+	})
+
+	got, err := c.DMSessionMessages(context.Background(), "2002", 50)
+	if err != nil {
+		t.Fatalf("拉详情失败：%v", err)
+	}
+	if path != "/session_svr/v1/session_svr/get_session_msgs" {
+		t.Errorf("路径不符：%s", path)
+	}
+	if talker != "2002" || sessionType != "1" || size != "50" {
+		t.Errorf("参数不符：talker=%s type=%s size=%s", talker, sessionType, size)
+	}
+	if len(got) != 2 {
+		t.Fatalf("非文本消息应跳过，实际 %d：%+v", len(got), got)
+	}
+	if got[0].MsgKey != "9001" || got[0].SenderUID != "2002" || got[0].Content != "第一条" {
+		t.Errorf("第 1 条不符：%+v", got[0])
+	}
+	if got[1].MsgKey != "9002" || got[1].Content != "第二条" {
+		t.Errorf("数字 msg_key 未解析：%+v", got[1])
+	}
+}
+
+// TestDMSessionMessagesRejectsBadTalker 非数字 talker 本地拒绝，不发请求。
+func TestDMSessionMessagesRejectsBadTalker(t *testing.T) {
+	c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("非法 talker 不应发请求")
+	})
+	if _, err := c.DMSessionMessages(context.Background(), "abc", 50); err == nil {
+		t.Fatal("非数字 talker 应报错")
+	}
+}
+
 // TestSendMessageParams 断言 POST、msg[...] 参数与 csrf。
 func TestSendMessageParams(t *testing.T) {
 	var method, path, sender, receiver, content, csrf string

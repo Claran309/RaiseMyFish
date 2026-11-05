@@ -130,6 +130,8 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 	cfg.Sender.ApplyDefaults()
 	// [reasoning] 是值结构：缺字段补默认（默认开启，显式 enabled=false 才关）。
 	cfg.Reasoning.ApplyDefaults()
+	// soul_path 未显式配置时跟随人格包，多 persona 各用各的。
+	cfg.Memory.deriveSoulPath(cfg.LLM.PersonaDir)
 	local := map[string]string{}
 	if envPath != "" {
 		values, err := godotenv.Read(envPath)

@@ -71,6 +71,67 @@ func (c *Client) DMSessions(ctx context.Context, limit int) ([]DMSession, error)
 	return out, nil
 }
 
+// DMMessage 是会话详情里的一条消息。
+type DMMessage struct {
+	MsgKey    string
+	SenderUID string
+	Content   string
+	Timestamp int64
+}
+
+// DMSessionMessages 拉某个会话的最近消息（get_session_msgs）；
+// limit<=0 用 50，最大 100。文本取 content 字段，非文本/空正文跳过。
+func (c *Client) DMSessionMessages(ctx context.Context, talkerID string, limit int) ([]DMMessage, error) {
+	if c == nil {
+		return nil, ErrNoCredential
+	}
+	if !isDigits(talkerID) {
+		return nil, errors.New("私信会话 talker_id 必须是纯数字")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	endpoint := c.vc + "/session_svr/v1/session_svr/get_session_msgs?talker_id=" + url.QueryEscape(talkerID) +
+		"&session_type=1&size=" + strconv.Itoa(limit)
+	var data struct {
+		Messages []struct {
+			MsgKey    json.RawMessage `json:"msg_key"`
+			SenderUID json.RawMessage `json:"sender_uid"`
+			Content   string          `json:"content"`
+			Timestamp int64           `json:"timestamp"`
+		} `json:"messages"`
+	}
+	if err := c.do(ctx, "dm_session_msgs", http.MethodGet, endpoint, nil, &data); err != nil {
+		return nil, err
+	}
+	out := make([]DMMessage, 0, len(data.Messages))
+	for _, m := range data.Messages {
+		key, sender, text := rawJSONID(m.MsgKey), rawJSONID(m.SenderUID), parseDMContent(m.Content)
+		if key == "" || sender == "" || text == "" {
+			continue
+		}
+		out = append(out, DMMessage{MsgKey: key, SenderUID: sender, Content: text, Timestamp: m.Timestamp})
+	}
+	return out, nil
+}
+
+// parseDMContent 取文本消息正文；平台把正文包在 JSON 字符串里（{"content":"..."}）。
+func parseDMContent(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "{") {
+		var obj struct {
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal([]byte(raw), &obj); err == nil {
+			return strings.TrimSpace(obj.Content)
+		}
+	}
+	return raw
+}
+
 // SendMessage 发一条私信，返回平台 msg_key。
 func (c *Client) SendMessage(ctx context.Context, mid, text string) (string, error) {
 	if !isDigits(mid) {

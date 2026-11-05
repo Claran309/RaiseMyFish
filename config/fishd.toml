@@ -142,6 +142,11 @@ refresh_interval_seconds = 3600
 enabled = true
 addr = "127.0.0.1:8090"
 search_url = ""
+# 搜索协议：generic（默认，POST {"query"}）/ serper（X-API-KEY）/ bing（Ocp-Apim-Subscription-Key）。
+protocol = "generic"
+# 结果 URL 域名白名单：留空不限；填写后只保留域名相同或子域的结果。
+# 例：allowed_domains = ["bilibili.com", "zhihu.com"]
+allowed_domains = []
 search_key = ""
 # 推荐用环境变量（优先于 search_key 字面值）：search_key_env = "FISH_SEARCH_KEY"
 search_key_env = ""
@@ -226,7 +231,9 @@ llm_extract_max_per_hour = 30
 # 灵魂记忆（长期设定）：每小时从高重要度 fact/preference 重建 soul-memories.md
 soul_enabled = true
 soul_max_entries = 20
-soul_path = "personas/dafeiyu/knowledge/soul-memories.md"
+# 留空表示跟随 [llm] persona_dir：<persona_dir>/knowledge/soul-memories.md，
+# 多 persona 各用各的；显式填写则优先。
+soul_path = ""
 
 # 消费循环（Claim → Scheduler → Brain → Sender）。
 # 整段缺失表示「只采集不回复」；这里保留默认值，实际是否回复还取决于 [llm] enabled 与路由。

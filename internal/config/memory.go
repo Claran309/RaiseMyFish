@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"path"
 	"strings"
 )
 
@@ -24,12 +25,25 @@ type Memory struct {
 	SoulEnabled bool `toml:"soul_enabled"`
 	// SoulMaxEntries 是灵魂记忆条数上限。
 	SoulMaxEntries int `toml:"soul_max_entries"`
-	// SoulPath 是 soul-memories.md 路径。
+	// SoulPath 是 soul-memories.md 路径；留空时从 LLM.PersonaDir 派生。
 	SoulPath string `toml:"soul_path"`
 }
 
 func defaultMemory() Memory {
-	return Memory{Enabled: true, IntervalSeconds: 300, LLMExtract: true, LLMExtractMaxPerHour: 30, SoulEnabled: true, SoulMaxEntries: 20, SoulPath: "personas/dafeiyu/knowledge/soul-memories.md"}
+	return Memory{Enabled: true, IntervalSeconds: 300, LLMExtract: true, LLMExtractMaxPerHour: 30, SoulEnabled: true, SoulMaxEntries: 20}
+}
+
+// deriveSoulPath 在未显式配置 soul_path 时跟随人格包：
+// <persona_dir>/knowledge/soul-memories.md，多 persona 各用各的。
+func (m *Memory) deriveSoulPath(personaDir string) {
+	if strings.TrimSpace(m.SoulPath) != "" {
+		return
+	}
+	dir := strings.TrimSpace(personaDir)
+	if dir == "" {
+		return
+	}
+	m.SoulPath = path.Join(dir, "knowledge", "soul-memories.md")
 }
 
 // Validate 只做静态校验；水位文件与数据库在装配阶段检查。

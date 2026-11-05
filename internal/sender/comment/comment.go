@@ -111,7 +111,7 @@ func (s *Service) Send(ctx context.Context, c event.Claim, p sender.Reply) (send
 	if ctx == nil {
 		return sender.Result{}, &sender.Error{Kind: sender.KindInput}
 	}
-	oid, rpid, text, err := validate(c, p)
+	oid, rpid, root, text, err := validate(c, p)
 	if err != nil {
 		return sender.Result{}, err
 	}
@@ -132,7 +132,7 @@ func (s *Service) Send(ctx context.Context, c event.Claim, p sender.Reply) (send
 		s.log.Info("评论仍在平台限流退避中", zap.String("action", "comment_send_backoff"), zap.String("event_id", c.Event.ID), zap.Duration("wait", wait))
 		return sender.Result{}, &sender.Error{Kind: sender.KindRetry, RetryAt: now.Add(wait), Cause: errors.New("评论发送退避中")}
 	}
-	result, err := s.post(ctx, cookie, csrf, oid, rpid, text, replyType(c.Event))
+	result, err := s.post(ctx, cookie, csrf, oid, rpid, root, text, replyType(c.Event))
 	if err != nil {
 		kind := errorKind(err)
 		if kind == sender.KindRetry && ctx.Err() == nil {
@@ -227,8 +227,10 @@ func (s *Service) Resume(context.Context, event.Claim) (sender.Result, error) {
 	return sender.Result{}, &sender.Error{Kind: sender.KindUncertain, Cause: errors.New("评论发送不支持恢复核验")}
 }
 
-func validate(c event.Claim, p sender.Reply) (string, string, string, error) {
-	input := func() (string, string, string, error) { return "", "", "", &sender.Error{Kind: sender.KindInput} }
+func validate(c event.Claim, p sender.Reply) (string, string, string, string, error) {
+	input := func() (string, string, string, string, error) {
+		return "", "", "", "", &sender.Error{Kind: sender.KindInput}
+	}
 	e := c.Event
 	if c.Lease.Owner == "" || c.Lease.Version < 1 || e.Channel != event.ChComment || e.Dir != event.DirIn || e.Private || e.ID == "" {
 		return input()
@@ -249,6 +251,12 @@ func validate(c event.Claim, p sender.Reply) (string, string, string, error) {
 	if !ok {
 		return input()
 	}
+	// 多级回复：root 取采集到的线程根（顶层评论为 0，回落到本条 rpid）；
+	// parent 始终是「被回复的这条评论」。
+	root := replyRoot(e)
+	if root == "" {
+		root = rpid
+	}
 	if p.Scope.Channel != e.Channel || p.Scope.Session != e.Session || p.Scope.Private || len(p.Actions) != 0 {
 		return input()
 	}
@@ -260,15 +268,33 @@ func validate(c event.Claim, p sender.Reply) (string, string, string, error) {
 	if runes := []rune(text); len(runes) > maxReplyRunes {
 		text = string(runes[:maxReplyRunes])
 	}
-	return oid, rpid, text, nil
+	return oid, rpid, root, text, nil
 }
 
-func (s *Service) post(ctx context.Context, cookie, csrf, oid, rpid, text string, commentType int) (sender.Result, error) {
+// replyRoot 从事件 Meta 取线程根评论；缺失/非法/0 返回空。
+func replyRoot(e event.Event) string {
+	if len(e.Meta) == 0 {
+		return ""
+	}
+	var meta struct {
+		Root string `json:"root"`
+	}
+	if err := json.Unmarshal(e.Meta, &meta); err != nil {
+		return ""
+	}
+	root, ok := canonicalID(meta.Root)
+	if !ok {
+		return ""
+	}
+	return root
+}
+
+func (s *Service) post(ctx context.Context, cookie, csrf, oid, rpid, root, text string, commentType int) (sender.Result, error) {
 	form := url.Values{}
 	form.Set("oid", oid)
 	form.Set("type", strconv.Itoa(commentType))
 	form.Set("message", text)
-	form.Set("root", rpid)
+	form.Set("root", root)
 	form.Set("parent", rpid)
 	form.Set("csrf", csrf)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.options.APIRoot+"/x/v2/reply/add", strings.NewReader(form.Encode()))

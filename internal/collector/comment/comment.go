@@ -419,12 +419,39 @@ func (d *decimal) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// optionalID 接受平台数字或数字字符串；0/空表示「没有」。
+// 顶层评论的 root/parent 就是 0，不能用拒绝 0 的 decimal 解析。
+type optionalID string
+
+func (d *optionalID) UnmarshalJSON(data []byte) error {
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || raw == "null" {
+		return nil
+	}
+	if raw[0] == '"' {
+		var text string
+		if err := json.Unmarshal(data, &text); err != nil {
+			return err
+		}
+		raw = strings.TrimSpace(text)
+	}
+	if raw == "" {
+		return nil
+	}
+	if !numericID.MatchString(raw) {
+		return errors.New("平台ID不是非负整数")
+	}
+	// 全零等价于没有（顶层评论），其余去掉前导零。
+	*d = optionalID(strings.TrimLeft(raw, "0"))
+	return nil
+}
+
 type apiReply struct {
-	Rpid   decimal `json:"rpid"`
-	Mid    decimal `json:"mid"`
-	Ctime  int64   `json:"ctime"`
-	Root   decimal `json:"root"`
-	Parent decimal `json:"parent"`
+	Rpid   decimal    `json:"rpid"`
+	Mid    decimal    `json:"mid"`
+	Ctime  int64      `json:"ctime"`
+	Root   optionalID `json:"root"`
+	Parent optionalID `json:"parent"`
 	Member struct {
 		Mid   decimal `json:"mid"`
 		UName string  `json:"uname"`

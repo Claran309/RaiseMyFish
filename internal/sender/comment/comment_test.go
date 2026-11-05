@@ -136,6 +136,40 @@ func TestSendPostsExpectedForm(t *testing.T) {
 	}
 }
 
+// TestSendUsesCollectedRoot 多级回复：root 用采集到的线程根，parent 用被回复评论。
+func TestSendUsesCollectedRoot(t *testing.T) {
+	fixture, srv := newSendServer(t)
+	s := newService(t, srv.URL)
+	claim := testClaim()
+	claim.Event.Meta = json.RawMessage(`{"source":"bili-comment","comment_type":1,"root":"555","parent":"666"}`)
+	if _, err := s.Send(context.Background(), claim, testReply("回你")); err != nil {
+		t.Fatalf("发送失败：%v", err)
+	}
+	fixture.mu.Lock()
+	form := fixture.form
+	fixture.mu.Unlock()
+	if form.Get("root") != "555" || form.Get("parent") != "777" {
+		t.Errorf("root/parent 不符：%v", form)
+	}
+}
+
+// TestSendZeroRootFallsBack 顶层评论 Meta.root 为空/0 时回落到本条 rpid。
+func TestSendZeroRootFallsBack(t *testing.T) {
+	fixture, srv := newSendServer(t)
+	s := newService(t, srv.URL)
+	claim := testClaim()
+	claim.Event.Meta = json.RawMessage(`{"source":"bili-comment","comment_type":1,"root":"0","parent":"0"}`)
+	if _, err := s.Send(context.Background(), claim, testReply("回你")); err != nil {
+		t.Fatalf("发送失败：%v", err)
+	}
+	fixture.mu.Lock()
+	form := fixture.form
+	fixture.mu.Unlock()
+	if form.Get("root") != "777" || form.Get("parent") != "777" {
+		t.Errorf("root/parent 不符：%v", form)
+	}
+}
+
 func TestSendFallsBackToEventRpid(t *testing.T) {
 	fixture, srv := newSendServer(t)
 	s := newService(t, srv.URL)
