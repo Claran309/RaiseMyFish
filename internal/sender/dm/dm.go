@@ -65,9 +65,12 @@ type Options struct {
 type Sender struct {
 	transport Transporter
 	relation  Relation
-	allowed   map[string]struct{}
 	rate      time.Duration
 	now       func() time.Time
+
+	// allowed 热更新：面板改白名单时整体替换，读写都要过锁。
+	allowedMu sync.RWMutex
+	allowed   map[string]struct{}
 
 	store *RecipientStore
 
@@ -186,8 +189,34 @@ func (s *Sender) Send(ctx context.Context, claim event.Claim, reply sender.Reply
 
 // allowedMID 检查白名单。
 func (s *Sender) allowedMID(mid string) bool {
+	s.allowedMu.RLock()
+	defer s.allowedMu.RUnlock()
 	_, ok := s.allowed[mid]
 	return ok
+}
+
+// SetAllowedMIDs 整体替换白名单（面板热更新用）。
+//
+// 调用方负责把主人 mid 并入；空列表或非法 mid 一律拒绝，避免误清空护栏。
+func (s *Sender) SetAllowedMIDs(mids []string) error {
+	allowed := make(map[string]struct{}, len(mids))
+	for _, raw := range mids {
+		mid := strings.TrimSpace(raw)
+		if mid == "" {
+			continue
+		}
+		if !isDigits(mid) {
+			return &Error{Kind: KindInput, Cause: errors.New("白名单 mid 必须是纯数字")}
+		}
+		allowed[mid] = struct{}{}
+	}
+	if len(allowed) == 0 {
+		return &Error{Kind: KindInput, Cause: errors.New("私信白名单不能为空")}
+	}
+	s.allowedMu.Lock()
+	s.allowed = allowed
+	s.allowedMu.Unlock()
+	return nil
 }
 
 // reserveRecipient 实现「一天最多 1 个收信人」：换人就拒绝，同人放行。

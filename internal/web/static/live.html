@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>直播 · 大肥鱼面板</title>
+<style>
+:root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.6 -apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header b{font-size:15px}
+nav a{color:var(--muted);text-decoration:none;margin-right:14px}
+nav a.on{color:var(--accent)}
+main{padding:20px;max-width:980px;margin:0 auto}
+h2{font-size:13px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;margin:20px 0 10px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.rowline{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+input{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 10px;font:inherit;min-width:280px}
+button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 14px;font:inherit;cursor:pointer}
+button.primary{border-color:var(--accent);color:var(--accent)}
+button.danger{border-color:#3a1d1d;color:var(--bad)}
+.pill{font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.pill.ok{color:var(--ok);border-color:#1d3a26;background:#0f1a12}
+.pill.bad{color:var(--bad);border-color:#3a1d1d;background:#1a0f0f}
+.pill.warn{color:var(--warn);border-color:#3a331d;background:#1a170f}
+.muted{color:var(--muted);font-size:12px}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-top:10px}
+.kv div{font-size:12px;color:var(--muted)}
+.kv b{color:var(--fg);font-weight:500}
+.msg{margin-top:12px;font-size:12px}
+.msg.bad{color:var(--bad)}.msg.ok{color:var(--ok)}
+</style>
+</head>
+<body>
+<header>
+  <b>🐟 大肥鱼面板</b>
+  <nav><a href="/">概览</a><a class="on" href="/live">直播</a><a href="/message">消息</a><a href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
+</header>
+<main>
+  <h2>直播管理</h2>
+  <h2>直播采集</h2>
+  <div class="panel">
+    <div class="rowline">
+      <span id="live-pill" class="pill">检测中…</span>
+      <span class="muted" id="live-sub"></span>
+      <span style="flex:1"></span>
+      <button id="live-btn" onclick="toggleCollect()">启停直播采集</button>
+    </div>
+    <div class="kv" id="live-kv"></div>
+  </div>
+
+  <h2>看直播</h2>
+  <div class="panel">
+    <div class="rowline">
+      <input id="room" placeholder="直播间链接或 room_id，例如 https://live.bilibili.com/30308220">
+      <button id="watch-start" class="primary" onclick="startWatch()">开始看直播</button>
+      <button id="watch-stop" class="danger" onclick="stopWatch()">停止看直播</button>
+    </div>
+    <div class="kv" style="margin-top:12px">
+      <div>状态：<b id="watch-pill">—</b></div>
+      <div>房间：<b id="watch-room">—</b></div>
+      <div>启动时间：<b id="watch-started">—</b></div>
+      <div>最近错误：<b id="watch-error">—</b></div>
+    </div>
+    <div class="muted" style="margin-top:8px">支持纯数字 room_id 或 live.bilibili.com 直播间链接；房间号留空时沿用上次。</div>
+  </div>
+  <div class="msg" id="msg"></div>
+</main>
+<script>
+var state = null;
+function esc(s) {
+  return (s || '').replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+function when(iso) {
+  if (!iso) return '—';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return esc(iso);
+  return d.toLocaleString('zh-CN', { hour12: false });
+}
+function say(text, ok) {
+  var box = document.getElementById('msg');
+  box.className = 'msg ' + (ok ? 'ok' : 'bad');
+  box.textContent = text;
+}
+function pill(el, ok, label) {
+  el.className = 'pill ' + (ok ? 'ok' : 'bad');
+  el.textContent = label;
+}
+function render() {
+  if (!state) return;
+  var live = state.live || {}, watch = state.watch || {};
+  var liveAvailable = live.available !== false;
+  var livePill = document.getElementById('live-pill');
+  if (!liveAvailable) { pill(livePill, false, '未装配'); }
+  else if (live.running) { pill(livePill, true, '采集中'); }
+  else if (live.enabled) { pill(livePill, false, '已启用未运行'); }
+  else { pill(livePill, false, '已停止'); }
+  document.getElementById('live-btn').textContent = live.enabled ? '停止直播采集' : '启动直播采集';
+  document.getElementById('live-btn').disabled = !liveAvailable;
+  document.getElementById('live-sub').textContent = live.last_error ? ('错误：' + live.last_error) : (!liveAvailable ? '直播采集未装配' : '');
+  document.getElementById('live-kv').innerHTML =
+    '<div>启动时间：<b>' + when(live.started_at) + '</b></div>' +
+    '<div>最近事件：<b>' + when(live.last_event_at) + '</b></div>' +
+    '<div>重连次数：<b>' + (live.reconnects || 0) + '</b></div>';
+
+  var running = watch.running;
+  var watchAvailable = watch.available !== false;
+  document.getElementById('watch-pill').textContent = !watchAvailable ? '未装配' : (running ? '运行中' : (watch.enabled ? '已启用未运行' : '已停止'));
+  document.getElementById('watch-room').textContent = watch.room_id || '—';
+  document.getElementById('watch-started').textContent = when(watch.started_at);
+  document.getElementById('watch-error').textContent = watch.last_error || (!watchAvailable ? '看直播未装配（需启用 [llm]）' : '—');
+  document.getElementById('room').disabled = !watchAvailable;
+  document.getElementById('watch-start').disabled = !watchAvailable;
+  document.getElementById('watch-stop').disabled = !watchAvailable;
+  if (!document.getElementById('room').value && watch.room_id) {
+    document.getElementById('room').value = watch.room_id;
+  }
+}
+async function load() {
+  var r = await fetch('/api/live');
+  if (!r.ok) { say('运行时控制未启用', false); return; }
+  state = await r.json();
+  render();
+}
+async function post(payload) {
+  var r = await fetch('/api/live?confirm=yes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  var d = await r.json().catch(function () { return {}; });
+  if (!r.ok) { say(d.error || ('操作失败：' + r.status), false); return false; }
+  if (d.live !== undefined) { state = { live: d.live, watch: d.watch }; render(); }
+  say('已生效', true);
+  return true;
+}
+async function toggleCollect() {
+  if (!state) return;
+  await post({ action: 'collect', enabled: !state.live.enabled });
+}
+async function startWatch() {
+  var room = document.getElementById('room').value.trim();
+  await post({ action: 'watch', enabled: true, room_id: room });
+}
+async function stopWatch() {
+  await post({ action: 'watch', enabled: false });
+}
+load();
+setInterval(load, 10000);
+</script>
+</body>
+</html>

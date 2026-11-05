@@ -177,6 +177,139 @@ func (r *WebRepo) Events(ctx context.Context, dir string, limit int) ([]store.We
 	return out, nil
 }
 
+// EventsByChannel 按通道取最近事件；channel 只接受 live/comment/dm。
+func (r *WebRepo) EventsByChannel(ctx context.Context, channel, dir string, limit int) ([]store.WebEvent, error) {
+	if ctx == nil || limit < 1 || limit > webMaxLimit {
+		return nil, store.ErrInvalid
+	}
+	switch channel {
+	case "live", "comment", "dm":
+	default:
+		return nil, store.ErrInvalid
+	}
+	q := r.db.WithContext(ctx).Table("events").Where("channel = ?", channel)
+	switch strings.TrimSpace(dir) {
+	case "":
+	case "in", "out":
+		q = q.Where("dir = ?", strings.TrimSpace(dir))
+	default:
+		return nil, store.ErrInvalid
+	}
+	var rows []struct {
+		ID       string
+		Channel  string
+		Dir      string
+		Session  string
+		FromName string
+		Text     string
+		At       time.Time
+		Status   string
+	}
+	if err := q.Select("id, COALESCE(channel,'') AS channel, dir, COALESCE(session,'') AS session, COALESCE(from_name,'') AS from_name, COALESCE(text,'') AS text, at, status").
+		Order("at DESC, id ASC").Limit(limit).Find(&rows).Error; err != nil {
+		return nil, &safeError{"查询通道事件失败", err}
+	}
+	out := make([]store.WebEvent, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, store.WebEvent{
+			ID: row.ID, Channel: row.Channel, Dir: row.Dir, Session: row.Session,
+			FromName: row.FromName, Text: row.Text, At: row.At, Status: row.Status,
+		})
+	}
+	return out, nil
+}
+
+// Event 取单条事件详情；回复计划与尝试是可选的（事件可能还没生成回复）。
+func (r *WebRepo) Event(ctx context.Context, id string) (store.WebEventDetail, error) {
+	if ctx == nil || strings.TrimSpace(id) == "" {
+		return store.WebEventDetail{}, store.ErrInvalid
+	}
+	var row struct {
+		ID        string
+		Channel   string
+		Dir       string
+		Session   string
+		FromID    string
+		FromName  string
+		Text      string
+		Private   bool
+		ReplyTo   string
+		At        time.Time
+		Status    string
+		Meta      string
+		CreatedAt time.Time
+	}
+	err := r.db.WithContext(ctx).Raw(
+		`SELECT id, COALESCE(channel,'') AS channel, dir, COALESCE(session,'') AS session,
+		        COALESCE(from_id,'') AS from_id, COALESCE(from_name,'') AS from_name,
+		        COALESCE(text,'') AS text, private, COALESCE(reply_to,'') AS reply_to,
+		        at, status, COALESCE(meta::text,'') AS meta, created_at
+		   FROM events WHERE id = ?`, id,
+	).Scan(&row).Error
+	if err != nil {
+		return store.WebEventDetail{}, &safeError{"查询事件详情失败", err}
+	}
+	if row.ID == "" {
+		return store.WebEventDetail{}, store.ErrWebNotFound
+	}
+	detail := store.WebEventDetail{
+		WebEvent: store.WebEvent{
+			ID: row.ID, Channel: row.Channel, Dir: row.Dir, Session: row.Session,
+			FromName: row.FromName, Text: row.Text, At: row.At, Status: row.Status,
+		},
+		FromID: row.FromID, ReplyTo: row.ReplyTo, Private: row.Private,
+		Meta: row.Meta, CreatedAt: row.CreatedAt,
+	}
+	var plan struct {
+		ActorID      string
+		RoomID       string
+		Text         string
+		State        string
+		AttemptCount int
+		CreatedAt    time.Time
+	}
+	err = r.db.WithContext(ctx).Raw(
+		`SELECT actor_id, room_id, text, state, attempt_count, created_at
+		   FROM send_plans WHERE event_id = ?`, id,
+	).Scan(&plan).Error
+	if err != nil {
+		return store.WebEventDetail{}, &safeError{"查询回复计划失败", err}
+	}
+	if plan.ActorID == "" && plan.RoomID == "" && plan.Text == "" {
+		return detail, nil
+	}
+	reply := store.WebReply{
+		ActorID: plan.ActorID, RoomID: plan.RoomID, Text: plan.Text,
+		State: plan.State, AttemptCount: plan.AttemptCount, CreatedAt: plan.CreatedAt,
+	}
+	var attempts []struct {
+		Number    int
+		State     string
+		OK        *bool
+		Verified  bool
+		MsgID     string
+		Evidence  string
+		ErrorKind string
+		CreatedAt time.Time
+	}
+	if err := r.db.WithContext(ctx).Raw(
+		`SELECT number, state, ok, verified, COALESCE(msg_id,'') AS msg_id,
+		        COALESCE(evidence,'') AS evidence, COALESCE(error_kind,'') AS error_kind, created_at
+		   FROM send_attempts WHERE event_id = ? ORDER BY number ASC`, id,
+	).Scan(&attempts).Error; err != nil {
+		return store.WebEventDetail{}, &safeError{"查询发送尝试失败", err}
+	}
+	reply.Attempts = make([]store.WebAttempt, 0, len(attempts))
+	for _, a := range attempts {
+		reply.Attempts = append(reply.Attempts, store.WebAttempt{
+			Number: a.Number, State: a.State, OK: a.OK, Verified: a.Verified,
+			MsgID: a.MsgID, Evidence: a.Evidence, ErrorKind: a.ErrorKind, CreatedAt: a.CreatedAt,
+		})
+	}
+	detail.Reply = &reply
+	return detail, nil
+}
+
 // Errors 取最近异常事件：status 为 dead/retry 的（按时间倒序）。
 func (r *WebRepo) Errors(ctx context.Context, limit int) ([]store.WebEvent, error) {
 	if ctx == nil || limit < 1 || limit > webMaxLimit {

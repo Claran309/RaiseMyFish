@@ -32,7 +32,8 @@ type proactiveRunner interface {
 }
 
 // buildProactiveRunner 只装配依赖，构造期不联网、不执行 ffmpeg。
-func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, know knowledge.Reader, pres *presence.Table, logger *zap.Logger) (*proactive.Runner, error) {
+// giftGate 为 nil 时回落到配置里的送礼开关；面板热更新会传入动态门控。
+func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, know knowledge.Reader, pres *presence.Table, giftGate func() bool, logger *zap.Logger) (*proactive.Runner, error) {
 	if resources == nil || resources.DB == nil {
 		return nil, errors.New("主动弹幕缺少数据库资源")
 	}
@@ -89,7 +90,7 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 		if err != nil {
 			return nil, fmt.Errorf("装配主动弹幕用量账本失败：%w", err)
 		}
-		factory, err := buildReasonerFactory(cfg, memReader, know, pres, events, nil, buildGiftQuota(cfg, logger), buildToolExecutors(cfg, logger), usageRepo, logger)
+		factory, err := buildReasonerFactory(cfg, memReader, know, pres, events, nil, buildGiftQuota(cfg, logger), buildToolExecutors(cfg, logger), usageRepo, giftGate, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -166,12 +167,28 @@ func startProactive(ctx context.Context, cfg config.Config, resources *infra.Res
 	if !cfg.Proactive.Enabled {
 		return noop
 	}
-	runner, err := buildProactiveRunner(cfg, resources, routes, pack, know, pres, logger)
+	runner, err := buildProactiveRunner(cfg, resources, routes, pack, know, pres, nil, logger)
 	if err != nil {
 		logger.Error("主动弹幕装配失败，降级运行", zap.String("action", "proactive"), zap.Error(err))
 		return noop
 	}
 	interval := time.Duration(cfg.Proactive.IntervalSeconds) * time.Second
+	stop := startProactiveLoop(ctx, runner, interval, logger)
+	logger.Info("主动弹幕已启动",
+		zap.String("action", "proactive"),
+		zap.Int("interval_seconds", cfg.Proactive.IntervalSeconds),
+		zap.Int("send_gap_seconds", cfg.Proactive.SendGapSeconds),
+		zap.Bool("use_react", cfg.Proactive.UseReact),
+		zap.String("react_trigger", cfg.Proactive.ReactTrigger),
+	)
+	return stop
+}
+
+// startProactiveLoop 起定时循环；interval 非正时按 20 秒兜底。
+func startProactiveLoop(ctx context.Context, runner proactiveRunner, interval time.Duration, logger *zap.Logger) func() {
+	if interval <= 0 {
+		interval = 20 * time.Second
+	}
 	ticker := time.NewTicker(interval)
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -180,13 +197,6 @@ func startProactive(ctx context.Context, cfg config.Config, resources *infra.Res
 		defer ticker.Stop()
 		runProactive(runCtx, runner, ticker.C, time.Now, logger)
 	}()
-	logger.Info("主动弹幕已启动",
-		zap.String("action", "proactive"),
-		zap.Int("interval_seconds", cfg.Proactive.IntervalSeconds),
-		zap.Int("send_gap_seconds", cfg.Proactive.SendGapSeconds),
-		zap.Bool("use_react", cfg.Proactive.UseReact),
-		zap.String("react_trigger", cfg.Proactive.ReactTrigger),
-	)
 	return func() {
 		cancel()
 		<-done

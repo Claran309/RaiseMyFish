@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"RaiseMyFish/internal/config"
@@ -26,6 +28,38 @@ type memeLearnWorker interface {
 	RunOnce(context.Context) (knowledge.MemeLearnStats, error)
 }
 
+// newMemeLearner 只负责装配，供启动路径与面板热更新复用。
+func newMemeLearner(cfg config.Config, db *gorm.DB, runtime knowledgeAssembly, logger *zap.Logger) (memeLearnWorker, string, error) {
+	if !cfg.LLM.Enabled || len(cfg.LLM.Routing) == 0 {
+		return nil, "", errors.New("梗白学习需要启用 LLM")
+	}
+	if runtime.Reader == nil {
+		return nil, "", errors.New("梗白学习需要知识 Reader")
+	}
+	if db == nil {
+		return nil, "", errors.New("梗白学习缺少数据库资源")
+	}
+	source, err := database.NewEventRepo(db)
+	if err != nil {
+		return nil, "", fmt.Errorf("装配事件来源失败：%w", err)
+	}
+	llm, model, err := buildBackgroundLLM(cfg, backgroundRoute(cfg), memeLearnMaxTokens)
+	if err != nil {
+		return nil, "", err
+	}
+	learner, err := knowledge.NewMemeLearner(cfg.Knowledge.Dir, runtime.Reader, source, llm, knowledge.MemeLearnOptions{
+		MaxPerDay: cfg.Knowledge.MemeLearnMaxPerDay,
+		HotLimit:  cfg.Knowledge.MemeLearnHotLimit,
+		Window:    time.Duration(cfg.Knowledge.MemeLearnWindowHours) * time.Hour,
+		MinCount:  cfg.Knowledge.MemeLearnMinOccurrences,
+		Channel:   event.ChLive,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return learner, model, nil
+}
+
 // startMemeLearn 装配并启动学习循环；返回的 stop 会取消并等待循环退出。
 // 未启用或初始化失败时返回空 stop，调用方主链路不受影响。
 func startMemeLearn(ctx context.Context, cfg config.Config, db *gorm.DB, runtime knowledgeAssembly, logger *zap.Logger) func() {
@@ -41,28 +75,11 @@ func startMemeLearn(ctx context.Context, cfg config.Config, db *gorm.DB, runtime
 		logger.Warn("梗白学习已配置但知识Reader未装配，跳过", zap.String("action", memeLearnAction))
 		return noop
 	}
-	source, err := database.NewEventRepo(db)
+	learner, model, err := newMemeLearner(cfg, db, runtime, logger)
 	if err != nil {
 		logger.Error("梗白学习装配失败，降级运行", zap.String("action", memeLearnAction), zap.Error(err))
 		return noop
 	}
-	llm, model, err := buildBackgroundLLM(cfg, backgroundRoute(cfg), memeLearnMaxTokens)
-	if err != nil {
-		logger.Error("梗白学习模型装配失败，降级运行", zap.String("action", memeLearnAction), zap.Error(err))
-		return noop
-	}
-	learner, err := knowledge.NewMemeLearner(cfg.Knowledge.Dir, runtime.Reader, source, llm, knowledge.MemeLearnOptions{
-		MaxPerDay: cfg.Knowledge.MemeLearnMaxPerDay,
-		HotLimit:  cfg.Knowledge.MemeLearnHotLimit,
-		Window:    time.Duration(cfg.Knowledge.MemeLearnWindowHours) * time.Hour,
-		MinCount:  cfg.Knowledge.MemeLearnMinOccurrences,
-		Channel:   event.ChLive,
-	})
-	if err != nil {
-		logger.Error("梗白学习初始化失败，降级运行", zap.String("action", memeLearnAction), zap.Error(err))
-		return noop
-	}
-
 	logger.Info("梗白学习已启动",
 		zap.String("action", memeLearnAction),
 		zap.String("model", model),
@@ -70,11 +87,16 @@ func startMemeLearn(ctx context.Context, cfg config.Config, db *gorm.DB, runtime
 		zap.Int("max_per_day", cfg.Knowledge.MemeLearnMaxPerDay),
 		zap.Duration("interval", memeLearnInterval),
 	)
+	return startMemeLearnLoop(ctx, learner, logger)
+}
+
+// startMemeLearnLoop 起周期循环；返回 stop 取消并等待退出。
+func startMemeLearnLoop(ctx context.Context, worker memeLearnWorker, logger *zap.Logger) func() {
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runMemeLearn(runCtx, learner, memeLearnInterval, logger)
+		runMemeLearn(runCtx, worker, memeLearnInterval, logger)
 	}()
 	return func() {
 		cancel()

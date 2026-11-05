@@ -74,16 +74,18 @@ type SideEffectDeps struct {
 	// Enabled 对应 `[reasoning] allow_side_effect_tools`；false 时所有副作用工具拒绝执行。
 	Enabled bool
 
-	Gift         GiftExecutor
-	Social       SocialExecutor
-	Quota        QuotaReserver
-	QuotaView    QuotaSource
-	GiftEnabled  bool
-	GiftReal     bool
-	GiftID       string
-	MaxNum       int
-	DailyLimit   int
-	AllowedRooms []string
+	Gift      GiftExecutor
+	Social    SocialExecutor
+	Quota     QuotaReserver
+	QuotaView QuotaSource
+	// GiftEnabled 是送礼开关的静态值；GiftEnabledFunc 非 nil 时以它为准（面板热切换）。
+	GiftEnabled     bool
+	GiftEnabledFunc func() bool
+	GiftReal        bool
+	GiftID          string
+	MaxNum          int
+	DailyLimit      int
+	AllowedRooms    []string
 	// AllowPostDynamic 是发动态的独立开关（默认关）。
 	AllowPostDynamic bool
 	// OwnerMID 是主人；永不取关。
@@ -185,11 +187,12 @@ func (s *sideEffects) gift(ctx context.Context, args string) (string, error) {
 		}
 	}
 	// 未开启/非真实：只说明不执行，并退还刚占的额度
-	if !d.GiftEnabled || !d.GiftReal {
+	enabled := s.giftEnabled()
+	if !enabled || !d.GiftReal {
 		if d.Quota != nil && d.DailyLimit > 0 {
 			d.Quota.Release(day, req.Num)
 		}
-		out := fmt.Sprintf("dry-run：未真实送礼（enabled=%v real=%v），本轮不消耗额度", d.GiftEnabled, d.GiftReal)
+		out := fmt.Sprintf("dry-run：未真实送礼（enabled=%v real=%v），本轮不消耗额度", enabled, d.GiftReal)
 		s.log("gift", fmt.Sprintf("room=%s num=%d", req.Room, req.Num), "dry_run", s.quotaLeft(day))
 		return out, nil
 	}
@@ -335,6 +338,14 @@ func (s *sideEffects) authorized() error {
 		return fmt.Errorf("未授权：副作用工具未启用（allow_side_effect_tools=false）")
 	}
 	return nil
+}
+
+// giftEnabled 读取当前送礼开关；面板热切换通过 GiftEnabledFunc 注入。
+func (s *sideEffects) giftEnabled() bool {
+	if s.deps.GiftEnabledFunc != nil {
+		return s.deps.GiftEnabledFunc()
+	}
+	return s.deps.GiftEnabled
 }
 
 // allow 是限频：同一工具两次调用之间至少隔 interval。

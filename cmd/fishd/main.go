@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"RaiseMyFish/internal/database"
 	eventbus "RaiseMyFish/internal/event/bus"
 	"RaiseMyFish/internal/infra"
+	"RaiseMyFish/internal/logview"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/memory/extractworker"
 	"RaiseMyFish/internal/presence"
@@ -147,8 +149,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	defer stopMemory()
 	stopEmbeddingRefresh := startKnowledgeEmbeddingRefresh(ctx, cfg, knowledgeRuntime, logger)
 	defer stopEmbeddingRefresh()
-	stopMemeLearn := startMemeLearn(ctx, cfg, resources.DB, knowledgeRuntime, logger)
-	defer stopMemeLearn()
 	stopHeartbeatLike := startHeartbeatLike(ctx, cfg, logger)
 	defer stopHeartbeatLike()
 	logger.Info("Brain装配检查完成，未消费事件", zap.String("action", "brain_setup"), zap.Int("routes", len(routes)))
@@ -168,12 +168,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	// 放在初始化完成之后启动：启动阶段卡死时不刷新心跳，看门狗才有机会介入。
 	stopHeartbeat := startHeartbeat(ctx, cfg.Watchdog.HeartbeatPath, logger)
 	defer stopHeartbeat()
-	// 消费循环：只有 [scheduler] 存在、有 Brain 路由且 live 通道开启时才装配；
-	// 否则保持「只采集」的现状。
-	wantConsume := consumeEnabled(cfg, routes)
-	if liveCollector == nil && commentCollector == nil && !wantConsume {
-		return serveRuntime(ctx)
-	}
+	// 事件总线始终装配：面板可以在运行时开启采集，不能因为静态配置全关就跳过。
 	events, err := database.NewEventRepo(resources.DB)
 	if err != nil {
 		return err
@@ -182,9 +177,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
-	// 发送通道表：buildConsume 先用空壳，注册表建好后再绑定（Collect 之前完成）
+
+	// 送礼开关由控制面热更新，ReAct 副作用每次调用都读最新值。
+	giftGate := &atomic.Bool{}
+	giftGate.Store(cfg.Gift.Enabled)
+
+	// 发送通道表：buildConsume 先用空壳，注册表建好后再绑定（Send/Resume 之前完成）
 	chans := &channelSet{}
-	consume, snd, err := buildConsume(cfg, resources, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, chans, logger)
+	consume, snd, dmWhitelist, err := buildConsume(cfg, resources, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, chans, giftGate.Load, logger)
 	if err != nil {
 		return err
 	}
@@ -199,48 +199,88 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	servePipeline := func(ctx context.Context) error {
 		return withScheduler(ctx, consume, logger, serveRuntime)
 	}
-	if liveCollector == nil {
-		if cfg.Watch.Enabled {
-			logger.Warn("看直播未启动：直播采集未启用", zap.String("action", "watch"))
-		}
-	} else {
-		// watch/active 都是旁路：装配失败只记日志，不阻塞采集/调度。
-		stopWatch := startWatch(ctx, cfg, logger)
-		defer stopWatch()
-		stopProactive := startProactive(ctx, cfg, resources, routes, pack, knowledgeRuntime.Reader, presenceTable, logger)
-		defer stopProactive()
-	}
-	// 通道经注册表获取；Collect 异步启动，stop 在返回时取消并等待采集退出。
+	// 通道注册表只服务发送/核验；采集统一由运行时控制面驱动。
 	dmCollector, err := buildDMCollector(cfg, logger)
 	if err != nil {
 		return fmt.Errorf("装配私信采集失败：%w", err)
-	}
-	// 运维面板（只监听回环）：默认关，开启后独立 goroutine 跑
-	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, accountService, logger)
-	defer stopWeb()
-
-	// 知识热重载：梗白学习写入 learned.md 后不必重启；语义包装不影响底层快照。
-	if stopReload := startKnowledgeHotReload(ctx, knowledgeRuntime.Base, cfg.Knowledge, logger); stopReload != nil {
-		defer stopReload()
 	}
 	registry, err := buildChannelRegistry(liveCollector, commentCollector, dmCollector, snd, timeout, logger)
 	if err != nil {
 		return err
 	}
-	// 发送路径改用通道：此后 Generate/Deliver 优先走注册表
 	chans.Set(registry)
-	channels := registry.All()
-	for _, ch := range channels {
-		stop, err := ch.Collect(ctx, withPresenceBus(bus, presenceTable))
-		if err != nil {
-			return fmt.Errorf("启动 %s 采集失败：%w", ch.Name(), err)
+
+	deps := runtimeDeps{
+		// 采集发布前记录 presence（在看直播），与旧 channel.Collect 路径一致。
+		Bus:         withPresenceBus(bus, presenceTable),
+		Resources:   resources,
+		Routes:      routes,
+		Pack:        pack,
+		Knowledge:   knowledgeRuntime,
+		Presence:    presenceTable,
+		Timeout:     timeout,
+		DMWhitelist: dmWhitelist,
+		GiftGate:    giftGate,
+		Now:         time.Now,
+	}
+	// 避免 typed-nil 指针装进接口后变成「非 nil 采集器」。
+	if liveCollector != nil {
+		deps.Live = liveCollector
+	}
+	if commentCollector != nil {
+		deps.Comment = commentCollector
+	}
+	if dmCollector != nil {
+		deps.DM = dmCollector
+	}
+	control, err := newRuntimeControl(ctx, cfg, deps, logger)
+	if err != nil {
+		return err
+	}
+	defer control.Close()
+
+	// 运维面板（只监听回环）：默认关，开启后独立 goroutine 跑。
+	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, accountService, control, logview.NewSource(cfg.Log.Dir, nil), logger)
+	defer stopWeb()
+
+	// 主循环先就绪（running 状态落盘）再启动采集：外部不会先看到事件、后看到服务状态。
+	runCtx, stopPipeline := context.WithCancel(ctx)
+	defer stopPipeline()
+	pipeline := make(chan error, 1)
+	go func() { pipeline <- servePipeline(runCtx) }()
+	if err := waitRunning(runCtx, cfg.Runtime.StateFile, pipeline); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return <-pipeline
 		}
-		defer stop()
+		return err
 	}
-	if len(channels) > 0 {
-		logger.Info("已装配采集通道到事件总线", zap.String("action", "collector_bus_start"), zap.Int("channels", len(channels)))
+	if err := control.StartInitial(); err != nil {
+		stopPipeline()
+		<-pipeline
+		return err
 	}
-	return servePipeline(ctx)
+	return <-pipeline
+}
+
+// waitRunning 等主循环把 running 状态写进状态文件；主循环提前退出或取消会立即返回。
+func waitRunning(ctx context.Context, path string, pipeline <-chan error) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if st, err := infra.ReadStatus(path); err == nil && st.State == "running" && st.PID == os.Getpid() {
+			return nil
+		}
+		select {
+		case err := <-pipeline:
+			if err == nil {
+				return errors.New("服务在就绪前退出")
+			}
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // serve 不启动额外后台goroutine；所有探活有超时，取消后更新状态再释放连接。
@@ -250,6 +290,10 @@ func serve(ctx context.Context, path string, interval time.Duration, logger *zap
 		return nil
 	}
 	if err := check(ctx); err != nil {
+		// 启动探针期间被取消属于正常停止，不能误报数据库故障。
+		if ctx.Err() != nil {
+			return nil
+		}
 		return err
 	}
 	summary := func(now time.Time) string {

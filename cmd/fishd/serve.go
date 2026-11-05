@@ -209,19 +209,24 @@ func buildLiveSender(cfg config.Config, resources *infra.Resources, log *zap.Log
 	return senderlive.New(repo, transport, wiring.Service, log)
 }
 
+// dmWhitelistSetter 是私信发送器的热更新白名单能力（senderdm.Sender 实现）。
+type dmWhitelistSetter interface {
+	SetAllowedMIDs(mids []string) error
+}
+
 // buildSender 按已启用通道装配发送路由；Generate/Deliver 仍只看到一个 sender.Sender。
 //
 // live 走既有 Node 传输与投递账本；comment 走纯 Go HTTP（1条/分钟硬限频）。
 // 两者都没有启用时明确报错，避免消费循环「能生成却不能发」。
-func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger) (sender.Sender, error) {
+func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger) (sender.Sender, dmWhitelistSetter, error) {
 	if cfg.Sender == nil {
-		return nil, errors.New("未配置 [sender] 发送通道，无法装配发送器")
+		return nil, nil, errors.New("未配置 [sender] 发送通道，无法装配发送器")
 	}
 	routes := make(map[event.Channel]sender.Sender, 2)
 	if cfg.Channels.Live.Enabled {
 		liveSender, err := buildLiveSender(cfg, resources, log)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		routes[event.ChLive] = liveSender
 	}
@@ -235,7 +240,7 @@ func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger)
 		o.MinInterval = time.Minute
 		commentSender, err := sendercomment.New(o, log)
 		if err != nil {
-			return nil, fmt.Errorf("装配评论发送通道失败：%w", err)
+			return nil, nil, fmt.Errorf("装配评论发送通道失败：%w", err)
 		}
 		routes[event.ChComment] = commentSender
 	}
@@ -243,15 +248,23 @@ func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger)
 		log.Warn("评论采集已启用但未配置评论发送，评论事件将无法回复", zap.String("action", "comment_sender_missing"))
 	}
 	// 私信：只在 [sender.dm] 开启且凭据可用时注册路由
+	var dmWhitelist dmWhitelistSetter
 	if dmSender, err := buildDMSender(cfg, log); err != nil {
-		return nil, fmt.Errorf("装配私信发送通道失败：%w", err)
+		return nil, nil, fmt.Errorf("装配私信发送通道失败：%w", err)
 	} else if dmSender != nil {
 		routes[event.ChDM] = dmSender
+		if setter, ok := dmSender.(dmWhitelistSetter); ok {
+			dmWhitelist = setter
+		}
 	}
 	if cfg.Collector.DM.Enabled && routes[event.ChDM] == nil {
 		log.Warn("私信采集已启用但未装配私信发送，私信事件将无法回复", zap.String("action", "dm_sender_missing"))
 	}
-	return newSendRouter(routes)
+	router, err := newSendRouter(routes)
+	if err != nil {
+		return nil, nil, err
+	}
+	return router, dmWhitelist, nil
 }
 
 // defaultOwnerMID 是主人的 B站 UID（派发单给定）：永不取关、私信默认允许。
@@ -295,13 +308,17 @@ func buildGiftQuota(cfg config.Config, log *zap.Logger) reasoning.QuotaSource {
 //
 // 注意：平台执行器（送礼/关注/点赞/私信/动态）本批尚未接入，置 nil 时工具会明确回「未配置」，
 // 但护栏（开关/白名单/额度/限频/不取关主人）全部生效并有单测覆盖。
-func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExecutors, room string, log *zap.Logger) reasoning.SideEffectDeps {
+func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExecutors, room string, giftGate func() bool, log *zap.Logger) reasoning.SideEffectDeps {
+	giftEnabled := cfg.Gift.Enabled
+	if giftGate != nil {
+		giftEnabled = giftGate()
+	}
 	return reasoning.SideEffectDeps{
 		Enabled:          cfg.Reasoning.AllowSideEffectTools,
 		Gift:             exec.Gift,
 		Social:           exec.Social,
 		QuotaView:        quota,
-		GiftEnabled:      cfg.Gift.Enabled,
+		GiftEnabled:      giftEnabled,
 		GiftReal:         cfg.Gift.Real,
 		GiftID:           cfg.Gift.GiftID,
 		MaxNum:           cfg.Gift.MaxNum,
@@ -317,19 +334,20 @@ func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExe
 
 // buildConsume 装配消费循环；未启用（无 [scheduler] / 无 Brain 路由 / 通道关闭）时返回 nil。
 // 返回的发送器与消费循环共用同一实例，供通道注册表复用（同一限流与暂停状态）。
-func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, channels *channelSet, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, error) {
+// dmWhitelist 在未装配私信发送时为 nil；giftGate 为动态送礼开关（面板热更新）。
+func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, channels *channelSet, giftGate func() bool, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, dmWhitelistSetter, error) {
 	if !consumeEnabled(cfg, routes) {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	// 记忆 Reader 装配失败是启动级错误：召回是消费循环的核心输入，不能静默降级成「永远失忆」。
 	memRepo, err := database.NewMemoryRepo(resources.DB)
 	if err != nil {
-		return nil, nil, fmt.Errorf("装配记忆仓储失败：%w", err)
+		return nil, nil, nil, fmt.Errorf("装配记忆仓储失败：%w", err)
 	}
 	assembled, err := memory.NewReader(memRepo, memRepo, memory.ReaderOptions{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("装配记忆 Reader 失败：%w", err)
+		return nil, nil, nil, fmt.Errorf("装配记忆 Reader 失败：%w", err)
 	}
 	memReader := memory.Reader(assembled)
 
@@ -366,21 +384,21 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	options := buildSchedulerOptions(cfg.Scheduler)
 	byChannel, err := resolveRoutes(options.Channels, routes)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	snd, err := buildSender(cfg, resources, log)
+	snd, dmWhitelist, err := buildSender(cfg, resources, log)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// history 工具需要读最近事件；EventRepo 只读复用，不新增写路径。
 	eventRepo, err := database.NewEventRepo(resources.DB)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// ReAct 的 token 也要进 llm_usage，否则日报费用偏低
 	usageRepo, err := database.NewUsageRepo(resources.DB)
 	if err != nil {
-		return nil, nil, fmt.Errorf("装配用量账本失败：%w", err)
+		return nil, nil, nil, fmt.Errorf("装配用量账本失败：%w", err)
 	}
 	// 观众档案：没启用就不建仓储（Generate 里 viewers==nil 自然不注入）
 	var viewerRepo store.ViewerRepo
@@ -408,9 +426,9 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	}
 	quota := buildGiftQuota(cfg, log)
 	execs := buildToolExecutors(cfg, log)
-	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, viewerSearch, quota, execs, usageRepo, log)
+	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, viewerSearch, quota, execs, usageRepo, giftGate, log)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// ReAct 运行期策略：默认全量走多步，结果按 Scope + 问题文本缓存 5 分钟。
 	var reactCfg *reactRuntime
@@ -423,14 +441,14 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	}
 	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(pres, cfg.Watch), reactCfg, channels, log)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	repo, err := database.NewSchedulerRepo(resources.DB)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	sched, err := scheduler.New(bus, repo, options, workers, log)
-	return sched, snd, err
+	return sched, snd, dmWhitelist, err
 }
 
 // consumeEnabled 判断是否接消费循环：有调度配置、有 Brain 路由、且至少一个通道开启。

@@ -27,6 +27,11 @@ func buildLive(cfg config.Config, log *zap.Logger) (*livecollector.Collector, er
 	if !cfg.Channels.Live.Enabled {
 		return nil, nil
 	}
+	return newLiveCollector(cfg, log)
+}
+
+// newLiveCollector 忽略静态启用开关，供面板运行时启停复用。
+func newLiveCollector(cfg config.Config, log *zap.Logger) (*livecollector.Collector, error) {
 	l := cfg.Collector.Live
 	o := livecollector.DefaultOptions()
 	o.RoomID = l.RoomID

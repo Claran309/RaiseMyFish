@@ -16,8 +16,13 @@ func buildComment(cfg config.Config, log *zap.Logger) (*commentcollector.Collect
 	if !cfg.Channels.Comment.Enabled || !cfg.Collector.Comment.Enabled {
 		return nil, nil
 	}
+	return newCommentCollector(cfg, cfg.Collector.Comment.Videos, log)
+}
+
+// newCommentCollector 用给定视频列表装配，供面板热更新（忽略静态启用开关）。
+func newCommentCollector(cfg config.Config, videos []string, log *zap.Logger) (*commentcollector.Collector, error) {
 	o := commentcollector.DefaultOptions()
-	o.Videos = cfg.Collector.Comment.Videos
+	o.Videos = videos
 	o.Interval = time.Duration(cfg.Collector.Comment.IntervalSeconds) * time.Second
 	o.Cookie = cfg.Collector.Live.Cookie
 	o.CookieFile = cfg.Collector.Live.CookieFile

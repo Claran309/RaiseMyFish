@@ -5,29 +5,45 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>活动 · 大肥鱼面板</title>
 <style>
-:root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--bad:#ff6b6b}
+:root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.6 -apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
-header{display:flex;gap:16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header{display:flex;gap:16px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--card)}
 header b{font-size:15px}
 nav a{color:var(--muted);text-decoration:none;margin-right:14px}
 nav a.on{color:var(--accent)}
-main{padding:20px;max-width:1080px;margin:0 auto}
+main{padding:20px;max-width:1180px;margin:0 auto}
 table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
 th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 th{color:var(--muted);font-weight:500;font-size:12px}
 input,select,button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
 button{cursor:pointer}
-.bar{display:flex;gap:8px;margin-bottom:12px;align-items:center}
+.bar{display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap}
 .muted{color:var(--muted)}
 .tag{font-size:12px;color:var(--muted)}
 h3{font-size:14px;color:#8b93a1;margin-top:22px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;border-left:3px solid var(--line)}
+.card.ok{border-left-color:var(--ok)}.card.bad{border-left-color:var(--bad)}.card.warn{border-left-color:var(--warn)}
+.card .k{color:var(--muted);font-size:12px}
+.card .v{font-size:20px;font-variant-numeric:tabular-nums;word-break:break-all}
+.card .sub{font-size:11px;color:var(--muted)}
+tr.ev{cursor:pointer}
+tr.ev:hover{background:#1b2029}
+#detail{display:none;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:12px}
+#detail pre{background:#0b0d11;border:1px solid var(--line);border-radius:6px;padding:10px;overflow:auto;font:12px/1.55 ui-monospace,Consolas,monospace;max-height:320px}
+#detail .kv{display:grid;grid-template-columns:130px 1fr;gap:4px 12px;font-size:13px}
+#detail .kv .k{color:var(--muted)}
+.logline{font:12px/1.6 ui-monospace,Consolas,monospace}
+.logline .t{color:#5d6675;margin-right:8px}
+.logline .lv{font-weight:600;margin-right:8px}
+.logline.warn .lv{color:var(--warn)}.logline.error .lv{color:var(--bad)}.logline.info .lv{color:var(--accent)}
 </style>
 </head>
 <body>
 <header>
   <b>🐟 大肥鱼面板</b>
-  <nav><a href="/">概览</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a class="on" href="/activity">活动</a><a href="/accounts">账号</a></nav>
+  <nav><a href="/">概览</a><a href="/live">直播</a><a href="/message">消息</a><a class="on" href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
 </header>
 <main>
   <div class="bar">
@@ -43,10 +59,45 @@ h3{font-size:14px;color:#8b93a1;margin-top:22px}
     </select>
     <button onclick="load()">刷新</button>
     <span class="muted" id="cnt"></span>
+    <span class="muted tag">点击事件行查看完整详情</span>
   </div>
   <table>
     <thead><tr><th>时间</th><th>方向</th><th>通道</th><th>会话</th><th>来自</th><th>内容</th><th>状态</th></tr></thead>
     <tbody id="rows"></tbody>
+  </table>
+
+  <div id="detail">
+    <div class="bar" style="margin-bottom:8px">
+      <b id="detail-title">事件详情</b>
+      <span class="spacer" style="flex:1"></span>
+      <button onclick="closeDetail()">关闭</button>
+    </div>
+    <div class="kv" id="detail-kv"></div>
+    <h3>原始元数据</h3>
+    <pre id="detail-meta">—</pre>
+    <h3>回复与投递</h3>
+    <pre id="detail-reply">—</pre>
+  </div>
+
+  <h3>送礼额度</h3>
+  <div class="grid" id="gift-cards"></div>
+
+  <h3>送礼记录</h3>
+  <table>
+    <thead><tr><th>时间</th><th>级别</th><th>动作</th><th>内容</th><th>字段</th></tr></thead>
+    <tbody id="gift-log"></tbody>
+  </table>
+
+  <h3>主动弹幕记录</h3>
+  <table>
+    <thead><tr><th>时间</th><th>级别</th><th>动作</th><th>内容</th><th>字段</th></tr></thead>
+    <tbody id="proactive-log"></tbody>
+  </table>
+
+  <h3>点赞记录</h3>
+  <table>
+    <thead><tr><th>时间</th><th>级别</th><th>动作</th><th>内容</th><th>字段</th></tr></thead>
+    <tbody id="like-log"></tbody>
   </table>
 
   <h3>最近发送</h3>
@@ -61,24 +112,99 @@ function esc(s) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
   });
 }
-async function load() {
+function fieldsText(fields) {
+  if (!fields) return '';
+  return Object.keys(fields).map(function (k) { return k + '=' + fields[k]; }).join(' ');
+}
+function logRows(items) {
+  return (items || []).map(function (e) {
+    var lv = (e.level || 'info').toLowerCase();
+    return '<tr><td class="tag">' + esc(e.time) + '</td>' +
+      '<td class="logline ' + esc(lv) + '"><span class="lv">' + esc(lv) + '</span></td>' +
+      '<td class="tag">' + esc(e.action) + '</td>' +
+      '<td>' + esc(e.msg) + '</td>' +
+      '<td class="tag">' + esc(fieldsText(e.fields)) + '</td></tr>';
+  }).join('') || '<tr><td colspan="5" class="muted">暂无记录</td></tr>';
+}
+async function loadEvents() {
   var dir = document.getElementById('dir').value;
   var limit = document.getElementById('limit').value;
   var d = await (await fetch('/api/events?dir=' + dir + '&limit=' + limit)).json();
   document.getElementById('cnt').textContent = (d.count || 0) + ' 条';
   document.getElementById('rows').innerHTML = (d.items || []).map(function (e) {
-    return '<tr><td class="tag">' + esc(e.at) + '</td><td class="tag">' + esc(e.dir) + '</td>' +
+    return '<tr class="ev" data-id="' + esc(e.id) + '" onclick="showDetail(this.dataset.id)">' +
+      '<td class="tag">' + esc(e.at) + '</td><td class="tag">' + esc(e.dir) + '</td>' +
       '<td class="tag">' + esc(e.channel) + '</td><td class="tag">' + esc(e.session) + '</td>' +
       '<td>' + esc(e.from_name) + '</td><td>' + esc(e.text) + '</td>' +
       '<td class="tag">' + esc(e.status) + '</td></tr>';
   }).join('');
-
+}
+async function showDetail(id) {
+  var box = document.getElementById('detail');
+  box.style.display = 'block';
+  document.getElementById('detail-title').textContent = '事件详情 · ' + id;
+  document.getElementById('detail-kv').innerHTML = '<div class="k">加载中…</div><div></div>';
+  document.getElementById('detail-meta').textContent = '—';
+  document.getElementById('detail-reply').textContent = '—';
+  var r = await fetch('/api/events/' + encodeURIComponent(id));
+  if (!r.ok) {
+    document.getElementById('detail-kv').innerHTML = '<div class="k">错误</div><div>' + esc((await r.json()).error || r.status) + '</div>';
+    return;
+  }
+  var e = await r.json();
+  var rows = [
+    ['事件 ID', e.id], ['时间', e.at], ['创建时间', e.created_at],
+    ['通道', e.channel], ['方向', e.dir], ['会话', e.session],
+    ['来自', e.from_name], ['from_id', e.from_id], ['回复给', e.reply_to],
+    ['状态', e.status], ['私密', e.private ? '是' : '否'], ['正文', e.text]
+  ];
+  document.getElementById('detail-kv').innerHTML = rows.map(function (kv) {
+    return '<div class="k">' + esc(kv[0]) + '</div><div>' + esc(kv[1]) + '</div>';
+  }).join('');
+  var meta = e.meta || '';
+  try { meta = JSON.stringify(JSON.parse(meta), null, 2); } catch (err) { /* 保留原文 */ }
+  document.getElementById('detail-meta').textContent = meta || '—';
+  document.getElementById('detail-reply').textContent = e.reply ? JSON.stringify(e.reply, null, 2) : '尚未回复';
+}
+function closeDetail() {
+  document.getElementById('detail').style.display = 'none';
+}
+function giftCard(kind, label, value, sub) {
+  return '<div class="card ' + kind + '"><div class="k">' + label + '</div>' +
+    '<div class="v">' + esc(value) + '</div>' + (sub ? '<div class="sub">' + esc(sub) + '</div>' : '') + '</div>';
+}
+async function loadGiftQuota() {
+  var box = document.getElementById('gift-cards');
+  var r = await fetch('/api/gift/quota');
+  if (!r.ok) { box.innerHTML = '<div class="card bad"><div class="k">额度加载失败</div></div>'; return; }
+  var q = await r.json();
+  box.innerHTML = giftCard(q.enabled ? 'ok' : 'warn', '送礼开关', q.enabled ? '已开启' : '已关闭',
+      q.real ? '真实发送' : '模拟/关闭') +
+    giftCard('', '当日已用', (q.used || 0) + ' / ' + (q.daily_limit || 0),
+      '单次最多 ' + (q.max_num || 0) + ' 个 · ' + (q.day || '')) +
+    giftCard('', '本鱼鱼粮', (q.coins || 0) + ' 硬币');
+}
+async function loadLogs() {
+  var gift = await (await fetch('/api/gift/log?limit=20')).json();
+  document.getElementById('gift-log').innerHTML = logRows(gift.items);
+  var proactive = await (await fetch('/api/proactive/log?limit=20')).json();
+  document.getElementById('proactive-log').innerHTML = logRows(proactive.items);
+  var like = await (await fetch('/api/like/log?limit=20')).json();
+  document.getElementById('like-log').innerHTML = logRows(like.items);
+}
+async function loadSends() {
   var s = await (await fetch('/api/send_log?limit=20')).json();
   document.getElementById('sends').innerHTML = (s.items || []).map(function (e) {
     return '<tr><td class="tag">' + esc(e.at) + '</td><td class="tag">' + esc(e.channel) + '</td>' +
       '<td>' + (e.ok ? '✅' : '❌') + '</td><td class="tag">' + esc(e.msg_id) + '</td>' +
       '<td class="tag">' + esc(e.event_id) + '</td></tr>';
   }).join('');
+}
+function load() {
+  loadEvents();
+  loadSends();
+  loadGiftQuota();
+  loadLogs();
 }
 load();
 </script>

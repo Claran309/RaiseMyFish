@@ -18,14 +18,17 @@ import (
 )
 
 type fakeRepo struct {
-	status     store.WebStatus
-	embedding  store.WebEmbeddingStatus
-	memory     []store.WebMemory
-	events     []store.WebEvent
-	errors     []store.WebEvent
-	sends      []store.WebSend
-	archived   []string
-	archiveErr error
+	status        store.WebStatus
+	embedding     store.WebEmbeddingStatus
+	memory        []store.WebMemory
+	events        []store.WebEvent
+	channelEvents map[string][]store.WebEvent
+	details       map[string]store.WebEventDetail
+	detailErr     error
+	errors        []store.WebEvent
+	sends         []store.WebSend
+	archived      []string
+	archiveErr    error
 }
 
 func (f *fakeRepo) Status(context.Context) (store.WebStatus, error) { return f.status, nil }
@@ -51,6 +54,24 @@ func (f *fakeRepo) Events(_ context.Context, dir string, _ int) ([]store.WebEven
 		return nil, store.ErrInvalid
 	}
 	return f.events, nil
+}
+
+func (f *fakeRepo) EventsByChannel(_ context.Context, channel, dir string, _ int) ([]store.WebEvent, error) {
+	if dir != "" && dir != "in" && dir != "out" {
+		return nil, store.ErrInvalid
+	}
+	return f.channelEvents[channel], nil
+}
+
+func (f *fakeRepo) Event(_ context.Context, id string) (store.WebEventDetail, error) {
+	if f.detailErr != nil {
+		return store.WebEventDetail{}, f.detailErr
+	}
+	detail, ok := f.details[id]
+	if !ok {
+		return store.WebEventDetail{}, store.ErrWebNotFound
+	}
+	return detail, nil
 }
 
 func (f *fakeRepo) Errors(context.Context, int) ([]store.WebEvent, error) { return f.errors, nil }

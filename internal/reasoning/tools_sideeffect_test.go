@@ -228,6 +228,30 @@ func TestGiftRealSendsAndReserves(t *testing.T) {
 	}
 }
 
+// TestGiftDynamicSwitch 面板热切换：运行中改 Func 立即生效，且无需重建工具。
+func TestGiftDynamicSwitch(t *testing.T) {
+	d, g, _, q := sideDeps()
+	enabled := false
+	d.GiftEnabledFunc = func() bool { return enabled }
+	box, _ := BuildSideEffectTools(d)
+
+	got, err := box.Run(context.Background(), ToolGift, `{"gift_id":"31036","num":1}`)
+	if err != nil || !strings.Contains(got, "dry-run") {
+		t.Fatalf("关闭时应 dry-run：%q err=%v", got, err)
+	}
+	if g.calls != 0 || q.used != 0 {
+		t.Fatalf("关闭时不应送礼/占额度：calls=%d used=%d", g.calls, q.used)
+	}
+
+	enabled = true
+	if _, err := box.Run(context.Background(), ToolGift, `{"gift_id":"31036","num":1}`); err != nil {
+		t.Fatalf("打开后送礼失败：%v", err)
+	}
+	if g.calls != 1 || q.used != 1 {
+		t.Errorf("打开后应真实送礼：calls=%d used=%d", g.calls, q.used)
+	}
+}
+
 // TestFollowNeverUnfollowOwnerOrSelf 永不取关主人/自己，其余照常执行。
 func TestFollowNeverUnfollowOwnerOrSelf(t *testing.T) {
 	d, _, s, _ := sideDeps()

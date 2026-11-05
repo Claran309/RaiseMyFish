@@ -20,6 +20,8 @@ type Watchdog struct {
 	RestartCommand string `toml:"restart_command"`
 	// HeartbeatPath 是心跳文件路径（默认 state/fishd.heartbeat）。
 	HeartbeatPath string `toml:"heartbeat_path"`
+	// HistoryPath 是重启历史 JSONL（默认 state/watchdog-history.jsonl）。
+	HistoryPath string `toml:"history_path"`
 }
 
 func defaultWatchdog() Watchdog {
@@ -30,6 +32,7 @@ func defaultWatchdog() Watchdog {
 		UnhealthyThreshold: 2,
 		CooldownSeconds:    300,
 		HeartbeatPath:      "state/fishd.heartbeat",
+		HistoryPath:        "state/watchdog-history.jsonl",
 	}
 }
 
@@ -55,6 +58,9 @@ func (w Watchdog) Validate() error {
 	}
 	if strings.ContainsAny(w.HeartbeatPath, "\r\n\x00") {
 		return errors.New("看门狗 heartbeat_path 不能包含控制字符")
+	}
+	if w.HistoryPath != "" && strings.ContainsAny(w.HistoryPath, "\r\n\x00") {
+		return errors.New("看门狗 history_path 不能包含控制字符")
 	}
 	if strings.TrimSpace(w.RestartCommand) == "" {
 		return errors.New("看门狗启用需要 restart_command")

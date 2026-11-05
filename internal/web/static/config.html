@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>配置 · 大肥鱼面板</title>
+<style>
+:root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.6 -apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header b{font-size:15px}
+nav a{color:var(--muted);text-decoration:none;margin-right:14px}
+nav a.on{color:var(--accent)}
+main{padding:20px;max-width:1000px;margin:0 auto}
+h2{font-size:13px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;margin:20px 0 10px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.setting{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--line)}
+.setting:last-child{border-bottom:0}
+.setting label{min-width:120px}
+.setting .desc{color:var(--muted);font-size:12px;flex:1;min-width:180px}
+input[type=number]{width:110px;background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent)}
+button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 12px;font:inherit;cursor:pointer}
+button.primary{border-color:var(--accent);color:var(--accent)}
+.pill{font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.pill.ok{color:var(--ok);border-color:#1d3a26;background:#0f1a12}
+.pill.bad{color:var(--bad);border-color:#3a1d1d;background:#1a0f0f}
+.pill.warn{color:var(--warn);border-color:#3a331d;background:#1a170f}
+.muted{color:var(--muted);font-size:12px}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;margin-top:10px}
+.kv div{font-size:12px;color:var(--muted)}
+.kv b{color:var(--fg);font-weight:500}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:12px}
+th{color:var(--muted);font-weight:500}
+.msg{margin-top:12px;font-size:12px}
+.msg.bad{color:var(--bad)}.msg.ok{color:var(--ok)}
+</style>
+</head>
+<body>
+<header>
+  <b>🐟 大肥鱼面板</b>
+  <nav><a href="/">概览</a><a href="/live">直播</a><a href="/message">消息</a><a href="/activity">活动</a><a class="on" href="/config">配置</a><a href="/logs">日志</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
+</header>
+<main>
+  <h2>配置编辑</h2>
+  <div class="panel">
+    <div class="setting">
+      <label>主动弹幕</label>
+      <input type="checkbox" id="proactive_enabled">
+      <span class="desc">启停定时主动发言，下一次触发即生效</span>
+      <input type="number" id="proactive_interval_seconds" min="5" max="3600" step="1">
+      <span class="muted">秒</span>
+      <button id="proactive-save" class="primary" onclick="saveProactive()">保存</button>
+      <span class="pill" id="proactive-pill">—</span>
+    </div>
+    <div class="setting">
+      <label>送礼开关</label>
+      <input type="checkbox" id="gift_enabled">
+      <span class="desc">ReAct 送礼副作用总开关；关闭后工具直接拒绝</span>
+      <button class="primary" onclick="saveGift()">保存</button>
+      <span class="pill" id="gift-pill">—</span>
+    </div>
+    <div class="setting">
+      <label>记忆冻结</label>
+      <input type="checkbox" id="memory_frozen">
+      <span class="desc">冻结后提炼 worker 只读不写，无需重启</span>
+      <button class="primary" onclick="saveMemory()">保存</button>
+      <span class="pill" id="memory-pill">—</span>
+    </div>
+    <div class="setting">
+      <label>知识热重载</label>
+      <input type="checkbox" id="hot_reload_enabled">
+      <span class="desc">轮询知识目录变化并重载快照</span>
+      <button id="hot-save" class="primary" onclick="saveHotReload()">保存</button>
+      <span class="pill" id="hot-pill">—</span>
+    </div>
+    <div class="setting">
+      <label>梗白学习</label>
+      <input type="checkbox" id="meme_learn_enabled">
+      <span class="desc">从近期弹幕学习梗词并写入 learned.md</span>
+      <button id="meme-save" class="primary" onclick="saveMemeLearn()">保存</button>
+      <span class="pill" id="meme-pill">—</span>
+    </div>
+    <div class="muted" style="margin-top:10px">所有写操作都带 confirm=yes；未知字段或不合法取值会被服务端拒绝。</div>
+  </div>
+
+  <h2>Watchdog 状态</h2>
+  <div class="panel">
+    <div class="kv" id="wd-kv"></div>
+    <table>
+      <thead><tr><th>时间</th><th>原因</th><th>PID</th></tr></thead>
+      <tbody id="wd-rows"></tbody>
+    </table>
+  </div>
+  <div class="msg" id="msg"></div>
+</main>
+<script>
+function esc(s) {
+  return (s || '').replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+function when(iso) {
+  if (!iso) return '—';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return esc(iso);
+  return d.toLocaleString('zh-CN', { hour12: false });
+}
+function say(text, ok) {
+  var box = document.getElementById('msg');
+  box.className = 'msg ' + (ok ? 'ok' : 'bad');
+  box.textContent = text;
+}
+function pill(el, ok, label) {
+  el.className = 'pill ' + (ok ? 'ok' : 'bad');
+  el.textContent = label;
+}
+function render(data) {
+  var p = data.proactive || {}, g = data.gift || {}, m = data.memory || {};
+  var h = data.hot_reload || {}, ml = data.meme_learn || {};
+  var proactiveOk = p.available !== false, hotOk = h.available !== false, memeOk = ml.available !== false;
+  document.getElementById('proactive_enabled').disabled = !proactiveOk;
+  document.getElementById('proactive_interval_seconds').disabled = !proactiveOk;
+  document.getElementById('proactive-save').disabled = !proactiveOk;
+  document.getElementById('hot_reload_enabled').disabled = !hotOk;
+  document.getElementById('hot-save').disabled = !hotOk;
+  document.getElementById('meme_learn_enabled').disabled = !memeOk;
+  document.getElementById('meme-save').disabled = !memeOk;
+  if (!dirtyConfig) {
+    document.getElementById('proactive_enabled').checked = !!p.enabled;
+    if (p.interval_seconds) { document.getElementById('proactive_interval_seconds').value = p.interval_seconds; }
+    document.getElementById('gift_enabled').checked = !!g.enabled;
+    document.getElementById('memory_frozen').checked = !!m.frozen;
+    document.getElementById('hot_reload_enabled').checked = !!h.enabled;
+    document.getElementById('meme_learn_enabled').checked = !!ml.enabled;
+  }
+  if (!proactiveOk) { pill(document.getElementById('proactive-pill'), false, '未装配'); }
+  else { pill(document.getElementById('proactive-pill'), !!p.running, p.running ? '运行中' : (p.enabled ? '已启用未运行' : '已停止')); }
+  document.getElementById('gift-pill').textContent = '今日已用 ' + (g.used || 0) + '/' + (g.daily_limit || 0);
+  pill(document.getElementById('memory-pill'), !!m.frozen, m.frozen ? '已冻结' : '正常');
+  if (!hotOk) { pill(document.getElementById('hot-pill'), false, '未装配'); }
+  else { pill(document.getElementById('hot-pill'), !!h.running, h.running ? '运行中' : (h.enabled ? '已启用未运行' : '已停止')); }
+  if (!memeOk) { pill(document.getElementById('meme-pill'), false, '未装配'); }
+  else { pill(document.getElementById('meme-pill'), !!ml.running, ml.running ? '运行中' : (ml.enabled ? '已启用未运行' : '已停止')); }
+}
+async function load() {
+  var r = await fetch('/api/config');
+  if (!r.ok) { say('运行时控制未启用', false); return; }
+  render(await r.json());
+  var w = await fetch('/api/watchdog');
+  if (w.ok) { renderWatchdog(await w.json()); }
+}
+function renderWatchdog(d) {
+  var hb = d.heartbeat || {};
+  document.getElementById('wd-kv').innerHTML =
+    '<div>看门狗：<b>' + (d.enabled ? '启用' : '关闭') + '</b></div>' +
+    '<div>心跳：<b>' + (hb.exists ? when(hb.at) : '无') + '</b></div>' +
+    '<div>心跳年龄：<b>' + (hb.exists ? hb.age_seconds + ' 秒' : '—') + '</b></div>' +
+    '<div>心跳状态：<b>' + (hb.exists ? (hb.stale ? '已过期' : '正常') : '—') + '</b></div>' +
+    '<div>过期阈值：<b>' + (d.stale_seconds || 0) + ' 秒</b></div>' +
+    '<div>重启命令：<b>' + (d.restart_command_configured ? '已配置' : '未配置') + '</b></div>' +
+    (d.error ? '<div style="color:var(--bad)">' + esc(d.error) + '</div>' : '');
+  var rows = d.restarts || [];
+  document.getElementById('wd-rows').innerHTML = rows.length ? rows.map(function (r) {
+    return '<tr><td class="muted">' + when(r.at) + '</td><td>' + esc(r.reason) + '</td><td class="muted">' + (r.pid || '—') + '</td></tr>';
+  }).join('') : '<tr><td colspan="3" class="muted">暂无重启记录</td></tr>';
+}
+async function update(field, value) {
+  var r = await fetch('/api/config?confirm=yes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ field: field, value: value })
+  });
+  var d = await r.json().catch(function () { return {}; });
+  if (!r.ok) { say(d.error || ('操作失败：' + r.status), false); return; }
+  dirtyConfig = false;
+  render(d);
+  say('已生效', true);
+}
+function saveProactive() {
+  var enabled = document.getElementById('proactive_enabled').checked;
+  var interval = Number(document.getElementById('proactive_interval_seconds').value) || 0;
+  update('proactive_enabled', enabled).then(function () {
+    if (interval >= 5) { update('proactive_interval_seconds', interval); }
+  });
+}
+function saveGift() { update('gift_enabled', document.getElementById('gift_enabled').checked); }
+function saveMemory() { update('memory_frozen', document.getElementById('memory_frozen').checked); }
+function saveHotReload() { update('hot_reload_enabled', document.getElementById('hot_reload_enabled').checked); }
+function saveMemeLearn() { update('meme_learn_enabled', document.getElementById('meme_learn_enabled').checked); }
+// 自动刷新不能覆盖用户尚未保存的改动。
+var dirtyConfig = false;
+['proactive_enabled', 'proactive_interval_seconds', 'gift_enabled', 'memory_frozen', 'hot_reload_enabled', 'meme_learn_enabled'].forEach(function (id) {
+  document.getElementById(id).addEventListener('change', function () { dirtyConfig = true; });
+});
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>

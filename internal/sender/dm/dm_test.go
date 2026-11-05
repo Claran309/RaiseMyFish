@@ -203,3 +203,29 @@ func TestResumeNotRetried(t *testing.T) {
 		t.Error("Resume 应返回错误（不重投）")
 	}
 }
+
+// TestSetAllowedMIDsHotUpdate 面板热更新：新名单立即生效，旧名单成员被拒。
+func TestSetAllowedMIDsHotUpdate(t *testing.T) {
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	s, _, _ := newSender(t, &now)
+
+	if err := s.SetAllowedMIDs([]string{"888", "999"}); err != nil {
+		t.Fatalf("更新白名单失败：%v", err)
+	}
+	if _, err := s.Send(context.Background(), claimFor("777"), sender.Reply{Text: "你好"}); err == nil {
+		t.Error("旧白名单成员应被拒绝")
+	}
+	if _, err := s.Send(context.Background(), claimFor("888"), sender.Reply{Text: "你好"}); err != nil {
+		t.Errorf("新白名单成员应放行：%v", err)
+	}
+
+	if err := s.SetAllowedMIDs(nil); err == nil {
+		t.Error("空名单应拒绝")
+	}
+	if err := s.SetAllowedMIDs([]string{"abc"}); err == nil {
+		t.Error("非数字 mid 应拒绝")
+	}
+	if !s.allowedMID("888") {
+		t.Error("非法更新不应破坏原名单")
+	}
+}

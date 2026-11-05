@@ -44,11 +44,11 @@ func scanKnowledgeStamp(dir string) knowledgeStamp {
 	return stamp
 }
 
-// startKnowledgeHotReload 起一个轮询 goroutine；返回 stop 函数（等待退出）。
+// startKnowledgeHotReload 起一个轮询 goroutine；返回 stop 函数（取消并等待退出）。
 //
-// 未开启、reader 为 nil、目录为空时直接返回空 stop（调用方无需判断）。
+// reader 为 nil 或目录为空时直接返回空 stop；是否启用由调用方（运行时控制面）决定。
 func startKnowledgeHotReload(ctx context.Context, reader *knowledge.FileReader, cfg config.Knowledge, log *zap.Logger) func() {
-	if reader == nil || !cfg.HotReload || cfg.Dir == "" || log == nil {
+	if reader == nil || cfg.Dir == "" || log == nil {
 		return func() {}
 	}
 	interval := time.Duration(cfg.ReloadIntervalSeconds) * time.Second
@@ -56,6 +56,7 @@ func startKnowledgeHotReload(ctx context.Context, reader *knowledge.FileReader, 
 		interval = 30 * time.Second
 	}
 	last := scanKnowledgeStamp(cfg.Dir)
+	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -63,14 +64,14 @@ func startKnowledgeHotReload(ctx context.Context, reader *knowledge.FileReader, 
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-runCtx.Done():
 				return
 			case <-ticker.C:
 				stamp := scanKnowledgeStamp(cfg.Dir)
 				if stamp == last {
 					continue
 				}
-				if err := reader.Reload(ctx); err != nil {
+				if err := reader.Reload(runCtx); err != nil {
 					// 失败保留旧快照：下次再试
 					log.Warn("知识热重载失败，继续使用旧快照",
 						zap.String("action", "knowledge_reload"),
@@ -84,6 +85,7 @@ func startKnowledgeHotReload(ctx context.Context, reader *knowledge.FileReader, 
 		}
 	}()
 	return func() {
+		cancel()
 		<-done
 	}
 }

@@ -13,7 +13,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -51,6 +53,8 @@ type Options struct {
 	Cooldown time.Duration
 	// RestartCommand 是重启命令（如 systemctl restart fishd）。
 	RestartCommand string
+	// HistoryPath 是重启历史 JSONL 文件；空表示不落盘。
+	HistoryPath string
 	// RestartTimeout 是重启命令的执行上限（默认 60s），防止命令挂死拖住看门狗。
 	RestartTimeout time.Duration
 	// Now 可注入时钟。
@@ -193,6 +197,7 @@ func (w *Watchdog) Check(ctx context.Context) CheckResult {
 		// 命令失败也进入冷却：否则每个检查周期都会反复执行失败的命令。
 		w.lastAttempt = now
 		res.Reason = "重启命令执行失败"
+		w.record(RestartRecord{At: now.UTC(), Verdict: verdict, PID: pid, OK: false, Restarts: w.restarts, Reason: "restart_failed"})
 		w.opts.Log.Error("看门狗重启失败",
 			zap.String("action", "watchdog_restart_failed"),
 			zap.String("verdict", string(verdict)),
@@ -207,6 +212,7 @@ func (w *Watchdog) Check(ctx context.Context) CheckResult {
 	w.restarts++
 	res.Restarted = true
 	res.Reason = "已重启"
+	w.record(RestartRecord{At: now.UTC(), Verdict: verdict, PID: pid, OK: true, Restarts: w.restarts})
 	w.opts.Log.Error("看门狗已重启 fishd",
 		zap.String("action", "watchdog_restart"),
 		zap.String("verdict", string(verdict)),
@@ -278,6 +284,108 @@ func (w *Watchdog) Run(ctx context.Context) error {
 			w.Check(ctx)
 		}
 	}
+}
+
+// RestartRecord 是一次重启尝试的历史记录。
+type RestartRecord struct {
+	At       time.Time `json:"at"`
+	Verdict  Verdict   `json:"verdict"`
+	PID      int       `json:"pid"`
+	OK       bool      `json:"ok"`
+	Restarts int       `json:"restarts"`
+	Reason   string    `json:"reason,omitempty"`
+}
+
+// record 追加一条重启历史；写失败只告警，不影响重启流程。
+func (w *Watchdog) record(rec RestartRecord) {
+	if w.opts.HistoryPath == "" {
+		return
+	}
+	if err := AppendHistory(w.opts.HistoryPath, rec); err != nil {
+		w.opts.Log.Warn("看门狗重启历史写入失败",
+			zap.String("action", "watchdog_history"),
+			zap.Error(err),
+		)
+	}
+}
+
+// AppendHistory 追加一条 JSONL 历史记录（目录自动创建，文件权限 0600）。
+func AppendHistory(path string, rec RestartRecord) error {
+	if dir := dirOf(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return fmt.Errorf("创建看门狗历史目录：%w", err)
+		}
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("打开看门狗历史：%w", err)
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		_ = file.Close()
+		return errors.New("编码看门狗历史失败")
+	}
+	data = append(data, '\n')
+	_, writeErr := file.Write(data)
+	closeErr := file.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		return fmt.Errorf("写看门狗历史：%w", err)
+	}
+	return nil
+}
+
+// ReadHistory 读取最近 limit 条重启记录（新的在前）。
+//
+// 只读文件尾部 256KB，避免历史文件无限增长时把内存吃满；
+// 文件不存在返回空列表，不视为错误。
+func ReadHistory(path string, limit int) ([]RestartRecord, error) {
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if path == "" {
+		return nil, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("打开看门狗历史：%w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("读取看门狗历史大小：%w", err)
+	}
+	const maxTail = 256 << 10
+	offset := int64(0)
+	if info.Size() > maxTail {
+		offset = info.Size() - maxTail
+	}
+	if _, err := file.Seek(offset, 0); err != nil {
+		return nil, fmt.Errorf("定位看门狗历史：%w", err)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxTail))
+	if err != nil {
+		return nil, fmt.Errorf("读取看门狗历史：%w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	out := make([]RestartRecord, 0, limit)
+	for i := len(lines) - 1; i >= 0 && len(out) < limit; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		var rec RestartRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue // 截断的半行或坏行直接跳过
+		}
+		out = append(out, rec)
+	}
+	return out, nil
 }
 
 // WriteHeartbeat 原子写心跳（临时文件 + rename）。

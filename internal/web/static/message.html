@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>消息 · 大肥鱼面板</title>
+<style>
+:root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.6 -apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header b{font-size:15px}
+nav a{color:var(--muted);text-decoration:none;margin-right:14px}
+nav a.on{color:var(--accent)}
+main{padding:20px;max-width:1180px;margin:0 auto}
+h2{font-size:13px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;margin:20px 0 10px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+@media (max-width:900px){.cols{grid-template-columns:1fr}}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+textarea{width:100%;min-height:76px;background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:8px;font:12px/1.5 ui-monospace,Consolas,monospace;resize:vertical}
+button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 12px;font:inherit;cursor:pointer}
+button.primary{border-color:var(--accent);color:var(--accent)}
+.pill{font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.pill.ok{color:var(--ok);border-color:#1d3a26;background:#0f1a12}
+.pill.bad{color:var(--bad);border-color:#3a1d1d;background:#1a0f0f}
+.muted{color:var(--muted);font-size:12px}
+table{width:100%;border-collapse:collapse}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:12px}
+th{color:var(--muted);font-weight:500}
+.msg{margin-top:12px;font-size:12px}
+.msg.bad{color:var(--bad)}.msg.ok{color:var(--ok)}
+.rowline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+</style>
+</head>
+<body>
+<header>
+  <b>🐟 大肥鱼面板</b>
+  <nav><a href="/">概览</a><a href="/live">直播</a><a class="on" href="/message">消息</a><a href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
+</header>
+<main>
+  <h2>消息管理</h2>
+  <div class="cols">
+    <section>
+      <h2>评论监听</h2>
+      <div class="panel">
+        <div class="rowline">
+          <span id="comment-pill" class="pill">检测中…</span>
+          <span style="flex:1"></span>
+          <button id="comment-btn" class="primary" onclick="toggleComment()">启停评论监听</button>
+        </div>
+        <div class="muted">视频 oid 列表（每行或逗号分隔，必须是纯数字）：</div>
+        <textarea id="videos" oninput="dirtyVideos=true" placeholder="例如：&#10;123456&#10;789012"></textarea>
+        <div class="rowline" style="margin-top:8px">
+          <button id="videos-save" onclick="saveVideos()">保存视频 oid 并重启监听</button>
+          <span class="muted" id="comment-sub"></span>
+        </div>
+      </div>
+
+      <h2>最近评论</h2>
+      <div class="panel">
+        <table>
+          <thead><tr><th>时间</th><th>方向</th><th>来自</th><th>内容</th><th>状态</th></tr></thead>
+          <tbody id="comment-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>私信监听</h2>
+      <div class="panel">
+        <div class="rowline">
+          <span id="dm-pill" class="pill">检测中…</span>
+          <span style="flex:1"></span>
+          <button id="dm-btn" class="primary" onclick="toggleDM()">启停私信监听</button>
+        </div>
+        <div class="muted">私信白名单 mid（每行或逗号分隔；主人始终保留）：</div>
+        <textarea id="mids" oninput="dirtyMIDs=true" placeholder="例如：&#10;313591854"></textarea>
+        <div class="rowline" style="margin-top:8px">
+          <button id="mids-save" onclick="saveMIDs()">保存白名单</button>
+          <span class="muted" id="dm-sub"></span>
+        </div>
+      </div>
+
+      <h2>最近私信</h2>
+      <div class="panel">
+        <table>
+          <thead><tr><th>时间</th><th>方向</th><th>来自</th><th>内容</th><th>状态</th></tr></thead>
+          <tbody id="dm-rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+  <div class="msg" id="msg"></div>
+</main>
+<script>
+var state = null;
+// 自动刷新不能覆盖用户正在编辑的列表；保存成功后再恢复同步。
+var dirtyVideos = false;
+var dirtyMIDs = false;
+function esc(s) {
+  return (s || '').replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+function splitList(text) {
+  return (text || '').split(/[\s,，]+/).filter(function (v) { return v.length > 0; });
+}
+function say(text, ok) {
+  var box = document.getElementById('msg');
+  box.className = 'msg ' + (ok ? 'ok' : 'bad');
+  box.textContent = text;
+}
+function pill(el, ok, label) {
+  el.className = 'pill ' + (ok ? 'ok' : 'bad');
+  el.textContent = label;
+}
+function render() {
+  if (!state) return;
+  var comment = state.comment || {}, dm = state.dm || {};
+  var cp = document.getElementById('comment-pill');
+  var commentAvailable = comment.available !== false;
+  if (!commentAvailable) { pill(cp, false, '未装配'); }
+  else { pill(cp, !!comment.running, comment.running ? '监听中' : (comment.enabled ? '已启用未运行' : '已停止')); }
+  document.getElementById('comment-btn').textContent = comment.enabled ? '停止评论监听' : '启动评论监听';
+  document.getElementById('comment-btn').disabled = !commentAvailable;
+  document.getElementById('videos').disabled = !commentAvailable;
+  document.getElementById('videos-save').disabled = !commentAvailable;
+  if (!dirtyVideos) { document.getElementById('videos').value = (comment.videos || []).join('\n'); }
+  document.getElementById('comment-sub').textContent = comment.last_error ? ('错误：' + comment.last_error) : (!commentAvailable ? '评论采集未装配' : '');
+
+  var dp = document.getElementById('dm-pill');
+  var dmAvailable = dm.available !== false;
+  if (!dmAvailable) { pill(dp, false, '未装配'); }
+  else { pill(dp, !!dm.running, dm.running ? '监听中' : (dm.enabled ? '已启用未运行' : '已停止')); }
+  document.getElementById('dm-btn').textContent = dm.enabled ? '停止私信监听' : '启动私信监听';
+  document.getElementById('dm-btn').disabled = !dmAvailable;
+  if (!dirtyMIDs) { document.getElementById('mids').value = (dm.allowed_mids || []).join('\n'); }
+  document.getElementById('mids-save').disabled = !dmAvailable || !dm.whitelist_available;
+  document.getElementById('dm-sub').textContent = dm.whitelist_available ? '白名单可热更新' : '私信发送未装配，白名单只读';
+}
+async function load() {
+  var r = await fetch('/api/message');
+  if (!r.ok) { say('运行时控制未启用', false); return; }
+  state = await r.json();
+  render();
+  loadRecent('/api/comment/recent', 'comment-rows');
+  loadRecent('/api/dm/recent', 'dm-rows');
+}
+async function loadRecent(path, target) {
+  var d = await (await fetch(path + '?limit=20')).json().catch(function () { return {}; });
+  var items = d.items || [];
+  document.getElementById(target).innerHTML = items.length ? items.map(function (e) {
+    return '<tr><td class="muted">' + esc(e.at) + '</td><td class="muted">' + esc(e.dir) + '</td>' +
+      '<td>' + esc(e.from_name) + '</td><td>' + esc(e.text) + '</td><td class="muted">' + esc(e.status) + '</td></tr>';
+  }).join('') : '<tr><td colspan="5" class="muted">暂无记录</td></tr>';
+}
+async function post(payload) {
+  var r = await fetch('/api/message?confirm=yes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  var d = await r.json().catch(function () { return {}; });
+  if (!r.ok) { say(d.error || ('操作失败：' + r.status), false); return false; }
+  if (d.comment !== undefined) { state = { comment: d.comment, dm: d.dm }; render(); }
+  say('已生效', true);
+  return true;
+}
+async function toggleComment() {
+  if (!state) return;
+  var videos = splitList(document.getElementById('videos').value);
+  if (await post({ action: 'comment', enabled: !state.comment.enabled, videos: videos })) { dirtyVideos = false; }
+}
+async function toggleDM() {
+  if (!state) return;
+  await post({ action: 'dm', enabled: !state.dm.enabled });
+}
+async function saveVideos() {
+  if (!state) return;
+  if (await post({ action: 'comment', enabled: state.comment.enabled, videos: splitList(document.getElementById('videos').value) })) { dirtyVideos = false; }
+}
+async function saveMIDs() {
+  if (!state) return;
+  if (await post({ action: 'dm', enabled: state.dm.enabled, allowed_mids: splitList(document.getElementById('mids').value) })) { dirtyMIDs = false; }
+}
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>

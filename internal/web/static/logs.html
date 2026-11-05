@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>日志 · 大肥鱼面板</title>
+<style>
+:root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.6 -apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:16px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header b{font-size:15px}
+nav a{color:var(--muted);text-decoration:none;margin-right:14px}
+nav a.on{color:var(--accent)}
+.spacer{flex:1}
+main{padding:20px;max-width:1180px;margin:0 auto}
+h2{font-size:13px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;margin:0 0 10px}
+.bar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+input,select,button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+button{cursor:pointer}
+button.on{color:var(--accent);border-color:#1d3a5c;background:#0f1622}
+.muted{color:var(--muted)}
+.tag{font-size:12px;color:var(--muted)}
+.pill{font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.pill.ok{color:var(--ok);border-color:#1d3a26;background:#0f1a12}
+.pill.bad{color:var(--bad);border-color:#3a1d1d;background:#1a0f0f}
+#logbox{background:#0b0d11;border:1px solid var(--line);border-radius:8px;height:calc(100vh - 210px);min-height:320px;overflow:auto;padding:10px 12px;font:12px/1.55 ui-monospace,Consolas,"Cascadia Mono",monospace}
+.line{white-space:pre-wrap;word-break:break-all;border-bottom:1px solid #151a22;padding:3px 0}
+.line:last-child{border-bottom:0}
+.line .t{color:#5d6675;margin-right:8px}
+.line .lv{display:inline-block;min-width:44px;margin-right:8px;font-weight:600}
+.line.info .lv{color:var(--accent)}
+.line.warn .lv{color:var(--warn)}
+.line.error .lv,.line.dpanic .lv{color:var(--bad)}
+.line.debug .lv{color:var(--muted)}
+.line .act{color:#7ee0c0;margin-right:8px}
+.line .f{color:#8b93a1}
+</style>
+</head>
+<body>
+<header>
+  <b>🐟 大肥鱼面板</b>
+  <nav><a href="/">概览</a><a href="/live">直播</a><a href="/message">消息</a><a href="/activity">活动</a><a href="/config">配置</a><a class="on" href="/logs">日志</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
+  <span class="spacer"></span>
+  <span class="pill" id="conn">未连接</span>
+</header>
+<main>
+  <h2>实时日志</h2>
+  <div class="bar">
+    <select id="level">
+      <option value="">全部级别</option>
+      <option value="debug">debug+</option>
+      <option value="info">info+</option>
+      <option value="warn">warn+</option>
+      <option value="error">error+</option>
+    </select>
+    <button id="pause" onclick="togglePause()">暂停</button>
+    <button onclick="clearLog()">清空</button>
+    <button onclick="reconnect()">重新连接</button>
+    <span class="muted tag" id="cnt">0 行</span>
+    <span class="spacer"></span>
+    <span class="muted tag">SSE · /api/logs/stream · 已脱敏，不含凭据</span>
+  </div>
+  <div id="logbox"></div>
+</main>
+<script>
+var box = document.getElementById('logbox');
+var pauseBtn = document.getElementById('pause');
+var paused = false;
+var source = null;
+var total = 0;
+var MAX_LINES = 2000;
+var pending = [];
+
+var RANK = { debug: 0, info: 1, warn: 2, error: 3, dpanic: 4, panic: 5, fatal: 6 };
+function esc(s) {
+  return (s || '').replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+function needLevel(lv) {
+  var min = document.getElementById('level').value;
+  if (!min) return true;
+  return (RANK[lv] || 0) >= (RANK[min] || 0);
+}
+function add(entry) {
+  if (!needLevel(entry.level)) return;
+  var div = document.createElement('div');
+  var lv = esc(entry.level || 'info').toLowerCase();
+  div.className = 'line ' + lv;
+  var fields = '';
+  if (entry.fields) {
+    fields = Object.keys(entry.fields).map(function (k) {
+      return k + '=' + entry.fields[k];
+    }).join(' ');
+  }
+  div.innerHTML = '<span class="t">' + esc(entry.time) + '</span>' +
+    '<span class="lv">' + esc(lv) + '</span>' +
+    '<span class="act">' + esc(entry.action || '') + '</span>' +
+    '<span class="msg">' + esc(entry.msg) + '</span>' +
+    (fields ? ' <span class="f">' + esc(fields) + '</span>' : '');
+  var stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  box.appendChild(div);
+  total++;
+  document.getElementById('cnt').textContent = total + ' 行';
+  while (box.childElementCount > MAX_LINES) {
+    box.removeChild(box.firstElementChild);
+  }
+  if (stick) box.scrollTop = box.scrollHeight;
+}
+function flushPending() {
+  var items = pending;
+  pending = [];
+  items.forEach(add);
+}
+function connect() {
+  if (source) source.close();
+  var conn = document.getElementById('conn');
+  conn.className = 'pill';
+  conn.textContent = '连接中…';
+  source = new EventSource('/api/logs/stream');
+  source.addEventListener('ready', function () {
+    conn.className = 'pill ok';
+    conn.textContent = '已连接';
+  });
+  source.onmessage = function (ev) {
+    var entry;
+    try { entry = JSON.parse(ev.data); } catch (e) { return; }
+    if (paused) { pending.push(entry); if (pending.length > MAX_LINES) pending.shift(); return; }
+    add(entry);
+  };
+  source.onerror = function () {
+    conn.className = 'pill bad';
+    conn.textContent = '连接中断，重试中…';
+  };
+}
+function togglePause() {
+  paused = !paused;
+  pauseBtn.textContent = paused ? '继续' : '暂停';
+  pauseBtn.className = paused ? 'on' : '';
+  if (!paused) flushPending();
+}
+function clearLog() {
+  box.innerHTML = '';
+  pending = [];
+  total = 0;
+  document.getElementById('cnt').textContent = '0 行';
+}
+function reconnect() {
+  pending = [];
+  connect();
+}
+document.getElementById('level').addEventListener('change', function () {
+  box.innerHTML = '';
+  total = 0;
+  document.getElementById('cnt').textContent = '0 行';
+  flushPending();
+});
+connect();
+</script>
+</body>
+</html>

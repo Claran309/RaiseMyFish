@@ -54,6 +54,42 @@ type WebSend struct {
 	At      time.Time
 }
 
+// WebEventDetail 是事件详情：原事件 + 回复计划/尝试。
+//
+// Meta 由数据库以文本形式给出，调用方负责截断/脱敏。
+type WebEventDetail struct {
+	WebEvent
+	FromID    string
+	ReplyTo   string
+	Private   bool
+	Meta      string
+	CreatedAt time.Time
+	Reply     *WebReply
+}
+
+// WebReply 是 send_plans 的只读投影。
+type WebReply struct {
+	ActorID      string
+	RoomID       string
+	Text         string
+	State        string
+	AttemptCount int
+	CreatedAt    time.Time
+	Attempts     []WebAttempt
+}
+
+// WebAttempt 是一次投递尝试。
+type WebAttempt struct {
+	Number    int
+	State     string
+	OK        *bool
+	Verified  bool
+	MsgID     string
+	Evidence  string
+	ErrorKind string
+	CreatedAt time.Time
+}
+
 // WebEmbeddingSection 是单个来源的向量入库进度；知识来源的 Revision 由快照注入。
 type WebEmbeddingSection struct {
 	Total       int64
@@ -83,6 +119,10 @@ type WebRepo interface {
 	ArchiveMemory(ctx context.Context, id string) error
 	// Events 取最近事件（dir 为空表示不筛）。
 	Events(ctx context.Context, dir string, limit int) ([]WebEvent, error)
+	// EventsByChannel 按通道取最近事件（dir 为空表示不筛）。
+	EventsByChannel(ctx context.Context, channel, dir string, limit int) ([]WebEvent, error)
+	// Event 取单条事件详情（含回复计划与尝试）。
+	Event(ctx context.Context, id string) (WebEventDetail, error)
 	// Errors 取最近异常事件（status 为 dead/retry）。
 	Errors(ctx context.Context, limit int) ([]WebEvent, error)
 	// SendLogs 取最近发送记录。

@@ -14,24 +14,26 @@ import (
 )
 
 type harness struct {
-	dir        string
-	path       string
-	clock      time.Time
-	restarts   int
-	attempts   int
-	kills      int
-	restartErr error
-	alive      bool
+	dir         string
+	path        string
+	historyPath string
+	clock       time.Time
+	restarts    int
+	attempts    int
+	kills       int
+	restartErr  error
+	alive       bool
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	dir := t.TempDir()
 	return &harness{
-		dir:   dir,
-		path:  filepath.Join(dir, "fishd.heartbeat"),
-		clock: time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC),
-		alive: true,
+		dir:         dir,
+		path:        filepath.Join(dir, "fishd.heartbeat"),
+		historyPath: filepath.Join(dir, "watchdog-history.jsonl"),
+		clock:       time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC),
+		alive:       true,
 	}
 }
 
@@ -50,6 +52,7 @@ func (h *harness) newDog(t *testing.T, threshold int, cooldown time.Duration) *W
 	t.Helper()
 	dog, err := New(Options{
 		HeartbeatPath:      h.path,
+		HistoryPath:        h.historyPath,
 		Interval:           time.Minute,
 		StaleAfter:         2 * time.Minute,
 		UnhealthyThreshold: threshold,
@@ -292,5 +295,54 @@ func TestNewValidates(t *testing.T) {
 	}
 	if dog.opts.Kill == nil || dog.opts.Restart == nil || dog.opts.PIDAlive == nil {
 		t.Error("进程操作默认实现未注入")
+	}
+}
+
+// TestRestartHistoryPersisted 重启成功/失败都落历史，读取顺序为新的在前。
+func TestRestartHistoryPersisted(t *testing.T) {
+	h := newHarness(t)
+	h.write(t, h.clock.Add(-5*time.Minute), 1234)
+	dog := h.newDog(t, 1, 0)
+	if res := dog.Check(context.Background()); !res.Restarted {
+		t.Fatalf("应触发重启：%+v", res)
+	}
+
+	records, err := ReadHistory(h.historyPath, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || !records[0].OK || records[0].Verdict != VerdictFrozen || records[0].PID != 1234 {
+		t.Fatalf("历史记录不符：%+v", records)
+	}
+
+	h.clock = h.clock.Add(time.Minute)
+	h.restartErr = errors.New("boom")
+	dog.lastAttempt = time.Time{} // 跳过冷却，直接再试
+	if res := dog.Check(context.Background()); res.Restarted {
+		t.Fatalf("重启命令失败不应标记成功：%+v", res)
+	}
+	records, err = ReadHistory(h.historyPath, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[0].OK || records[0].Reason != "restart_failed" {
+		t.Fatalf("失败历史不符：%+v", records)
+	}
+}
+
+// TestReadHistoryMissingAndBadLines 文件不存在返回空；坏行跳过。
+func TestReadHistoryMissingAndBadLines(t *testing.T) {
+	dir := t.TempDir()
+	records, err := ReadHistory(filepath.Join(dir, "none.jsonl"), 5)
+	if err != nil || len(records) != 0 {
+		t.Fatalf("缺失文件应返回空：%v %+v", err, records)
+	}
+	path := filepath.Join(dir, "history.jsonl")
+	if err := os.WriteFile(path, []byte("not-json\n{\"at\":\"2026-11-04T12:00:00Z\",\"verdict\":\"dead\",\"pid\":7,\"ok\":true}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	records, err = ReadHistory(path, 5)
+	if err != nil || len(records) != 1 || records[0].PID != 7 {
+		t.Fatalf("坏行应跳过：%v %+v", err, records)
 	}
 }

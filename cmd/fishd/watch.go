@@ -117,20 +117,29 @@ func startWatch(ctx context.Context, cfg config.Config, logger *zap.Logger) func
 		return noop
 	}
 	interval := time.Duration(cfg.Watch.IntervalSeconds) * time.Second
-	ticker := time.NewTicker(interval)
-	runCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		defer ticker.Stop()
-		runWatch(runCtx, pipeline, ticker.C, time.Now, logger)
-	}()
+	stop := startWatchLoop(ctx, pipeline, interval, logger)
 	logger.Info("看直播已启动",
 		zap.String("action", "watch"),
 		zap.Int("interval_seconds", cfg.Watch.IntervalSeconds),
 		zap.Int("seconds", cfg.Watch.Seconds),
 		zap.Int("frames", cfg.Watch.Frames),
 	)
+	return stop
+}
+
+// startWatchLoop 起定时循环；interval 非正时按 10 分钟兜底。
+func startWatchLoop(ctx context.Context, runner watchRunner, interval time.Duration, logger *zap.Logger) func() {
+	if interval <= 0 {
+		interval = 10 * time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer ticker.Stop()
+		runWatch(runCtx, runner, ticker.C, time.Now, logger)
+	}()
 	return func() {
 		cancel()
 		<-done

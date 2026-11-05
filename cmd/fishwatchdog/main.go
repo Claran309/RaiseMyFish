@@ -64,6 +64,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	dog, err := watchdog.New(watchdog.Options{
 		HeartbeatPath:      w.HeartbeatPath,
+		HistoryPath:        w.HistoryPath,
 		Interval:           time.Duration(w.IntervalSeconds) * time.Second,
 		StaleAfter:         time.Duration(w.StaleSeconds) * time.Second,
 		UnhealthyThreshold: w.UnhealthyThreshold,

@@ -6,6 +6,7 @@ package main
 // 缺 cookie 时不装配采集/发送，只记日志「未配置凭据」。
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -41,6 +42,19 @@ func buildDMCollector(cfg config.Config, log *zap.Logger) (*dmcollector.Collecto
 	if client == nil {
 		return nil, nil
 	}
+	return newDMCollectorWithClient(cfg, client, log)
+}
+
+// newDMCollector 忽略静态启用开关，供面板运行时启停；缺凭据明确报错。
+func newDMCollector(cfg config.Config, log *zap.Logger) (*dmcollector.Collector, error) {
+	client := buildBiliClientForDM(cfg, log)
+	if client == nil {
+		return nil, errors.New("私信采集未装配：未配置可用凭据")
+	}
+	return newDMCollectorWithClient(cfg, client, log)
+}
+
+func newDMCollectorWithClient(cfg config.Config, client *bili.Client, log *zap.Logger) (*dmcollector.Collector, error) {
 	opts := dmcollector.Options{
 		Interval: time.Duration(cfg.Collector.DM.IntervalSeconds) * time.Second,
 		Log:      log,

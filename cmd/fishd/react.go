@@ -189,8 +189,9 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, pa
 // buildReasonerFactory 装配 ReAct：模型走主路由，工具走记忆/知识/状态/历史。
 //
 // viewerSearch 为 nil 时不注册 viewer_search；其余工具照旧。
+// giftGate 是可选的动态送礼开关（面板热更新），nil 时用配置值。
 // 返回 nil 表示不启用（配置关闭、没模型、或一个工具都装不起来）——此时 serve 仍走单步。
-func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, events *database.EventRepo, viewerSearch reasoning.ViewerProfileSearcher, quota reasoning.QuotaSource, exec toolExecutors, usage store.UsageRepo, log *zap.Logger) (reactFactory, error) {
+func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, events *database.EventRepo, viewerSearch reasoning.ViewerProfileSearcher, quota reasoning.QuotaSource, exec toolExecutors, usage store.UsageRepo, giftGate func() bool, log *zap.Logger) (reactFactory, error) {
 	if !cfg.Reasoning.Enabled {
 		log.Info("ReAct 未启用（配置关闭）", zap.String("action", "react_disabled"))
 		return nil, nil
@@ -243,7 +244,7 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 		boxes := []*reasoning.Toolbox{recall, readonly}
 		// 副作用 5 个：默认关；关了就不注册，模型连选项都看不见
 		if cfg.Reasoning.AllowSideEffectTools {
-			side, err := reasoning.BuildSideEffectTools(sideEffectDeps(cfg, quota, exec, scope.Session, log))
+			side, err := reasoning.BuildSideEffectTools(sideEffectDeps(cfg, quota, exec, scope.Session, giftGate, log))
 			if err != nil {
 				return nil, err
 			}

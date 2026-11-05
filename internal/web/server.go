@@ -64,6 +64,10 @@ type Options struct {
 	KnowledgeInfo KnowledgeInfo
 	// Accounts 可选：账号管理服务；nil 时 /accounts 接口返回 503。
 	Accounts AccountService
+	// Control 可选：运行时控制面；nil 时控制类接口返回 503。
+	Control RuntimeController
+	// Logs 可选：日志读取口；nil 时日志接口返回 503。
+	Logs LogSource
 }
 
 // Server 是面板本体。
@@ -74,6 +78,8 @@ type Server struct {
 	now           func() time.Time
 	knowledgeInfo KnowledgeInfo
 	accounts      AccountService
+	control       RuntimeController
+	logs          LogSource
 }
 
 // New 校验地址与依赖；非回环地址直接拒绝。
@@ -95,7 +101,7 @@ func New(o Options) (*Server, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Server{addr: addr, repo: o.Repo, log: o.Log, now: now, knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts}, nil
+	return &Server{addr: addr, repo: o.Repo, log: o.Log, now: now, knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts, control: o.Control, logs: o.Logs}, nil
 }
 
 // ValidateAddr 只允许回环监听，避免把运维面板暴露到公网。
@@ -129,10 +135,22 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/memory", s.handleMemory)
 	mux.HandleFunc("/api/memory/", s.handleMemoryDelete)
 	mux.HandleFunc("/api/events", s.handleEvents)
+	mux.HandleFunc("/api/events/", s.handleEventDetail)
+	mux.HandleFunc("/api/comment/recent", s.handleCommentRecent)
+	mux.HandleFunc("/api/dm/recent", s.handleDMRecent)
 	mux.HandleFunc("/api/errors", s.handleErrors)
 	mux.HandleFunc("/api/send_log", s.handleSendLog)
 	mux.HandleFunc("/api/accounts", s.handleAccounts)
 	mux.HandleFunc("/api/accounts/", s.handleAccountAction)
+	mux.HandleFunc("/api/live", s.handleLive)
+	mux.HandleFunc("/api/message", s.handleMessage)
+	mux.HandleFunc("/api/config", s.handleConfig)
+	mux.HandleFunc("/api/watchdog", s.handleWatchdog)
+	mux.HandleFunc("/api/logs/stream", s.handleLogsStream)
+	mux.HandleFunc("/api/gift/log", s.handleGiftLog)
+	mux.HandleFunc("/api/gift/quota", s.handleGiftQuota)
+	mux.HandleFunc("/api/proactive/log", s.handleProactiveLog)
+	mux.HandleFunc("/api/like/log", s.handleLikeLog)
 	mux.HandleFunc("/", s.handlePage)
 	return mux
 }
@@ -182,6 +200,14 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		name = "static/activity.html"
 	case "/accounts":
 		name = "static/accounts.html"
+	case "/live":
+		name = "static/live.html"
+	case "/message":
+		name = "static/message.html"
+	case "/config":
+		name = "static/config.html"
+	case "/logs":
+		name = "static/logs.html"
 	default:
 		http.NotFound(w, r)
 		return
