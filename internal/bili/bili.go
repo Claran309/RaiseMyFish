@@ -402,6 +402,17 @@ func (c *Client) do(ctx context.Context, op, method, endpoint string, form url.V
 	return c.send(ctx, cred, op, method, endpoint, form, out)
 }
 
+// refererFor 按接口来源返回对应 Referer。
+//
+// B站按 Referer 校验来源：直播接口要求 live.bilibili.com，空间/用户主页接口
+// 要求 space.bilibili.com；用错来源会被风控返回 412（实测 space_videos）。
+func refererFor(op string) string {
+	if strings.HasPrefix(op, "space_") || op == "wbi_keys" {
+		return "https://space.bilibili.com/"
+	}
+	return "https://live.bilibili.com/"
+}
+
 // send 用给定凭据发一次请求并解析 code。
 func (c *Client) send(ctx context.Context, cred credential, op, method, endpoint string, form url.Values, out any) error {
 	var body io.Reader
@@ -413,7 +424,7 @@ func (c *Client) send(ctx context.Context, cred credential, op, method, endpoint
 		return &Error{Op: op, Cause: errors.New("构造请求失败")}
 	}
 	req.Header.Set("Cookie", cred.cookie)
-	req.Header.Set("Referer", "https://live.bilibili.com/")
+	req.Header.Set("Referer", refererFor(op))
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) RaiseMyFish/0.22")
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
