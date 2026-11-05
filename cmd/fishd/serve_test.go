@@ -1522,57 +1522,61 @@ func TestGeneratePresenceClearsReplyingOnBrainFailure(t *testing.T) {
 	}
 }
 
-// TestBrainStatePresencePriority Presence 的实时房间优先于配置，且不把配置主播名串到别的房间。
-func TestBrainStatePresencePriority(t *testing.T) {
+// TestBrainStateUsesCollectorRoom 只有当前采集房间进入状态；旧 Presence/配置不得串台。
+func TestBrainStateUsesCollectorRoom(t *testing.T) {
 	watch := config.Watch{CurrentRoom: "111", StreamerName: "甲"}
-	got := brainState([]presence.State{{Kind: presence.KindWatching, Detail: "222"}}, watch)
+	got := brainState("222", watch)
 	if !strings.Contains(got, "222") || strings.Contains(got, "111") || strings.Contains(got, "甲") {
-		t.Fatalf("Presence 未优先或串台：%q", got)
+		t.Fatalf("状态未按采集房间对齐：%q", got)
 	}
-}
-
-// TestBrainStateMatchesConfiguredStreamer 房间与配置一致时带上主播名。
-func TestBrainStateMatchesConfiguredStreamer(t *testing.T) {
-	watch := config.Watch{CurrentRoom: "1992099976", StreamerName: "娇娇"}
-	active := []presence.State{{Kind: presence.KindWatching, Detail: "1992099976"}}
 	want := "你正在看娇娇（房间 1992099976）的直播，你在她弹幕区发弹幕"
-	if got := brainState(active, watch); got != want {
-		t.Fatalf("状态摘要 = %q，期望 %q", got, want)
+	if got := brainState("1992099976", config.Watch{CurrentRoom: "1992099976", StreamerName: "娇娇"}); got != want {
+		t.Fatalf("同房间主播名丢失：%q", got)
+	}
+	// 未采集或异常房间号不声称在看直播，也不回落到 [watch] 配置。
+	for _, room := range []string{"", "bad<room>", "0"} {
+		if got := brainState(room, watch); got != "" {
+			t.Fatalf("未采集房间 %q 生成状态：%q", room, got)
+		}
 	}
 }
 
-// TestBrainStateConfigFallback 无 watching 时用配置兜底；无配置返回空。
-func TestBrainStateConfigFallback(t *testing.T) {
+// TestBrainStateSourceReadsCurrentRoom 状态源随时间读取权威房间，切换/停止后不残留。
+func TestBrainStateSourceReadsCurrentRoom(t *testing.T) {
+	rooms := &liveRoomState{}
 	watch := config.Watch{CurrentRoom: "1992099976", StreamerName: "娇娇"}
-	if got, want := brainState(nil, watch), "你正在看娇娇（房间 1992099976）的直播"; got != want {
-		t.Fatalf("配置兜底 = %q，期望 %q", got, want)
+	source := brainStateSource(rooms.Current, watch)
+	if got := source(time.Now()); got != "" {
+		t.Fatalf("未采集却有状态：%q", got)
 	}
-	if got := brainState(nil, config.Watch{}); got != "" {
-		t.Fatalf("无配置兜底 = %q，期望空", got)
+	rooms.Set("1992099976")
+	if got, want := source(time.Now()), "你正在看娇娇（房间 1992099976）的直播，你在她弹幕区发弹幕"; got != want {
+		t.Fatalf("状态 = %q，期望 %q", got, want)
 	}
-	// replying/sending 不是观看状态，不能生成「在看」摘要。
-	active := []presence.State{{Kind: presence.KindReplying, Detail: "1992099976"}}
-	if got := brainState(active, config.Watch{}); got != "" {
-		t.Fatalf("非 watching 状态生成了摘要：%q", got)
+	rooms.Set("333")
+	if got := source(time.Now()); !strings.Contains(got, "333") || strings.Contains(got, "娇娇") {
+		t.Fatalf("切房后仍串台：%q", got)
 	}
-	// 异常房间号不能经 Presence 进入 prompt，退回配置兜底。
-	active = []presence.State{{Kind: presence.KindWatching, Detail: "bad<room>"}}
-	if got, want := brainState(active, watch), "你正在看娇娇（房间 1992099976）的直播"; got != want {
-		t.Fatalf("异常房间号未退回配置兜底：%q，期望 %q", got, want)
+	rooms.Clear()
+	if got := source(time.Now()); got != "" {
+		t.Fatalf("停止采集仍声称在看：%q", got)
+	}
+	if got := brainStateSource(nil, watch)(time.Now()); got != "" {
+		t.Fatalf("空读取器生成：%q", got)
 	}
 }
 
-// TestGenerateInjectsPresenceState Generate 把 Presence 的 watching 注入 Brain。
-func TestGenerateInjectsPresenceState(t *testing.T) {
+// TestGenerateInjectsCollectorRoomState Generate 把当前采集房间注入 Brain。
+func TestGenerateInjectsCollectorRoomState(t *testing.T) {
 	const id = "live:30308220:9401"
 	bus := newFakeBus(id)
-	table := presence.NewTable()
-	table.Set(presence.State{Kind: presence.KindWatching, Channel: string(event.ChLive), Detail: "1992099976", TTL: time.Hour})
+	rooms := &liveRoomState{}
+	rooms.Set("1992099976")
 	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
 	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
 	watch := config.Watch{CurrentRoom: "1992099976", StreamerName: "娇娇"}
 
-	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", table, brainStateSource(table, watch), nil, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, brainStateSource(rooms.Current, watch), nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -1587,35 +1591,38 @@ func TestGenerateInjectsPresenceState(t *testing.T) {
 	}
 }
 
-// TestGenerateStateConfigFallback 无 Presence 时 Generate 仍能用配置兜底。
-func TestGenerateStateConfigFallback(t *testing.T) {
+// TestGenerateStateIgnoresStalePresence 旧 Presence 的 watching 不再进入状态。
+func TestGenerateStateIgnoresStalePresence(t *testing.T) {
 	const id = "live:30308220:9402"
 	bus := newFakeBus(id)
 	table := presence.NewTable()
+	table.Set(presence.State{Kind: presence.KindWatching, Channel: string(event.ChLive), Detail: "111", TTL: time.Hour})
+	rooms := &liveRoomState{}
+	rooms.Set("1992099976")
 	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
 	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
-	watch := config.Watch{CurrentRoom: "1992099976", StreamerName: "娇娇"}
+	watch := config.Watch{CurrentRoom: "111", StreamerName: "旧主播"}
 
-	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", table, brainStateSource(table, watch), nil, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", table, brainStateSource(rooms.Current, watch), nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
 	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
 		t.Fatalf("Generate 失败：%v", err)
 	}
-	if want := "你正在看娇娇（房间 1992099976）的直播"; engine.gotInput.State != want {
-		t.Fatalf("ContextInput.State = %q，期望 %q", engine.gotInput.State, want)
+	if !strings.Contains(engine.gotInput.State, "1992099976") || strings.Contains(engine.gotInput.State, "111") || strings.Contains(engine.gotInput.State, "旧主播") {
+		t.Fatalf("ContextInput.State = %q，旧房间/旧主播串台", engine.gotInput.State)
 	}
 }
 
-// TestGenerateStateEmptyWithoutPresenceOrConfig 无状态来源时 State 保持空，不伪造身份。
-func TestGenerateStateEmptyWithoutPresenceOrConfig(t *testing.T) {
+// TestGenerateStateEmptyUntilCollecting 未采集时 State 保持空，不伪造身份。
+func TestGenerateStateEmptyUntilCollecting(t *testing.T) {
 	const id = "live:30308220:9403"
 	bus := newFakeBus(id)
 	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
 	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
 
-	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, brainStateSource(nil, config.Watch{}), nil, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, brainStateSource(nil, config.Watch{CurrentRoom: "1992099976", StreamerName: "娇娇"}), nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -1812,13 +1819,13 @@ func TestShouldUseReActByDefault(t *testing.T) {
 		want bool
 	}{
 		{"好", true},          // 全量 ReAct：1 字也走
-		{"在吗", true},        // 全量 ReAct：短句也走
-		{"哈哈哈", true},       // 3 字短句也走
-		{"主播好", true},       // 3 字
-		{"草草草草草", true},     // 5 字
-		{"草草草草草草", true},    // 6 字
-		{"今天吃什么好吃的", true},  // 无召回词表也走
-		{"晚安", true},        // 2 字
+		{"在吗", true},         // 全量 ReAct：短句也走
+		{"哈哈哈", true},        // 3 字短句也走
+		{"主播好", true},        // 3 字
+		{"草草草草草", true},      // 5 字
+		{"草草草草草草", true},     // 6 字
+		{"今天吃什么好吃的", true},   // 无召回词表也走
+		{"晚安", true},         // 2 字
 		{"刚才那个梗是什么意思", true}, // 长句
 	}
 	for _, tc := range cases {

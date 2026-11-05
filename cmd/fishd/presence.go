@@ -4,11 +4,54 @@ package main
 
 import (
 	"context"
+	"strings"
+	"sync"
 
 	"RaiseMyFish/internal/collector"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/presence"
 )
+
+// liveRoomState 记录当前 live 采集房间；空串表示没有在采集。
+// 它是状态注入的唯一权威来源，避免 Presence 的 TTL 残留或 [watch] 旧配置串台。
+type liveRoomState struct {
+	mu   sync.RWMutex
+	room string
+}
+
+func (s *liveRoomState) Set(room string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.room = strings.TrimSpace(room)
+	s.mu.Unlock()
+}
+
+func (s *liveRoomState) Clear() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.room = ""
+	s.mu.Unlock()
+}
+
+func (s *liveRoomState) Current() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.room
+}
+
+// resetWatching 清掉上一个采集房间留下的 watching，防止 TTL 内继续被当成「正在看」。
+func resetWatching(table *presence.Table) {
+	if table != nil {
+		table.Clear(presence.KindWatching, string(event.ChLive))
+	}
+}
 
 // presencePublisher 在采集事件转发前记录「正在看直播」。
 type presencePublisher struct {

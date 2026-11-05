@@ -22,6 +22,7 @@
 | 18 | [reference-projects.md](reference-projects.md) | 既有项目参考（lanmei-dream / ClaranAIM / ClaranCloudDisk） | ✅ |
 | 19 | [knowledge.md](knowledge.md) | 知识库与 RAG：人格/知识/记忆分层、K0/K1/K2 阶段 | ✅ |
 | 20 | [presence.md](presence.md) | Presence 三心二意状态表：主体/会话分离、状态注册表、租约 | ✅ |
+| 21 | [2026-11-05 全项目审查与弹幕回复改进设计](reviews/2026-11-05-project-review-and-improvement-design.md) | 用户截图/归档问题对照、源码缺陷、上下文/认人/记忆方案、跨通道与运维、任务和验收矩阵 | 审查与建议，未实施 |
 
 契约文档：`../contracts/`（event / collector / sender / brain）
 

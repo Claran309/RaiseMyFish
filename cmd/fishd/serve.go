@@ -334,7 +334,7 @@ func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExe
 // buildConsume 装配消费循环；未启用（无 [scheduler] / 无 Brain 路由 / 通道关闭）时返回 nil。
 // 返回的发送器与消费循环共用同一实例，供通道注册表复用（同一限流与暂停状态）。
 // dmWhitelist 在未装配私信发送时为 nil；giftGate 为动态送礼开关（面板热更新）。
-func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, channels *channelSet, giftGate func() bool, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, dmWhitelistSetter, error) {
+func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, rooms *liveRoomState, channels *channelSet, giftGate func() bool, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, dmWhitelistSetter, error) {
 	if !consumeEnabled(cfg, routes) {
 		return nil, nil, nil, nil
 	}
@@ -366,18 +366,24 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 				zap.String("action", "semantic_setup"), zap.Error(err))
 		} else {
 			embedClient = client
-			hybrid, err := memory.NewHybridSearcher(memReader, memRepo, client, memory.HybridSearchOptions{
-				Alpha: cfg.Embedding.Alpha,
-				OnSemanticError: func(err error) {
-					log.Warn("记忆语义召回降级为关键词", zap.String("action", "memory_semantic"), zap.Error(err))
-				},
-			})
-			if err != nil {
-				log.Warn("记忆混合检索装配失败，继续用既有召回", zap.String("action", "memory_semantic"), zap.Error(err))
-			} else {
-				memReader = hybrid
-			}
 		}
+	}
+	// 即使没有 embedding 也要装混合检索：关键词档位包含 events 原文，
+	// 否则 memory_search 只能走 Recall，摘要没提炼出来时会「数据在却说不知道」。
+	var memEmbedder memory.Embedder
+	if embedClient != nil {
+		memEmbedder = embedClient
+	}
+	hybrid, err := memory.NewHybridSearcher(memReader, memRepo, memEmbedder, memory.HybridSearchOptions{
+		Alpha: cfg.Embedding.Alpha,
+		OnSemanticError: func(err error) {
+			log.Warn("记忆语义召回降级为关键词", zap.String("action", "memory_semantic"), zap.Error(err))
+		},
+	})
+	if err != nil {
+		log.Warn("记忆混合检索装配失败，继续用既有召回", zap.String("action", "memory_semantic"), zap.Error(err))
+	} else {
+		memReader = hybrid
 	}
 
 	options := buildSchedulerOptions(cfg.Scheduler)
@@ -399,28 +405,31 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("装配用量账本失败：%w", err)
 	}
-	// 观众档案：没启用就不建仓储（Generate 里 viewers==nil 自然不注入）
+	// 观众档案：查询能力始终可用（存量档案不该因为「暂停建档」就查不到）；
+	// prompt 注入仍只在 [viewer] enabled 时开启，避免额外查询改变既有行为。
 	var viewerRepo store.ViewerRepo
 	var viewerSearch reasoning.ViewerProfileSearcher
-	if cfg.Viewer.Enabled {
-		repo, err := database.NewViewerRepo(resources.DB)
-		if err == nil {
-			viewerRepo = repo
-			var embedder viewer.Embedder
-			if embedClient != nil {
-				embedder = embedClient
-			}
-			searcher, err := viewer.NewSearcher(repo, embedder, viewer.SearchOptions{
-				Alpha: cfg.Embedding.Alpha,
-				OnSemanticError: func(err error) {
-					log.Warn("档案语义检索降级为关键词", zap.String("action", "viewer_semantic"), zap.Error(err))
-				},
-			})
-			if err != nil {
-				log.Warn("档案检索装配失败，viewer_search 不注册", zap.String("action", "viewer_semantic"), zap.Error(err))
-			} else {
-				viewerSearch = searcher
-			}
+	viewerStore, err := database.NewViewerRepo(resources.DB)
+	if err != nil {
+		log.Warn("观众档案仓储装配失败，viewer_search 不注册", zap.String("action", "viewer_setup"), zap.Error(err))
+	} else {
+		if cfg.Viewer.Enabled {
+			viewerRepo = viewerStore
+		}
+		var embedder viewer.Embedder
+		if embedClient != nil {
+			embedder = embedClient
+		}
+		searcher, err := viewer.NewSearcher(viewerStore, embedder, viewer.SearchOptions{
+			Alpha: cfg.Embedding.Alpha,
+			OnSemanticError: func(err error) {
+				log.Warn("档案语义检索降级为关键词", zap.String("action", "viewer_semantic"), zap.Error(err))
+			},
+		})
+		if err != nil {
+			log.Warn("档案检索装配失败，viewer_search 不注册", zap.String("action", "viewer_semantic"), zap.Error(err))
+		} else {
+			viewerSearch = searcher
 		}
 	}
 	quota := buildGiftQuota(cfg, log)
@@ -438,7 +447,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 			cache:        newReactCache(time.Now),
 		}
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(pres, cfg.Watch), reactCfg, channels, log)
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log)
 	if err != nil {
 		return nil, nil, nil, err
 	}

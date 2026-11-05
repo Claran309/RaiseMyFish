@@ -184,7 +184,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 
 	// 发送通道表：buildConsume 先用空壳，注册表建好后再绑定（Send/Resume 之前完成）
 	chans := &channelSet{}
-	consume, snd, dmWhitelist, err := buildConsume(cfg, resources, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, chans, giftGate.Load, logger)
+	// live 采集房间的权威状态：状态注入与 watching 重置都读它。
+	liveRooms := &liveRoomState{}
+	consume, snd, dmWhitelist, err := buildConsume(cfg, resources, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, liveRooms, chans, giftGate.Load, logger)
 	if err != nil {
 		return err
 	}
@@ -218,6 +220,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		Pack:        pack,
 		Knowledge:   knowledgeRuntime,
 		Presence:    presenceTable,
+		Rooms:       liveRooms,
 		Timeout:     timeout,
 		DMWhitelist: dmWhitelist,
 		GiftGate:    giftGate,

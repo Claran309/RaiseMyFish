@@ -43,6 +43,7 @@ type runtimeDeps struct {
 	Pack        persona.Pack
 	Knowledge   knowledgeAssembly
 	Presence    *presence.Table
+	Rooms       *liveRoomState
 	Timeout     time.Duration
 	DMWhitelist dmWhitelistSetter
 	GiftGate    *atomic.Bool
@@ -106,6 +107,16 @@ func newRuntimeControl(ctx context.Context, cfg config.Config, deps runtimeDeps,
 
 	c.live = newCollectorController("live", ctx, deps.Bus, deps.Timeout, log, now, deps.Live,
 		func() (collector.Collector, error) { return newLiveCollector(cfg, log) })
+	// live 采集的真实房间是状态注入的唯一权威：启动时登记并清掉旧 watching，停止时一并撤销。
+	liveRoom := strings.TrimSpace(cfg.Collector.Live.RoomID)
+	c.live.onStart = func() {
+		deps.Rooms.Set(liveRoom)
+		resetWatching(deps.Presence)
+	}
+	c.live.onStop = func() {
+		deps.Rooms.Clear()
+		resetWatching(deps.Presence)
+	}
 	c.comment = newCollectorController("comment", ctx, deps.Bus, deps.Timeout, log, now, deps.Comment,
 		func() (collector.Collector, error) {
 			c.mu.Lock()
@@ -490,6 +501,9 @@ type collectorController struct {
 	lastError string
 	cancel    context.CancelFunc
 	done      chan struct{}
+	// onStart/onStop 由控制面设置，用于同步外部状态（如 live 房间与 watching）。
+	onStart func()
+	onStop  func()
 }
 
 func newCollectorController(name string, ctx context.Context, bus event.Bus, timeout time.Duration, log *zap.Logger, now func() time.Time, initial collector.Collector, factory func() (collector.Collector, error)) *collectorController {
@@ -560,6 +574,9 @@ func (c *collectorController) start(inst collector.Collector) {
 	c.cancel = cancel
 	c.done = done
 	c.mu.Unlock()
+	if c.onStart != nil {
+		c.onStart()
+	}
 	go c.run(runCtx, inst, done)
 	c.log.Info("采集器已启动",
 		zap.String("action", "collector_start"),
@@ -583,6 +600,9 @@ func (c *collectorController) run(ctx context.Context, inst collector.Collector,
 		c.lastError = err.Error()
 	}
 	c.mu.Unlock()
+	if c.onStop != nil {
+		c.onStop()
+	}
 	if err != nil && !stopped {
 		c.log.Warn("采集器已暂停，需处理后重启",
 			zap.String("action", "collector_paused"),

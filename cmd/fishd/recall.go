@@ -13,7 +13,6 @@ import (
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/knowledge"
 	"RaiseMyFish/internal/memory"
-	"RaiseMyFish/internal/presence"
 	"go.uber.org/zap"
 )
 
@@ -30,44 +29,32 @@ func validBrainRoom(room string) bool {
 	return strings.Trim(room, "0") != ""
 }
 
-// brainState 生成注入 Brain 的当前状态摘要。
-// Presence 的实时 watching 优先；没有 watching 时用 [watch] 配置兜底。
-func brainState(active []presence.State, watch config.Watch) string {
-	room, name := strings.TrimSpace(watch.CurrentRoom), strings.TrimSpace(watch.StreamerName)
-	watchingRoom := ""
-	// Active 按 Since 升序；同一时刻只保留一个房间，取最新的一条。
-	for i := len(active) - 1; i >= 0; i-- {
-		if active[i].Kind != presence.KindWatching {
-			continue
-		}
-		if detail := strings.TrimSpace(active[i].Detail); validBrainRoom(detail) {
-			watchingRoom = detail
-			break
-		}
-	}
-	if watchingRoom != "" {
-		// 配置的主播名只在房间匹配（或未配置房间）时使用，避免串台。
-		if name != "" && (room == "" || room == watchingRoom) {
-			return fmt.Sprintf("你正在看%s（房间 %s）的直播，你在她弹幕区发弹幕", name, watchingRoom)
-		}
-		return fmt.Sprintf("你正在看房间 %s 的直播，你在其弹幕区发弹幕", watchingRoom)
-	}
-	if room == "" {
+// brainState 只用「当前 live 采集房间」生成状态摘要。
+//
+// 为什么不看 Presence：watching 是带 TTL 的旁路状态，采集停止或切换房间后
+// 旧值仍会存活一段时间；[watch] current_room 也可能与实际采集房间不一致。
+// 未采集时不声称在看直播，宁缺毋滥。
+func brainState(currentRoom string, watch config.Watch) string {
+	room := strings.TrimSpace(currentRoom)
+	if !validBrainRoom(room) {
 		return ""
 	}
-	if name != "" {
-		return fmt.Sprintf("你正在看%s（房间 %s）的直播", name, room)
+	name := strings.TrimSpace(watch.StreamerName)
+	configured := strings.TrimSpace(watch.CurrentRoom)
+	// 主播名只在配置房间与当前采集房间一致（或未配置房间）时使用，避免串台。
+	if name != "" && (configured == "" || configured == room) {
+		return fmt.Sprintf("你正在看%s（房间 %s）的直播，你在她弹幕区发弹幕", name, room)
 	}
-	return fmt.Sprintf("你正在看房间 %s 的直播", room)
+	return fmt.Sprintf("你正在看房间 %s 的直播，你在其弹幕区发弹幕", room)
 }
 
-// brainStateSource 返回按时间读取 Presence 的状态摘要函数；table 为空时只用配置兜底。
-func brainStateSource(table *presence.Table, watch config.Watch) func(time.Time) string {
-	return func(now time.Time) string {
-		if table == nil {
-			return brainState(nil, watch)
+// brainStateSource 每次读取当前采集房间；读取器为空或未采集时返回空串。
+func brainStateSource(currentRoom func() string, watch config.Watch) func(time.Time) string {
+	return func(time.Time) string {
+		if currentRoom == nil {
+			return ""
 		}
-		return brainState(table.Active(now), watch)
+		return brainState(currentRoom(), watch)
 	}
 }
 

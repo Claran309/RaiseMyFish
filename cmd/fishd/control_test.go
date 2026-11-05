@@ -15,6 +15,7 @@ import (
 	"RaiseMyFish/internal/collector"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/presence"
 	"go.uber.org/zap"
 )
 
@@ -185,6 +186,43 @@ func TestCollectorControllerRestartsWithNewInstance(t *testing.T) {
 		t.Fatalf("重启应新建实例一次，实际 %d", factoryCalls.Load())
 	}
 	_ = ctl.set(false)
+}
+
+// TestLiveCollectorStartResetsRoomAndWatching 采集启停必须同步权威房间并清掉旧 watching。
+func TestLiveCollectorStartResetsRoomAndWatching(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Collector.Live.RoomID = "222"
+	rooms := &liveRoomState{}
+	table := presence.NewTable()
+	table.Set(presence.State{Kind: presence.KindWatching, Channel: string(event.ChLive), Detail: "111", TTL: time.Hour})
+
+	control, err := newRuntimeControl(context.Background(), cfg, runtimeDeps{
+		Bus:      &recordingBus{},
+		Timeout:  time.Second,
+		Live:     &fakeCollector{name: "live"},
+		Rooms:    rooms,
+		Presence: table,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+
+	if err := control.SetLiveCollect(true); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return rooms.Current() == "222" })
+	if got := table.Active(time.Now()); len(got) != 0 {
+		t.Fatalf("启动采集后旧 watching 应被清空：%+v", got)
+	}
+
+	if err := control.SetLiveCollect(false); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return rooms.Current() == "" })
+	if got := table.Active(time.Now()); len(got) != 0 {
+		t.Fatalf("停止采集后不应残留 watching：%+v", got)
+	}
 }
 
 func TestCollectorControllerFactoryError(t *testing.T) {
