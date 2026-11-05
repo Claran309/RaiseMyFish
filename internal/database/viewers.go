@@ -130,26 +130,44 @@ func (r *ViewerRepo) TopViewers(ctx context.Context, limit int) ([]store.ViewerP
 	return out, nil
 }
 
-// ActiveSince 判断 since 之后是否有入向事件（用来判断直播是否活跃）。
+// ActiveSince 判断 since 之后是否有公开入向事件（用来判断直播是否活跃）。
+//
+// DM 和私密会话不算公开活跃度：否则只有私信时也会触发档案重建。
 func (r *ViewerRepo) ActiveSince(ctx context.Context, since time.Time) (bool, error) {
 	if ctx == nil || since.IsZero() {
 		return false, store.ErrInvalid
 	}
 	var exists bool
 	err := r.db.WithContext(ctx).Raw(
-		"SELECT EXISTS(SELECT 1 FROM events WHERE dir = 'in' AND at >= ?)", since.UTC()).Scan(&exists).Error
+		"SELECT EXISTS(SELECT 1 FROM events WHERE dir = 'in' AND at >= ? AND NOT private AND channel <> 'dm')", since.UTC()).Scan(&exists).Error
 	if err != nil {
 		return false, &safeError{"检查直播活跃度失败", err}
 	}
 	return exists, nil
 }
 
-// RebuildProfiles 从 events 全量重算档案（幂等：ON CONFLICT 覆盖）。
+// RebuildProfiles 从公开事件全量重算档案（幂等：ON CONFLICT 覆盖）。
+//
+// 口径（M01）：
+//   - 只聚合公开、非 DM 的入向事件；DM 私信和错误降密的 DM 都不进公开档案；
+//   - 出向只认已确认 done，且关联的入向与出向都必须是公开来源；
+//   - 不再满足门槛的旧档案（例如私密来源被修正后）直接删除，连同其向量；
+//   - 昵称/最近发言/最近回复变化时清空旧向量，等待重新入库，避免继续用污染向量召回。
 func (r *ViewerRepo) RebuildProfiles(ctx context.Context, opts store.ViewerRebuildOptions) (store.ViewerRebuildStats, error) {
 	if ctx == nil || opts.MinHits < 1 || opts.RecentTexts < 1 || opts.RecentReplies < 1 {
 		return store.ViewerRebuildStats{}, store.ErrInvalid
 	}
-	const sql = `
+	const cleanupSQL = `
+WITH inbound AS (
+    SELECT from_id AS uid
+    FROM events
+    WHERE dir = 'in' AND NOT private AND channel <> 'dm'
+      AND COALESCE(from_id, '') <> '' AND COALESCE(text, '') <> ''
+    GROUP BY from_id
+    HAVING COUNT(*) >= ?
+)
+DELETE FROM viewer_profiles WHERE uid NOT IN (SELECT uid FROM inbound)`
+	const upsertSQL = `
 WITH inbound AS (
     SELECT from_id AS uid,
            COUNT(*) AS hits,
@@ -157,7 +175,8 @@ WITH inbound AS (
            (ARRAY_AGG(text ORDER BY at DESC))[1:LEAST(?, COUNT(*))] AS texts,
            (ARRAY_AGG(from_name ORDER BY at DESC))[1] AS name
     FROM events
-    WHERE dir = 'in' AND COALESCE(from_id, '') <> '' AND COALESCE(text, '') <> ''
+    WHERE dir = 'in' AND NOT private AND channel <> 'dm'
+      AND COALESCE(from_id, '') <> '' AND COALESCE(text, '') <> ''
     GROUP BY from_id
     HAVING COUNT(*) >= ?
 ), outbound AS (
@@ -166,7 +185,10 @@ WITH inbound AS (
            (ARRAY_AGG(o.text ORDER BY o.at DESC))[1:LEAST(?, COUNT(*))] AS replies_texts
     FROM events o
     JOIN events i ON i.id = o.reply_to
-    WHERE o.dir = 'out' AND i.dir = 'in' AND COALESCE(i.from_id, '') <> '' AND COALESCE(o.text, '') <> ''
+    WHERE o.dir = 'out' AND o.status = 'done'
+      AND NOT o.private AND o.channel <> 'dm'
+      AND i.dir = 'in' AND NOT i.private AND i.channel <> 'dm'
+      AND COALESCE(i.from_id, '') <> '' AND COALESCE(o.text, '') <> ''
     GROUP BY i.from_id
 )
 INSERT INTO viewer_profiles(uid, name, hits, replies, last_seen, recent_texts, recent_replies, updated_at)
@@ -187,12 +209,37 @@ ON CONFLICT (uid) DO UPDATE SET
   last_seen = EXCLUDED.last_seen,
   recent_texts = EXCLUDED.recent_texts,
   recent_replies = EXCLUDED.recent_replies,
+  profile_embedding = CASE
+    WHEN ROW(viewer_profiles.name, viewer_profiles.recent_texts, viewer_profiles.recent_replies)
+       IS DISTINCT FROM ROW(EXCLUDED.name, EXCLUDED.recent_texts, EXCLUDED.recent_replies)
+    THEN NULL ELSE viewer_profiles.profile_embedding END,
+  profile_embedding_hash = CASE
+    WHEN ROW(viewer_profiles.name, viewer_profiles.recent_texts, viewer_profiles.recent_replies)
+       IS DISTINCT FROM ROW(EXCLUDED.name, EXCLUDED.recent_texts, EXCLUDED.recent_replies)
+    THEN NULL ELSE viewer_profiles.profile_embedding_hash END,
+  profile_embedding_updated_at = CASE
+    WHEN ROW(viewer_profiles.name, viewer_profiles.recent_texts, viewer_profiles.recent_replies)
+       IS DISTINCT FROM ROW(EXCLUDED.name, EXCLUDED.recent_texts, EXCLUDED.recent_replies)
+    THEN NULL ELSE viewer_profiles.profile_embedding_updated_at END,
   updated_at = clock_timestamp()`
-	result := r.db.WithContext(ctx).Exec(sql, opts.RecentTexts, opts.MinHits, opts.RecentReplies)
-	if result.Error != nil {
-		return store.ViewerRebuildStats{}, &safeError{"重建观众档案失败", result.Error}
+	profiles := 0
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 先删不符合公开门槛的旧档案：历史私密来源混入后不再达标的人必须消失，
+		// 其向量随行删除，不能只是「以后不读」。
+		if res := tx.Exec(cleanupSQL, opts.MinHits); res.Error != nil {
+			return res.Error
+		}
+		res := tx.Exec(upsertSQL, opts.RecentTexts, opts.MinHits, opts.RecentReplies)
+		if res.Error != nil {
+			return res.Error
+		}
+		profiles = int(res.RowsAffected)
+		return nil
+	})
+	if err != nil {
+		return store.ViewerRebuildStats{}, &safeError{"重建观众档案失败", err}
 	}
-	return store.ViewerRebuildStats{Profiles: int(result.RowsAffected)}, nil
+	return store.ViewerRebuildStats{Profiles: profiles}, nil
 }
 
 func nonNil(v []string) []string {

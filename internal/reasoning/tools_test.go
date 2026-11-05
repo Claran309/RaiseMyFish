@@ -61,14 +61,13 @@ type fakeHist struct {
 	rows     []event.Event
 	err      error
 	gotLimit int
-	gotCh    event.Channel
-	gotSess  string
+	gotScope memory.Scope
 	calls    int
 }
 
-func (f *fakeHist) RecentEvents(_ context.Context, ch event.Channel, session string, limit int) ([]event.Event, error) {
+func (f *fakeHist) RecentEvents(_ context.Context, scope memory.Scope, limit int) ([]event.Event, error) {
 	f.calls++
-	f.gotCh, f.gotSess, f.gotLimit = ch, session, limit
+	f.gotScope, f.gotLimit = scope, limit
 	return f.rows, f.err
 }
 
@@ -178,6 +177,28 @@ func TestMemoryToolUsesQuerySearch(t *testing.T) {
 	}
 }
 
+// TestMemoryToolReturnsRawMessages 摘要为空时也要把 events 原文返回给模型。
+func TestMemoryToolReturnsRawMessages(t *testing.T) {
+	mem := &fakeQueryMem{queryCtx: memory.Context{
+		Scope: testScope(),
+		Recent: []memory.Message{{
+			EventID: "e1", Channel: event.ChLive, Session: "30308220", Dir: "in",
+			FromName: "弓长三益", Text: "打错了很正常", At: time.Now(),
+		}},
+	}}
+	box, err := BuildTools(ToolDeps{Memory: mem, Scope: testScope()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := box.Run(context.Background(), ToolMemorySearch, "弓长三益")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if !strings.Contains(got, "弓长三益: 打错了很正常") {
+		t.Errorf("未返回原文弹幕：%q", got)
+	}
+}
+
 // TestMemoryToolEmpty 没召回到内容时给明确文案，不是空串。
 func TestMemoryToolEmpty(t *testing.T) {
 	box, _ := BuildTools(ToolDeps{Memory: &fakeMem{}, Scope: testScope()})
@@ -232,8 +253,8 @@ func TestHistoryToolLimit(t *testing.T) {
 			t.Errorf("args=%q → limit=%d，期望 %d", tc.args, hist.gotLimit, tc.want)
 		}
 	}
-	if hist.gotCh != event.ChLive || hist.gotSess != "30308220" {
-		t.Errorf("查询范围 = %s/%s", hist.gotCh, hist.gotSess)
+	if hist.gotScope.Channel != event.ChLive || hist.gotScope.Session != "30308220" || hist.gotScope.Private {
+		t.Errorf("查询范围 = %+v", hist.gotScope)
 	}
 }
 

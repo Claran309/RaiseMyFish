@@ -63,6 +63,38 @@ func seedViewerProfiles(t *testing.T, ctx context.Context, repo *ViewerRepo) {
 	}
 }
 
+// TestViewerQuestionShellFindsNickname 「弓长三益是谁」也要按昵称命中真实档案。
+func TestViewerQuestionShellFindsNickname(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatalf("迁移失败：%v", err)
+	}
+	repo, err := NewViewerRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := time.Date(2026, 11, 5, 21, 54, 0, 0, time.UTC)
+	profile := store.ViewerProfile{
+		UID: "5005", Name: "弓长三益", Hits: 12, Replies: 0,
+		LastSeen: seen, RecentTexts: []string{"打错了很正常", "今晚也在"},
+	}
+	if err := repo.UpsertProfile(ctx, profile); err != nil {
+		t.Fatalf("写入档案失败：%v", err)
+	}
+
+	searcher, err := viewer.NewSearcher(repo, nil, viewer.SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits, err := searcher.Search(ctx, "弓长三益是谁", 3)
+	if err != nil {
+		t.Fatalf("问句检索失败：%v", err)
+	}
+	if len(hits) == 0 || hits[0].Profile.UID != "5005" || hits[0].Profile.Hits != 12 {
+		t.Fatalf("问句未命中档案：%+v", hits)
+	}
+}
+
 // TestViewerSemanticSearchFindsUID 「那个爱要白饭的人」→ 找到 2002。
 func TestViewerSemanticSearchFindsUID(t *testing.T) {
 	db, ctx := repositoryDB(t)

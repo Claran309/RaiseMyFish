@@ -208,6 +208,31 @@ func (r *MemoryRepo) KeywordRecords(ctx context.Context, s memory.Scope, keyword
 	return memoryRows(rows)
 }
 
+// KeywordMessages 在 scope 可见范围内按正文/昵称匹配原始弹幕。
+//
+// 记忆摘要可能还没提炼出来，但 events 已有原文；这一路保证「数据在就能搜到」。
+// 可见性口径与 Recent 完全一致（会话隔离、私密过滤、DM 不外泄）。
+func (r *MemoryRepo) KeywordMessages(ctx context.Context, s memory.Scope, keyword string, limit int) ([]memory.Message, error) {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return nil, store.ErrInvalid
+	}
+	if utf8.RuneCountInString(keyword) > memorySearchMaxRunes {
+		return nil, store.ErrInvalid
+	}
+	if err := validateRecall(ctx, s, limit); err != nil {
+		return nil, err
+	}
+	pattern := "%" + keyword + "%"
+	query := r.db.WithContext(ctx).Table("events").Where("channel=? AND session=?", s.Channel, s.Session).Where("(dir <> 'out' OR status='done')")
+	if !s.Private {
+		query = query.Where("NOT private")
+	}
+	query = query.Where("(channel <> 'dm' OR private)")
+	query = query.Where("(text ILIKE ? OR from_name ILIKE ?)", pattern, pattern)
+	return recallMessages(query, s, limit, false)
+}
+
 // SemanticRecords 在 scope 可见范围内按余弦距离取最相近的摘要。
 func (r *MemoryRepo) SemanticRecords(ctx context.Context, s memory.Scope, vector []float64, limit int) ([]memory.SemanticRecord, error) {
 	if err := validateRecall(ctx, s, limit); err != nil {
@@ -462,7 +487,8 @@ func validateMemoryRecordQuery(ctx context.Context, limit int) error {
 // 返回前用 memory.SharedState.Validate 再核一遍范围与字段。
 // SoulCandidates 选「够格进灵魂记忆」的记录：fact/preference 且 importance 达标。
 //
-// 只取有效、未归档的记录；排序按重要度与新鲜度，供上层去重后截断。
+// 灵魂记忆是公开长期设定：只取有效、未归档、公开来源的记录；
+// 私密 DM 与其错误降密行不能进入。排序按重要度与新鲜度，供上层去重后截断。
 func (r *MemoryRepo) SoulCandidates(ctx context.Context, minImportance float64, limit int) ([]store.MemoryRecord, error) {
 	if ctx == nil || minImportance <= 0 || minImportance > 1 || limit < 1 || limit > 200 {
 		return nil, store.ErrInvalid
@@ -486,6 +512,7 @@ func (r *MemoryRepo) SoulCandidates(ctx context.Context, minImportance float64, 
 	}
 	err := r.db.WithContext(ctx).Table("memory_records").
 		Where("kind IN ? AND valid_to IS NULL AND NOT archived AND importance >= ?", []string{"fact", "preference"}, minImportance).
+		Where("NOT private AND (channel IS NULL OR channel <> 'dm' OR private)").
 		Select("id, source, kind, title, summary, importance, confidence, private, COALESCE(channel,'') AS channel, COALESCE(session,'') AS session, COALESCE(from_id,'') AS from_id, COALESCE(from_name,'') AS from_name, valid_from, created_at, to_json(event_ids) AS ids").
 		Order("importance DESC, valid_from DESC, id ASC").Limit(limit).Find(&rows).Error
 	if err != nil {
@@ -510,12 +537,16 @@ func (r *MemoryRepo) SoulCandidates(ctx context.Context, minImportance float64, 
 	return out, nil
 }
 
-// FactsByViewer 按观众 uid 查事实（认人用），新的在前。
+// FactsByViewer 按观众 uid 查公开事实（认人用），新的在前。
+//
+// 认人是公开场景：只读公开来源，私密 DM 事实不能经 uid 被认出来。
 func (r *MemoryRepo) FactsByViewer(ctx context.Context, fromID string, limit int) ([]store.MemoryRecord, error) {
 	if ctx == nil || strings.TrimSpace(fromID) == "" || limit < 1 || limit > 50 {
 		return nil, store.ErrInvalid
 	}
-	return r.queryFacts(ctx, "from_id = ? AND kind = 'fact' AND valid_to IS NULL AND NOT archived", fromID, limit)
+	return r.queryFacts(ctx,
+		"from_id = ? AND kind = 'fact' AND valid_to IS NULL AND NOT archived AND NOT private AND (channel IS NULL OR channel <> 'dm' OR private)",
+		fromID, limit)
 }
 
 func (r *MemoryRepo) queryFacts(ctx context.Context, where string, arg any, limit int) ([]store.MemoryRecord, error) {

@@ -7,6 +7,7 @@ package database
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -109,6 +110,64 @@ func TestMemoryKeywordAndSemanticScope(t *testing.T) {
 		if hit.Record.ID == "mem-private" {
 			t.Fatal("其他 DM 会话读取到了私密记忆")
 		}
+	}
+}
+
+// TestMemoryKeywordMessagesRecall 摘要为空时用 events 原文召回，且不越界。
+func TestMemoryKeywordMessagesRecall(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatalf("迁移失败：%v", err)
+	}
+	repo, err := NewMemoryRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	insert := func(id, channel, session, text string, private bool, at time.Time) {
+		t.Helper()
+		err := repo.db.WithContext(ctx).Exec(`INSERT INTO events(id,channel,dir,session,from_id,from_name,text,private,at,status)
+VALUES(?,?,?,?,?,?,?,?,?,?)`, id, channel, "in", session, "3003", "弓长三益", text, private, at, "done").Error
+		if err != nil {
+			t.Fatalf("写入事件 %s 失败：%v", id, err)
+		}
+	}
+	// 真实形态：同一个观众在本房间说了 12 句。
+	for i := 0; i < 12; i++ {
+		insert(fmt.Sprintf("live:room:g%d", i), "live", "room", fmt.Sprintf("第%d条", i), false, now.Add(time.Duration(i)*time.Second))
+	}
+	insert("live:other:g", "live", "other", "别的房间", false, now)
+	insert("dm:owner:g", "dm", "owner", "私信里的弓长三益", true, now)
+
+	scope := memory.Scope{Channel: event.ChLive, Session: "room"}
+	got, err := repo.KeywordMessages(ctx, scope, "弓长三益", 20)
+	if err != nil {
+		t.Fatalf("原文召回失败：%v", err)
+	}
+	if len(got) != 12 {
+		t.Fatalf("应召回本房间 12 条，实际 %d：%+v", len(got), got)
+	}
+	for _, m := range got {
+		if m.Session != "room" || m.Private {
+			t.Fatalf("越界召回：%+v", m)
+		}
+	}
+
+	// limit 取最新 5 条，返回仍按时间升序；最后一条应是第 11 条。
+	got, err = repo.KeywordMessages(ctx, scope, "弓长三益", 5)
+	if err != nil {
+		t.Fatalf("限量召回失败：%v", err)
+	}
+	if len(got) != 5 || got[4].Text != "第11条" {
+		t.Fatalf("限量/排序不符：%+v", got)
+	}
+
+	otherHits, err := repo.KeywordMessages(ctx, memory.Scope{Channel: event.ChLive, Session: "other"}, "私信", 10)
+	if err != nil {
+		t.Fatalf("别的房间查询失败：%v", err)
+	}
+	if len(otherHits) != 0 {
+		t.Fatalf("公开视角读到了私信：%+v", otherHits)
 	}
 }
 

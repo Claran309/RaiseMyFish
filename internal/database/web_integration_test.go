@@ -126,15 +126,16 @@ func TestWebEventsByChannelAndDetail(t *testing.T) {
 		t.Fatalf("第二次尝试不符：%+v", second)
 	}
 
-	noReply, err := repo.Event(ctx, "dm:1")
+	// 公开详情接口不能直读私密 DM；DM 只在显式的 /api/dm/recent 视图出现。
+	if _, err := repo.Event(ctx, "dm:1"); !errors.Is(err, store.ErrWebNotFound) {
+		t.Fatalf("私信详情不应进入公开详情接口：%v", err)
+	}
+	dmRows, err := repo.EventsByChannel(ctx, "dm", "", 10)
 	if err != nil {
-		t.Fatalf("读取私信详情失败：%v", err)
+		t.Fatalf("读取私信视图失败：%v", err)
 	}
-	if noReply.Reply != nil {
-		t.Fatalf("未回复事件不应有回复计划：%+v", noReply.Reply)
-	}
-	if !noReply.Private {
-		t.Error("私信应标记为 private")
+	if len(dmRows) != 1 || dmRows[0].ID != "dm:1" {
+		t.Fatalf("显式 DM 视图应返回私信：%+v", dmRows)
 	}
 
 	if _, err := repo.Event(ctx, "missing"); !errors.Is(err, store.ErrWebNotFound) {

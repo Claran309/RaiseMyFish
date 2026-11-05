@@ -8,7 +8,8 @@
 //   - 不碰 SQL：读写都走注入的接口（DoneSource / store.MemoryRepo）。
 //   - 幂等靠记录主键：ID 由 event_id + kind + title 派生，配合
 //     INSERT ... ON CONFLICT (id) DO NOTHING，同一事件重扫不会产生重复行。
-//   - 不设计隐私策略：私密事件是否提炼由调用方 AllowPrivate 决定，默认拒绝。
+//   - 隐私边界 fail-closed：未授权的私密事件在拼上下文、调提炼器之前直接跳过；
+//     是否授权由调用方的 AllowPrivate 决定，默认拒绝。
 package extractworker
 
 import (
@@ -110,8 +111,10 @@ type Options struct {
 }
 
 // RecentEventsSource 提供某会话最近的事件（database.EventRepo 满足）。
+//
+// Scope 显式传入：公开事件只读公开上下文，私密事件只读本会话私密上下文。
 type RecentEventsSource interface {
-	RecentEvents(ctx context.Context, ch event.Channel, session string, limit int) ([]event.Event, error)
+	RecentEvents(ctx context.Context, scope memory.Scope, limit int) ([]event.Event, error)
 }
 
 // ProfileSource 是观众档案重建所需的最小能力（由 database.ViewerRepo 实现）。
@@ -371,6 +374,13 @@ func (w *Worker) handleEvent(ctx context.Context, ev event.Event, stats *Stats) 
 		return next, nil
 	}
 
+	// 私密边界在任何上下文拼装、提炼器调用和模型调用之前：未授权直接跳过。
+	// 跳过也要推进水位，否则每轮都会重复扫描同一批私信。
+	if ev.Private && !w.opts.AllowPrivate {
+		stats.Skipped++
+		return next, nil
+	}
+
 	extractOpts := memory.ExtractOptions{
 		OwnerName: w.opts.OwnerName,
 		// 首次出现需要「该 session 已见昵称集合」，属持久化能力，
@@ -380,7 +390,8 @@ func (w *Worker) handleEvent(ctx context.Context, ev event.Event, stats *Stats) 
 	}
 	// 上下文：取同 session 最近几条（去掉当前这条），失败降级为无上下文
 	if w.opts.Recent != nil {
-		if recent, err := w.opts.Recent.RecentEvents(ctx, ev.Channel, ev.Session, w.opts.ContextLimit+1); err == nil {
+		scope := memory.Scope{Channel: ev.Channel, Session: ev.Session, Private: ev.Private}
+		if recent, err := w.opts.Recent.RecentEvents(ctx, scope, w.opts.ContextLimit+1); err == nil {
 			extractOpts.Context = withoutCurrent(recent, ev.ID)
 		}
 	}

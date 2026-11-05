@@ -86,13 +86,16 @@ func (r *WebRepo) Status(ctx context.Context) (store.WebStatus, error) {
 	return st, nil
 }
 
-// Memory 按 kind/关键词过滤。
+// Memory 按 kind/关键词过滤公开记忆。
+//
+// 面板记忆页是公开导出视角：私密 DM 摘要与其错误降密行都不展示。
 func (r *WebRepo) Memory(ctx context.Context, kind, query string, limit int) ([]store.WebMemory, error) {
 	if ctx == nil || limit < 1 || limit > webMaxLimit {
 		return nil, store.ErrInvalid
 	}
 	q := r.db.WithContext(ctx).Table("memory_records").
-		Where("valid_to IS NULL AND NOT archived")
+		Where("valid_to IS NULL AND NOT archived").
+		Where("NOT private AND (channel IS NULL OR channel <> 'dm' OR private)")
 	if k := strings.TrimSpace(kind); k != "" {
 		q = q.Where("kind = ?", k)
 	}
@@ -140,12 +143,15 @@ func (r *WebRepo) ArchiveMemory(ctx context.Context, id string) error {
 	return nil
 }
 
-// Events 取最近事件；dir 仅接受 in/out。
+// Events 取最近公开事件；dir 仅接受 in/out。
+//
+// 活动流水是公开视角：私密事件和错误降密的 DM 都不出现。
 func (r *WebRepo) Events(ctx context.Context, dir string, limit int) ([]store.WebEvent, error) {
 	if ctx == nil || limit < 1 || limit > webMaxLimit {
 		return nil, store.ErrInvalid
 	}
-	q := r.db.WithContext(ctx).Table("events")
+	q := r.db.WithContext(ctx).Table("events").
+		Where("NOT private AND channel <> ?", "dm")
 	switch strings.TrimSpace(dir) {
 	case "":
 	case "in", "out":
@@ -178,16 +184,23 @@ func (r *WebRepo) Events(ctx context.Context, dir string, limit int) ([]store.We
 }
 
 // EventsByChannel 按通道取最近事件；channel 只接受 live/comment/dm。
+//
+// live/comment 是公开通道，只返回公开行；dm 是显式的私密通道视图
+// （仅面板本机可见），按 channel 精确隔离，不影响公开视角。
 func (r *WebRepo) EventsByChannel(ctx context.Context, channel, dir string, limit int) ([]store.WebEvent, error) {
 	if ctx == nil || limit < 1 || limit > webMaxLimit {
 		return nil, store.ErrInvalid
 	}
 	switch channel {
-	case "live", "comment", "dm":
+	case "live", "comment":
+	case "dm":
 	default:
 		return nil, store.ErrInvalid
 	}
 	q := r.db.WithContext(ctx).Table("events").Where("channel = ?", channel)
+	if channel != "dm" {
+		q = q.Where("NOT private")
+	}
 	switch strings.TrimSpace(dir) {
 	case "":
 	case "in", "out":
@@ -219,7 +232,9 @@ func (r *WebRepo) EventsByChannel(ctx context.Context, channel, dir string, limi
 	return out, nil
 }
 
-// Event 取单条事件详情；回复计划与尝试是可选的（事件可能还没生成回复）。
+// Event 取单条公开事件详情；回复计划与尝试是可选的（事件可能还没生成回复）。
+//
+// 活动页只链接公开事件；私密事件和错误降密的 DM 不能经 id 直读。
 func (r *WebRepo) Event(ctx context.Context, id string) (store.WebEventDetail, error) {
 	if ctx == nil || strings.TrimSpace(id) == "" {
 		return store.WebEventDetail{}, store.ErrInvalid
@@ -244,7 +259,7 @@ func (r *WebRepo) Event(ctx context.Context, id string) (store.WebEventDetail, e
 		        COALESCE(from_id,'') AS from_id, COALESCE(from_name,'') AS from_name,
 		        COALESCE(text,'') AS text, private, COALESCE(reply_to,'') AS reply_to,
 		        at, status, COALESCE(meta::text,'') AS meta, created_at
-		   FROM events WHERE id = ?`, id,
+		   FROM events WHERE id = ? AND NOT private AND (channel <> 'dm' OR private)`, id,
 	).Scan(&row).Error
 	if err != nil {
 		return store.WebEventDetail{}, &safeError{"查询事件详情失败", err}
@@ -310,7 +325,9 @@ func (r *WebRepo) Event(ctx context.Context, id string) (store.WebEventDetail, e
 	return detail, nil
 }
 
-// Errors 取最近异常事件：status 为 dead/retry 的（按时间倒序）。
+// Errors 取最近公开异常事件：status 为 dead/retry 的（按时间倒序）。
+//
+// 异常列表同样是公开视角，不能借失败状态导出私密正文。
 func (r *WebRepo) Errors(ctx context.Context, limit int) ([]store.WebEvent, error) {
 	if ctx == nil || limit < 1 || limit > webMaxLimit {
 		return nil, store.ErrInvalid
@@ -327,6 +344,7 @@ func (r *WebRepo) Errors(ctx context.Context, limit int) ([]store.WebEvent, erro
 	}
 	if err := r.db.WithContext(ctx).Table("events").
 		Where("status IN ?", []string{"dead", "retry"}).
+		Where("NOT private AND channel <> ?", "dm").
 		Select("id, COALESCE(channel,'') AS channel, dir, COALESCE(session,'') AS session, COALESCE(from_name,'') AS from_name, COALESCE(text,'') AS text, at, status").
 		Order("at DESC, id ASC").Limit(limit).Find(&rows).Error; err != nil {
 		return nil, &safeError{"查询异常事件失败", err}

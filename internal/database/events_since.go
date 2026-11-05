@@ -23,8 +23,9 @@ func (r *EventRepo) PublicSince(ctx context.Context, ch event.Channel, since tim
 		return nil, store.ErrInvalid
 	}
 	var rows []eventRow
+	// DM 即使被旧数据错误降密，也不能进入公开学习窗口。
 	err := r.db.WithContext(ctx).Table("events").
-		Where("channel = ? AND dir = ? AND private = ? AND at >= ?", ch, event.DirIn, false, since).
+		Where("channel = ? AND channel <> ? AND dir = ? AND private = ? AND at >= ?", ch, event.ChDM, event.DirIn, false, since).
 		Order("at DESC, id DESC").Limit(limit).Find(&rows).Error
 	if err != nil {
 		return nil, &safeError{"读取窗口事件失败", err}

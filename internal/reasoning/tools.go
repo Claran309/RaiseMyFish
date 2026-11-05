@@ -148,8 +148,10 @@ type KnowledgeSearcher interface {
 }
 
 // HistorySearcher 提供某会话最近的事件。
+//
+// Scope 显式传入，避免工具把私密会话的历史带进公开回复。
 type HistorySearcher interface {
-	RecentEvents(ctx context.Context, ch event.Channel, session string, limit int) ([]event.Event, error)
+	RecentEvents(ctx context.Context, scope memory.Scope, limit int) ([]event.Event, error)
 }
 
 // BuildTools 按可用依赖装配工具集。
@@ -164,7 +166,7 @@ func BuildTools(d ToolDeps) (*Toolbox, error) {
 		scope := d.Scope
 		tools = append(tools, Tool{
 			Name: ToolMemorySearch,
-			Desc: "查本会话/跨通道的历史记忆与摘要；args 传查询词或空",
+			Desc: "查本会话/跨通道的历史弹幕原文与记忆摘要；args 传昵称或关键词（如「弓长三益」），不要传整句；留空看最近记录",
 			Run: func(ctx context.Context, args string) (string, error) {
 				queryText := strings.TrimSpace(args)
 				var (
@@ -228,7 +230,7 @@ func BuildTools(d ToolDeps) (*Toolbox, error) {
 			Desc: "查本房间最近几条弹幕；args 可传条数（1-20，默认 10）",
 			Run: func(ctx context.Context, args string) (string, error) {
 				limit := parseLimit(args, 10, 20)
-				rows, err := d.History.RecentEvents(ctx, scope.Channel, scope.Session, limit)
+				rows, err := d.History.RecentEvents(ctx, scope, limit)
 				if err != nil {
 					return "", err
 				}
