@@ -1334,15 +1334,16 @@ func TestGenerateKnowledgeEnabledFillsContext(t *testing.T) {
 	}
 }
 
-// TestGenerateSkipsRecallForSimpleEvent 简单弹幕不查记忆/知识，Brain 仍拿到带 Scope 的空快照。
-func TestGenerateSkipsRecallForSimpleEvent(t *testing.T) {
+// TestGenerateAlwaysRecallsMemoryForSimpleEvent 简单弹幕也默认注入近期记忆（C04）；
+// 知识仍按意图补充，不因「简单」而额外召回。
+func TestGenerateAlwaysRecallsMemoryForSimpleEvent(t *testing.T) {
 	const id = "live:30308220:9205"
 	bus := newFakeBus(id)
 	engine := &fakeBrain{reply: brain.Reply{Text: "哼"}}
 	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
 	mem := &fakeMemoryReader{
-		ctx:    memory.Context{Scope: memory.Scope{Channel: event.ChLive, Session: "30308220"}, Recent: []memory.Message{{EventID: "e1", Text: "不该被召回"}}},
-		shared: memory.SharedState{Scope: memory.Scope{Channel: event.ChLive, Session: "30308220"}, Facts: []memory.Fact{{Key: "不该", Value: "召回"}}},
+		ctx:    memory.Context{Scope: memory.Scope{Channel: event.ChLive, Session: "30308220"}, Recent: []memory.Message{{EventID: "e1", Text: "刚说过的话"}}},
+		shared: memory.SharedState{Scope: memory.Scope{Channel: event.ChLive, Session: "30308220"}, Facts: []memory.Fact{{Key: "存粮", Value: "有"}}},
 	}
 	know := &fakeKnowledgeReader{
 		ctx: knowledge.Context{Scope: knowledge.Scope{Channel: event.ChLive, Session: "30308220"}, Items: []knowledge.Item{{ID: "k1", Text: "不该被召回"}}},
@@ -1352,22 +1353,30 @@ func TestGenerateSkipsRecallForSimpleEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
-	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+	claim := liveClaim(id)
+	claim.Event.Text = "哈哈"
+	if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
 		t.Fatalf("Generate 失败：%v", err)
 	}
 
-	if mem.recallCalls != 0 || mem.sharedCalls != 0 || know.recallCalls != 0 {
-		t.Fatalf("简单弹幕不应召回：memory=%d/%d knowledge=%d", mem.recallCalls, mem.sharedCalls, know.recallCalls)
+	if mem.recallCalls != 1 || mem.sharedCalls != 1 {
+		t.Fatalf("近期记忆必须默认召回：memory=%d/%d", mem.recallCalls, mem.sharedCalls)
+	}
+	if know.recallCalls != 0 {
+		t.Fatalf("简单弹幕不应召回知识：knowledge=%d", know.recallCalls)
 	}
 	if engine.calls != 1 {
 		t.Fatalf("Brain 调用 = %d，期望 1", engine.calls)
 	}
 	wantScope := memory.Scope{Channel: event.ChLive, Session: "30308220"}
 	if engine.gotInput.Memory.Scope != wantScope || engine.gotInput.Shared.Scope != wantScope {
-		t.Errorf("空快照 Scope 不符：%+v / %+v", engine.gotInput.Memory.Scope, engine.gotInput.Shared.Scope)
+		t.Errorf("快照 Scope 不符：%+v / %+v", engine.gotInput.Memory.Scope, engine.gotInput.Shared.Scope)
 	}
-	if len(engine.gotInput.Memory.Recent) != 0 || len(engine.gotInput.Shared.Facts) != 0 {
-		t.Errorf("不需要召回时不应填入数据：%+v / %+v", engine.gotInput.Memory, engine.gotInput.Shared)
+	if len(engine.gotInput.Memory.Recent) != 1 || engine.gotInput.Memory.Recent[0].Text != "刚说过的话" {
+		t.Errorf("近期记忆未注入：%+v", engine.gotInput.Memory)
+	}
+	if len(engine.gotInput.Shared.Facts) != 1 || engine.gotInput.Shared.Facts[0].Key != "存粮" {
+		t.Errorf("共享事实未注入：%+v", engine.gotInput.Shared)
 	}
 	if engine.gotInput.Knowledge != nil {
 		t.Errorf("不需要知识时 Knowledge 应为 nil：%+v", engine.gotInput.Knowledge)

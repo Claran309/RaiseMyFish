@@ -22,6 +22,7 @@ import (
 	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/proactive"
 	senderlive "RaiseMyFish/internal/sender/live"
+	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/watch"
 	"go.uber.org/zap"
 )
@@ -33,7 +34,7 @@ type proactiveRunner interface {
 
 // buildProactiveRunner 只装配依赖，构造期不联网、不执行 ffmpeg。
 // giftGate 为 nil 时回落到配置里的送礼开关；面板热更新会传入动态门控。
-func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, know knowledge.Reader, pres *presence.Table, giftGate func() bool, logger *zap.Logger) (*proactive.Runner, error) {
+func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, know knowledge.Reader, pres *presence.Table, rooms *liveRoomState, giftGate func() bool, logger *zap.Logger) (*proactive.Runner, error) {
 	if resources == nil || resources.DB == nil {
 		return nil, errors.New("主动弹幕缺少数据库资源")
 	}
@@ -69,6 +70,19 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 			memReader = reader
 		}
 	}
+	// 观众档案与被动路径同一开关；装配失败只降级为不注入
+	var viewerRepo store.ViewerRepo
+	if cfg.Viewer.Enabled {
+		vr, err := database.NewViewerRepo(resources.DB)
+		if err != nil {
+			logger.Warn("主动弹幕观众档案装配失败，本轮不注入档案",
+				zap.String("action", "viewer_setup"), zap.Error(err))
+		} else {
+			viewerRepo = vr
+		}
+	}
+	// 统一上下文快照：被动 Brain/ReAct 与主动弹幕共用同一套资料装配。
+	builder := newContextBuilder(pack, memReader, know, viewerRepo, newSoulCache(cfg.Memory.SoulPath), brainStateSource(rooms.Current, cfg.Watch), logger)
 
 	wiring, err := resolveSenderWiring(cfg, senderlive.DefaultOptions().MinInterval)
 	if err != nil {
@@ -107,6 +121,7 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 		SendGap:      time.Duration(cfg.Proactive.SendGapSeconds) * time.Second,
 		RoomID:       cfg.Collector.Live.RoomID,
 		ReactTrigger: cfg.Proactive.ReactTrigger,
+		Builder:      builder,
 		Logger:       logger,
 	})
 }
@@ -167,7 +182,7 @@ func startProactive(ctx context.Context, cfg config.Config, resources *infra.Res
 	if !cfg.Proactive.Enabled {
 		return noop
 	}
-	runner, err := buildProactiveRunner(cfg, resources, routes, pack, know, pres, nil, logger)
+	runner, err := buildProactiveRunner(cfg, resources, routes, pack, know, pres, nil, nil, logger)
 	if err != nil {
 		logger.Error("主动弹幕装配失败，降级运行", zap.String("action", "proactive"), zap.Error(err))
 		return noop

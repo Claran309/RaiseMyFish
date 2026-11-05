@@ -16,11 +16,8 @@ import (
 
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/event"
-	"RaiseMyFish/internal/knowledge"
 	"RaiseMyFish/internal/memory"
-	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/presence"
-	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
 	"RaiseMyFish/internal/store"
@@ -105,18 +102,13 @@ func formatViewerProfile(p store.ViewerProfile) string {
 // generateDeps 是 Generate handler 的只读依赖投影。
 type generateDeps struct {
 	live       scheduler.ChannelPolicy
-	pack       persona.Pack
 	brains     map[event.Channel]brain.Brain
 	sender     sender.Sender
 	bus        event.Bus
 	retryDelay time.Duration
-	memory     memory.Reader
-	knowledge  knowledge.Reader
-	viewers    store.ViewerRepo
-	soul       *soulCache
+	context    *contextBuilder
 	channels   *channelSet
 	presence   *presence.Table
-	state      func(time.Time) string
 	react      *reactRuntime
 	log        *zap.Logger
 }
@@ -153,49 +145,14 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		}()
 
 		scope := memory.Scope{Channel: ev.Channel, Session: ev.Session, Private: ev.Private}
-		// 召回判断仍保留：短句单步与 ReAct 失败回落时，Brain 需要 memory/knowledge 注入。
-		decision := reasoning.Decide(ev.Text)
-		deps.log.Info("召回判断完成",
+		// 统一快照：近期记忆默认注入，知识按意图补充（与 ReAct/主动弹幕同源）。
+		input, decision := buildPassiveInput(ctx, deps.context, ev)
+		deps.log.Info("意图判断完成",
 			zap.String("action", "reasoning"),
 			zap.Bool("need_memory", decision.NeedMemory),
 			zap.Bool("need_knowledge", decision.NeedKnowledge),
 			zap.String("reason", decision.Reason),
 		)
-
-		// 不需要召回时仍传带 Scope 的空快照；召回失败按现有降级，不阻塞回复。
-		memCtx := memory.Context{Scope: scope}
-		shared := memory.SharedState{Scope: scope}
-		if decision.NeedMemory {
-			memCtx, shared = recallMemory(ctx, deps.memory, scope, deps.log)
-		}
-		var knowCtx *knowledge.Context
-		if decision.NeedKnowledge {
-			knowCtx = recallKnowledge(ctx, deps.knowledge, ev, deps.log)
-		}
-
-		stateText := ""
-		if deps.state != nil {
-			stateText = deps.state(time.Now())
-		}
-		// 认人：按 from_id 查档案；陌生人（无档案）不注入
-		viewerText := ""
-		if deps.viewers != nil && strings.TrimSpace(ev.FromID) != "" {
-			if profile, err := deps.viewers.GetProfile(ctx, ev.FromID); err == nil {
-				viewerText = formatViewerProfile(profile)
-			}
-		}
-		// 长期设定：带 mtime 缓存，文件没变不重复解析
-		soulLines := deps.soul.load(ctx)
-		input := brain.ContextInput{
-			Event:     ev,
-			Persona:   deps.pack,
-			Memory:    memCtx,
-			Shared:    shared,
-			Knowledge: knowCtx,
-			State:     stateText,
-			Viewer:    viewerText,
-			Soul:      soulLines,
-		}
 		task := brain.Task{ID: w.Task.ID, EventID: w.Task.EventID, Channel: w.Task.Channel, Session: w.Task.Session}
 
 		// ReAct：默认除短句外全部走多步（default_react=true），短句保持单步以维持 1 秒级延迟。
@@ -205,7 +162,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		var err error
 		reactText := ""
 		if deps.react != nil && deps.react.factory != nil && shouldUseReAct(ev.Text, deps.react.defaultReact) {
-			reactText, err = runReact(ctx, deps.react, scope, deps.pack, ev, deps.log)
+			reactText, err = runReact(ctx, deps.react, scope, ev, input, deps.log)
 			if err != nil {
 				// ReAct 是增强：失败就回落单步，不能把弹幕卡死
 				deps.log.Warn("ReAct 执行失败，回落单步生成",

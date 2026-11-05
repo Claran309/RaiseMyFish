@@ -104,10 +104,11 @@ func (f *fakeMem) Shared(_ context.Context, s memory.Scope) (memory.SharedState,
 
 func testPack() persona.Pack {
 	return persona.Pack{
-		Meta:    persona.Meta{Name: "大肥鱼", Version: "1"},
-		Soul:    "你是大肥鱼",
-		Rules:   "规则",
-		Samples: "样本",
+		Meta:     persona.Meta{Name: "大肥鱼", Version: "1"},
+		Soul:     "你是大肥鱼",
+		Rules:    "规则",
+		Samples:  "样本",
+		Contexts: map[string]string{persona.ContextLive: "你在直播间的场景"},
 	}
 }
 
@@ -362,10 +363,14 @@ type stubLLM struct {
 	reply string
 	err   error
 	calls int
+
+	system string
+	user   string
 }
 
-func (s *stubLLM) Complete(_ context.Context, _, _ string) (string, error) {
+func (s *stubLLM) Complete(_ context.Context, system, user string) (string, error) {
 	s.calls++
+	s.system, s.user = system, user
 	if s.err != nil {
 		return "", s.err
 	}
@@ -649,5 +654,141 @@ func TestVisualTooShortSkipsReact(t *testing.T) {
 	}
 	if *factoryCalls != 0 {
 		t.Errorf("shouldUseReAct 本身不应触发生成：%d", *factoryCalls)
+	}
+}
+
+// ---------- 统一上下文快照（C05） ----------
+
+// fakeBuilder 记录注入参数，并返回预置的统一快照。
+type fakeBuilder struct {
+	input brain.ContextInput
+
+	calls        int
+	gotEvent     event.Event
+	gotVisual    string
+	gotKnowledge bool
+}
+
+func (f *fakeBuilder) BuildContext(_ context.Context, ev event.Event, visual string, withKnowledge bool) brain.ContextInput {
+	f.calls++
+	f.gotEvent = ev
+	f.gotVisual = visual
+	f.gotKnowledge = withKnowledge
+	in := f.input
+	in.Event = ev
+	in.Visual = visual
+	return in
+}
+
+func snapshotBuilderInput() brain.ContextInput {
+	scope := memory.Scope{Channel: event.ChLive, Session: "30308220"}
+	return brain.ContextInput{
+		Persona: testPack(),
+		Memory: memory.Context{Scope: scope, Recent: []memory.Message{{
+			EventID: "e1", Channel: event.ChLive, Session: "30308220", Dir: event.DirIn,
+			FromID: "42", FromName: "路人", Text: "刚才聊到吃鱼",
+			At: time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC),
+		}}},
+		Shared: memory.SharedState{Scope: scope},
+		State:  "你正在看房间 30308220 的直播",
+		Viewer: "【对方档案 · 老熟人】\n- 说过 3 次",
+		Soul:   []string{"- 喜欢被摸头"},
+	}
+}
+
+// TestRunOnceUsesInjectedContextBuilder 主动弹幕走注入的 ContextBuilder：
+// 画面描述作为 Visual 传入，返回的双方对话/档案/状态/长期设定进入 Brain。
+func TestRunOnceUsesInjectedContextBuilder(t *testing.T) {
+	f := newFixture(t)
+	builder := &fakeBuilder{input: snapshotBuilderInput()}
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, nil, f.snd, Options{
+		SendGap: 30 * time.Second, RoomID: "30308220", Builder: builder,
+		Now: func() time.Time { return *f.clock },
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	got, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if !got.Sent || got.Visual != f.vision.text {
+		t.Fatalf("结果不符：%+v", got)
+	}
+	if builder.calls != 1 {
+		t.Fatalf("ContextBuilder 调用 = %d，期望 1", builder.calls)
+	}
+	if builder.gotVisual != f.vision.text {
+		t.Errorf("Builder 未收到画面描述：%q", builder.gotVisual)
+	}
+	if builder.gotEvent.ID != f.engine.gotInput.Event.ID || builder.gotEvent.Session != "30308220" {
+		t.Errorf("Builder 收到的事件不符：%+v", builder.gotEvent)
+	}
+	if f.engine.gotInput.Visual != f.vision.text {
+		t.Errorf("Brain 未收到 Visual：%q", f.engine.gotInput.Visual)
+	}
+	if len(f.engine.gotInput.Memory.Recent) != 1 || f.engine.gotInput.Memory.Recent[0].Text != "刚才聊到吃鱼" {
+		t.Errorf("主动弹幕看不到刚说过的话：%+v", f.engine.gotInput.Memory)
+	}
+	if !strings.Contains(f.engine.gotInput.Viewer, "老熟人") {
+		t.Errorf("档案未注入：%q", f.engine.gotInput.Viewer)
+	}
+	if f.engine.gotInput.State != "你正在看房间 30308220 的直播" {
+		t.Errorf("状态未注入：%q", f.engine.gotInput.State)
+	}
+	if len(f.engine.gotInput.Soul) == 0 || !strings.Contains(strings.Join(f.engine.gotInput.Soul, "\n"), "喜欢被摸头") {
+		t.Errorf("长期设定未注入：%+v", f.engine.gotInput.Soul)
+	}
+}
+
+// TestRunOnceReactUsesUnifiedSnapshot 主动弹幕走 ReAct 时同样吃统一快照：
+// Context 与 Passive Brain 同源，Question 额外带画面。
+func TestRunOnceReactUsesUnifiedSnapshot(t *testing.T) {
+	f := newFixture(t)
+	builder := &fakeBuilder{input: snapshotBuilderInput()}
+	llm := &stubLLM{reply: `{"thought":"看够了","action":"final","final":"在吃面包呢"}`}
+	factory, _ := reactFixture(t, llm)
+	runner, err := New(f.snap, f.vision, f.engine, testPack(), nil, factory, f.snd, Options{
+		SendGap: 30 * time.Second, RoomID: "30308220", Builder: builder,
+		Now: func() time.Time { return *f.clock },
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	got, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if !got.React || f.engine.calls != 0 {
+		t.Fatalf("应走 ReAct：result=%+v brain=%d", got, f.engine.calls)
+	}
+	if !strings.HasPrefix(llm.system, testPack().SystemPrompt()) || !strings.Contains(llm.system, "你在回答一条直播弹幕") {
+		t.Error("ReAct system 不是「人格 prompt + 协议」")
+	}
+	for _, want := range []string{
+		"刚才聊到吃鱼",
+		"【对方档案 · 老熟人】",
+		"[当前状态] 你正在看房间 30308220 的直播",
+		"喜欢被摸头",
+		"你在直播间的场景",
+		"画面：" + f.vision.text,
+	} {
+		if !strings.Contains(llm.user, want) {
+			t.Errorf("ReAct 上下文缺少 %q：\n%s", want, llm.user)
+		}
+	}
+
+	// 与 ContextBuilder 产出的快照同源：Context 段就是 ContextText 的渲染结果。
+	built := builder.input
+	built.Event = builder.gotEvent
+	built.Visual = builder.gotVisual
+	wantText, err := brain.ContextText(context.Background(), built)
+	if err != nil {
+		t.Fatalf("渲染统一快照失败：%v", err)
+	}
+	if !strings.HasPrefix(llm.user, strings.TrimSpace(wantText)) {
+		t.Errorf("主动 ReAct 与统一快照不同源：\nwant prefix:\n%s\ngot:\n%s", wantText, llm.user)
 	}
 }

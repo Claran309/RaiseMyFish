@@ -821,7 +821,7 @@ func (p *proactiveController) set(enabled bool, intervalSeconds int) error {
 	runner := p.runner
 	p.mu.Unlock()
 	if runner == nil {
-		built, err := buildProactiveRunner(p.base, p.deps.Resources, p.deps.Routes, p.deps.Pack, p.deps.Knowledge.Reader, p.deps.Presence, p.deps.GiftGate.Load, p.log)
+		built, err := buildProactiveRunner(p.base, p.deps.Resources, p.deps.Routes, p.deps.Pack, p.deps.Knowledge.Reader, p.deps.Presence, p.deps.Rooms, p.deps.GiftGate.Load, p.log)
 		if err != nil {
 			p.setError(err)
 			return err

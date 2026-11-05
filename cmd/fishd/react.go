@@ -13,13 +13,13 @@ import (
 	"sync"
 	"time"
 
+	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/brain/provider"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/knowledge"
 	"RaiseMyFish/internal/memory"
-	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/store"
@@ -151,7 +151,10 @@ func (c *reactCache) Put(scope memory.Scope, text, reply string) {
 
 // runReact 执行一次 ReAct 并记录预算相关日志（步数/工具/降级/耗时）。
 // 命中缓存时不再造 Agent，也不再消耗模型调用。
-func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, pack persona.Pack, ev event.Event, log *zap.Logger) (string, error) {
+//
+// 上下文与单步 Brain 同源：input 是 ContextBuilder 组装的统一快照，
+// 渲染成 Context 后进入 user 段，ReAct 因此能看到档案/双方对话/状态/长期设定。
+func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev event.Event, input brain.ContextInput, log *zap.Logger) (string, error) {
 	if runtime == nil || runtime.factory == nil {
 		return "", nil
 	}
@@ -166,8 +169,21 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, pa
 	if err != nil || agent == nil {
 		return "", err
 	}
+	contextText, cerr := brain.ContextText(ctx, input)
+	if cerr != nil {
+		// 快照渲染失败只降级为「不带上下文」，问题本身仍可作答
+		log.Warn("ReAct 上下文渲染失败，仅带问题执行",
+			zap.String("action", "react_context"),
+			zap.String("event_id", ev.ID),
+			zap.Error(cerr),
+		)
+	}
 	started := time.Now()
-	res, err := agent.Run(ctx, reasoning.Input{System: pack.SystemPrompt(), Question: ev.Text})
+	res, err := agent.Run(ctx, reasoning.Input{
+		System:   input.Persona.SystemPrompt(),
+		Context:  contextText,
+		Question: ev.Text,
+	})
 	elapsed := time.Since(started).Milliseconds()
 	log.Info("ReAct 执行完成",
 		zap.String("action", "react"),

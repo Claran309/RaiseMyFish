@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
@@ -185,5 +186,44 @@ func TestBaselineSceneAssemblyBudgetRetainsInstructionAndInput(t *testing.T) {
 	after, err := json.Marshal(in)
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("场景装配或裁剪修改了输入")
+	}
+}
+
+// TestContextTextMatchesBrainPrompt 单步 Brain 与 ReAct 的 ContextText 同源：
+// 同一份快照（双方对话/共享事实/状态/画面/档案/长期设定/场景）渲染结果一致。
+func TestContextTextMatchesBrainPrompt(t *testing.T) {
+	_, in := fixture()
+	in.State = "你正在看房间 1992099976 的直播"
+	in.Visual = "画面里有一个人坐在桌前啃面包"
+	in.Viewer = "【对方档案 · 老熟人】\n- 说过 3 次"
+	in.Soul = []string{"- 喜欢被摸头"}
+	at := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	in.Memory.Recent = []memory.Message{{EventID: "e1", Channel: event.ChLive, Session: "room", Dir: event.DirIn, Text: "刚说过的话", At: at}}
+	in.Shared.Facts = []memory.Fact{{Key: "存粮", Value: "有", Channel: event.ChLive, Session: "room", SourceID: "e1", At: at}}
+
+	text, err := ContextText(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages, err := buildMessages(context.Background(), in, 32768)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := messages[1].Content
+	if !strings.HasPrefix(user, text) {
+		t.Fatalf("单步 prompt 与 ContextText 不同源：\ncontext=%q\nuser=%q", text, user)
+	}
+	for _, want := range []string{
+		"刚说过的话",
+		"存粮",
+		"[当前状态] " + in.State,
+		"<visual>\n" + in.Visual + "\n</visual>",
+		"<viewer>\n" + in.Viewer + "\n</viewer>",
+		"<longterm>\n- 喜欢被摸头\n</longterm>",
+		"场景",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("ContextText 缺少 %q：\n%s", want, text)
+		}
 	}
 }

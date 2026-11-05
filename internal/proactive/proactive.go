@@ -68,6 +68,15 @@ type Sender interface {
 // 用工厂而不是单例：工具要按当前房间/会话查，并发 worker 共享可变 Scope 会串会话。
 type ReactFactory func(scope memory.Scope) (*reasoning.Agent, error)
 
+// ContextBuilder 组装统一上下文快照；实现由 cmd/fishd 注入。
+//
+// 主动与被动必须共用同一套资料与权限规则：档案、双方最近对话、状态、
+// 长期设定都在实现里装配；visual 是主动路径额外提供的画面描述。
+// withKnowledge 由调用方按意图决定。
+type ContextBuilder interface {
+	BuildContext(ctx context.Context, ev event.Event, visual string, withKnowledge bool) brain.ContextInput
+}
+
 // Options 是运行期参数；Interval 由 cmd 的定时循环控制，不在这里睡眠。
 type Options struct {
 	// SendGap 是两次发送的最小间隔；零值取 DefaultSendGap。
@@ -76,8 +85,10 @@ type Options struct {
 	RoomID string
 	// ReactTrigger 是 ReAct 触发模式：always（默认）/ keyword。
 	ReactTrigger string
-	Logger       *zap.Logger
-	Now          func() time.Time
+	// Builder 是统一上下文快照装配器；nil 时退回本包的最小召回（仅供测试/旧装配）。
+	Builder ContextBuilder
+	Logger  *zap.Logger
+	Now     func() time.Time
 }
 
 // Result 描述本轮结果，便于日志与测试断言。
@@ -99,6 +110,7 @@ type Runner struct {
 	brain    brain.Brain
 	pack     persona.Pack
 	mem      memory.Reader
+	builder  ContextBuilder
 	react    ReactFactory
 	sender   Sender
 	room     string
@@ -154,6 +166,7 @@ func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack 
 		brain:          engine,
 		pack:           pack,
 		mem:            mem,
+		builder:        opts.Builder,
 		react:          react,
 		sender:         snd,
 		room:           opts.RoomID,
@@ -203,17 +216,11 @@ func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 		return Result{Visual: visual}, err
 	}
 
-	// 4. 构造 ContextInput：合成事件 + 画面描述，其余（人设/记忆/知识/预算）全走 Brain 复用管线
+	// 4. 构造统一快照：合成事件 + 画面描述；档案/双方对话/状态/长期设定
+	//    与被动回复走同一个 ContextBuilder，单步与 ReAct 都吃这份资料。
 	ev := r.syntheticEvent()
 	scope := memory.Scope{Channel: ev.Channel, Session: ev.Session}
-	memCtx, shared := r.recall(ctx, scope)
-	input := brain.ContextInput{
-		Event:   ev,
-		Persona: r.pack,
-		Memory:  memCtx,
-		Shared:  shared,
-		Visual:  visual,
-	}
+	input := r.buildInput(ctx, ev, visual)
 	task := brain.Task{ID: ev.ID, EventID: ev.ID, Channel: ev.Channel, Session: ev.Session}
 
 	// 5. 生成：画面里出现「要查事实」的线索就走 ReAct，否则单步 Brain
@@ -268,7 +275,7 @@ func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 // 与弹幕回复路径的降级策略保持一致。
 func (r *Runner) generate(ctx context.Context, scope memory.Scope, input brain.ContextInput, task brain.Task, visual string) (bool, string, error) {
 	if r.shouldUseReAct(visual) {
-		text, err := r.runReact(ctx, scope, visual)
+		text, err := r.runReact(ctx, scope, input, visual)
 		if err == nil && strings.TrimSpace(text) != "" {
 			return true, text, nil
 		}
@@ -305,8 +312,26 @@ func (r *Runner) shouldUseReAct(visual string) bool {
 	return decision.NeedMemory || decision.NeedKnowledge
 }
 
-// runReact 调 ReAct 循环拿回复；预算与降级由 reasoning.Agent 自己控制。
-func (r *Runner) runReact(ctx context.Context, scope memory.Scope, visual string) (string, error) {
+// buildInput 组装本轮统一快照；注入 Builder 时与被动回复同源，
+// 否则退回本包的最小召回（保留给测试与旧装配）。
+func (r *Runner) buildInput(ctx context.Context, ev event.Event, visual string) brain.ContextInput {
+	if r.builder != nil {
+		// 主动路径不额外召回知识：事实查询由 ReAct 工具按需发起，保持既有成本。
+		return r.builder.BuildContext(ctx, ev, visual, false)
+	}
+	scope := memory.Scope{Channel: ev.Channel, Session: ev.Session}
+	memCtx, shared := r.recall(ctx, scope)
+	return brain.ContextInput{
+		Event:   ev,
+		Persona: r.pack,
+		Memory:  memCtx,
+		Shared:  shared,
+		Visual:  visual,
+	}
+}
+
+// runReact 调 ReAct 循环拿回复；上下文与单步 Brain 同源，预算与降级由 Agent 控制。
+func (r *Runner) runReact(ctx context.Context, scope memory.Scope, input brain.ContextInput, visual string) (string, error) {
 	agent, err := r.react(scope)
 	if err != nil {
 		return "", err
@@ -314,8 +339,19 @@ func (r *Runner) runReact(ctx context.Context, scope memory.Scope, visual string
 	if agent == nil {
 		return "", errors.New("ReAct 未装配")
 	}
+	contextText, cerr := brain.ContextText(ctx, input)
+	if cerr != nil {
+		r.log.Warn("主动弹幕上下文渲染失败，仅带画面执行",
+			zap.String("action", "proactive_react"),
+			zap.Error(cerr),
+		)
+	}
 	question := SyntheticEventText + "\n画面：" + visual
-	res, err := agent.Run(ctx, reasoning.Input{System: r.pack.SystemPrompt(), Question: question})
+	res, err := agent.Run(ctx, reasoning.Input{
+		System:   input.Persona.SystemPrompt(),
+		Context:  contextText,
+		Question: question,
+	})
 	r.log.Info("主动弹幕 ReAct 完成",
 		zap.String("action", "proactive_react"),
 		zap.Int("steps", res.Steps),

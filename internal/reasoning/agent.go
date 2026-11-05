@@ -48,6 +48,9 @@ func DefaultOptions() Options {
 type Input struct {
 	// System 是人设与协议（调用方传人格摘要）。
 	System string
+	// Context 是统一上下文快照（档案/双方对话/状态/长期设定/场景资料），
+	// 与单步 Brain 使用同一份快照；进入 user 段，不作为系统指令。
+	Context string
 	// Question 是这次要回答的事件正文。
 	Question string
 }
@@ -142,12 +145,10 @@ func (a *Agent) Run(ctx context.Context, in Input) (Result, error) {
 			return a.degrade(runCtx, in, observations, used, steps, DegradeParse)
 		}
 		if decision.Action == "final" {
-			text := strings.TrimSpace(decision.Final)
+			// action=final 时正文可放 final 或 args（协议约定），但必须过正文校验
+			text := replyBody(finalBody(decision))
 			if text == "" {
-				text = strings.TrimSpace(decision.Args)
-			}
-			if text == "" {
-				// 说 final 却没给正文：当成解析失败降级，别回空串
+				// 说 final 却没给可用正文：走降级，绝不把内部内容当回复
 				return a.degrade(runCtx, in, observations, used, steps, DegradeEmpty)
 			}
 			return Result{Text: text, Steps: steps, Tools: used}, nil
@@ -182,15 +183,47 @@ func (a *Agent) degrade(ctx context.Context, in Input, observations, used []stri
 		// 降级本身失败不向上抛：调用方会回落单步生成，这里报错只会多一条噪音
 		return result, nil //nolint:nilerr // 有意吞掉：降级失败交给调用方兜底
 	}
-	// 降级那次模型仍可能回 JSON，尽量把正文捞出来
+	// 降级那次模型仍可能回 JSON：只认 action=final 的正文，
+	// thought/args 属于内部推理与工具参数，任何情况下都不外发。
 	if decision, perr := ParseStep(out); perr == nil {
-		if text := firstNonEmpty(decision.Final, decision.Args, decision.Thought); text != "" {
-			result.Text = text
-			return result, nil
+		if decision.Action == "final" {
+			result.Text = replyBody(finalBody(decision))
+		}
+		return result, nil
+	}
+	// 不是合法 JSON：残缺的协议 JSON 同样视为内部内容丢弃；
+	// 纯文本才可能是「直接给出最终回复」的正文。
+	result.Text = replyBody(out)
+	return result, nil
+}
+
+// finalBody 只从 action=final 的步里取正文；工具步一律返回空。
+func finalBody(step Step) string {
+	if step.Action != "final" {
+		return ""
+	}
+	return firstNonEmpty(step.Final, step.Args)
+}
+
+// replyBody 校验并清洗最终正文。
+//
+// 拒绝：空串、代码块、JSON 形状（完整或残缺的协议输出）、
+// 以及带 thought/action/args 字段的内部推理。坏内容宁可不发，
+// 由调用方回落单步生成，也不能把内部内容当弹幕发出去。
+func replyBody(raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" || strings.HasPrefix(text, "```") {
+		return ""
+	}
+	if strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
+		return ""
+	}
+	for _, field := range []string{`"action"`, `"thought"`, `"args"`} {
+		if strings.Contains(text, field) {
+			return ""
 		}
 	}
-	result.Text = strings.TrimSpace(out)
-	return result, nil
+	return text
 }
 
 // systemPrompt 拼协议说明。
@@ -201,6 +234,8 @@ func (a *Agent) systemPrompt(in Input) string {
 		sb.WriteString("\n\n")
 	}
 	sb.WriteString("你在回答一条直播弹幕。需要事实就先查，查到够了再回答。\n")
+	sb.WriteString("「XX 是谁」是在问观众 XX，不是问你自己：用 viewer_search 按昵称或 uid 查档案，查不到就说不认识；只有「你是谁」才是问你自己。\n")
+	sb.WriteString("查记忆时 memory_search 的 args 传昵称或关键词（如「弓长三益」），不要传整句问题。\n")
 	sb.WriteString("可用工具：\n")
 	sb.WriteString(a.tools.Descriptions())
 	sb.WriteString("每一步只输出一行 JSON，不要多余文字：\n")
@@ -208,9 +243,15 @@ func (a *Agent) systemPrompt(in Input) string {
 	return sb.String()
 }
 
-// userPrompt 拼问题与已获得的观察。
+// userPrompt 拼上下文、问题与已获得的观察。
+//
+// 统一上下文快照放在 user 段：资料不是新指令，不能混进 system。
 func (a *Agent) userPrompt(in Input, observations []string) string {
 	var sb strings.Builder
+	if contextText := strings.TrimSpace(in.Context); contextText != "" {
+		sb.WriteString(contextText)
+		sb.WriteString("\n")
+	}
 	fmt.Fprintf(&sb, "弹幕：%s\n", clip(in.Question, 300))
 	if len(observations) == 0 {
 		sb.WriteString("（还没有查证）")

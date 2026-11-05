@@ -79,6 +79,18 @@ func newTestAgent(t *testing.T, llm LLM, opts Options, tools ...Tool) *Agent {
 	return agent
 }
 
+// TestSystemPromptDistinguishesWhoIsWho 防止「XX 是谁」被当成「你是谁」。
+func TestSystemPromptDistinguishesWhoIsWho(t *testing.T) {
+	tool := &countingTool{name: ToolViewerSearch, out: "档案"}
+	agent := newTestAgent(t, &scriptedLLM{}, DefaultOptions(), tool.tool())
+	prompt := agent.systemPrompt(Input{System: "人设"})
+	for _, want := range []string{"「XX 是谁」是在问观众 XX", "viewer_search", "「你是谁」才是问你自己", "memory_search 的 args 传昵称或关键词"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("ReAct system prompt 缺少规则 %q：%s", want, prompt)
+		}
+	}
+}
+
 // TestRunToolThenFinal 模型先调工具、拿到结果后再给 final。
 func TestRunToolThenFinal(t *testing.T) {
 	tool := &countingTool{name: ToolMemorySearch, out: "上次说想吃鱼"}
@@ -252,6 +264,76 @@ func TestParseStepToleratesFences(t *testing.T) {
 	}
 }
 
+// TestDegradeOnlyAcceptsFinalBody（T17）降级只认 action=final 的正文：
+// 工具步的 args/thought、残缺 JSON、空 final 一概不外发。
+func TestDegradeOnlyAcceptsFinalBody(t *testing.T) {
+	tool := &countingTool{name: ToolHistory, out: "弹幕一"}
+	cases := []struct {
+		name    string
+		degrade string
+		want    string
+	}{
+		{"非final工具步", `{"thought":"内部推理：先查历史","action":"history","args":"10"}`, ""},
+		{"非final却带final字段", `{"thought":"内部推理","action":"history","final":"内部内容","args":"10"}`, ""},
+		{"残缺JSON", `{"thought":"内部推理","action":"final","final":"答案"`, ""},
+		{"空final", `{"thought":"内部推理","action":"final","final":"  "}`, ""},
+		{"final正文", `{"thought":"内部推理","action":"final","final":"在吃面包"}`, "在吃面包"},
+		{"final的args正文", `{"thought":"内部推理","action":"final","args":"在吃面包"}`, "在吃面包"},
+		{"纯文本", "直接回答：在吃面包", "直接回答：在吃面包"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			llm := &scriptedLLM{replies: []string{
+				`{"thought":"查一下","action":"history","args":"10"}`,
+				tc.degrade,
+			}}
+			agent := newTestAgent(t, llm, Options{MaxSteps: 1, Timeout: 2 * time.Second}, tool.tool())
+			got, err := agent.Run(context.Background(), Input{Question: "问"})
+			if err != nil {
+				t.Fatalf("Run 失败：%v", err)
+			}
+			if !got.Degraded || got.Reason != DegradeSteps {
+				t.Errorf("应步数耗尽降级：%+v", got)
+			}
+			if got.Text != tc.want {
+				t.Errorf("降级正文 = %q，期望 %q", got.Text, tc.want)
+			}
+		})
+	}
+}
+
+// TestFinalBodyRejectsJSON 普通收尾同样过正文校验：
+// 正文像协议 JSON 时降级重问，最终只发人话；final 的 args 仍兼容。
+func TestFinalBodyRejectsJSON(t *testing.T) {
+	tool := &countingTool{name: ToolHistory, out: "x"}
+	llm := &scriptedLLM{replies: []string{
+		`{"thought":"想好了","action":"final","final":"{\"thought\":\"内部\",\"action\":\"history\",\"args\":\"10\"}"}`,
+		`{"action":"final","final":"在吃面包"}`,
+	}}
+	agent := newTestAgent(t, llm, Options{MaxSteps: 3, Timeout: 2 * time.Second}, tool.tool())
+	got, err := agent.Run(context.Background(), Input{Question: "问"})
+	if err != nil {
+		t.Fatalf("Run 失败：%v", err)
+	}
+	if !got.Degraded || got.Reason != DegradeEmpty {
+		t.Errorf("JSON 形状正文应判为空正文并降级：%+v", got)
+	}
+	if got.Text != "在吃面包" {
+		t.Errorf("降级后正文 = %q", got.Text)
+	}
+
+	// final 的 args 是协议允许的正文位置
+	llm2 := &scriptedLLM{replies: []string{`{"action":"final","args":"在吃面包"}`}}
+	agent2 := newTestAgent(t, llm2, Options{MaxSteps: 3, Timeout: 2 * time.Second}, tool.tool())
+	got2, err := agent2.Run(context.Background(), Input{Question: "问"})
+	if err != nil {
+		t.Fatalf("Run 失败：%v", err)
+	}
+	if got2.Text != "在吃面包" || got2.Degraded {
+		t.Errorf("final 的 args 正文应直接采用：%+v", got2)
+	}
+}
+
 // TestNewRejectsBadOptions 预算参数非法时构造失败。
 func TestNewRejectsBadOptions(t *testing.T) {
 	box, err := NewToolbox(Tool{Name: "t", Desc: "d", Run: func(context.Context, string) (string, error) { return "", nil }})
@@ -278,5 +360,24 @@ func TestDefaultOptions(t *testing.T) {
 	o := DefaultOptions()
 	if o.MaxSteps != 3 || o.Timeout != 8*time.Second {
 		t.Errorf("默认预算不符：%+v", o)
+	}
+}
+
+// TestUserPromptIncludesContextSnapshot Input.Context 进入 user 段且位于问题之前；
+// 空 Context 不产生多余空行，保持旧格式。
+func TestUserPromptIncludesContextSnapshot(t *testing.T) {
+	a := &Agent{}
+	got := a.userPrompt(Input{
+		Context:  " <context>{\"recent\":[]}</context>\n[当前状态] 在看直播 ",
+		Question: "记得吗",
+	}, nil)
+	wantPrefix := "<context>{\"recent\":[]}</context>\n[当前状态] 在看直播\n弹幕：记得吗"
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Fatalf("Context 未进入 user 段或位置不对：%q", got)
+	}
+
+	got = a.userPrompt(Input{Question: "在吗"}, nil)
+	if !strings.HasPrefix(got, "弹幕：在吗\n") {
+		t.Fatalf("空 Context 不应改变旧 prompt 格式：%q", got)
 	}
 }

@@ -117,20 +117,17 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 		return scheduler.Workers{}, errors.New("日志器不能为 nil")
 	}
 
+	// 统一上下文快照：被动回复与主动弹幕共用同一套资料装配规则。
+	builder := newContextBuilder(pack, mem, know, viewers, newSoulCache(soulPath), state, log)
 	generate := generateHandler(generateDeps{
 		live:       live,
-		pack:       pack,
 		brains:     byChannel,
 		sender:     snd,
 		bus:        bus,
 		retryDelay: retryDelay,
-		memory:     mem,
-		knowledge:  know,
-		soul:       newSoulCache(soulPath),
+		context:    builder,
 		channels:   channels,
-		viewers:    viewers,
 		presence:   pres,
-		state:      state,
 		react:      react,
 		log:        log,
 	})
