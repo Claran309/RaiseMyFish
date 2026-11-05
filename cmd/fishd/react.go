@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"RaiseMyFish/internal/brain/provider"
 	"RaiseMyFish/internal/config"
@@ -42,7 +41,6 @@ type reactRuntime struct {
 
 const (
 	// 短句门槛：少于 6 个字符（rune）单步，如「哈哈」「好」「在吗」。
-	minReactRunes = 6
 	// 同问题结果复用窗口，控制重复弹幕的模型成本。
 	reactCacheTTL = 5 * time.Minute
 	// 缓存条目上限；弹幕量大时不至于无界增长。
@@ -55,11 +53,14 @@ const (
 // 不再依赖「梗/刚才」这类词表——词表漏判就查不到记忆，可用性优先。
 // default_react=false：保留旧两段式，仅命中召回线索时走 ReAct。
 //
-// 短句判断直接用 rune 长度，不复用 reasoning.Decide：
-// Decide 的职责是「是否需要召回」，不是「句子长短」；拿它当长度判断会改语义，也会漏掉短句。
+// shouldUseReAct 判断这条弹幕要不要走多步思考。
+//
+// default_react=true（默认）：**全量走 ReAct**（含短句）——可用性优先，
+// 短句也可能需要查记忆/知识（「记得吗」「摸我」），不再按长度区分。
+// default_react=false：保留旧两段式，仅命中召回线索时走 ReAct。
 func shouldUseReAct(text string, defaultReact bool) bool {
 	if defaultReact {
-		return utf8.RuneCountInString(strings.TrimSpace(text)) >= minReactRunes
+		return true
 	}
 	d := reasoning.Decide(text)
 	return d.NeedMemory || d.NeedKnowledge

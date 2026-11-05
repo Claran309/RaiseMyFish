@@ -342,8 +342,9 @@ func TestGenerateSettlesBrainErrorButPropagatesSenderError(t *testing.T) {
 	sendBus := newFakeBus(sendID)
 	snd := &fakeSender{sendErr: boom}
 	workers2, _ := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: &fakeBrain{reply: brain.Reply{Text: "好"}}}, snd, sendBus, time.Second, nil, nil, nil, "", nil, nil, nil, nil, zap.NewNop())
-	if _, err := workers2.Generate(context.Background(), scheduler.Work{Claim: liveClaim(sendID), Task: liveTask(sendID)}); !errors.Is(err, boom) {
-		t.Errorf("Sender 错误未透传：%v", err)
+	// 发送失败但事件已结清（dead/retry）时不再返回错误：可预期错误不能终止消费循环。
+	if _, err := workers2.Generate(context.Background(), scheduler.Work{Claim: liveClaim(sendID), Task: liveTask(sendID)}); err != nil {
+		t.Errorf("结清后不应返回错误：%v", err)
 	}
 }
 
@@ -749,8 +750,9 @@ func TestGenerateSettlesBySenderKind(t *testing.T) {
 			snd := &fakeSender{sendErr: &sender.Error{Kind: tc.kind, Settled: false}}
 			workers := newSettleWorkers(t, &fakeBrain{reply: brain.Reply{Text: "哼"}}, snd, bus)
 
-			if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err == nil {
-				t.Fatal("发送失败时应返回错误")
+			// 发送失败已由 settleFailure 结清（dead/retry），handler 返回 nil 让循环继续。
+			if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: liveClaim(id), Task: liveTask(id)}); err != nil {
+				t.Fatalf("结清后不应返回错误：%v", err)
 			}
 			if got := bus.finalStatus(id); got != tc.want {
 				t.Errorf("最终状态 = %q，期望 %q", got, tc.want)
@@ -1809,14 +1811,14 @@ func TestShouldUseReActByDefault(t *testing.T) {
 		text string
 		want bool
 	}{
-		{"好", false},         // 1 字短句
-		{"在吗", false},        // 2 字短句
-		{"哈哈哈", false},       // 3 字短句（旧词表也不命中）
-		{"主播好", false},       // 3 字：即使以前会走单步，现在仍按短句处理
-		{"草草草草草", false},     // 5 字：仍少于 6
-		{"草草草草草草", true},     // 6 字：达到门槛
-		{"今天吃什么好吃的", true},   // 无召回词表也要走 ReAct
-		{"晚安", false},        // 2 字
+		{"好", true},          // 全量 ReAct：1 字也走
+		{"在吗", true},        // 全量 ReAct：短句也走
+		{"哈哈哈", true},       // 3 字短句也走
+		{"主播好", true},       // 3 字
+		{"草草草草草", true},     // 5 字
+		{"草草草草草草", true},    // 6 字
+		{"今天吃什么好吃的", true},  // 无召回词表也走
+		{"晚安", true},        // 2 字
 		{"刚才那个梗是什么意思", true}, // 长句
 	}
 	for _, tc := range cases {
@@ -1824,9 +1826,9 @@ func TestShouldUseReActByDefault(t *testing.T) {
 			t.Errorf("%q → %v，期望 %v", tc.text, got, tc.want)
 		}
 	}
-	// 首尾空白不计入长度。
-	if got := shouldUseReAct("  在吗  ", true); got {
-		t.Error("短句带空白不应因为空白长度进 ReAct")
+	// 全量 ReAct 下空白短句同样进 ReAct。
+	if got := shouldUseReAct("  在吗  ", true); !got {
+		t.Error("全量 ReAct 下短句（含空白）也应进入")
 	}
 }
 
@@ -1868,14 +1870,15 @@ func TestSimpleMessageSkipsReAct(t *testing.T) {
 		t.Fatalf("Generate 失败：%v", err)
 	}
 
-	if *calls != 0 || llm.calls != 0 {
-		t.Errorf("简单弹幕不应进 ReAct：factory=%d llm=%d", *calls, llm.calls)
+	// 全量 ReAct：简单弹幕同样进 ReAct，单步 Brain 不再被调用。
+	if *calls != 1 || llm.calls < 1 {
+		t.Errorf("简单弹幕也应进 ReAct：factory=%d llm=%d", *calls, llm.calls)
 	}
-	if engine.calls != 1 {
-		t.Errorf("应走单步生成 1 次，实际 %d", engine.calls)
+	if engine.calls != 0 {
+		t.Errorf("ReAct 路径不应调单步 Brain，实际 %d", engine.calls)
 	}
-	if snd.gotReply.Text != "单步回复" {
-		t.Errorf("发送正文 = %q", snd.gotReply.Text)
+	if snd.gotReply.Text == "" {
+		t.Error("ReAct 路径应发送非空回复")
 	}
 }
 

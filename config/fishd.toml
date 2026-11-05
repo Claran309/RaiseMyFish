@@ -268,7 +268,7 @@ reply_only_mention = true
 # 被结构化 @（回复目标是自己）时，回复前缀带「@对方昵称 」；正文含前缀截到 40 rune。
 reply_mention_back = true
 max_reply_runes = 40
-self_names = ["大肥鱼", "Claranの大肥鱼"]
+self_names = ["大肥鱼", "Claranの大肥鱼", "魔鱼魔鱼吃白饭饭饭饭"]
 self_ids = ["3747574135655903"]
 
 # 评论回复的调度策略：启用 [collector.comment]/[sender.comment] 时必须同时配置，

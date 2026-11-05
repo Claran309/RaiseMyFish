@@ -259,7 +259,10 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 			if settleErr := settleFailure(ctx, deps.bus, w.Claim, err, []event.Status{event.StatusReplying}, deps.retryDelay); settleErr != nil {
 				return scheduler.Result{}, errors.Join(err, settleErr)
 			}
-			return scheduler.Result{}, err
+			// 事件已结清（dead/retry），返回 nil 让消费循环继续：发送失败是
+			// 可预期错误，不能因为一条私信/评论发失败就终止整个消费者。
+			// 错误详情已由 withErrorLog 记录（error_kind/error_chain）。
+			return scheduler.Result{Replied: res.OK}, nil
 		}
 
 		// 投递被接受才算发送成功；OK=false 不记 sending
