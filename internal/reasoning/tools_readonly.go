@@ -1,6 +1,7 @@
 package reasoning
 
-// 本文件实现 7 个只读工具：查观众史、查自己回复、直播间状态、额度、时间、画面、搜索。
+// 本文件实现 7 个固定只读工具：查观众史、查自己回复、直播间状态、额度、时间、画面、搜索。
+// 观众档案语义检索（viewer_search）在注入依赖时额外注册。
 //
 // 共同约束（派发单）：只读、不写库、参数校验、结果截断 ≤500 字。
 
@@ -12,11 +13,13 @@ import (
 	"time"
 
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/store"
 )
 
 // 只读工具名（协议的一部分，改名等于改协议）。
 const (
 	ToolViewerMemory = "viewer_memory"
+	ToolViewerSearch = "viewer_search"
 	ToolReplyHistory = "reply_history"
 	ToolLiveStatus   = "live_status"
 	ToolQuota        = "quota"
@@ -31,6 +34,11 @@ const maxReadOnlyRunes = 500
 // ViewerSearcher 按观众 ID 查历史消息。
 type ViewerSearcher interface {
 	ViewerRecent(ctx context.Context, fromID string, limit int) ([]event.Event, error)
+}
+
+// ViewerProfileSearcher 按自然语言描述检索观众档案（语义 + 关键词）。
+type ViewerProfileSearcher interface {
+	Search(ctx context.Context, query string, limit int) ([]store.ViewerProfileHit, error)
 }
 
 // ReplySearcher 查本会话最近发出的回复。
@@ -66,13 +74,15 @@ type FrameReader interface {
 // ReadOnlyDeps 是只读工具的数据来源；为 nil 的工具仍会注册，
 // 但调用时明确返回「未配置」，让模型知道「这条路走不通」而不是「没有数据」。
 type ReadOnlyDeps struct {
-	Viewer    ViewerSearcher
-	Replies   ReplySearcher
-	Live      LiveStatusSource
-	Quota     QuotaSource
-	Frame     FrameSource
-	FrameRead FrameReader
-	Search    WebSearcher
+	Viewer ViewerSearcher
+	// ViewerSearch 为 nil 时不注册 viewer_search（不影响固定 7 个工具）。
+	ViewerSearch ViewerProfileSearcher
+	Replies      ReplySearcher
+	Live         LiveStatusSource
+	Quota        QuotaSource
+	Frame        FrameSource
+	FrameRead    FrameReader
+	Search       WebSearcher
 	// Room 是本会话房间号；空串时直播类工具返回未配置。
 	Room string
 	// QuotaLimit 是每日送礼上限（0 表示未配置）。
@@ -115,6 +125,34 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 			return clip(strings.Join(parts, " / "), maxReadOnlyRunes), nil
 		},
 	})
+
+	if d.ViewerSearch != nil {
+		tools = append(tools, Tool{
+			Name: ToolViewerSearch,
+			Desc: "按描述找观众档案（如「那个爱要白饭的人」）；args 传描述词",
+			Run: func(ctx context.Context, args string) (string, error) {
+				query := strings.TrimSpace(args)
+				if query == "" {
+					return "", fmt.Errorf("查询词不能为空")
+				}
+				if len([]rune(query)) > 100 {
+					return "", fmt.Errorf("查询词不能超过100字")
+				}
+				hits, err := d.ViewerSearch.Search(ctx, query, 3)
+				if err != nil {
+					return "", err
+				}
+				if len(hits) == 0 {
+					return "没有找到匹配的观众", nil
+				}
+				var parts []string
+				for _, hit := range hits {
+					parts = append(parts, formatViewerHit(hit.Profile))
+				}
+				return clip(strings.Join(parts, " / "), maxReadOnlyRunes), nil
+			},
+		})
+	}
 
 	tools = append(tools, Tool{
 		Name: ToolReplyHistory,
@@ -228,6 +266,15 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 	})
 
 	return NewToolbox(tools...)
+}
+
+// formatViewerHit 把一条档案压成「uid 昵称：最近发言」的一行。
+func formatViewerHit(p store.ViewerProfile) string {
+	line := p.UID + " " + p.Name
+	if len(p.RecentTexts) > 0 {
+		line += "：" + clip(strings.Join(p.RecentTexts, " / "), 60)
+	}
+	return line
 }
 
 // parseViewerArgs 解析 viewer_memory 的参数：from_id（纯数字）+ limit(1-20)。

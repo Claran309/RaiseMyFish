@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/store"
 )
 
 type fakeViewer struct {
@@ -87,6 +88,20 @@ func (f *fakeFrameRead) Describe(_ context.Context, path string) (string, error)
 	return f.out, f.err
 }
 
+type fakeViewerProfileSearch struct {
+	hits    []store.ViewerProfileHit
+	err     error
+	gotQ    string
+	gotLim  int
+	gotCall int
+}
+
+func (f *fakeViewerProfileSearch) Search(_ context.Context, query string, limit int) ([]store.ViewerProfileHit, error) {
+	f.gotCall++
+	f.gotQ, f.gotLim = query, limit
+	return f.hits, f.err
+}
+
 func readonlyDeps() ReadOnlyDeps {
 	return ReadOnlyDeps{
 		Viewer:     &fakeViewer{rows: []event.Event{{Text: "早"}, {Text: "在吃鱼"}}},
@@ -152,6 +167,58 @@ func TestViewerMemoryRejectsBadArgs(t *testing.T) {
 		if _, err := box.Run(context.Background(), ToolViewerMemory, args); err == nil {
 			t.Errorf("非法参数未被拒绝：%s", args)
 		}
+	}
+}
+
+// TestViewerSearchOptionalTool 注入档案检索时才注册 viewer_search，查询参数透传。
+func TestViewerSearchOptionalTool(t *testing.T) {
+	d := readonlyDeps()
+	search := &fakeViewerProfileSearch{hits: []store.ViewerProfileHit{{
+		Profile: store.ViewerProfile{UID: "2002", Name: "白饭哥", RecentTexts: []string{"今天也要白饭"}},
+	}}}
+	d.ViewerSearch = search
+	box, err := BuildReadOnlyTools(d)
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	names := box.Names()
+	if len(names) != 8 || names[1] != ToolViewerSearch {
+		t.Fatalf("应额外注册 viewer_search：%v", names)
+	}
+	if !strings.Contains(box.Descriptions(), ToolViewerSearch) {
+		t.Error("描述里应列出 viewer_search")
+	}
+
+	got, err := box.Run(context.Background(), ToolViewerSearch, "  那个爱要白饭的人 ")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if search.gotCall != 1 || search.gotQ != "那个爱要白饭的人" || search.gotLim != 3 {
+		t.Errorf("查询参数不符：calls=%d q=%q limit=%d", search.gotCall, search.gotQ, search.gotLim)
+	}
+	if !strings.Contains(got, "2002") || !strings.Contains(got, "白饭哥") || !strings.Contains(got, "今天也要白饭") {
+		t.Errorf("结果格式不符：%q", got)
+	}
+
+	if _, err := box.Run(context.Background(), ToolViewerSearch, "  "); err == nil {
+		t.Error("空查询应报错")
+	}
+	if _, err := box.Run(context.Background(), ToolViewerSearch, strings.Repeat("鱼", 101)); err == nil {
+		t.Error("超长查询应报错")
+	}
+}
+
+// TestViewerSearchEmptyResult 没有命中时给明确文案。
+func TestViewerSearchEmptyResult(t *testing.T) {
+	d := readonlyDeps()
+	d.ViewerSearch = &fakeViewerProfileSearch{}
+	box, _ := BuildReadOnlyTools(d)
+	got, err := box.Run(context.Background(), ToolViewerSearch, "不存在的人")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if got != "没有找到匹配的观众" {
+		t.Errorf("空结果文案 = %q", got)
 	}
 }
 

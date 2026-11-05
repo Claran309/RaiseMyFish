@@ -98,13 +98,7 @@ func (r *MemoryRepo) Records(ctx context.Context, s memory.Scope, limit int) ([]
 	if err := validateRecall(ctx, s, limit); err != nil {
 		return nil, err
 	}
-	query := r.db.WithContext(ctx).Table("memory_records").Where("valid_to IS NULL AND NOT archived AND valid_from <= now()")
-	if s.Private {
-		query = query.Where("(NOT private OR (private AND channel=? AND session=?))", s.Channel, s.Session)
-	} else {
-		query = query.Where("NOT private")
-	}
-	query = query.Where("(channel IS NULL OR channel <> 'dm' OR private)")
+	query := memoryScopeQuery(r.db.WithContext(ctx), s)
 	// SQL行与领域DTO分离，GORM不能直接映射DTO的[]string。
 	var rows []struct {
 		ID         string
@@ -135,6 +129,211 @@ func (r *MemoryRepo) Records(ctx context.Context, s memory.Scope, limit int) ([]
 		return nil, &safeError{"记忆摘要存量数据无效", err}
 	}
 	return result, nil
+}
+
+// memoryScopeQuery 统一 Records/KeywordRecords 的有效期与公开私密过滤。
+func memoryScopeQuery(db *gorm.DB, s memory.Scope) *gorm.DB {
+	query := db.Table("memory_records").Where("valid_to IS NULL AND NOT archived AND valid_from <= now()")
+	if s.Private {
+		query = query.Where("(NOT private OR (private AND channel=? AND session=?))", s.Channel, s.Session)
+	} else {
+		query = query.Where("NOT private")
+	}
+	// 即使旧数据被错误降密，也不允许 DM 行进入公开视角。
+	return query.Where("(channel IS NULL OR channel <> 'dm' OR private)")
+}
+
+// memoryVisibilitySQL 是语义检索手写 SQL 的同口径条件与参数。
+func memoryVisibilitySQL(s memory.Scope) (string, []any) {
+	parts := make([]string, 0, 2)
+	args := make([]any, 0, 2)
+	if s.Private {
+		parts = append(parts, "(NOT private OR (private AND channel=? AND session=?))")
+		args = append(args, string(s.Channel), s.Session)
+	} else {
+		parts = append(parts, "NOT private")
+	}
+	parts = append(parts, "(channel IS NULL OR channel <> 'dm' OR private)")
+	return strings.Join(parts, " AND "), args
+}
+
+// memoryRecordRow 是关键词/语义两路共用的摘要投影。
+type memoryRecordRow struct {
+	ID         string
+	Channel    event.Channel
+	Session    string
+	Summary    string
+	Importance float64
+	Confidence float64
+	Private    bool
+	ValidFrom  time.Time
+	IDs        json.RawMessage
+	Sim        float64
+}
+
+func (row memoryRecordRow) record() (memory.Record, error) {
+	record := memory.Record{
+		ID: row.ID, Channel: row.Channel, Session: row.Session, Summary: row.Summary,
+		Importance: row.Importance, Confidence: row.Confidence, Private: row.Private,
+		ValidFrom: row.ValidFrom,
+	}
+	if len(row.IDs) > 0 {
+		if err := json.Unmarshal(row.IDs, &record.EventIDs); err != nil {
+			return memory.Record{}, err
+		}
+	}
+	return record, nil
+}
+
+// KeywordRecords 在 scope 可见范围内按 title/summary 做关键词模糊匹配。
+func (r *MemoryRepo) KeywordRecords(ctx context.Context, s memory.Scope, keyword string, limit int) ([]memory.Record, error) {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return nil, store.ErrInvalid
+	}
+	if err := validateRecall(ctx, s, limit); err != nil {
+		return nil, err
+	}
+	pattern := "%" + keyword + "%"
+	var rows []memoryRecordRow
+	err := memoryScopeQuery(r.db.WithContext(ctx), s).
+		Where("(title ILIKE ? OR summary ILIKE ?)", pattern, pattern).
+		Select("id, channel, session, summary, importance, confidence, private, valid_from, to_json(event_ids) AS ids").
+		Order("importance DESC, valid_from DESC, id ASC").
+		Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, &safeError{"关键词检索记忆失败", err}
+	}
+	return memoryRows(rows)
+}
+
+// SemanticRecords 在 scope 可见范围内按余弦距离取最相近的摘要。
+func (r *MemoryRepo) SemanticRecords(ctx context.Context, s memory.Scope, vector []float64, limit int) ([]memory.SemanticRecord, error) {
+	if err := validateRecall(ctx, s, limit); err != nil {
+		return nil, err
+	}
+	literal, err := vectorLiteral(vector, memory.EmbeddingDimension)
+	if err != nil {
+		return nil, store.ErrInvalid
+	}
+	visibility, args := memoryVisibilitySQL(s)
+	params := make([]any, 0, len(args)+2)
+	params = append(params, literal)
+	params = append(params, args...)
+	params = append(params, limit)
+	var rows []memoryRecordRow
+	err = r.db.WithContext(ctx).Raw(`
+WITH q AS (SELECT ?::vector AS v)
+SELECT id, channel, session, summary, importance, confidence, private, valid_from,
+       to_json(event_ids) AS ids, 1 - (embedding <=> q.v) AS sim
+FROM memory_records, q
+WHERE valid_to IS NULL AND NOT archived AND valid_from <= now()
+  AND embedding IS NOT NULL AND `+visibility+`
+ORDER BY embedding <=> q.v, id ASC
+LIMIT ?`, params...).Scan(&rows).Error
+	if err != nil {
+		return nil, &safeError{"向量检索记忆失败", err}
+	}
+	records := make([]memory.SemanticRecord, 0, len(rows))
+	for _, row := range rows {
+		record, err := row.record()
+		if err != nil {
+			return nil, &safeError{"解析记忆来源失败", err}
+		}
+		records = append(records, memory.SemanticRecord{Record: record, Similarity: row.Sim})
+	}
+	return records, nil
+}
+
+func memoryRows(rows []memoryRecordRow) ([]memory.Record, error) {
+	records := make([]memory.Record, 0, len(rows))
+	for _, row := range rows {
+		record, err := row.record()
+		if err != nil {
+			return nil, &safeError{"解析记忆来源失败", err}
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+// MemoryEmbeddingInputs 返回全部非空摘要的向量化源字段。
+//
+// 本机运维任务视角：不按 visibility 过滤，召回查询仍会在 SQL 层做范围过滤。
+func (r *MemoryRepo) MemoryEmbeddingInputs(ctx context.Context) ([]memory.EmbeddingInput, error) {
+	if ctx == nil {
+		return nil, store.ErrInvalid
+	}
+	var rows []struct {
+		ID      string
+		Title   string
+		Summary string
+	}
+	err := r.db.WithContext(ctx).Table("memory_records").
+		Select("id, COALESCE(title,'') AS title, COALESCE(summary,'') AS summary").
+		Where("COALESCE(summary,'') <> ''").
+		Order("id ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, &safeError{"读取记忆向量化源失败", err}
+	}
+	inputs := make([]memory.EmbeddingInput, 0, len(rows))
+	for _, row := range rows {
+		inputs = append(inputs, memory.EmbeddingInput{ID: row.ID, Title: row.Title, Summary: row.Summary})
+	}
+	return inputs, nil
+}
+
+// ExistingMemoryEmbeddingHashes 返回已入库向量的文本 hash，用于增量跳过。
+func (r *MemoryRepo) ExistingMemoryEmbeddingHashes(ctx context.Context) (map[string]string, error) {
+	if ctx == nil {
+		return nil, store.ErrInvalid
+	}
+	var rows []struct {
+		ID   string
+		Hash string
+	}
+	err := r.db.WithContext(ctx).Table("memory_records").
+		Select("id, embedding_text_hash AS hash").
+		Where("embedding IS NOT NULL AND COALESCE(embedding_text_hash,'') <> ''").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, &safeError{"查询记忆向量状态失败", err}
+	}
+	hashes := make(map[string]string, len(rows))
+	for _, row := range rows {
+		hashes[row.ID] = row.Hash
+	}
+	return hashes, nil
+}
+
+// UpsertMemoryEmbeddings 只更新既有记录的向量列，不新建记忆行。
+func (r *MemoryRepo) UpsertMemoryEmbeddings(ctx context.Context, records []memory.EmbeddingRecord) error {
+	if ctx == nil {
+		return store.ErrInvalid
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, record := range records {
+			if strings.TrimSpace(record.ID) == "" || strings.TrimSpace(record.Hash) == "" {
+				return store.ErrInvalid
+			}
+			literal, err := vectorLiteral(record.Embedding, memory.EmbeddingDimension)
+			if err != nil {
+				return err
+			}
+			if err := tx.Exec(`
+UPDATE memory_records
+SET embedding=?::vector, embedding_text_hash=?, embedding_updated_at=clock_timestamp()
+WHERE id=?`, literal, record.Hash, record.ID).Error; err != nil {
+				return &safeError{"写入记忆向量失败", err}
+			}
+		}
+		return nil
+	})
 }
 
 // ListRecords 返回最近创建的记录（含私密与归档行）。

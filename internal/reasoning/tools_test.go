@@ -25,6 +25,27 @@ func (f *fakeMem) Recall(_ context.Context, s memory.Scope) (memory.Context, err
 	return f.ctx, f.err
 }
 
+// fakeQueryMem 额外实现带查询词的混合检索。
+type fakeQueryMem struct {
+	fakeMem
+	queryCtx    memory.Context
+	queryErr    error
+	gotQuery    memory.SearchQuery
+	queryCalls  int
+	recallCalls int
+}
+
+func (f *fakeQueryMem) Recall(ctx context.Context, s memory.Scope) (memory.Context, error) {
+	f.recallCalls++
+	return f.fakeMem.Recall(ctx, s)
+}
+
+func (f *fakeQueryMem) Search(_ context.Context, q memory.SearchQuery) (memory.Context, error) {
+	f.queryCalls++
+	f.gotQuery = q
+	return f.queryCtx, f.queryErr
+}
+
 type fakeKnow struct {
 	ctx knowledge.Context
 	err error
@@ -118,6 +139,42 @@ func TestMemoryToolUsesEventScope(t *testing.T) {
 	}
 	if !strings.Contains(got, "路人: 早") || !strings.Contains(got, "摘要: 喜欢钓鱼") {
 		t.Errorf("格式化不符：%q", got)
+	}
+}
+
+// TestMemoryToolUsesQuerySearch 有查询词且实现混合检索时走 Search；空查询仍走 Recall。
+func TestMemoryToolUsesQuerySearch(t *testing.T) {
+	mem := &fakeQueryMem{
+		queryCtx: memory.Context{
+			Scope:   testScope(),
+			Records: []memory.Record{{ID: "m1", Summary: "喜欢白饭", Importance: 0.6, Confidence: 0.8, ValidFrom: time.Now()}},
+		},
+	}
+	box, err := BuildTools(ToolDeps{Memory: mem, Scope: testScope()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := box.Run(context.Background(), ToolMemorySearch, " 爱要白饭 ")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if mem.queryCalls != 1 {
+		t.Fatalf("混合检索调用次数 = %d，期望 1", mem.queryCalls)
+	}
+	if mem.gotQuery.Scope != testScope() || mem.gotQuery.Text != "爱要白饭" || mem.gotQuery.Limit != 10 {
+		t.Errorf("查询参数不符：%+v", mem.gotQuery)
+	}
+	if !strings.Contains(got, "摘要: 喜欢白饭") {
+		t.Errorf("格式化不符：%q", got)
+	}
+
+	// 空查询不消耗 embedding，仍走既有 Recall
+	mem.fakeMem.ctx = memory.Context{Scope: testScope()}
+	if _, err := box.Run(context.Background(), ToolMemorySearch, ""); err != nil {
+		t.Fatal(err)
+	}
+	if mem.queryCalls != 1 || mem.recallCalls != 1 {
+		t.Errorf("空查询应走 Recall：search=%d recall=%d", mem.queryCalls, mem.recallCalls)
 	}
 }
 

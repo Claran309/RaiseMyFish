@@ -20,6 +20,7 @@ import (
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
+	"RaiseMyFish/internal/embedding"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/gift"
 	"RaiseMyFish/internal/infra"
@@ -33,6 +34,7 @@ import (
 	sendercomment "RaiseMyFish/internal/sender/comment"
 	senderlive "RaiseMyFish/internal/sender/live"
 	"RaiseMyFish/internal/store"
+	"RaiseMyFish/internal/viewer"
 	"go.uber.org/zap"
 )
 
@@ -325,9 +327,40 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, nil, fmt.Errorf("装配记忆仓储失败：%w", err)
 	}
-	memReader, err := memory.NewReader(memRepo, memRepo, memory.ReaderOptions{})
+	assembled, err := memory.NewReader(memRepo, memRepo, memory.ReaderOptions{})
 	if err != nil {
 		return nil, nil, fmt.Errorf("装配记忆 Reader 失败：%w", err)
+	}
+	memReader := memory.Reader(assembled)
+
+	// embedding 是增强能力：装配失败只记日志，记忆/档案检索退回纯关键词。
+	var embedClient *embedding.Client
+	if cfg.Embedding.Enabled {
+		client, err := embedding.New(embedding.Options{
+			URL:       cfg.Embedding.URL,
+			Model:     cfg.Embedding.Model,
+			APIKey:    cfg.Embedding.Key,
+			Dimension: cfg.Embedding.Dimension,
+			BatchSize: cfg.Embedding.BatchSize,
+			Timeout:   embedding.DefaultTimeout,
+		})
+		if err != nil {
+			log.Warn("embedding客户端装配失败，语义检索降级为关键词",
+				zap.String("action", "semantic_setup"), zap.Error(err))
+		} else {
+			embedClient = client
+			hybrid, err := memory.NewHybridSearcher(memReader, memRepo, client, memory.HybridSearchOptions{
+				Alpha: cfg.Embedding.Alpha,
+				OnSemanticError: func(err error) {
+					log.Warn("记忆语义召回降级为关键词", zap.String("action", "memory_semantic"), zap.Error(err))
+				},
+			})
+			if err != nil {
+				log.Warn("记忆混合检索装配失败，继续用既有召回", zap.String("action", "memory_semantic"), zap.Error(err))
+			} else {
+				memReader = hybrid
+			}
+		}
 	}
 
 	options := buildSchedulerOptions(cfg.Scheduler)
@@ -351,14 +384,31 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	}
 	// 观众档案：没启用就不建仓储（Generate 里 viewers==nil 自然不注入）
 	var viewerRepo store.ViewerRepo
+	var viewerSearch reasoning.ViewerProfileSearcher
 	if cfg.Viewer.Enabled {
-		if repo, err := database.NewViewerRepo(resources.DB); err == nil {
+		repo, err := database.NewViewerRepo(resources.DB)
+		if err == nil {
 			viewerRepo = repo
+			var embedder viewer.Embedder
+			if embedClient != nil {
+				embedder = embedClient
+			}
+			searcher, err := viewer.NewSearcher(repo, embedder, viewer.SearchOptions{
+				Alpha: cfg.Embedding.Alpha,
+				OnSemanticError: func(err error) {
+					log.Warn("档案语义检索降级为关键词", zap.String("action", "viewer_semantic"), zap.Error(err))
+				},
+			})
+			if err != nil {
+				log.Warn("档案检索装配失败，viewer_search 不注册", zap.String("action", "viewer_semantic"), zap.Error(err))
+			} else {
+				viewerSearch = searcher
+			}
 		}
 	}
 	quota := buildGiftQuota(cfg, log)
 	execs := buildToolExecutors(cfg, log)
-	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, quota, execs, usageRepo, log)
+	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, viewerSearch, quota, execs, usageRepo, log)
 	if err != nil {
 		return nil, nil, err
 	}

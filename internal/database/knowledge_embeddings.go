@@ -70,7 +70,7 @@ func (r *KnowledgeEmbeddingRepo) UpsertEmbeddings(ctx context.Context, records [
 			if strings.TrimSpace(record.ID) == "" || strings.TrimSpace(record.Source) == "" || strings.TrimSpace(record.Title) == "" {
 				return errors.New("知识向量缺少必需字段")
 			}
-			vector, err := vectorLiteral(record.Embedding)
+			vector, err := vectorLiteral(record.Embedding, knowledge.EmbeddingDimension)
 			if err != nil {
 				return err
 			}
@@ -91,7 +91,7 @@ func (r *KnowledgeEmbeddingRepo) SemanticSearch(ctx context.Context, vector []fl
 	if ctx == nil || limit < 1 || limit > 200 {
 		return nil, store.ErrInvalid
 	}
-	literal, err := vectorLiteral(vector)
+	literal, err := vectorLiteral(vector, knowledge.EmbeddingDimension)
 	if err != nil {
 		return nil, err
 	}
@@ -116,14 +116,16 @@ LIMIT ?`, literal, limit).Scan(&rows).Error; err != nil {
 }
 
 // vectorLiteral 生成 pgvector 的 [x,y,...] 文本；拒绝非法维度与非有限值。
-func vectorLiteral(vector []float64) (string, error) {
-	if len(vector) != knowledge.EmbeddingDimension {
-		return "", fmt.Errorf("知识向量维度必须为%d", knowledge.EmbeddingDimension)
+//
+// 维度由调用方传入：知识、长期记忆、观众档案共用同一段 PG 文本协议。
+func vectorLiteral(vector []float64, dimension int) (string, error) {
+	if len(vector) != dimension {
+		return "", fmt.Errorf("向量维度必须为%d", dimension)
 	}
 	parts := make([]string, len(vector))
 	for i, value := range vector {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return "", errors.New("知识向量包含非法数值")
+			return "", errors.New("向量包含非法数值")
 		}
 		parts[i] = strconv.FormatFloat(value, 'g', -1, 64)
 	}

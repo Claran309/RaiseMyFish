@@ -188,8 +188,9 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, pa
 
 // buildReasonerFactory 装配 ReAct：模型走主路由，工具走记忆/知识/状态/历史。
 //
+// viewerSearch 为 nil 时不注册 viewer_search；其余工具照旧。
 // 返回 nil 表示不启用（配置关闭、没模型、或一个工具都装不起来）——此时 serve 仍走单步。
-func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, events *database.EventRepo, quota reasoning.QuotaSource, exec toolExecutors, usage store.UsageRepo, log *zap.Logger) (reactFactory, error) {
+func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, events *database.EventRepo, viewerSearch reasoning.ViewerProfileSearcher, quota reasoning.QuotaSource, exec toolExecutors, usage store.UsageRepo, log *zap.Logger) (reactFactory, error) {
 	if !cfg.Reasoning.Enabled {
 		log.Info("ReAct 未启用（配置关闭）", zap.String("action", "react_disabled"))
 		return nil, nil
@@ -222,18 +223,19 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 		if err != nil {
 			return nil, err
 		}
-		// 只读 7 个：观众史/回复史/直播状态/额度/时间/画面/搜索
+		// 只读 7 个：观众史/回复史/直播状态/额度/时间/画面/搜索；档案语义检索按依赖额外注册
 		readonly, err := reasoning.BuildReadOnlyTools(reasoning.ReadOnlyDeps{
-			Viewer:     events,
-			Replies:    events,
-			Live:       exec.Live,
-			Quota:      quota,
-			QuotaLimit: cfg.Gift.DailyLimit,
-			Frame:      exec.Frame,
-			FrameRead:  exec.FrameRead,
-			Search:     exec.Search,
-			Room:       scope.Session,
-			Now:        time.Now,
+			Viewer:       events,
+			ViewerSearch: viewerSearch,
+			Replies:      events,
+			Live:         exec.Live,
+			Quota:        quota,
+			QuotaLimit:   cfg.Gift.DailyLimit,
+			Frame:        exec.Frame,
+			FrameRead:    exec.FrameRead,
+			Search:       exec.Search,
+			Room:         scope.Session,
+			Now:          time.Now,
 		})
 		if err != nil {
 			return nil, err

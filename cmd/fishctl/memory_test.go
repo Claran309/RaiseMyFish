@@ -57,6 +57,7 @@ func TestParseMemoryArgs(t *testing.T) {
 		{"search 默认", []string{"search", "--q", "猫"}, memoryCommand{Action: "search", Limit: defaultMemoryLimit, Query: "猫"}},
 		{"search 去空白", []string{"search", "--q", "  带话  ", "--limit", "3"}, memoryCommand{Action: "search", Limit: 3, Query: "带话"}},
 		{"stats", []string{"stats"}, memoryCommand{Action: "stats", Limit: defaultMemoryLimit}},
+		{"embed", []string{"embed"}, memoryCommand{Action: "embed"}},
 		{"freeze", []string{"freeze"}, memoryCommand{Action: "freeze"}},
 		{"unfreeze", []string{"unfreeze"}, memoryCommand{Action: "unfreeze"}},
 		{"help", []string{"list", "--help"}, memoryCommand{Action: "help"}},
@@ -86,6 +87,7 @@ func TestParseMemoryArgsRejectsBadInput(t *testing.T) {
 		"search 缺关键词":   {"search"},
 		"search 空白词":    {"search", "--q", "   "},
 		"stats 多余参数":    {"stats", "extra"},
+		"embed 多余参数":    {"embed", "extra"},
 		"freeze 多余参数":   {"freeze", "extra"},
 		"unfreeze 多余参数": {"unfreeze", "extra"},
 	}
@@ -353,5 +355,97 @@ func TestRunMemoryFreezeWithoutConfigOrDatabase(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("解冻后标记仍存在：%v", err)
+	}
+}
+
+// mockMemoryEmbedStore 是命令层测试用的增量向量化仓储。
+type mockMemoryEmbedStore struct {
+	inputs  []memory.EmbeddingInput
+	hashes  map[string]string
+	records []memory.EmbeddingRecord
+}
+
+func (m *mockMemoryEmbedStore) MemoryEmbeddingInputs(context.Context) ([]memory.EmbeddingInput, error) {
+	return m.inputs, nil
+}
+
+func (m *mockMemoryEmbedStore) ExistingMemoryEmbeddingHashes(context.Context) (map[string]string, error) {
+	return m.hashes, nil
+}
+
+func (m *mockMemoryEmbedStore) UpsertMemoryEmbeddings(_ context.Context, records []memory.EmbeddingRecord) error {
+	m.records = append(m.records, records...)
+	return nil
+}
+
+// TestExecuteMemoryEmbedIncremental 增量入库输出摘要、进度与二次跳过。
+func TestExecuteMemoryEmbedIncremental(t *testing.T) {
+	store := &mockMemoryEmbedStore{inputs: []memory.EmbeddingInput{
+		{ID: "mem-1", Title: "猫", Summary: "很乖"},
+		{ID: "mem-2", Title: "", Summary: "今天晴天"},
+	}}
+	embedder := &cliEmbedder{}
+	var out, progress bytes.Buffer
+	if err := executeMemoryEmbed(context.Background(), store, embedder, 1, &out, &progress); err != nil {
+		t.Fatalf("入库失败：%v", err)
+	}
+	var summary memoryEmbedOutput
+	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
+		t.Fatalf("输出不是合法JSON：%v %s", err, out.String())
+	}
+	if summary.Total != 2 || summary.Pending != 2 || summary.Embedded != 2 || summary.Batches != 2 || summary.Skipped != 0 {
+		t.Fatalf("入库摘要不正确：%+v", summary)
+	}
+	if embedder.calls != 2 || len(store.records) != 2 {
+		t.Fatalf("批量写入不符：calls=%d records=%d", embedder.calls, len(store.records))
+	}
+	if !strings.Contains(progress.String(), "memory embed: 已处理 1/2 条（1/2 批）") {
+		t.Fatalf("进度日志不正确：%s", progress.String())
+	}
+
+	// 二次执行：hash 已写入，应全部跳过
+	store.hashes = map[string]string{}
+	for _, record := range store.records {
+		store.hashes[record.ID] = record.Hash
+	}
+	out.Reset()
+	progress.Reset()
+	if err := executeMemoryEmbed(context.Background(), store, embedder, 1, &out, &progress); err != nil {
+		t.Fatalf("二次入库失败：%v", err)
+	}
+	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.Skipped != 2 || summary.Pending != 0 || summary.Embedded != 0 {
+		t.Fatalf("二次增量未全部跳过：%+v", summary)
+	}
+	if embedder.calls != 2 || progress.Len() != 0 {
+		t.Fatalf("二次增量仍调用embedding：calls=%d progress=%q", embedder.calls, progress.String())
+	}
+}
+
+// TestExecuteMemoryEmbedReportsFailure embedding 失败时不出成功摘要。
+func TestExecuteMemoryEmbedReportsFailure(t *testing.T) {
+	store := &mockMemoryEmbedStore{inputs: []memory.EmbeddingInput{{ID: "mem-1", Summary: "鱼"}}}
+	var out bytes.Buffer
+	err := executeMemoryEmbed(context.Background(), store, &cliEmbedder{err: errors.New("上游不可用")}, 8, &out, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "记忆入库失败") {
+		t.Fatalf("embedding失败未向上返回：%v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("失败时不应输出成功摘要：%s", out.String())
+	}
+}
+
+// TestRunMemoryEmbedRequiresConfig embedding 未启用时不连库直接报错。
+func TestRunMemoryEmbedRequiresConfig(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	path := filepath.Join(t.TempDir(), "fishd.toml")
+	if err := os.WriteFile(path, []byte("[embedding]\nenabled = false\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err := runMemory(context.Background(), path, "", []string{"embed"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "embedding 未启用") {
+		t.Fatalf("未在入库前检查embedding开关：%v", err)
 	}
 }

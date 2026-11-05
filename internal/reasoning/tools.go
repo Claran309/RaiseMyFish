@@ -135,6 +135,13 @@ type MemorySearcher interface {
 	Recall(ctx context.Context, scope memory.Scope) (memory.Context, error)
 }
 
+// MemoryQuerySearcher 是可选的带查询词召回能力（混合检索实现）。
+//
+// 未实现时 memory_search 退回 Recall，保持既有行为。
+type MemoryQuerySearcher interface {
+	Search(ctx context.Context, query memory.SearchQuery) (memory.Context, error)
+}
+
 // KnowledgeSearcher 是 knowledge.Reader 的最小投影。
 type KnowledgeSearcher interface {
 	Recall(ctx context.Context, query knowledge.Query) (knowledge.Context, error)
@@ -159,7 +166,20 @@ func BuildTools(d ToolDeps) (*Toolbox, error) {
 			Name: ToolMemorySearch,
 			Desc: "查本会话/跨通道的历史记忆与摘要；args 传查询词或空",
 			Run: func(ctx context.Context, args string) (string, error) {
-				got, err := d.Memory.Recall(ctx, scope)
+				queryText := strings.TrimSpace(args)
+				var (
+					got memory.Context
+					err error
+				)
+				if queryText != "" {
+					if searcher, ok := d.Memory.(MemoryQuerySearcher); ok {
+						got, err = searcher.Search(ctx, memory.SearchQuery{Scope: scope, Text: queryText, Limit: 10})
+					} else {
+						got, err = d.Memory.Recall(ctx, scope)
+					}
+				} else {
+					got, err = d.Memory.Recall(ctx, scope)
+				}
 				if err != nil {
 					return "", err
 				}

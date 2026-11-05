@@ -1,12 +1,13 @@
 package main
 
-// 本文件实现 `fishctl memory` 运维命令：list / search / stats 只读查询，
+// 本文件实现 `fishctl memory` 运维命令：list / search / stats / embed 查询与入库，
 // 以及 freeze / unfreeze 运行时冻结开关。
 //
 // 边界：
 //   - 查询走 store.MemoryRepo 的只读方法，不在命令层写 SQL；
 //   - 输出与 status 一致，使用单行 JSON；
 //   - 这是本机运维视角，会列出私密行；给 Brain 的召回仍由 repository 过滤隐私。
+//   - embed 走 memory.RunEmbedding，增量判断在领域层，命令层只打进度与摘要。
 //   - freeze/unfreeze 只改状态文件，不读配置、不连数据库，PG 不可用时也能操作。
 
 import (
@@ -21,6 +22,7 @@ import (
 
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
+	"RaiseMyFish/internal/embedding"
 	"RaiseMyFish/internal/infra"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/store"
@@ -31,7 +33,7 @@ const (
 	maxMemoryLimit     = 200
 )
 
-var errMemoryUsage = errors.New("用法：fishctl memory list [--limit N] | memory search --q <关键词> [--limit N] | memory stats | memory freeze | memory unfreeze")
+var errMemoryUsage = errors.New("用法：fishctl memory list [--limit N] | memory search --q <关键词> [--limit N] | memory stats | memory embed | memory freeze | memory unfreeze")
 
 // memoryFreezeFile 是冻结状态文件位置；测试可替换，生产固定与 fishd 共用默认路径。
 var memoryFreezeFile = memory.DefaultFreezePath
@@ -73,6 +75,9 @@ func runMemory(ctx context.Context, configPath, envPath string, args []string, o
 	// 冻结开关是纯本地状态文件操作：不读配置、不连 PG，数据库故障时仍可执行。
 	if spec.Action == "freeze" || spec.Action == "unfreeze" {
 		return executeMemoryFreeze(spec, out)
+	}
+	if spec.Action == "embed" {
+		return runMemoryEmbed(ctx, configPath, envPath, out, stderr)
 	}
 
 	// 只读命令不采集直播，跳过 collector.live 校验，避免凭据缺失时不可用。
@@ -163,6 +168,21 @@ func parseMemoryArgs(args []string, stderr io.Writer) (memoryCommand, error) {
 		}
 		return memoryCommand{Action: "stats", Limit: defaultMemoryLimit}, nil
 
+	case "embed":
+		fs := flag.NewFlagSet("memory embed", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		fs.Usage = func() { fmt.Fprintln(stderr, "用法：fishctl memory embed") }
+		if err := fs.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return memoryCommand{Action: "help"}, nil
+			}
+			return memoryCommand{}, errMemoryUsage
+		}
+		if fs.NArg() != 0 {
+			return memoryCommand{}, errMemoryUsage
+		}
+		return memoryCommand{Action: "embed"}, nil
+
 	case "freeze", "unfreeze":
 		fs := flag.NewFlagSet("memory "+args[0], flag.ContinueOnError)
 		fs.SetOutput(stderr)
@@ -181,6 +201,87 @@ func parseMemoryArgs(args []string, stderr io.Writer) (memoryCommand, error) {
 	default:
 		return memoryCommand{}, errMemoryUsage
 	}
+}
+
+// memoryEmbedOutput 是给运维看的单行 JSON 摘要。
+type memoryEmbedOutput struct {
+	Total    int `json:"total"`
+	Skipped  int `json:"skipped"`
+	Pending  int `json:"pending"`
+	Batches  int `json:"batches"`
+	Embedded int `json:"embedded"`
+}
+
+// runMemoryEmbed 装配 embedding 客户端与仓储，执行一次增量向量化。
+//
+// 密钥只来自配置层已解析的环境变量，本函数不读取也不打印。
+func runMemoryEmbed(ctx context.Context, configPath, envPath string, out, stderr io.Writer) (result error) {
+	cfg, err := config.LoadForCLI(configPath, envPath)
+	if err != nil {
+		return err
+	}
+	if !cfg.Embedding.Enabled {
+		return errors.New("embedding 未启用：请先在 [embedding] 设置 enabled=true")
+	}
+	client, err := embedding.New(embedding.Options{
+		URL:       cfg.Embedding.URL,
+		Model:     cfg.Embedding.Model,
+		APIKey:    cfg.Embedding.Key,
+		Dimension: cfg.Embedding.Dimension,
+		BatchSize: cfg.Embedding.BatchSize,
+		Timeout:   embedding.DefaultTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("装配embedding客户端：%w", err)
+	}
+
+	probe, cancel := context.WithTimeout(ctx, time.Duration(cfg.Database.TimeoutSeconds)*time.Second)
+	defer cancel()
+	resources, err := infra.Setup(probe, cfg)
+	if err != nil {
+		return err
+	}
+	if resources == nil {
+		return errors.New("基础设施未就绪")
+	}
+	defer func() { result = errors.Join(result, resources.Close(ctx)) }()
+	if err := database.Ready(probe, resources.DB); err != nil {
+		return err
+	}
+	repo, err := database.NewMemoryRepo(resources.DB)
+	if err != nil {
+		return err
+	}
+	return executeMemoryEmbed(probe, repo, client, cfg.Embedding.BatchSize, out, stderr)
+}
+
+// executeMemoryEmbed 执行增量入库并输出摘要；进度逐批写 stderr。
+func executeMemoryEmbed(ctx context.Context, store memory.EmbeddingStore, embedder memory.Embedder, batchSize int, out, progressOut io.Writer) error {
+	if store == nil || embedder == nil {
+		return errors.New("记忆入库依赖不能为空")
+	}
+	doneBatches := 0
+	stats, err := memory.RunEmbedding(ctx, store, embedder, memory.EmbedOptions{
+		BatchSize: batchSize,
+		Progress: func(done, total, batches int) {
+			doneBatches++
+			fmt.Fprintf(progressOut, "memory embed: 已处理 %d/%d 条（%d/%d 批）\n", done, total, doneBatches, batches)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("记忆入库失败：%w", err)
+	}
+	summary := memoryEmbedOutput{
+		Total:    stats.Total,
+		Skipped:  stats.Skipped,
+		Pending:  stats.Pending,
+		Batches:  stats.Batches,
+		Embedded: stats.Embedded,
+	}
+	if err := json.NewEncoder(out).Encode(summary); err != nil {
+		return fmt.Errorf("输出记忆入库结果：%w", err)
+	}
+	return nil
 }
 
 // executeMemoryFreeze 执行冻结/解冻并输出最终状态；重复调用保持幂等。
