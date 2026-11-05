@@ -283,10 +283,18 @@ func formatHistory(rows []event.Event) string {
 }
 
 // parseLimit 解析条数参数，非法时回落到默认值。
+// MCP 调用传 JSON 对象（{"limit":n}），先走 parseLimitArg；旧格式仍按数字前缀解析。
 func parseLimit(args string, fallback, max int) int {
 	args = strings.TrimSpace(args)
 	if args == "" {
 		return fallback
+	}
+	if strings.HasPrefix(args, "{") {
+		n, err := parseLimitArg(args, fallback, max)
+		if err != nil {
+			return fallback
+		}
+		return n
 	}
 	var n int
 	if _, err := fmt.Sscanf(args, "%d", &n); err != nil || n < 1 {

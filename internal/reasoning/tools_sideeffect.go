@@ -10,6 +10,7 @@ package reasoning
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -581,8 +582,13 @@ func parseTextArg(args string, max int) (string, error) {
 	return text, nil
 }
 
-// splitArgs 按 JSON 标点切分参数串；引号内的空格不切（正文可能带空格）。
+// splitArgs 把参数串拆成 key,value 序列。
+// MCP 调用直接传 JSON 对象：优先按 JSON 解析（字符串已反转义、正文可含空格与引号）；
+// 解析失败再走旧的标点切分，保持 ReAct 的宽松输入兼容。
 func splitArgs(args string) []string {
+	if fields, ok := jsonArgs(args); ok {
+		return fields
+	}
 	var fields []string
 	var cur strings.Builder
 	inQuote := false
@@ -607,4 +613,38 @@ func splitArgs(args string) []string {
 		fields = append(fields, cur.String())
 	}
 	return fields
+}
+
+// jsonArgs 把 JSON 对象摊平成 key,value 序列；只接受对象，失败时回落到旧切分。
+func jsonArgs(args string) ([]string, bool) {
+	trimmed := strings.TrimSpace(args)
+	if !strings.HasPrefix(trimmed, "{") {
+		return nil, false
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &obj); err != nil {
+		return nil, false
+	}
+	fields := make([]string, 0, len(obj)*2)
+	for key, raw := range obj {
+		fields = append(fields, key, jsonScalar(raw))
+	}
+	return fields, true
+}
+
+// jsonScalar 把 JSON 标量/字符串数组转成工具解析器接受的文本。
+func jsonScalar(raw json.RawMessage) string {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err == nil {
+		return number.String()
+	}
+	var list []string
+	if err := json.Unmarshal(raw, &list); err == nil {
+		return strings.Join(list, ",")
+	}
+	return string(raw)
 }

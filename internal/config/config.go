@@ -31,6 +31,7 @@ type Config struct {
 	Gift      Gift       `toml:"gift"`
 	Memory    Memory     `toml:"memory"`
 	Web       Web        `toml:"web"`
+	MCP       MCP        `toml:"mcp"`
 	Watchdog  Watchdog   `toml:"watchdog"`
 	Collector Collectors `toml:"collector"`
 	// Scheduler 为 nil 表示「不接消费循环」，只采集。
@@ -111,6 +112,7 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 		Gift:      defaultGift(),
 		Memory:    defaultMemory(),
 		Web:       defaultWeb(),
+		MCP:       defaultMCP(),
 		Watchdog:  defaultWatchdog(),
 		// 评论采集默认关闭；interval 先补默认值，开启后省略也能工作。
 		Collector: Collectors{Live: defaultLiveCollector(), Comment: defaultCommentCollector(), DM: defaultDMCollector()},
@@ -284,6 +286,9 @@ func (c Config) validate(strictLive bool) error {
 		return err
 	}
 	if err := c.Web.Validate(); err != nil {
+		return err
+	}
+	if err := c.MCP.Validate(); err != nil {
 		return err
 	}
 	if err := c.Watchdog.Validate(); err != nil {

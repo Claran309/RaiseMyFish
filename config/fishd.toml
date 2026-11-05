@@ -151,6 +151,14 @@ search_key = ""
 # 推荐用环境变量（优先于 search_key 字面值）：search_key_env = "FISH_SEARCH_KEY"
 search_key_env = ""
 
+# MCP 工具服务器（stdio JSON-RPC 2.0）：默认关闭，供外部 agent（Codex/Claude）调用 ReAct 工具。
+# 启动：go run ./cmd/fishmcp --config config/fishd.toml
+# 工具白名单为空表示暴露全部已注册工具；副作用工具仍受 [reasoning] allow_side_effect_tools 控制。
+[mcp]
+enabled = false
+# 例：allowed_tools = ["memory_search", "knowledge_search", "now", "web_search"]
+allowed_tools = []
+
 # ReAct 思考链（C 档）：默认全部弹幕走多步（可用性优先），
 # 只有短句（少于 6 个字符，如「哈哈」「在吗」）保持单步。
 # 预算纪律：步数 3、总超时 8 秒；步数/超时/解析失败一律降级，不拖成半分钟。
