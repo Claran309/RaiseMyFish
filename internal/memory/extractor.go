@@ -82,7 +82,14 @@ func NewLLMExtractor(llm LLM, opts LLMExtractOptions) (*LLMExtractor, error) {
 }
 
 // Extract 按触发策略决定走 LLM 还是规则；任何异常都回落规则版。
+//
+// 隐私边界先于一切模型调用：未授权的私密事件直接丢弃，不拼 prompt、
+// 不占限流额度、不调用 Complete。规则版自己也会拦，但这里必须再拦一次，
+// 否则规则结果为空后仍会带着私密正文进入 LLM 分支。
 func (e *LLMExtractor) Extract(ctx context.Context, ev event.Event, opts ExtractOptions) ([]Candidate, error) {
+	if ev.Private && !opts.AllowPrivate {
+		return nil, nil
+	}
 	ruleResult := Extract(ev, opts)
 	if e == nil || e.llm == nil {
 		return ruleResult, nil

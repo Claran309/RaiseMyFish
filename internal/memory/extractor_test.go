@@ -183,3 +183,38 @@ func TestLLMExtractorNilLLM(t *testing.T) {
 		t.Fatalf("应直接走规则版：%+v / %v", got, err)
 	}
 }
+
+// TestLLMExtractorPrivateRequiresAuthorization 未授权私密事件必须在模型调用之前被拦截。
+//
+// 回归背景：规则版 Extract 会返回空，但 LLM 分支此前继续执行，
+// 导致长私信 / @ 命中触发策略时，私密正文仍被送进 Complete。
+func TestLLMExtractorPrivateRequiresAuthorization(t *testing.T) {
+	llm := &mockLLM{reply: `{"archive":true,"records":[{"kind":"fact","title":"私事","summary":"观众深夜倾诉","importance":0.7}],"confidence":0.9}`}
+	e := newLLM(t, llm)
+
+	ev := llmEvent("@大肥鱼 我今天遇到好多事情，想慢慢跟你说一件很长的私事，千万别告诉别人")
+	ev.Channel = event.ChDM
+	ev.Session = "dm-a"
+	ev.Private = true
+
+	// 未授权（AllowPrivate 零值）：零调用、零结果、不拼 prompt。
+	got, err := e.Extract(context.Background(), ev, ExtractOptions{})
+	if err != nil || len(got) != 0 {
+		t.Fatalf("未授权私密事件应直接跳过：%+v / %v", got, err)
+	}
+	if llm.calls != 0 {
+		t.Fatalf("未授权私密事件不应调用模型，实际 %d 次", llm.calls)
+	}
+	if llm.gotUser != "" {
+		t.Fatalf("未授权私密事件不应拼 prompt：%q", llm.gotUser)
+	}
+
+	// 显式授权后同一事件才允许进入模型。
+	got, err = e.Extract(context.Background(), ev, ExtractOptions{AllowPrivate: true})
+	if err != nil || len(got) != 1 || got[0].Title != "私事" {
+		t.Fatalf("授权后应使用模型结果：%+v / %v", got, err)
+	}
+	if llm.calls != 1 {
+		t.Errorf("授权后应调用模型 1 次，实际 %d", llm.calls)
+	}
+}
