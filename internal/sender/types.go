@@ -63,6 +63,12 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error { return e.Cause }
 func Handled(err error) bool   { var e *Error; return errors.As(err, &e) && e.Settled }
 
+// ErrKind 供上层统一读取错误类别（与各通道错误类型同名方法）。
+func (e *Error) ErrKind() string { return string(e.Kind) }
+
+// RetryAfter 返回调度层应遵守的最早重试时间。
+func (e *Error) RetryAfter() (time.Time, bool) { return e.RetryAt, e.Kind == KindRetry }
+
 const (
 	StateReady     = "ready"
 	StateArmed     = "armed"

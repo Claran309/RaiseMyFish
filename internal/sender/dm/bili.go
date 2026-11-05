@@ -4,6 +4,8 @@ package dm
 
 import (
 	"context"
+	"errors"
+	"net/http"
 
 	"RaiseMyFish/internal/bili"
 )
@@ -21,9 +23,33 @@ func (t BiliTransporter) SendDM(ctx context.Context, mid, text string) (string, 
 	}
 	msgID, err := t.client.SendMessage(ctx, mid, text)
 	if err != nil {
+		if classified := classifyBiliError(err); classified != nil {
+			return "", classified
+		}
 		return "", err
 	}
 	return msgID, nil
+}
+
+// classifyBiliError 把 B站平台错误映射成受控类别；未知平台错误保持 uncertain。
+func classifyBiliError(err error) error {
+	var apiErr *bili.Error
+	if !errors.As(err, &apiErr) {
+		return nil
+	}
+	switch apiErr.Status {
+	case http.StatusPreconditionFailed, http.StatusTooManyRequests:
+		return &Error{Kind: KindRetry, Cause: errors.New("私信被平台限流")}
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return &Error{Kind: KindAuth, Cause: errors.New("私信被权限拒绝")}
+	}
+	switch apiErr.Code {
+	case -101, -111, -403:
+		return &Error{Kind: KindAuth, Cause: errors.New("私信被权限拒绝")}
+	case -352, -412, -509:
+		return &Error{Kind: KindRetry, Cause: errors.New("私信被平台限流")}
+	}
+	return &Error{Kind: KindUncertain, Cause: errors.New("私信平台错误")}
 }
 
 // BiliRelation 用 bili 客户端查关注关系。

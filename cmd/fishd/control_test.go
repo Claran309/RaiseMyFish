@@ -277,6 +277,7 @@ func TestRuntimeControlStatus(t *testing.T) {
 		},
 		Sender: &config.Sender{DM: config.DMSender{AllowedMIDs: []string{"42"}}},
 	}
+	cfg.Collector.Comment.AutoDiscover = true
 	gate := &atomic.Bool{}
 	control, err := newRuntimeControl(context.Background(), cfg, runtimeDeps{
 		Bus:         &recordingBus{},
@@ -297,8 +298,11 @@ func TestRuntimeControlStatus(t *testing.T) {
 	if !st.Live.Available || st.Live.Enabled {
 		t.Errorf("直播采集状态不符：%+v", st.Live)
 	}
-	if len(st.DM.AllowedMIDs) != 2 || st.DM.WhitelistAvailable {
+	if len(st.DM.AllowedMIDs) != 2 || st.DM.WhitelistAvailable || !st.DM.AllFollowers {
 		t.Errorf("私信状态不符：%+v", st.DM)
+	}
+	if !st.Comment.AutoDiscover {
+		t.Errorf("评论自动发现状态不符：%+v", st.Comment)
 	}
 	if !st.Gift.Enabled || st.Gift.DailyLimit != 5 || st.Gift.Day == "" {
 		t.Errorf("礼物状态不符：%+v", st.Gift)
@@ -317,6 +321,36 @@ func TestRuntimeControlStatus(t *testing.T) {
 	}
 	if err := control.SetGift(false); err != nil || control.Status().Gift.Enabled {
 		t.Fatalf("关闭礼物开关失败：%v", err)
+	}
+}
+
+// TestSetCommentAllowsEmptyVideosWhenAutoDiscover 自动发现开启时允许手动列表为空。
+func TestSetCommentAllowsEmptyVideosWhenAutoDiscover(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	build := func(auto bool) *runtimeControl {
+		cfg := config.Config{}
+		cfg.Collector.Comment.AutoDiscover = auto
+		ctrl := &runtimeControl{base: cfg, log: zap.NewNop(), now: time.Now}
+		ctrl.comment = newCollectorController("comment", ctx, &recordingBus{}, time.Second, zap.NewNop(), time.Now,
+			&fakeCollector{name: "comment-test"}, nil)
+		return ctrl
+	}
+
+	ctrl := build(true)
+	if err := ctrl.SetComment(true, nil); err != nil {
+		t.Fatalf("自动发现开启时应允许空视频列表：%v", err)
+	}
+	if !ctrl.comment.isRunning() {
+		t.Error("采集器应已启动")
+	}
+	if err := ctrl.comment.set(false); err != nil {
+		t.Fatal(err)
+	}
+
+	strict := build(false)
+	if err := strict.SetComment(true, nil); err == nil {
+		t.Error("关闭自动发现时空视频列表应报错")
 	}
 }
 

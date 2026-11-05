@@ -48,8 +48,9 @@ th{color:var(--muted);font-weight:500}
           <span style="flex:1"></span>
           <button id="comment-btn" class="primary" onclick="toggleComment()">启停评论监听</button>
         </div>
-        <div class="muted">视频 oid 列表（每行或逗号分隔，必须是纯数字）：</div>
-        <textarea id="videos" oninput="dirtyVideos=true" placeholder="例如：&#10;123456&#10;789012"></textarea>
+        <div class="muted" id="comment-mode">自动发现：检测中…</div>
+        <div class="muted">手动追加的视频 oid（每行或逗号分隔，必须是纯数字；自动发现开启时可留空）：</div>
+        <textarea id="videos" oninput="dirtyVideos=true" placeholder="可留空，例如：&#10;123456&#10;789012"></textarea>
         <div class="rowline" style="margin-top:8px">
           <button id="videos-save" onclick="saveVideos()">保存视频 oid 并重启监听</button>
           <span class="muted" id="comment-sub"></span>
@@ -73,7 +74,8 @@ th{color:var(--muted);font-weight:500}
           <span style="flex:1"></span>
           <button id="dm-btn" class="primary" onclick="toggleDM()">启停私信监听</button>
         </div>
-        <div class="muted">私信白名单 mid（每行或逗号分隔；主人始终保留）：</div>
+        <div class="muted" id="dm-mode">回信范围：检测中…</div>
+        <div class="muted">额外放行白名单 mid（每行或逗号分隔；all_followers 开启时所有发信人可回，白名单仅作额外放行，主人始终保留）：</div>
         <textarea id="mids" oninput="dirtyMIDs=true" placeholder="例如：&#10;313591854"></textarea>
         <div class="rowline" style="margin-top:8px">
           <button id="mids-save" onclick="saveMIDs()">保存白名单</button>
@@ -126,6 +128,9 @@ function render() {
   document.getElementById('videos').disabled = !commentAvailable;
   document.getElementById('videos-save').disabled = !commentAvailable;
   if (!dirtyVideos) { document.getElementById('videos').value = (comment.videos || []).join('\n'); }
+  document.getElementById('comment-mode').textContent = comment.auto_discover
+    ? '自动发现：开启（自动轮询本账号视频 + 动态的评论区，手动列表可留空）'
+    : '自动发现：关闭（只轮询手动视频 oid）';
   document.getElementById('comment-sub').textContent = comment.last_error ? ('错误：' + comment.last_error) : (!commentAvailable ? '评论采集未装配' : '');
 
   var dp = document.getElementById('dm-pill');
@@ -136,6 +141,9 @@ function render() {
   document.getElementById('dm-btn').disabled = !dmAvailable;
   if (!dirtyMIDs) { document.getElementById('mids').value = (dm.allowed_mids || []).join('\n'); }
   document.getElementById('mids-save').disabled = !dmAvailable || !dm.whitelist_available;
+  document.getElementById('dm-mode').textContent = dm.all_followers
+    ? '回信范围：所有发信人可回（all_followers 开启）'
+    : '回信范围：仅白名单 / 主人（all_followers 关闭）';
   document.getElementById('dm-sub').textContent = dm.whitelist_available ? '白名单可热更新' : '私信发送未装配，白名单只读';
 }
 async function load() {

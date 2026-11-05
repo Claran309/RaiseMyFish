@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"RaiseMyFish/internal/bili"
 	"RaiseMyFish/internal/event"
 	"go.uber.org/zap"
 )
@@ -91,6 +92,17 @@ func newCollector(t *testing.T, root string, videos []string, interval time.Dura
 		t.Fatalf("构造采集器失败：%v", err)
 	}
 	return c
+}
+
+type fakeDiscoverer struct {
+	targets []Target
+	err     error
+	calls   int
+}
+
+func (f *fakeDiscoverer) Discover(context.Context) ([]Target, error) {
+	f.calls++
+	return f.targets, f.err
 }
 
 func startCollector(t *testing.T, c *Collector) (context.CancelFunc, chan event.Event, chan error, chan error) {
@@ -195,6 +207,122 @@ func TestCollectorParsesFiltersAndDeduplicates(t *testing.T) {
 	cancel()
 }
 
+// TestCollectorAutoDiscoverMergesTargets 覆盖：手动+视频+动态合并、动态 type=17 与 comment_type。
+func TestCollectorAutoDiscoverMergesTargets(t *testing.T) {
+	fixture, srv := newCommentServer(t)
+	fixture.add("100", reply(101, 41, "甲", "手动视频"))
+	fixture.add("200", reply(201, 42, "乙", "自动视频"))
+	fixture.add("300", reply(301, 43, "丙", "动态评论"))
+	discoverer := &fakeDiscoverer{targets: []Target{{OID: "200", Type: TypeVideo}, {OID: "300", Type: TypeDynamic}, {OID: "200", Type: TypeVideo}}}
+
+	o := DefaultOptions()
+	o.Videos = []string{"100"}
+	o.Interval = 20 * time.Millisecond
+	o.AutoDiscover = true
+	o.DiscoverInterval = time.Hour
+	o.Discoverer = discoverer
+	o.SelfID = "999"
+	o.Cookie = testCookie
+	o.APIRoot = srv.URL
+	o.HTTPTimeout = time.Second
+	c, err := New(o, zap.NewNop())
+	if err != nil {
+		t.Fatalf("构造采集器失败：%v", err)
+	}
+	_, out, _, _ := startCollector(t, c)
+
+	got := map[string]event.Event{}
+	for i := 0; i < 3; i++ {
+		ev := awaitEvent(t, out)
+		got[ev.ID] = ev
+	}
+	if len(got) != 3 || got["comment:100:101"].Session != "100" || got["comment:200:201"].Session != "200" || got["comment:300:301"].Session != "300" {
+		t.Fatalf("自动发现事件不符：%+v", got)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(got["comment:300:301"].Meta, &meta); err != nil || meta["comment_type"] != float64(TypeDynamic) {
+		t.Errorf("动态评论 Meta 不符：%s (%v)", got["comment:300:301"].Meta, err)
+	}
+	if discoverer.calls == 0 {
+		t.Error("自动发现未被调用")
+	}
+	queries, _ := fixture.snapshot()
+	types := map[string]string{}
+	for _, q := range queries {
+		types[q.Get("oid")] = q.Get("type")
+	}
+	if types["300"] != "17" || types["200"] != "1" || types["100"] != "1" {
+		t.Errorf("评论类型查询不符：%v", types)
+	}
+}
+
+// TestDiscoverFailureFallsBackToManual 覆盖：发现失败只轮询手动列表且不向 err 通道报错。
+func TestDiscoverFailureFallsBackToManual(t *testing.T) {
+	fixture, srv := newCommentServer(t)
+	fixture.add("100", reply(101, 41, "甲", "手动评论"))
+	o := DefaultOptions()
+	o.Videos = []string{"100"}
+	o.Interval = 20 * time.Millisecond
+	o.AutoDiscover = true
+	o.DiscoverInterval = time.Hour
+	o.Discoverer = &fakeDiscoverer{err: errors.New("平台超时")}
+	o.SelfID = "999"
+	o.Cookie = testCookie
+	o.APIRoot = srv.URL
+	o.HTTPTimeout = time.Second
+	c, err := New(o, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, out, errc, _ := startCollector(t, c)
+	if ev := awaitEvent(t, out); ev.ID != "comment:100:101" {
+		t.Fatalf("手动列表未继续轮询：%+v", ev)
+	}
+	select {
+	case err := <-errc:
+		t.Fatalf("发现失败不应上报错误：%v", err)
+	default:
+	}
+}
+
+func TestBiliDiscovererPartial(t *testing.T) {
+	source := &fakeSpaceSource{
+		videos:   []bili.SpaceVideo{{AID: "11"}},
+		dynamics: []bili.SpaceDynamic{{ID: "22"}},
+	}
+	got, err := BiliDiscoverer{Client: source, MID: "42", VideoLimit: 5, DynamicLimit: 5}.Discover(context.Background())
+	if err != nil {
+		t.Fatalf("发现失败：%v", err)
+	}
+	if len(got) != 2 || got[0] != (Target{OID: "11", Type: TypeVideo}) || got[1] != (Target{OID: "22", Type: TypeDynamic}) {
+		t.Fatalf("target 映射不符：%+v", got)
+	}
+	source.videoErr = errors.New("视频失败")
+	got, err = BiliDiscoverer{Client: source, MID: "42"}.Discover(context.Background())
+	if err != nil || len(got) != 1 || got[0].Type != TypeDynamic {
+		t.Fatalf("部分失败应保留动态：%+v (%v)", got, err)
+	}
+	source.dynamicErr = errors.New("动态失败")
+	if _, err := (BiliDiscoverer{Client: source, MID: "42"}).Discover(context.Background()); err == nil {
+		t.Fatal("两类都失败应返回错误")
+	}
+}
+
+type fakeSpaceSource struct {
+	videos     []bili.SpaceVideo
+	dynamics   []bili.SpaceDynamic
+	videoErr   error
+	dynamicErr error
+}
+
+func (f *fakeSpaceSource) SpaceVideos(context.Context, string, int) ([]bili.SpaceVideo, error) {
+	return f.videos, f.videoErr
+}
+
+func (f *fakeSpaceSource) SpaceDynamics(context.Context, string, int) ([]bili.SpaceDynamic, error) {
+	return f.dynamics, f.dynamicErr
+}
+
 func TestCollectorMultipleVideos(t *testing.T) {
 	fixture, srv := newCommentServer(t)
 	fixture.add("1", reply(11, 41, "甲", "视频一"))
@@ -244,7 +372,18 @@ func TestNewRejectsInvalidOptions(t *testing.T) {
 		name string
 		edit func(*Options)
 	}{
-		{"无视频", func(o *Options) { o.Videos = nil }},
+		{"无视频且不自动发现", func(o *Options) { o.Videos = nil }},
+		{"自动发现缺Disoverer", func(o *Options) { o.Videos = nil; o.AutoDiscover = true }},
+		{"发现间隔过小", func(o *Options) {
+			o.AutoDiscover = true
+			o.Discoverer = &fakeDiscoverer{}
+			o.DiscoverInterval = time.Second
+		}},
+		{"发现间隔过大", func(o *Options) {
+			o.AutoDiscover = true
+			o.Discoverer = &fakeDiscoverer{}
+			o.DiscoverInterval = 25 * time.Hour
+		}},
 		{"非法oid", func(o *Options) { o.Videos = []string{"abc"} }},
 		{"零oid", func(o *Options) { o.Videos = []string{"000"} }},
 		{"零间隔", func(o *Options) { o.Interval = 0 }},

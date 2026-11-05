@@ -61,13 +61,12 @@ func newSendServer(t *testing.T) (*sendFixture, *httptest.Server) {
 	return fixture, srv
 }
 
-func newService(t *testing.T, root string, interval time.Duration) *Service {
+func newService(t *testing.T, root string) *Service {
 	t.Helper()
 	o := DefaultOptions()
 	o.Cookie = testCookie
 	o.APIRoot = root
 	o.HTTPTimeout = time.Second
-	o.MinInterval = interval
 	s, err := New(o, zap.NewNop())
 	if err != nil {
 		t.Fatalf("构造发送器失败：%v", err)
@@ -111,7 +110,7 @@ func kindOf(t *testing.T, err error) sender.Kind {
 
 func TestSendPostsExpectedForm(t *testing.T) {
 	fixture, srv := newSendServer(t)
-	s := newService(t, srv.URL, time.Minute)
+	s := newService(t, srv.URL)
 
 	res, err := s.Send(context.Background(), testClaim(), testReply("你好呀"))
 	if err != nil {
@@ -139,7 +138,7 @@ func TestSendPostsExpectedForm(t *testing.T) {
 
 func TestSendFallsBackToEventRpid(t *testing.T) {
 	fixture, srv := newSendServer(t)
-	s := newService(t, srv.URL, time.Minute)
+	s := newService(t, srv.URL)
 	claim := testClaim()
 	claim.Event.ReplyTo = ""
 	if _, err := s.Send(context.Background(), claim, testReply("回你")); err != nil {
@@ -155,7 +154,7 @@ func TestSendFallsBackToEventRpid(t *testing.T) {
 
 func TestSendTruncatesTo200Runes(t *testing.T) {
 	fixture, srv := newSendServer(t)
-	s := newService(t, srv.URL, time.Minute)
+	s := newService(t, srv.URL)
 	long := strings.Repeat("肥", 250)
 	if _, err := s.Send(context.Background(), testClaim(), testReply(long)); err != nil {
 		t.Fatalf("发送失败：%v", err)
@@ -168,26 +167,111 @@ func TestSendTruncatesTo200Runes(t *testing.T) {
 	}
 }
 
-func TestSendRateLimited(t *testing.T) {
+func TestSendRateLimitedBacksOffExponentially(t *testing.T) {
 	fixture, srv := newSendServer(t)
-	s := newService(t, srv.URL, time.Minute)
-	if _, err := s.Send(context.Background(), testClaim(), testReply("第一条")); err != nil {
-		t.Fatalf("第一条应放行：%v", err)
+	s := newService(t, srv.URL)
+	now := time.Unix(1700000000, 0)
+	s.now = func() time.Time { return now }
+	setCode := func(code int) {
+		fixture.mu.Lock()
+		fixture.code = code
+		fixture.mu.Unlock()
 	}
-	_, err := s.Send(context.Background(), testClaim(), testReply("第二条"))
-	if kind := kindOf(t, err); kind != sender.KindRetry {
-		t.Fatalf("限频应为 retry，实际 %s", kind)
+	calls := func() int {
+		fixture.mu.Lock()
+		defer fixture.mu.Unlock()
+		return fixture.calls
 	}
+	retryAt := func(err error) time.Time {
+		t.Helper()
+		var typed *sender.Error
+		if !errors.As(err, &typed) || typed.Kind != sender.KindRetry {
+			t.Fatalf("应为 retry：%v", err)
+		}
+		if typed.RetryAt.IsZero() {
+			t.Fatal("retry 未提供 RetryAt")
+		}
+		return typed.RetryAt
+	}
+
+	// 平台第一次限流 → 30s 后重试
+	setCode(-352)
+	_, err := s.Send(context.Background(), testClaim(), testReply("第一条"))
+	if got := retryAt(err); !got.Equal(now.Add(30 * time.Second)) {
+		t.Errorf("首次退避 = %v，期望 %v", got, now.Add(30*time.Second))
+	}
+	if calls() != 1 {
+		t.Fatalf("首次限流应已发出 1 次请求：%d", calls())
+	}
+
+	// 退避未到点的重投不产生请求
+	if _, err := s.Send(context.Background(), testClaim(), testReply("第二条")); retryAt(err).Before(now.Add(30 * time.Second)) {
+		t.Error("退避中的重投不应缩短等待")
+	}
+	if calls() != 1 {
+		t.Fatalf("退避期间仍产生了请求：%d", calls())
+	}
+
+	// 退避到期仍被限流 → 翻倍到 60s
+	now = now.Add(30 * time.Second)
+	_, err = s.Send(context.Background(), testClaim(), testReply("第三条"))
+	if got := retryAt(err); !got.Equal(now.Add(60 * time.Second)) {
+		t.Errorf("第二次退避 = %v，期望 %v", got, now.Add(60*time.Second))
+	}
+	if calls() != 2 {
+		t.Fatalf("退避到期后应重新 POST：%d", calls())
+	}
+
+	// 退避到期且平台放行 → 成功并清除退避
+	now = now.Add(60 * time.Second)
+	setCode(0)
+	if _, err := s.Send(context.Background(), testClaim(), testReply("第四条")); err != nil {
+		t.Fatalf("退避到期应可发送：%v", err)
+	}
+	if calls() != 3 {
+		t.Fatalf("放行后请求次数 = %d", calls())
+	}
+
+	// 成功后重新计数：再次限流仍从 30s 起
+	setCode(-352)
+	_, err = s.Send(context.Background(), testClaim(), testReply("第五条"))
+	if got := retryAt(err); !got.Equal(now.Add(30 * time.Second)) {
+		t.Errorf("成功后重新退避 = %v，期望 %v", got, now.Add(30*time.Second))
+	}
+}
+
+func TestSendRateLimitByMessage(t *testing.T) {
+	fixture, srv := newSendServer(t)
+	s := newService(t, srv.URL)
+	now := time.Unix(1700000000, 0)
+	s.now = func() time.Time { return now }
+	fixture.mu.Lock()
+	fixture.raw = `{"code":77001,"message":"操作太快，请稍后再试"}`
+	fixture.mu.Unlock()
+
+	_, err := s.Send(context.Background(), testClaim(), testReply("测试"))
 	var typed *sender.Error
-	_ = errors.As(err, &typed)
-	if typed.RetryAt.IsZero() || !typed.RetryAt.After(time.Now()) {
-		t.Errorf("限频未提供 RetryAt：%+v", typed)
+	if !errors.As(err, &typed) || typed.Kind != sender.KindRetry {
+		t.Fatalf("「操作太快」应归为 retry：%v", err)
+	}
+	if !typed.RetryAt.Equal(now.Add(30 * time.Second)) {
+		t.Errorf("RetryAt = %v，期望 %v", typed.RetryAt, now.Add(30*time.Second))
+	}
+}
+
+func TestSendUsesEventCommentType(t *testing.T) {
+	fixture, srv := newSendServer(t)
+	s := newService(t, srv.URL)
+	claim := testClaim()
+	claim.Event.Meta = json.RawMessage(`{"source":"bili-comment","comment_type":17}`)
+	if _, err := s.Send(context.Background(), claim, testReply("动态下面回你")); err != nil {
+		t.Fatalf("发送失败：%v", err)
 	}
 	fixture.mu.Lock()
-	calls := fixture.calls
+	form := fixture.form
 	fixture.mu.Unlock()
-	if calls != 1 {
-		t.Fatalf("限频后仍产生了请求：%d", calls)
+	if form.Get("type") != "17" {
+		t.Errorf("动态评论 type = %q，期望 17", form.Get("type"))
 	}
 }
 
@@ -200,9 +284,11 @@ func TestSendErrorClassification(t *testing.T) {
 		want   sender.Kind
 	}{
 		{"风控重试", -352, 0, "", sender.KindRetry},
+		{"限流重试", -509, 0, "", sender.KindRetry},
 		{"权限失败", -101, 0, "", sender.KindAuth},
 		{"评论区关闭", commentClosed, 0, "", sender.KindDead},
-		{"未知平台错误", -1, 0, "", sender.KindDead},
+		{"未知平台错误", -1, 0, "", sender.KindUncertain},
+		{"文本限流", 0, 0, `{"code":77001,"message":"操作太快"}`, sender.KindRetry},
 		{"HTTP限流", 0, http.StatusPreconditionFailed, "", sender.KindRetry},
 		{"HTTP权限", 0, http.StatusForbidden, "", sender.KindAuth},
 		{"HTTP服务端", 0, http.StatusInternalServerError, "", sender.KindUncertain},
@@ -213,7 +299,7 @@ func TestSendErrorClassification(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture, srv := newSendServer(t)
 			fixture.code, fixture.status, fixture.raw = tc.code, tc.status, tc.raw
-			s := newService(t, srv.URL, time.Minute)
+			s := newService(t, srv.URL)
 			_, err := s.Send(context.Background(), testClaim(), testReply("测试"))
 			if err == nil {
 				t.Fatalf("期望错误，实际成功：%v", err)
@@ -248,7 +334,7 @@ func TestSendMissingCSRF(t *testing.T) {
 
 func TestSendRejectsInvalid(t *testing.T) {
 	_, srv := newSendServer(t)
-	s := newService(t, srv.URL, time.Minute)
+	s := newService(t, srv.URL)
 	cases := []struct {
 		name string
 		edit func(*event.Claim, *sender.Reply)
@@ -279,7 +365,7 @@ func TestSendRejectsInvalid(t *testing.T) {
 
 func TestResumeNeverReposts(t *testing.T) {
 	fixture, srv := newSendServer(t)
-	s := newService(t, srv.URL, time.Minute)
+	s := newService(t, srv.URL)
 	if _, err := s.Resume(context.Background(), testClaim()); kindOf(t, err) != sender.KindUncertain {
 		t.Fatalf("Resume 应返回 uncertain，实际 %v", err)
 	}
@@ -304,7 +390,6 @@ func TestNewRejectsInvalidOptions(t *testing.T) {
 		{"无凭据", func(o *Options) { o.Cookie = "" }},
 		{"凭据换行", func(o *Options) { o.Cookie = "SESSDATA=x\nX: 1" }},
 		{"零超时", func(o *Options) { o.HTTPTimeout = 0 }},
-		{"零间隔", func(o *Options) { o.MinInterval = 0 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

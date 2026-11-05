@@ -23,7 +23,7 @@ enabled = true
 [channels.comment]
 enabled = false
 [channels.dm]
-enabled = false
+enabled = true
 [channels.qq]
 enabled = false
 
@@ -43,14 +43,19 @@ backoff_max_ms = 60000
 stable_after_ms = 30000
 max_failures = 8
 
-# 评论采集（P1）：轮询视频评论区（最新回复优先），按 rpid 去重后写 channel=comment 事件。
+# 评论采集（P1）：轮询自己账号的视频/动态评论区（最新回复优先），
+# 按 rpid 去重后写 channel=comment 事件。
 # 默认关闭；启用需要 [channels.comment] enabled=true、FISH_BILI_COOKIE/_FILE 凭据，
 # 以及本账号 UID（[sender].self_id 或 [collector.live].self_id）用于跳过自己发的评论。
-# videos 填视频 oid（av 号数字）；interval_seconds 范围 10-3600。
+# auto_discover=true 时按 discover_interval_seconds 刷新自己账号的视频+动态列表；
+# videos 是手动追加的固定 oid（可为空）；发现失败只退回手动列表，不报错。
+# interval_seconds 范围 10-3600；discover_interval_seconds 范围 60-86400。
 [collector.comment]
 enabled = false
+auto_discover = true
 videos = []
 interval_seconds = 60
+discover_interval_seconds = 600
 
 # 弹幕发送通道：与采集脚本分开——采集是 danmaku-await.mjs（长连监听），
 # 发送是 danmaku.mjs（一次性 POST）。凭据复用 [collector.live] 解析到的 FISH_BILI_COOKIE（同一账号）。
@@ -60,8 +65,9 @@ script_path = "tools/bili-whale/danmaku.mjs"
 self_id = "3747574135655903"
 http_timeout_ms = 35000
 
-# 评论回复发送（P1）：独立开关，默认关闭；发送限频 1 条/分钟（评论风控严）。
-# 凭据与 csrf（bili_jct）复用 [collector.live] 解析到的同一账号 Cookie。
+# 评论回复发送（P1）：独立开关，默认关闭。
+# 不主动限速，由队列按到达顺序处理；只有平台返回限流/频繁（412/429/「操作太快」）
+# 才退避重试（30 秒起指数翻倍）。凭据与 csrf（bili_jct）复用同一账号 Cookie。
 [sender.comment]
 enabled = false
 
@@ -252,15 +258,26 @@ self_ids = ["3747574135655903"]
 
 # 评论回复的调度策略：启用 [collector.comment]/[sender.comment] 时必须同时配置，
 # 否则调度器不认识 comment 通道，评论事件只会排队不被消费。
-# max_reply_runes 上限 200（评论正文长度），rate 建议保持 1/分钟。
-# [scheduler.channels.comment]
-# brain = "default"
-# rate_per_minute = 1
-# burst = 1
-# daily_quota = 50
-# cooldown_ms = 60000
-# min_runes = 2
-# max_reply_runes = 200
+# 不限频：高配额 + 0 冷却，实际发送顺序由 events 到达顺序决定；
+# 被动保护（平台限流退避）在 sender 层完成，不靠调度器限速。
+[scheduler.channels.comment]
+brain = "default"
+rate_per_minute = 120
+burst = 20
+daily_quota = 10000
+cooldown_ms = 0
+min_runes = 2
+max_reply_runes = 40
+
+# 私信回复的调度策略：与评论相同的高配额、0 冷却；私密语义由调度器按通道类型加 ACL。
+[scheduler.channels.dm]
+brain = "default"
+rate_per_minute = 120
+burst = 20
+daily_quota = 10000
+cooldown_ms = 0
+min_runes = 1
+max_reply_runes = 40
 
 # 观众档案（认人）：从 events 聚合「谁说过什么/鱼怎么回」，按 from_id 注入 prompt。
 # 只给 hits ≥ min_hits 的人建档；每小时节流重建，且只在直播活跃时跑。
@@ -271,18 +288,19 @@ recent_texts = 15
 recent_replies = 10
 rebuild_interval_seconds = 3600
 
-# 私信通道（P1）：默认关——私信风控极严，护栏优先。
-# 采集：轮询私信会话 → 按 msg_id 去重 → 写事件（channel=dm、session=对方 mid）
+# 私信通道（P1）：采集所有会话，不按白名单过滤；
+# 轮询私信会话 → 按 msg_id 去重 → 写事件（channel=dm、session=对方 mid）
 [collector.dm]
 enabled = true
 interval_seconds = 120   # 10-3600
 
-# 发送护栏：只发主人/白名单、一天最多 1 个收信人、10 分钟限频、必须互关（attribute==6）
+# 发送：all_followers=true（默认）所有发信人都可回，不再要求互关/白名单/每日一个收信人；
+# allowed_mids 仅作额外放行（并始终并入主人 mid），不构成限制。
 [sender.dm]
 enabled = true
-# allowed_mids 至少含主人 mid；空列表且 enabled=true 会被配置校验拒绝。
+all_followers = true
 allowed_mids = ["313591854"]
-# 当日收信人状态（跨重启保留，防止重启后重复换人）
+# 仅显式 all_followers=false 时启用的旧护栏状态（跨重启保留）
 state_path = "state/dm-recipient.json"
 
 # 看门狗（独立进程 cmd/fishwatchdog）：读心跳判活，冻结/死亡时重启 fishd。

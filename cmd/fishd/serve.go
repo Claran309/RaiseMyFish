@@ -216,7 +216,7 @@ type dmWhitelistSetter interface {
 
 // buildSender 按已启用通道装配发送路由；Generate/Deliver 仍只看到一个 sender.Sender。
 //
-// live 走既有 Node 传输与投递账本；comment 走纯 Go HTTP（1条/分钟硬限频）。
+// live 走既有 Node 传输与投递账本；comment 走纯 Go HTTP（不主动限速，平台限流时被动退避）。
 // 两者都没有启用时明确报错，避免消费循环「能生成却不能发」。
 func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger) (sender.Sender, dmWhitelistSetter, error) {
 	if cfg.Sender == nil {
@@ -237,7 +237,6 @@ func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger)
 		if cfg.Sender.HTTPTimeoutMS > 0 {
 			o.HTTPTimeout = time.Duration(cfg.Sender.HTTPTimeoutMS) * time.Millisecond
 		}
-		o.MinInterval = time.Minute
 		commentSender, err := sendercomment.New(o, log)
 		if err != nil {
 			return nil, nil, fmt.Errorf("装配评论发送通道失败：%w", err)
@@ -453,7 +452,8 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 
 // consumeEnabled 判断是否接消费循环：有调度配置、有 Brain 路由、且至少一个通道开启。
 func consumeEnabled(cfg config.Config, routes map[string]brain.Brain) bool {
-	return cfg.Scheduler != nil && len(routes) > 0 && (cfg.Channels.Live.Enabled || cfg.Channels.Comment.Enabled)
+	return cfg.Scheduler != nil && len(routes) > 0 &&
+		(cfg.Channels.Live.Enabled || cfg.Channels.Comment.Enabled || cfg.Channels.DM.Enabled)
 }
 
 // withScheduler 让调度循环与服务主循环并行运行；任一返回就整体收敛。

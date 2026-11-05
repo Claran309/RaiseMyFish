@@ -12,15 +12,20 @@ import (
 	"strings"
 )
 
-// CommentCollector 是视频评论轮询采集配置。
+// CommentCollector 是评论轮询采集配置。
+//
+// AutoDiscover 开启时按 DiscoverIntervalSeconds 周期刷新自己账号的视频/动态列表，
+// 与手动 Videos 合并后轮询；发现失败只保留手动列表，不影响已有轮询。
 type CommentCollector struct {
-	Enabled         bool     `toml:"enabled"`
-	Videos          []string `toml:"videos"`
-	IntervalSeconds int      `toml:"interval_seconds"`
+	Enabled                 bool     `toml:"enabled"`
+	AutoDiscover            bool     `toml:"auto_discover"`
+	Videos                  []string `toml:"videos"`
+	IntervalSeconds         int      `toml:"interval_seconds"`
+	DiscoverIntervalSeconds int      `toml:"discover_interval_seconds"`
 }
 
 func defaultCommentCollector() CommentCollector {
-	return CommentCollector{IntervalSeconds: 60}
+	return CommentCollector{AutoDiscover: true, IntervalSeconds: 60, DiscoverIntervalSeconds: 600}
 }
 
 var positiveOID = regexp.MustCompile(`^[0-9]{1,128}$`)
@@ -39,8 +44,8 @@ func (c CommentCollector) Validate() error {
 	if !c.Enabled {
 		return nil
 	}
-	if len(c.Videos) == 0 {
-		return errors.New("评论采集启用需要配置 videos")
+	if !c.AutoDiscover && len(c.Videos) == 0 {
+		return errors.New("评论采集关闭自动发现时需要配置 videos")
 	}
 	seen := make(map[string]struct{}, len(c.Videos))
 	for _, raw := range c.Videos {
@@ -56,6 +61,9 @@ func (c CommentCollector) Validate() error {
 	if c.IntervalSeconds < 10 || c.IntervalSeconds > 3600 {
 		return errors.New("评论采集 interval_seconds 需在10至3600之间")
 	}
+	if c.AutoDiscover && (c.DiscoverIntervalSeconds < 60 || c.DiscoverIntervalSeconds > 86400) {
+		return errors.New("评论自动发现 discover_interval_seconds 需在60至86400之间")
+	}
 	return nil
 }
 
@@ -64,8 +72,8 @@ type CommentSender struct {
 	Enabled bool `toml:"enabled"`
 }
 
-// commentSelfID 优先 [sender].self_id，其次采集侧同一账号的 UID。
-func (c Config) commentSelfID() string {
+// accountSelfID 优先 [sender].self_id，其次采集侧同一账号的 UID。
+func (c Config) accountSelfID() string {
 	if c.Sender != nil {
 		if id := strings.TrimSpace(c.Sender.SelfID); id != "" {
 			return id

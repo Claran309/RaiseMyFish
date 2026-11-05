@@ -62,19 +62,89 @@ func (e *Error) Error() string {
 }
 func (e *Error) Unwrap() error { return e.Cause }
 
+// 评论对象类型：视频用 type=1，动态用 type=17。
+const (
+	TypeVideo   = 1
+	TypeDynamic = 17
+)
+
+// Target 是一个可轮询评论区的对象。
+type Target struct {
+	OID  string
+	Type int
+}
+
+// Discoverer 发现自己账号当前需要轮询的视频/动态；失败时上层退回手动列表。
+type Discoverer interface {
+	Discover(ctx context.Context) ([]Target, error)
+}
+
+// SpaceSource 是 B站空间列表的最小接口（*bili.Client 实现，测试可替换）。
+type SpaceSource interface {
+	SpaceVideos(ctx context.Context, mid string, limit int) ([]bili.SpaceVideo, error)
+	SpaceDynamics(ctx context.Context, mid string, limit int) ([]bili.SpaceDynamic, error)
+}
+
+// BiliDiscoverer 把空间视频/动态列表映射成评论 target。
+type BiliDiscoverer struct {
+	Client       SpaceSource
+	MID          string
+	VideoLimit   int
+	DynamicLimit int
+}
+
+// Discover 拉两类列表；任意一类成功就返回可用的 target（部分失败不拖垮另一类）。
+func (d BiliDiscoverer) Discover(ctx context.Context) ([]Target, error) {
+	if d.Client == nil {
+		return nil, errors.New("空间列表来源不能为 nil")
+	}
+	videoLimit, dynamicLimit := d.VideoLimit, d.DynamicLimit
+	if videoLimit <= 0 {
+		videoLimit = 50
+	}
+	if dynamicLimit <= 0 {
+		dynamicLimit = 20
+	}
+	targets := make([]Target, 0, videoLimit+dynamicLimit)
+	var errs []error
+	if videos, err := d.Client.SpaceVideos(ctx, d.MID, videoLimit); err != nil {
+		errs = append(errs, err)
+	} else {
+		for _, v := range videos {
+			targets = append(targets, Target{OID: v.AID, Type: TypeVideo})
+		}
+	}
+	if dynamics, err := d.Client.SpaceDynamics(ctx, d.MID, dynamicLimit); err != nil {
+		errs = append(errs, err)
+	} else {
+		for _, dyn := range dynamics {
+			targets = append(targets, Target{OID: dyn.ID, Type: TypeDynamic})
+		}
+	}
+	if len(targets) == 0 && len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	return targets, nil
+}
+
 // Options 由可信装配提供；CookieFile 只保存路径，内容不进日志。
 type Options struct {
-	Videos      []string
-	Interval    time.Duration
-	SelfID      string
-	Cookie      string `json:"-"`
-	CookieFile  string `json:"-"`
-	HTTPTimeout time.Duration
-	APIRoot     string
+	// Videos 是手动追加的视频 oid；AutoDiscover 关闭时必须非空。
+	Videos   []string
+	Interval time.Duration
+	// AutoDiscover 开启后按 DiscoverInterval 周期刷新自己账号的视频/动态列表。
+	AutoDiscover     bool
+	DiscoverInterval time.Duration
+	Discoverer       Discoverer
+	SelfID           string
+	Cookie           string `json:"-"`
+	CookieFile       string `json:"-"`
+	HTTPTimeout      time.Duration
+	APIRoot          string
 }
 
 func DefaultOptions() Options {
-	return Options{Interval: time.Minute, HTTPTimeout: 10 * time.Second, APIRoot: defaultAPIRoot}
+	return Options{Interval: time.Minute, DiscoverInterval: 10 * time.Minute, HTTPTimeout: 10 * time.Second, APIRoot: defaultAPIRoot}
 }
 
 // Collector 只有一个 Start 拥有轮询循环；Health 可并发读取。
@@ -105,7 +175,7 @@ func canonicalID(value string) (string, bool) {
 
 // New 只做静态校验，不读凭据文件、不访问平台。
 func New(o Options, log *zap.Logger) (*Collector, error) {
-	if log == nil || len(o.Videos) == 0 || o.Interval <= 0 || o.HTTPTimeout <= 0 || (o.Cookie == "" && o.CookieFile == "") || strings.ContainsAny(o.Cookie+o.CookieFile, "\r\n\x00") {
+	if log == nil || o.Interval <= 0 || o.HTTPTimeout <= 0 || (o.Cookie == "" && o.CookieFile == "") || strings.ContainsAny(o.Cookie+o.CookieFile, "\r\n\x00") {
 		return nil, &Error{Kind: KindInput}
 	}
 	videos := make([]string, 0, len(o.Videos))
@@ -121,8 +191,19 @@ func New(o Options, log *zap.Logger) (*Collector, error) {
 		unique[oid] = struct{}{}
 		videos = append(videos, oid)
 	}
-	if len(videos) == 0 {
+	if len(videos) == 0 && !o.AutoDiscover {
 		return nil, &Error{Kind: KindInput}
+	}
+	if o.AutoDiscover {
+		if o.Discoverer == nil {
+			return nil, &Error{Kind: KindInput}
+		}
+		if o.DiscoverInterval <= 0 {
+			o.DiscoverInterval = 10 * time.Minute
+		}
+		if o.DiscoverInterval < time.Minute || o.DiscoverInterval > 24*time.Hour {
+			return nil, &Error{Kind: KindInput}
+		}
 	}
 	if o.SelfID != "" {
 		self, ok := canonicalID(o.SelfID)
@@ -184,14 +265,21 @@ func (c *Collector) Start(ctx context.Context, out chan<- event.Event, errc chan
 	}
 	c.log.Info("评论采集已启动",
 		zap.String("action", "comment_collector_start"),
-		zap.Int("videos", len(c.options.Videos)),
+		zap.Int("manual_videos", len(c.options.Videos)),
+		zap.Bool("auto_discover", c.options.AutoDiscover),
 		zap.Duration("interval", c.options.Interval),
 	)
+	targets := c.manualTargets()
+	var lastDiscover time.Time
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if fatal := c.cycle(ctx, cookie, out, errc); fatal != nil {
+		if c.options.AutoDiscover && (lastDiscover.IsZero() || time.Since(lastDiscover) >= c.options.DiscoverInterval) {
+			targets = c.refreshTargets(ctx)
+			lastDiscover = time.Now()
+		}
+		if fatal := c.cycle(ctx, cookie, targets, out, errc); fatal != nil {
 			return fatal
 		}
 		timer := time.NewTimer(c.options.Interval)
@@ -204,14 +292,68 @@ func (c *Collector) Start(ctx context.Context, out chan<- event.Event, errc chan
 	}
 }
 
-// cycle 轮询全部视频；只有凭据类错误会让采集退出，其余错误留给下一轮。
-func (c *Collector) cycle(ctx context.Context, cookie string, out chan<- event.Event, errc chan<- error) *Error {
-	ok := true
+// manualTargets 把手动 videos 规整成视频类型 target。
+func (c *Collector) manualTargets() []Target {
+	out := make([]Target, 0, len(c.options.Videos))
 	for _, oid := range c.options.Videos {
+		out = append(out, Target{OID: oid, Type: TypeVideo})
+	}
+	return out
+}
+
+// refreshTargets 发现失败只记日志并退回手动列表，不向 err 通道报错。
+func (c *Collector) refreshTargets(ctx context.Context) []Target {
+	manual := c.manualTargets()
+	discoverCtx, cancel := context.WithTimeout(ctx, c.options.HTTPTimeout)
+	defer cancel()
+	discovered, err := c.options.Discoverer.Discover(discoverCtx)
+	if err != nil {
+		if ctx.Err() == nil {
+			c.log.Warn("评论自动发现失败，仅轮询手动列表",
+				zap.String("action", "comment_discover"),
+				zap.Error(err),
+			)
+		}
+		return manual
+	}
+	merged := mergeTargets(manual, discovered)
+	c.log.Info("评论自动发现完成",
+		zap.String("action", "comment_discover"),
+		zap.Int("targets", len(merged)),
+		zap.Int("discovered", len(discovered)),
+	)
+	return merged
+}
+
+// mergeTargets 按 (oid,type) 去重，手动列表优先。
+func mergeTargets(manual, discovered []Target) []Target {
+	out := make([]Target, 0, len(manual)+len(discovered))
+	seen := make(map[string]struct{}, len(manual)+len(discovered))
+	for _, group := range [][]Target{manual, discovered} {
+		for _, target := range group {
+			oid, ok := canonicalID(target.OID)
+			if !ok || (target.Type != TypeVideo && target.Type != TypeDynamic) {
+				continue
+			}
+			key := fmt.Sprintf("%d:%s", target.Type, oid)
+			if _, duplicate := seen[key]; duplicate {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, Target{OID: oid, Type: target.Type})
+		}
+	}
+	return out
+}
+
+// cycle 轮询全部 target；只有凭据类错误会让采集退出，其余错误留给下一轮。
+func (c *Collector) cycle(ctx context.Context, cookie string, targets []Target, out chan<- event.Event, errc chan<- error) *Error {
+	ok := true
+	for _, target := range targets {
 		if ctx.Err() != nil {
 			return nil
 		}
-		replies, err := c.fetch(ctx, cookie, oid)
+		replies, err := c.fetch(ctx, cookie, target)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -223,13 +365,14 @@ func (c *Collector) cycle(ctx context.Context, cookie string, out chan<- event.E
 			}
 			c.log.Warn("评论轮询失败，等待下一轮",
 				zap.String("action", "comment_poll"),
-				zap.String("oid", oid),
+				zap.String("oid", target.OID),
+				zap.Int("comment_type", target.Type),
 				zap.String("kind", string(err.Kind)),
 			)
 			continue
 		}
 		for _, reply := range replies {
-			ev, keep, err := c.normalize(oid, reply)
+			ev, keep, err := c.normalize(target, reply)
 			if err != nil {
 				c.report(errc, err)
 				continue
@@ -299,12 +442,12 @@ type envelope struct {
 }
 
 // fetch 发一次只读请求，绝不重试。
-func (c *Collector) fetch(parent context.Context, cookie, oid string) ([]apiReply, *Error) {
+func (c *Collector) fetch(parent context.Context, cookie string, target Target) ([]apiReply, *Error) {
 	ctx, cancel := context.WithTimeout(parent, c.options.HTTPTimeout)
 	defer cancel()
 	query := url.Values{}
-	query.Set("type", "1")
-	query.Set("oid", oid)
+	query.Set("type", fmt.Sprint(target.Type))
+	query.Set("oid", target.OID)
 	query.Set("pn", "1")
 	query.Set("ps", fmt.Sprint(pageSize))
 	query.Set("sort", "2")
@@ -367,7 +510,7 @@ func codeKind(code int) Kind {
 }
 
 // normalize 校验单条评论；重复与自己的评论返回 keep=false。
-func (c *Collector) normalize(oid string, r apiReply) (event.Event, bool, *Error) {
+func (c *Collector) normalize(target Target, r apiReply) (event.Event, bool, *Error) {
 	invalid := func() (event.Event, bool, *Error) { return event.Event{}, false, &Error{Kind: KindProtocol} }
 	rpid, mid := string(r.Rpid), string(r.Member.Mid)
 	if mid == "" {
@@ -376,7 +519,7 @@ func (c *Collector) normalize(oid string, r apiReply) (event.Event, bool, *Error
 	if !positiveID.MatchString(rpid) || !positiveID.MatchString(mid) {
 		return invalid()
 	}
-	if !c.firstSeen(oid, rpid) {
+	if !c.firstSeen(target, rpid) {
 		return event.Event{}, false, nil
 	}
 	if mid == c.options.SelfID {
@@ -400,18 +543,19 @@ func (c *Collector) normalize(oid string, r apiReply) (event.Event, bool, *Error
 		return invalid()
 	}
 	meta, err := json.Marshal(struct {
-		Source string `json:"source"`
-		Root   string `json:"root,omitempty"`
-		Parent string `json:"parent,omitempty"`
-	}{"bili-comment", string(r.Root), string(r.Parent)})
+		Source      string `json:"source"`
+		CommentType int    `json:"comment_type"`
+		Root        string `json:"root,omitempty"`
+		Parent      string `json:"parent,omitempty"`
+	}{"bili-comment", target.Type, string(r.Root), string(r.Parent)})
 	if err != nil {
 		return invalid()
 	}
 	return event.Event{
-		ID:       "comment:" + oid + ":" + rpid,
+		ID:       "comment:" + target.OID + ":" + rpid,
 		Channel:  event.ChComment,
 		Dir:      event.DirIn,
-		Session:  oid,
+		Session:  target.OID,
 		FromID:   mid,
 		FromName: name,
 		Text:     text,
@@ -423,9 +567,9 @@ func (c *Collector) normalize(oid string, r apiReply) (event.Event, bool, *Error
 	}, true, nil
 }
 
-// firstSeen 以 oid:rpid 为键去重；超过上限清空重来，持久化层仍会按事件 ID 幂等。
-func (c *Collector) firstSeen(oid, rpid string) bool {
-	key := oid + ":" + rpid
+// firstSeen 以 type:oid:rpid 为键去重；超过上限清空重来，持久化层仍会按事件 ID 幂等。
+func (c *Collector) firstSeen(target Target, rpid string) bool {
+	key := fmt.Sprintf("%d:%s:%s", target.Type, target.OID, rpid)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, ok := c.seen[key]; ok {

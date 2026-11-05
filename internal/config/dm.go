@@ -27,12 +27,20 @@ func (d DMCollector) Validate() error {
 
 // DMSender 是私信发送配置（`[sender.dm]`）。
 //
-// 默认关；白名单是硬护栏（主人 mid 由装配层并入）。
+// 默认关；AllFollowers 默认 true——所有发信人都可回，allowed_mids 仅作额外放行。
+// 显式 all_followers=false 时退回白名单硬护栏（主人 mid 由装配层并入）。
 type DMSender struct {
-	Enabled     bool     `toml:"enabled"`
-	AllowedMIDs []string `toml:"allowed_mids"`
+	Enabled bool `toml:"enabled"`
+	// AllFollowers 用指针区分「未写」与显式 false，未写按 true 处理。
+	AllFollowers *bool    `toml:"all_followers"`
+	AllowedMIDs  []string `toml:"allowed_mids"`
 	// StatePath 是「当日收信人」状态文件（跨重启保留），空则用 state/dm-recipient.json。
 	StatePath string `toml:"state_path"`
+}
+
+// AllFollowersEnabled 返回实际生效值：未配置视为 true。
+func (d DMSender) AllFollowersEnabled() bool {
+	return d.AllFollowers == nil || *d.AllFollowers
 }
 
 // Validate 只检查白名单格式。
@@ -40,8 +48,8 @@ func (d DMSender) Validate() error {
 	if !d.Enabled {
 		return nil
 	}
-	if len(d.AllowedMIDs) == 0 {
-		return errors.New("私信发送开启时必须配置 allowed_mids（至少主人）")
+	if !d.AllFollowersEnabled() && len(d.AllowedMIDs) == 0 {
+		return errors.New("私信发送关闭 all_followers 时必须配置 allowed_mids（至少主人）")
 	}
 	for _, mid := range d.AllowedMIDs {
 		if mid == "" || len(mid) > 32 {

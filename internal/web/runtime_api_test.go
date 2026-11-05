@@ -171,15 +171,16 @@ func TestLiveAPI(t *testing.T) {
 
 func TestMessageAPI(t *testing.T) {
 	control := &fakeControl{status: RuntimeStatus{
-		Comment: CommentState{CollectorState: CollectorState{Available: true}, Videos: []string{"12"}},
-		DM:      DMState{AllowedMIDs: []string{"42"}, WhitelistAvailable: true},
+		Comment: CommentState{CollectorState: CollectorState{Available: true}, Videos: []string{"12"}, AutoDiscover: true},
+		DM:      DMState{AllowedMIDs: []string{"42"}, AllFollowers: true, WhitelistAvailable: true},
 	}}
 	srv := newTestServerWithRuntime(t, &fakeRepo{}, control, nil)
 
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/message", nil))
 	body := rec.Body.String()
-	if rec.Code != http.StatusOK || !strings.Contains(body, `"videos":["12"]`) || !strings.Contains(body, `"allowed_mids":["42"]`) {
+	if rec.Code != http.StatusOK || !strings.Contains(body, `"videos":["12"]`) || !strings.Contains(body, `"allowed_mids":["42"]`) ||
+		!strings.Contains(body, `"auto_discover":true`) || !strings.Contains(body, `"all_followers":true`) {
 		t.Fatalf("消息状态不符：%d %s", rec.Code, body)
 	}
 
@@ -412,7 +413,7 @@ func TestNewPagesRender(t *testing.T) {
 	srv := newTestServerWithRuntime(t, &fakeRepo{}, &fakeControl{}, &fakeLogs{})
 	want := map[string][]string{
 		"/live":    {"直播管理", "/api/live", "room_id", "开始看直播", "直播采集", "未装配"},
-		"/message": {"消息管理", "/api/comment/recent", "/api/dm/recent", "白名单", "视频 oid", "未装配"},
+		"/message": {"消息管理", "/api/comment/recent", "/api/dm/recent", "白名单", "视频 oid", "自动发现", "所有发信人", "未装配"},
 		"/config":  {"配置编辑", "/api/config", "/api/watchdog", "记忆冻结", "梗白学习", "未装配"},
 		"/logs":    {"实时日志", "/api/logs/stream", "EventSource", "暂停"},
 	}

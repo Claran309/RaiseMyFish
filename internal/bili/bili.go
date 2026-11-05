@@ -17,6 +17,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -64,6 +65,11 @@ type Client struct {
 	selfMID       string
 	resolver      func(ctx context.Context) (cookie, selfMID string, err error)
 	http          *http.Client
+
+	// WBI 密钥按客户端缓存，1 小时内复用；过期后重新从 nav 获取。
+	wbiMu    sync.Mutex
+	wbiMixin string
+	wbiUntil time.Time
 }
 
 // Error 是可安全记录的调用错误（不含 cookie/正文）。

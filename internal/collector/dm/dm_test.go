@@ -53,6 +53,27 @@ func TestParseSessions(t *testing.T) {
 	}
 }
 
+// TestParseSessionsCollectsAllPeers 私信全收：没有白名单过滤，所有会话都产出。
+func TestParseSessionsCollectsAllPeers(t *testing.T) {
+	body := []byte(`{"code":0,"data":{"session_list":[
+		{"talker_id":"1001","last_msg":{"msg_key":"1","sender_uid":"1001","content":"甲","timestamp":1700000000}},
+		{"talker_id":"1002","last_msg":{"msg_key":"2","sender_uid":"1002","content":"乙","timestamp":1700000001}},
+		{"talker_id":"1003","last_msg":{"msg_key":"3","sender_uid":"1003","content":"丙","timestamp":1700000002}}
+	]}}`)
+	got, err := ParseSessions(body, "3747")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("所有会话都应采集，实际 %d：%+v", len(got), got)
+	}
+	for i, peer := range []string{"1001", "1002", "1003"} {
+		if got[i].PeerID != peer {
+			t.Errorf("第 %d 条 peer = %q，期望 %q", i+1, got[i].PeerID, peer)
+		}
+	}
+}
+
 // TestParseSessionsAuthError code≠0 归为鉴权错误。
 func TestParseSessionsAuthError(t *testing.T) {
 	_, err := ParseSessions([]byte(`{"code":-101,"message":"账号未登录"}`), "1")
@@ -82,7 +103,7 @@ func TestCollectorDedupByMsgID(t *testing.T) {
 		t.Fatalf("应只产出一条事件，实际 %d", len(events))
 	}
 	ev := <-events
-	if ev.Channel != event.ChDM || ev.Dir != event.DirIn || ev.Session != "2002" {
+	if ev.Channel != event.ChDM || ev.Dir != event.DirIn || ev.Session != "2002" || !ev.Private {
 		t.Errorf("事件字段不符：%+v", ev)
 	}
 	if ev.ID != "dm:2002:9001" {

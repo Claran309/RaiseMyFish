@@ -222,11 +222,20 @@ func (c *runtimeControl) Status() web.RuntimeStatus {
 	allowed := append([]string{}, c.allowedMIDs...)
 	c.mu.Unlock()
 
-	comment := web.CommentState{CollectorState: c.comment.status(), Videos: videos}
+	comment := web.CommentState{
+		CollectorState: c.comment.status(),
+		Videos:         videos,
+		AutoDiscover:   c.base.Collector.Comment.AutoDiscover,
+	}
 	dm := c.dm.status()
+	allFollowers := false
+	if c.base.Sender != nil {
+		allFollowers = c.base.Sender.DM.AllFollowersEnabled()
+	}
 	dmState := web.DMState{
 		CollectorState:     dm,
 		AllowedMIDs:        allowed,
+		AllFollowers:       allFollowers,
 		WhitelistAvailable: c.deps.DMWhitelist != nil,
 	}
 	return web.RuntimeStatus{
@@ -268,8 +277,9 @@ func (c *runtimeControl) SetComment(enabled bool, videos []string) error {
 		}
 		target = normalized
 	}
-	if enabled && len(target) == 0 {
-		return errors.New("评论监听需要至少一个视频 oid")
+	// 自动发现开启时允许手动列表为空（完全靠空间视频/动态发现）。
+	if enabled && len(target) == 0 && !c.base.Collector.Comment.AutoDiscover {
+		return errors.New("评论监听需要至少一个视频 oid（或开启 auto_discover）")
 	}
 	changed := !equalStrings(previous, target)
 	if changed {

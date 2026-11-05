@@ -81,16 +81,18 @@ func buildDMSender(cfg config.Config, log *zap.Logger) (sender.Sender, error) {
 	if owner := ownerMID(cfg); owner != "" {
 		allowed = append(allowed, owner)
 	}
+	allFollowers := cfg.Sender.DM.AllFollowersEnabled()
 	snd, err := senderdm.New(
 		senderdm.NewBiliTransporter(client),
 		senderdm.NewBiliRelation(client),
-		senderdm.Options{AllowedMIDs: allowed, RecipientPath: cfg.Sender.DM.StatePath},
+		senderdm.Options{AllFollowers: allFollowers, AllowedMIDs: allowed, RecipientPath: cfg.Sender.DM.StatePath},
 	)
 	if err != nil {
 		return nil, err
 	}
 	log.Info("私信发送已装配",
 		zap.String("action", "dm_setup"),
+		zap.Bool("all_followers", allFollowers),
 		zap.Int("allowed", len(allowed)),
 	)
 	return snd, nil

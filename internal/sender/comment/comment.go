@@ -1,7 +1,7 @@
 // Package comment 通过 B站评论接口发送回复。
 //
 // 边界：一次 Send 只 POST 一次，绝不自动重试；平台返回 rpid 即成功。
-// 发送频率硬限制为 1 条/分钟（评论风控比弹幕严），失败也占用额度。
+// 不主动限速：只有平台明确返回限流/频繁时才按事件做指数退避（30s 起，最长 10 分钟）。
 package comment
 
 import (
@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -21,7 +23,6 @@ import (
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/sender"
 	"go.uber.org/zap"
-	"golang.org/x/time/rate"
 )
 
 const (
@@ -30,6 +31,14 @@ const (
 	maxBodyBytes   = 1 << 20
 	// commentClosed 是「评论区已关闭」，平台明确拒收，重试没有意义。
 	commentClosed = 12002
+	// 被动退避：平台限流后 30s 起翻倍，封顶 10 分钟。
+	backoffBase       = 30 * time.Second
+	backoffMax        = 10 * time.Minute
+	maxBackoffEntries = 1024
+	// 评论类型：视频 / 动态；事件 Meta 缺省时按视频处理。
+	commentTypeVideo   = 1
+	commentTypeArticle = 12
+	commentTypeDynamic = 17
 )
 
 // Options 由可信装配提供；凭据只保存值或路径，不进入日志。
@@ -38,19 +47,27 @@ type Options struct {
 	CookieFile  string `json:"-"`
 	HTTPTimeout time.Duration
 	APIRoot     string
-	MinInterval time.Duration
 }
 
 func DefaultOptions() Options {
-	return Options{HTTPTimeout: 10 * time.Second, APIRoot: defaultAPIRoot, MinInterval: time.Minute}
+	return Options{HTTPTimeout: 10 * time.Second, APIRoot: defaultAPIRoot}
 }
 
-// Service 实现 sender.Sender；limiter 并发安全。
+// Service 实现 sender.Sender；退避表并发安全。
 type Service struct {
 	options Options
 	client  *http.Client
-	limiter *rate.Limiter
 	log     *zap.Logger
+	now     func() time.Time
+
+	backoffMu sync.Mutex
+	backoffs  map[string]backoffState
+}
+
+// backoffState 记录某条评论被平台限流后的下次可发时间与连续失败次数。
+type backoffState struct {
+	until    time.Time
+	attempts int
 }
 
 var _ sender.Sender = (*Service)(nil)
@@ -69,7 +86,7 @@ func canonicalID(value string) (string, bool) {
 
 // New 只做静态校验，不读凭据文件、不访问平台。
 func New(o Options, log *zap.Logger) (*Service, error) {
-	if log == nil || o.HTTPTimeout <= 0 || o.MinInterval <= 0 || (o.Cookie == "" && o.CookieFile == "") || strings.ContainsAny(o.Cookie+o.CookieFile, "\r\n\x00") {
+	if log == nil || o.HTTPTimeout <= 0 || (o.Cookie == "" && o.CookieFile == "") || strings.ContainsAny(o.Cookie+o.CookieFile, "\r\n\x00") {
 		return nil, &sender.Error{Kind: sender.KindInput}
 	}
 	if strings.TrimSpace(o.APIRoot) == "" {
@@ -77,16 +94,19 @@ func New(o Options, log *zap.Logger) (*Service, error) {
 	}
 	o.APIRoot = strings.TrimRight(strings.TrimSpace(o.APIRoot), "/")
 	return &Service{
-		options: o,
-		client:  &http.Client{Timeout: o.HTTPTimeout},
-		limiter: rate.NewLimiter(rate.Every(o.MinInterval), 1),
-		log:     log,
+		options:  o,
+		client:   &http.Client{Timeout: o.HTTPTimeout},
+		log:      log,
+		now:      time.Now,
+		backoffs: make(map[string]backoffState),
 	}, nil
 }
 
 func (s *Service) Name() string { return "bili-comment" }
 
 // Send 校验后最多 POST 一次；成功返回 rpid。
+//
+// 不主动限速；只有平台限流后才按事件退避，未到点的重投不会产生请求。
 func (s *Service) Send(ctx context.Context, c event.Claim, p sender.Reply) (sender.Result, error) {
 	if ctx == nil {
 		return sender.Result{}, &sender.Error{Kind: sender.KindInput}
@@ -95,7 +115,7 @@ func (s *Service) Send(ctx context.Context, c event.Claim, p sender.Reply) (send
 	if err != nil {
 		return sender.Result{}, err
 	}
-	// 凭据每轮重读，支持运行期轮换文件；csrf 缺失不消耗限频额度。
+	// 凭据每轮重读，支持运行期轮换文件。
 	cookie, err := bili.LoadCookie(s.options.Cookie, s.options.CookieFile)
 	if err != nil {
 		return sender.Result{}, &sender.Error{Kind: sender.KindAuth, Cause: err}
@@ -107,22 +127,99 @@ func (s *Service) Send(ctx context.Context, c event.Claim, p sender.Reply) (send
 	if ctx.Err() != nil {
 		return sender.Result{}, &sender.Error{Kind: sender.KindRetry, Cause: ctx.Err()}
 	}
-	now := time.Now()
-	reservation := s.limiter.ReserveN(now, 1)
-	if !reservation.OK() {
-		return sender.Result{}, &sender.Error{Kind: sender.KindInput}
+	now := s.now()
+	if wait := s.backoffRemaining(c.Event.ID, now); wait > 0 {
+		s.log.Info("评论仍在平台限流退避中", zap.String("action", "comment_send_backoff"), zap.String("event_id", c.Event.ID), zap.Duration("wait", wait))
+		return sender.Result{}, &sender.Error{Kind: sender.KindRetry, RetryAt: now.Add(wait), Cause: errors.New("评论发送退避中")}
 	}
-	if delay := reservation.DelayFrom(now); delay > 0 {
-		// 没发出去就不占额度，让调度按 RetryAt 再来。
-		reservation.CancelAt(now)
-		s.log.Warn("评论发送触发限频", zap.String("action", "comment_send_rate_wait"), zap.Duration("delay", delay))
-		return sender.Result{}, &sender.Error{Kind: sender.KindRetry, RetryAt: now.Add(delay), Cause: errors.New("评论发送限频")}
-	}
-	result, err := s.post(ctx, cookie, csrf, oid, rpid, text)
+	result, err := s.post(ctx, cookie, csrf, oid, rpid, text, replyType(c.Event))
 	if err != nil {
-		s.log.Warn("评论发送失败", zap.String("action", "comment_send_failed"), zap.String("event_id", c.Event.ID), zap.String("kind", string(errorKind(err))))
+		kind := errorKind(err)
+		if kind == sender.KindRetry && ctx.Err() == nil {
+			until := s.noteRateLimited(c.Event.ID, s.now())
+			var typed *sender.Error
+			if errors.As(err, &typed) {
+				typed.RetryAt = until
+			}
+			s.log.Warn("评论发送被平台限流，指数退避",
+				zap.String("action", "comment_send_backoff_scheduled"),
+				zap.String("event_id", c.Event.ID),
+				zap.Time("retry_at", until),
+			)
+		} else {
+			s.clearBackoff(c.Event.ID)
+			s.log.Warn("评论发送失败", zap.String("action", "comment_send_failed"), zap.String("event_id", c.Event.ID), zap.String("kind", string(kind)))
+		}
+		return result, err
 	}
-	return result, err
+	s.clearBackoff(c.Event.ID)
+	return result, nil
+}
+
+// backoffRemaining 返回该事件距离下次可发的剩余时间；到期也保留 attempts，成功时才清除。
+func (s *Service) backoffRemaining(eventID string, now time.Time) time.Duration {
+	s.backoffMu.Lock()
+	defer s.backoffMu.Unlock()
+	st, ok := s.backoffs[eventID]
+	if !ok || !st.until.After(now) {
+		// 已到点也保留 attempts，让下一次限流继续翻倍；成功时才清除。
+		return 0
+	}
+	return st.until.Sub(now)
+}
+
+// noteRateLimited 记录一次平台限流并返回下次可发时间：30s 起翻倍，封顶 10 分钟。
+func (s *Service) noteRateLimited(eventID string, now time.Time) time.Time {
+	s.backoffMu.Lock()
+	defer s.backoffMu.Unlock()
+	st := s.backoffs[eventID]
+	st.attempts++
+	delay := backoffBase
+	for i := 1; i < st.attempts && delay < backoffMax; i++ {
+		delay *= 2
+	}
+	if delay > backoffMax {
+		delay = backoffMax
+	}
+	st.until = now.Add(delay)
+	s.backoffs[eventID] = st
+	if len(s.backoffs) > maxBackoffEntries {
+		for id, other := range s.backoffs {
+			if id != eventID && !other.until.After(now) {
+				delete(s.backoffs, id)
+			}
+		}
+	}
+	if len(s.backoffs) > maxBackoffEntries {
+		// 极端情况下只保留当前事件，避免退避表无界增长。
+		s.backoffs = map[string]backoffState{eventID: st}
+	}
+	return st.until
+}
+
+func (s *Service) clearBackoff(eventID string) {
+	s.backoffMu.Lock()
+	delete(s.backoffs, eventID)
+	s.backoffMu.Unlock()
+}
+
+// replyType 从事件 Meta 取评论类型；缺省/非法值按视频评论处理。
+func replyType(e event.Event) int {
+	if len(e.Meta) == 0 {
+		return commentTypeVideo
+	}
+	var meta struct {
+		CommentType int `json:"comment_type"`
+	}
+	if err := json.Unmarshal(e.Meta, &meta); err != nil {
+		return commentTypeVideo
+	}
+	switch meta.CommentType {
+	case commentTypeVideo, commentTypeArticle, commentTypeDynamic:
+		return meta.CommentType
+	default:
+		return commentTypeVideo
+	}
 }
 
 // Resume 不重新 POST：评论接口没有安全的只读核验，重投可能造成重复回复。
@@ -166,10 +263,10 @@ func validate(c event.Claim, p sender.Reply) (string, string, string, error) {
 	return oid, rpid, text, nil
 }
 
-func (s *Service) post(ctx context.Context, cookie, csrf, oid, rpid, text string) (sender.Result, error) {
+func (s *Service) post(ctx context.Context, cookie, csrf, oid, rpid, text string, commentType int) (sender.Result, error) {
 	form := url.Values{}
 	form.Set("oid", oid)
-	form.Set("type", "1")
+	form.Set("type", strconv.Itoa(commentType))
 	form.Set("message", text)
 	form.Set("root", rpid)
 	form.Set("parent", rpid)
@@ -196,8 +293,9 @@ func (s *Service) post(ctx context.Context, cookie, csrf, oid, rpid, text string
 		return sender.Result{Error: "unknown_manual"}, &sender.Error{Kind: sender.KindUncertain}
 	}
 	var env struct {
-		Code int `json:"code"`
-		Data struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
 			Rpid    platformID `json:"rpid"`
 			RpidStr platformID `json:"rpid_str"`
 		} `json:"data"`
@@ -206,7 +304,7 @@ func (s *Service) post(ctx context.Context, cookie, csrf, oid, rpid, text string
 		return sender.Result{Error: "unknown_manual"}, &sender.Error{Kind: sender.KindUncertain}
 	}
 	if env.Code != 0 {
-		kind, code := codeFailure(env.Code)
+		kind, code := codeFailure(env.Code, env.Message)
 		return sender.Result{Error: code}, kind
 	}
 	rpidOut := string(env.Data.Rpid)
@@ -223,7 +321,8 @@ func (s *Service) post(ctx context.Context, cookie, csrf, oid, rpid, text string
 func statusFailure(status int) error {
 	switch status {
 	case http.StatusPreconditionFailed, http.StatusTooManyRequests:
-		return &sender.Error{Kind: sender.KindRetry, RetryAt: time.Now().Add(time.Minute)}
+		// RetryAt 由 Send 按事件退避表填写。
+		return &sender.Error{Kind: sender.KindRetry, Cause: fmt.Errorf("平台限流 HTTP %d", status)}
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return &sender.Error{Kind: sender.KindAuth}
 	default:
@@ -231,17 +330,35 @@ func statusFailure(status int) error {
 	}
 }
 
-func codeFailure(code int) (error, string) {
+func codeFailure(code int, message string) (error, string) {
 	switch code {
 	case -101, -111, -403:
 		return &sender.Error{Kind: sender.KindAuth}, "auth"
-	case -352, -412:
-		return &sender.Error{Kind: sender.KindRetry, RetryAt: time.Now().Add(time.Minute)}, "rate_limit"
+	case -352, -412, -509:
+		return &sender.Error{Kind: sender.KindRetry, Cause: fmt.Errorf("平台限流 code %d", code)}, "rate_limit"
 	case commentClosed:
 		return &sender.Error{Kind: sender.KindDead, Cause: errors.New("评论区已关闭")}, "unavailable"
-	default:
-		return &sender.Error{Kind: sender.KindDead, Cause: fmt.Errorf("平台返回 code %d", code)}, "unknown_manual"
 	}
+	// 平台有时用业务 code 表达「操作太快」；文本命中同样按限流退避。
+	if rateLimitMessage(message) {
+		return &sender.Error{Kind: sender.KindRetry, Cause: fmt.Errorf("平台限流 code %d", code)}, "rate_limit"
+	}
+	// 未知错误可能已被平台接收，不能断言可重试，也不能直接判死。
+	return &sender.Error{Kind: sender.KindUncertain, Cause: fmt.Errorf("平台返回 code %d", code)}, "unknown_manual"
+}
+
+// rateLimitMessage 识别平台限流/频繁的中英文提示（只用于分类，不写日志）。
+func rateLimitMessage(message string) bool {
+	msg := strings.ToLower(strings.TrimSpace(message))
+	if msg == "" {
+		return false
+	}
+	for _, token := range []string{"操作太快", "操作太频繁", "太频繁", "请求过快", "稍后再试", "稍后重试", "rate limit", "too many", "too frequent", "frequent"} {
+		if strings.Contains(msg, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func errorKind(err error) sender.Kind {

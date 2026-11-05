@@ -329,9 +329,9 @@ func safeErrorKind(err error) string {
 	if errors.As(err, &brainErr) {
 		return string(brainErr.Kind)
 	}
-	var senderErr *sender.Error
-	if errors.As(err, &senderErr) {
-		return string(senderErr.Kind)
+	var kinded interface{ ErrKind() string }
+	if errors.As(err, &kinded) {
+		return kinded.ErrKind()
 	}
 	return ""
 }
@@ -383,10 +383,10 @@ func settleDelivered(ctx context.Context, bus event.Bus, c event.Claim, verified
 //
 // 只有 KindRetry（可重试的临时故障）交回 retry；其余（dead/auth/input/skipped/uncertain）
 // 一律置 dead——尤其是 uncertain（可能已经发出去了），重投会重复发弹幕，宁可停下来让人看。
+// 通道错误（sender.Error / dm.Error）通过 RetryAfter 暴露类别与最早重试时间。
 func settleFailure(ctx context.Context, bus event.Bus, c event.Claim, cause error, from []event.Status, retryDelay time.Duration) error {
-	var sendErr *sender.Error
-	if errors.As(cause, &sendErr) && sendErr.Kind == sender.KindRetry {
-		if err := bus.Defer(ctx, c, time.Now().UTC().Add(retryDelay)); err != nil {
+	if deadline, ok := retryDeadline(cause, retryDelay); ok {
+		if err := bus.Defer(ctx, c, deadline); err != nil {
 			return fmt.Errorf("交回重试失败：%w", err)
 		}
 		return nil
@@ -395,4 +395,21 @@ func settleFailure(ctx context.Context, bus event.Bus, c event.Claim, cause erro
 		return fmt.Errorf("标记失败事件失败：%w", err)
 	}
 	return nil
+}
+
+// retryDeadline 读取通道错误的最早重试时间；没有 RetryAt 时用配置的 retryDelay。
+func retryDeadline(cause error, retryDelay time.Duration) (time.Time, bool) {
+	var retryable interface{ RetryAfter() (time.Time, bool) }
+	if !errors.As(cause, &retryable) {
+		return time.Time{}, false
+	}
+	at, ok := retryable.RetryAfter()
+	if !ok {
+		return time.Time{}, false
+	}
+	deadline := time.Now().UTC().Add(retryDelay)
+	if at.After(deadline) {
+		deadline = at.UTC()
+	}
+	return deadline, true
 }

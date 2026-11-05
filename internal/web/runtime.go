@@ -68,13 +68,15 @@ type FeatureState struct {
 // CommentState 是评论监听状态与当前视频列表。
 type CommentState struct {
 	CollectorState
-	Videos []string `json:"videos"`
+	Videos       []string `json:"videos"`
+	AutoDiscover bool     `json:"auto_discover"`
 }
 
 // DMState 是私信监听与白名单状态。
 type DMState struct {
 	CollectorState
 	AllowedMIDs        []string `json:"allowed_mids"`
+	AllFollowers       bool     `json:"all_followers"`
 	WhitelistAvailable bool     `json:"whitelist_available"`
 	WhitelistError     string   `json:"whitelist_error,omitempty"`
 }

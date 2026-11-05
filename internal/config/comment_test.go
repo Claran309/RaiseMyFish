@@ -19,6 +19,12 @@ func TestCommentDefaultsOff(t *testing.T) {
 	if cfg.Collector.Comment.IntervalSeconds != 60 {
 		t.Errorf("默认轮询间隔 = %d，期望 60", cfg.Collector.Comment.IntervalSeconds)
 	}
+	if !cfg.Collector.Comment.AutoDiscover {
+		t.Error("评论自动发现默认应开启")
+	}
+	if cfg.Collector.Comment.DiscoverIntervalSeconds != 600 {
+		t.Errorf("默认发现间隔 = %d，期望 600", cfg.Collector.Comment.DiscoverIntervalSeconds)
+	}
 	if cfg.Sender != nil && cfg.Sender.Comment != nil && cfg.Sender.Comment.Enabled {
 		t.Error("评论发送默认应关闭")
 	}
@@ -75,7 +81,9 @@ func TestCommentCollectorRejects(t *testing.T) {
 		body string
 		want string
 	}{
-		{"缺videos", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\n", "videos"},
+		{"关闭发现且缺videos", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nauto_discover=false\n", "videos"},
+		{"发现间隔过小", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\ndiscover_interval_seconds=5\n", "discover_interval_seconds"},
+		{"发现间隔过大", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\ndiscover_interval_seconds=86401\n", "discover_interval_seconds"},
 		{"非法oid", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nvideos=['abc']\n", "oid"},
 		{"零oid", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nvideos=['000']\n", "oid"},
 		{"重复oid", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nvideos=['1','01']\n", "重复"},
@@ -89,6 +97,17 @@ func TestCommentCollectorRejects(t *testing.T) {
 				t.Fatalf("期望错误含 %q，实际 %v", tc.want, err)
 			}
 		})
+	}
+}
+
+func TestCommentAutoDiscoverAllowsEmptyVideos(t *testing.T) {
+	t.Setenv("FISH_BILI_COOKIE", "SESSDATA=x")
+	cfg, err := loadWithScheduler(t, "[collector.live]\nself_id='8'\n[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nvideos=[]\n")
+	if err != nil {
+		t.Fatalf("自动发现开启时应允许空 videos：%v", err)
+	}
+	if !cfg.Collector.Comment.AutoDiscover || len(cfg.Collector.Comment.Videos) != 0 {
+		t.Errorf("自动发现配置不符：%+v", cfg.Collector.Comment)
 	}
 }
 

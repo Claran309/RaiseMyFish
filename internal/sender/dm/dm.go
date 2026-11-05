@@ -1,6 +1,7 @@
 // Package dm 实现私信发送，并把「防封号」的护栏放在最前面。
 //
-// 护栏（派发单要求，一条都不能放宽）：
+// 默认 AllFollowers=true：所有发信人都可回，不做白名单/互关/日收信人限制。
+// 显式 AllFollowers=false 时启用旧护护栏：
 //   - 只允许发给主人 + 白名单；
 //   - 一天最多 1 个收信人（防刷量）；
 //   - 同一收信人 10 分钟限频 1 条；
@@ -21,12 +22,16 @@ import (
 )
 
 const (
-	// defaultRate 是同一收信人的最小发送间隔。
+	// defaultRate 是同一收信人的最小发送间隔（仅关闭 all_followers 时生效）。
 	defaultRate = 10 * time.Minute
 	// mutualAttribute 是「互相关注」的 attribute 值。
 	mutualAttribute = 6
 	// maxTextRunes 与派发单一致。
 	maxTextRunes = 200
+	// 被动退避：平台限流后 30s 起翻倍，封顶 10 分钟（按收信人记录）。
+	backoffBase       = 30 * time.Second
+	backoffMax        = 10 * time.Minute
+	maxBackoffEntries = 1024
 )
 
 // Kind 是发送错误类别（映射到 sender.Kind）。
@@ -51,6 +56,8 @@ type Relation interface {
 
 // Options 是发送参数。
 type Options struct {
+	// AllFollowers=true 时所有发信人可回；false 时启用白名单/互关/日收信人护栏。
+	AllFollowers bool
 	// AllowedMIDs 是白名单；主人 mid 由调用方并入。
 	AllowedMIDs []string
 	// RateLimit 是同收信人最小间隔，<=0 用 10 分钟。
@@ -63,10 +70,11 @@ type Options struct {
 
 // Sender 实现 sender.Sender 的发送部分；Resume 交给上层（本通道不做重投）。
 type Sender struct {
-	transport Transporter
-	relation  Relation
-	rate      time.Duration
-	now       func() time.Time
+	transport    Transporter
+	relation     Relation
+	allFollowers bool
+	rate         time.Duration
+	now          func() time.Time
 
 	// allowed 热更新：面板改白名单时整体替换，读写都要过锁。
 	allowedMu sync.RWMutex
@@ -77,6 +85,13 @@ type Sender struct {
 	mu       sync.Mutex
 	state    recipientState
 	lastSent map[string]time.Time
+	backoffs map[string]backoffState
+}
+
+// backoffState 记录某收信人被平台限流后的下次可发时间与连续失败次数。
+type backoffState struct {
+	until    time.Time
+	attempts int
 }
 
 var _ sender.Sender = (*Sender)(nil)
@@ -100,7 +115,7 @@ func New(t Transporter, r Relation, o Options) (*Sender, error) {
 		}
 		allowed[mid] = struct{}{}
 	}
-	if len(allowed) == 0 {
+	if !o.AllFollowers && len(allowed) == 0 {
 		return nil, &Error{Kind: KindInput, Cause: errors.New("私信白名单不能为空")}
 	}
 	rate := o.RateLimit
@@ -110,6 +125,15 @@ func New(t Transporter, r Relation, o Options) (*Sender, error) {
 	now := o.Now
 	if now == nil {
 		now = time.Now
+	}
+	s := &Sender{
+		transport: t, relation: r, allFollowers: o.AllFollowers,
+		allowed: allowed, rate: rate, now: now,
+		lastSent: make(map[string]time.Time),
+		backoffs: make(map[string]backoffState),
+	}
+	if o.AllFollowers {
+		return s, nil
 	}
 	path := strings.TrimSpace(o.RecipientPath)
 	if path == "" {
@@ -123,10 +147,9 @@ func New(t Transporter, r Relation, o Options) (*Sender, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Sender{
-		transport: t, relation: r, allowed: allowed, rate: rate, now: now,
-		store: store, state: state, lastSent: make(map[string]time.Time),
-	}, nil
+	s.store = store
+	s.state = state
+	return s, nil
 }
 
 // Name 返回通道名。
@@ -153,31 +176,46 @@ func (s *Sender) Send(ctx context.Context, claim event.Claim, reply sender.Reply
 	if len([]rune(text)) > maxTextRunes {
 		return sender.Result{}, &Error{Kind: KindInput, Cause: errors.New("私信正文不能超过200字")}
 	}
+	// 平台限流后的被动退避：未到点直接交回调度，不产生请求。
+	if wait := s.backoffRemaining(mid, s.now()); wait > 0 {
+		return sender.Result{}, &Error{Kind: KindRetry, RetryAt: s.now().Add(wait), Cause: errors.New("私信仍在限流退避中")}
+	}
 
-	// 1. 白名单
-	if !s.allowedMID(mid) {
-		return sender.Result{}, &Error{Kind: KindInput, Cause: errors.New("收信人不在私信白名单")}
-	}
-	// 2. 当日收信人锁定
-	if err := s.reserveRecipient(mid); err != nil {
-		return sender.Result{}, err
-	}
-	// 3. 限频
-	if err := s.checkRate(mid); err != nil {
-		return sender.Result{}, err
-	}
-	// 4. 互关检查
-	attribute, err := s.relation.Attribute(ctx, mid)
-	if err != nil {
-		return sender.Result{}, &Error{Kind: KindRetry, Cause: errors.New("关注关系查询失败")}
-	}
-	if attribute != mutualAttribute {
-		return sender.Result{}, &Error{Kind: KindInput, Cause: errors.New("与收信人不是互关，拒绝发送")}
+	if !s.allFollowers {
+		// 1. 白名单
+		if !s.allowedMID(mid) {
+			return sender.Result{}, &Error{Kind: KindInput, Cause: errors.New("收信人不在私信白名单")}
+		}
+		// 2. 当日收信人锁定
+		if err := s.reserveRecipient(mid); err != nil {
+			return sender.Result{}, err
+		}
+		// 3. 限频
+		if err := s.checkRate(mid); err != nil {
+			return sender.Result{}, err
+		}
+		// 4. 互关检查
+		attribute, err := s.relation.Attribute(ctx, mid)
+		if err != nil {
+			return sender.Result{}, &Error{Kind: KindRetry, Cause: errors.New("关注关系查询失败")}
+		}
+		if attribute != mutualAttribute {
+			return sender.Result{}, &Error{Kind: KindInput, Cause: errors.New("与收信人不是互关，拒绝发送")}
+		}
 	}
 
 	msgID, err := s.transport.SendDM(ctx, mid, text)
 	if err != nil {
-		return sender.Result{}, classify(err)
+		classified := classify(err)
+		var typed *Error
+		if errors.As(classified, &typed) && typed.Kind == KindRetry && ctx.Err() == nil {
+			typed.RetryAt = s.noteRateLimited(mid, s.now())
+		}
+		return sender.Result{}, classified
+	}
+	s.clearBackoff(mid)
+	if s.allFollowers {
+		return sender.Result{OK: true, MsgID: msgID, Verified: msgID != ""}, nil
 	}
 	s.markSent(mid)
 	// 发送成功才占用当天名额；失败不影响后续
@@ -261,10 +299,58 @@ func (s *Sender) markSent(mid string) {
 	s.lastSent[mid] = s.now()
 }
 
-// Error 是受控错误，携带可映射的类别。
+// backoffRemaining 返回该收信人距离下次可发的剩余时间；到期也保留 attempts，成功时才清除。
+func (s *Sender) backoffRemaining(mid string, now time.Time) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.backoffs[mid]
+	if !ok || !st.until.After(now) {
+		// 已到点也保留 attempts，让下一次限流继续翻倍；成功时才清除。
+		return 0
+	}
+	return st.until.Sub(now)
+}
+
+// noteRateLimited 记录一次平台限流并返回下次可发时间：30s 起翻倍，封顶 10 分钟。
+func (s *Sender) noteRateLimited(mid string, now time.Time) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.backoffs[mid]
+	st.attempts++
+	delay := backoffBase
+	for i := 1; i < st.attempts && delay < backoffMax; i++ {
+		delay *= 2
+	}
+	if delay > backoffMax {
+		delay = backoffMax
+	}
+	st.until = now.Add(delay)
+	s.backoffs[mid] = st
+	if len(s.backoffs) > maxBackoffEntries {
+		for other, state := range s.backoffs {
+			if other != mid && !state.until.After(now) {
+				delete(s.backoffs, other)
+			}
+		}
+	}
+	if len(s.backoffs) > maxBackoffEntries {
+		// 极端情况下只保留当前收信人，避免退避表无界增长。
+		s.backoffs = map[string]backoffState{mid: st}
+	}
+	return st.until
+}
+
+func (s *Sender) clearBackoff(mid string) {
+	s.mu.Lock()
+	delete(s.backoffs, mid)
+	s.mu.Unlock()
+}
+
+// Error 是受控错误，携带可映射的类别与可选的下次重试时间。
 type Error struct {
-	Kind  Kind
-	Cause error `json:"-"`
+	Kind    Kind
+	RetryAt time.Time
+	Cause   error `json:"-"`
 }
 
 func (e *Error) Error() string {
@@ -279,7 +365,13 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Cause }
 
-// classify 把传输层错误映射成受控类别（风控/权限 → auth，网络 → retry，其余 uncertain）。
+// ErrKind 供上层统一读取错误类别（与 sender.Error 同名方法）。
+func (e *Error) ErrKind() string { return string(e.Kind) }
+
+// RetryAfter 返回调度层应遵守的最早重试时间。
+func (e *Error) RetryAfter() (time.Time, bool) { return e.RetryAt, e.Kind == KindRetry }
+
+// classify 把传输层错误映射成受控类别（限流/网络 → retry，风控/权限 → auth，其余 uncertain）。
 func classify(err error) error {
 	var typed *Error
 	if errors.As(err, &typed) {
@@ -287,13 +379,24 @@ func classify(err error) error {
 	}
 	msg := strings.ToLower(err.Error())
 	switch {
+	case rateLimitMessage(msg):
+		return &Error{Kind: KindRetry, Cause: errors.New("私信被平台限流")}
 	case strings.Contains(msg, "auth"), strings.Contains(msg, "403"), strings.Contains(msg, "封禁"), strings.Contains(msg, "风控"):
 		return &Error{Kind: KindAuth, Cause: errors.New("私信被风控或权限拒绝")}
-	case strings.Contains(msg, "timeout"), strings.Contains(msg, "network"), strings.Contains(msg, "5"):
+	case strings.Contains(msg, "timeout"), strings.Contains(msg, "network"):
 		return &Error{Kind: KindRetry, Cause: errors.New("私信网络异常")}
 	default:
 		return &Error{Kind: KindUncertain, Cause: errors.New("私信结果不确定")}
 	}
+}
+
+func rateLimitMessage(lowered string) bool {
+	for _, token := range []string{"rate limit", "too many", "too frequent", "frequent", "操作太快", "操作太频繁", "太频繁", "请求过快", "稍后再试", "稍后重试"} {
+		if strings.Contains(lowered, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func isDigits(s string) bool {

@@ -220,6 +220,7 @@ func (c *Collector) toEvent(m Message, now time.Time) (event.Event, bool) {
 		ID:       "dm:" + peer + ":" + id,
 		Channel:  event.ChDM,
 		Dir:      event.DirIn,
+		Private:  true,
 		Session:  peer,
 		FromID:   peer,
 		FromName: name,

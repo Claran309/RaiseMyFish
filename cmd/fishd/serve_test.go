@@ -28,6 +28,7 @@ import (
 	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
+	senderdm "RaiseMyFish/internal/sender/dm"
 	senderlive "RaiseMyFish/internal/sender/live"
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
@@ -464,6 +465,13 @@ func TestConsumeEnabledSwitch(t *testing.T) {
 	if consumeEnabled(cfg, nil) {
 		t.Error("没有路由时不应启用")
 	}
+
+	// 只开私信也应接消费循环
+	dmOnly := config.Config{Scheduler: &config.Scheduler{}}
+	dmOnly.Channels.DM.Enabled = true
+	if !consumeEnabled(dmOnly, routes) {
+		t.Error("只开私信时应启用")
+	}
 }
 
 // fakeBus 模拟事件总线的结清语义：校验状态边、记录每次 Mark/Defer。
@@ -748,6 +756,58 @@ func TestGenerateSettlesBySenderKind(t *testing.T) {
 				t.Errorf("最终状态 = %q，期望 %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSettleFailureHonorsRetryAt 退避时间必须写进 Defer，而不是固定 retryDelay。
+func TestSettleFailureHonorsRetryAt(t *testing.T) {
+	const id = "comment:1:1"
+	bus := newFakeBus(id)
+	claim := liveClaim(id)
+	retryAt := time.Now().Add(5 * time.Minute)
+	if err := settleFailure(context.Background(), bus, claim, &sender.Error{Kind: sender.KindRetry, RetryAt: retryAt}, []event.Status{event.StatusReplying}, time.Second); err != nil {
+		t.Fatalf("结清失败：%v", err)
+	}
+	bus.mu.Lock()
+	until := bus.defers[id]
+	bus.mu.Unlock()
+	if until.Before(retryAt) {
+		t.Errorf("Defer 时间 = %v，应不早于 RetryAt %v", until, retryAt)
+	}
+	if got := bus.finalStatus(id); got != event.StatusRetry {
+		t.Errorf("最终状态 = %s，期望 retry", got)
+	}
+}
+
+// TestSettleFailureHandlesDmError 私信错误不是 sender.Error，也要按 Kind/RetryAt 结清。
+func TestSettleFailureHandlesDmError(t *testing.T) {
+	const id = "dm:2002:1"
+	bus := newFakeBus(id)
+	claim := liveClaim(id)
+	retryAt := time.Now().Add(90 * time.Second)
+	if err := settleFailure(context.Background(), bus, claim, &senderdm.Error{Kind: senderdm.KindRetry, RetryAt: retryAt}, []event.Status{event.StatusReplying}, time.Second); err != nil {
+		t.Fatalf("结清失败：%v", err)
+	}
+	bus.mu.Lock()
+	until := bus.defers[id]
+	bus.mu.Unlock()
+	if until.Before(retryAt) {
+		t.Errorf("私信 Defer 时间 = %v，应不早于 RetryAt %v", until, retryAt)
+	}
+	if got := bus.finalStatus(id); got != event.StatusRetry {
+		t.Errorf("最终状态 = %s，期望 retry", got)
+	}
+
+	// 私信 auth 错误仍应 dead
+	authBus := newFakeBus(id)
+	authBus.mu.Lock()
+	authBus.status[id] = event.StatusReplying
+	authBus.mu.Unlock()
+	if err := settleFailure(context.Background(), authBus, claim, &senderdm.Error{Kind: senderdm.KindAuth}, []event.Status{event.StatusReplying}, time.Second); err != nil {
+		t.Fatalf("结清失败：%v", err)
+	}
+	if got := authBus.finalStatus(id); got != event.StatusDead {
+		t.Errorf("auth 最终状态 = %s，期望 dead", got)
 	}
 }
 

@@ -5,10 +5,12 @@ package dm
 import (
 	"context"
 	"errors"
+	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"RaiseMyFish/internal/bili"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/sender"
 )
@@ -43,6 +45,7 @@ func newSender(t *testing.T, clock *time.Time) (*Sender, *fakeTransport, *fakeRe
 	tr := &fakeTransport{}
 	rel := &fakeRelation{attribute: mutualAttribute}
 	s, err := New(tr, rel, Options{
+		AllFollowers:  false,
 		AllowedMIDs:   []string{"313591854", "777"},
 		RateLimit:     10 * time.Minute,
 		Now:           func() time.Time { return *clock },
@@ -52,6 +55,19 @@ func newSender(t *testing.T, clock *time.Time) (*Sender, *fakeTransport, *fakeRe
 		t.Fatal(err)
 	}
 	return s, tr, rel
+}
+
+func newAllFollowersSender(t *testing.T, clock *time.Time) (*Sender, *fakeTransport) {
+	t.Helper()
+	tr := &fakeTransport{}
+	s, err := New(tr, &fakeRelation{attribute: mutualAttribute}, Options{
+		AllFollowers: true,
+		Now:          func() time.Time { return *clock },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, tr
 }
 
 func claimFor(peer string) event.Claim {
@@ -178,10 +194,97 @@ func TestSendClassifiesErrors(t *testing.T) {
 	}
 }
 
-// TestNewValidatesWhitelist 白名单必须非空且为数字。
+// TestSendRateLimitBackoff 平台限流 → 30s 起指数退避，未到点不调用传输层。
+func TestSendRateLimitBackoff(t *testing.T) {
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	s, tr := newAllFollowersSender(t, &now)
+	tr.err = errors.New("操作太快，请稍后再试")
+	retryAt := func(err error) time.Time {
+		t.Helper()
+		var typed *Error
+		if !errors.As(err, &typed) || typed.Kind != KindRetry {
+			t.Fatalf("应为 retry：%v", err)
+		}
+		if typed.RetryAt.IsZero() {
+			t.Fatal("retry 未提供 RetryAt")
+		}
+		return typed.RetryAt
+	}
+
+	_, err := s.Send(context.Background(), claimFor("999"), sender.Reply{Text: "一"})
+	if got := retryAt(err); !got.Equal(now.Add(30 * time.Second)) {
+		t.Errorf("首次退避 = %v，期望 %v", got, now.Add(30*time.Second))
+	}
+	if tr.sent != 1 {
+		t.Fatalf("首次限流应已调用传输层：%d", tr.sent)
+	}
+
+	// 退避未到点：不调用传输层
+	if _, err := s.Send(context.Background(), claimFor("999"), sender.Reply{Text: "二"}); retryAt(err).Before(now.Add(30 * time.Second)) {
+		t.Error("退避中的重投不应缩短等待")
+	}
+	if tr.sent != 1 {
+		t.Fatalf("退避期间仍调用了传输层：%d", tr.sent)
+	}
+
+	// 退避到期仍限流 → 翻倍
+	now = now.Add(30 * time.Second)
+	_, err = s.Send(context.Background(), claimFor("999"), sender.Reply{Text: "三"})
+	if got := retryAt(err); !got.Equal(now.Add(60 * time.Second)) {
+		t.Errorf("第二次退避 = %v，期望 %v", got, now.Add(60*time.Second))
+	}
+	if tr.sent != 2 {
+		t.Fatalf("退避到期后应重试：%d", tr.sent)
+	}
+
+	// 放行后清空退避
+	now = now.Add(60 * time.Second)
+	tr.err = nil
+	if _, err := s.Send(context.Background(), claimFor("999"), sender.Reply{Text: "四"}); err != nil {
+		t.Fatalf("退避到期应可发送：%v", err)
+	}
+	if tr.sent != 3 {
+		t.Fatalf("放行后调用次数 = %d", tr.sent)
+	}
+	tr.err = errors.New("rate limit")
+	_, err = s.Send(context.Background(), claimFor("999"), sender.Reply{Text: "五"})
+	if got := retryAt(err); !got.Equal(now.Add(30 * time.Second)) {
+		t.Errorf("成功后重新退避 = %v，期望 %v", got, now.Add(30*time.Second))
+	}
+}
+
+// TestClassifyBiliError B站平台错误按状态码/业务码分类，未知保持 uncertain。
+func TestClassifyBiliError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want Kind
+	}{
+		{"业务限流", &bili.Error{Op: "dm_send", Code: -352}, KindRetry},
+		{"HTTP限流", &bili.Error{Op: "dm_send", Status: http.StatusTooManyRequests}, KindRetry},
+		{"业务鉴权", &bili.Error{Op: "dm_send", Code: -101}, KindAuth},
+		{"HTTP鉴权", &bili.Error{Op: "dm_send", Status: http.StatusForbidden}, KindAuth},
+		{"未知业务码", &bili.Error{Op: "dm_send", Code: 21019}, KindUncertain},
+		{"HTTP服务端", &bili.Error{Op: "dm_send", Status: http.StatusInternalServerError}, KindUncertain},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyBiliError(tc.err)
+			var typed *Error
+			if !errors.As(got, &typed) || typed.Kind != tc.want {
+				t.Fatalf("分类 = %v，期望 %s", got, tc.want)
+			}
+		})
+	}
+	if classifyBiliError(errors.New("普通错误")) != nil {
+		t.Error("非B站错误应返回 nil 交给通用分类")
+	}
+}
+
+// TestNewValidatesWhitelist 护栏模式下白名单必须非空且为数字。
 func TestNewValidatesWhitelist(t *testing.T) {
 	tr, rel := &fakeTransport{}, &fakeRelation{}
-	if _, err := New(tr, rel, Options{}); err == nil {
+	if _, err := New(tr, rel, Options{AllFollowers: false}); err == nil {
 		t.Error("空白名单应报错")
 	}
 	if _, err := New(tr, rel, Options{AllowedMIDs: []string{"abc"}}); err == nil {
@@ -192,6 +295,35 @@ func TestNewValidatesWhitelist(t *testing.T) {
 	}
 	if _, err := New(tr, nil, Options{AllowedMIDs: []string{"1"}}); err == nil {
 		t.Error("nil 关系检查应报错")
+	}
+	if _, err := New(tr, rel, Options{AllFollowers: true}); err != nil {
+		t.Errorf("all_followers 模式应允许空白名单：%v", err)
+	}
+}
+
+// TestSendAllFollowersAllowsAnyone 所有发信人可回：跳过白名单/互关/日收信人/限频。
+func TestSendAllFollowersAllowsAnyone(t *testing.T) {
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	tr := &fakeTransport{}
+	rel := &fakeRelation{attribute: 2}
+	s, err := New(tr, rel, Options{AllFollowers: true, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, peer := range []string{"9001", "9002", "9003"} {
+		res, err := s.Send(context.Background(), claimFor(peer), sender.Reply{Text: "你好"})
+		if err != nil {
+			t.Fatalf("第 %d 个发信人应放行：%v", i+1, err)
+		}
+		if !res.OK {
+			t.Errorf("第 %d 个发信人结果未标记成功：%+v", i+1, res)
+		}
+	}
+	if tr.sent != 3 {
+		t.Fatalf("应连续发出 3 条，实际 %d", tr.sent)
+	}
+	if tr.lastID != "9003" {
+		t.Errorf("最后收信人 = %q，期望 9003", tr.lastID)
 	}
 }
 
