@@ -88,7 +88,7 @@ func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]store
 		limit = maxSearchLimit
 	}
 
-	keyword, err := s.source.KeywordProfiles(ctx, text, limit)
+	keyword, err := s.keywordHits(ctx, text, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -112,6 +112,63 @@ func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]store
 		return sortHits(keyword, nil, 0, limit), nil
 	}
 	return sortHits(keyword, semantic, s.alpha, limit), nil
+}
+
+// keywordHits 先用原句查，查不到再剥掉「是谁/吗/那个」这类问句外壳。
+//
+// 观众问「弓长三益是谁」时昵称本身是「弓长三益」，整句 ILIKE 永远命不中。
+func (s *Searcher) keywordHits(ctx context.Context, text string, limit int) ([]store.ViewerProfileHit, error) {
+	for _, candidate := range keywordCandidates(text) {
+		hits, err := s.source.KeywordProfiles(ctx, candidate, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(hits) > 0 {
+			return hits, nil
+		}
+	}
+	return nil, nil
+}
+
+// keywordCandidates 返回由精确到宽松的去重关键词（原句优先）。
+func keywordCandidates(text string) []string {
+	seen := make(map[string]bool, 2)
+	var out []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	add(text)
+	add(stripQuestionShell(text))
+	return out
+}
+
+// stripQuestionShell 去掉问句的前后缀；只作为原句无命中时的兜底。
+func stripQuestionShell(text string) string {
+	s := strings.TrimSpace(text)
+	for {
+		before := s
+		s = strings.Trim(s, " \t\r\n？?！!。.，,、～~：:\"'“”‘’")
+		for _, suffix := range []string{"是谁呀", "是谁啊", "是谁呢", "是哪位", "是哪个", "是谁", "的人", "吗", "呢"} {
+			if strings.HasSuffix(s, suffix) && utf8.RuneCountInString(s) > utf8.RuneCountInString(suffix) {
+				s = strings.TrimSpace(strings.TrimSuffix(s, suffix))
+				break
+			}
+		}
+		for _, prefix := range []string{"请问", "你知道", "你还记得", "还记得", "那个"} {
+			if strings.HasPrefix(s, prefix) && utf8.RuneCountInString(s) > utf8.RuneCountInString(prefix) {
+				s = strings.TrimSpace(strings.TrimPrefix(s, prefix))
+				break
+			}
+		}
+		if s == before {
+			return s
+		}
+	}
 }
 
 func (s *Searcher) embedQuery(ctx context.Context, text string) ([]float64, error) {

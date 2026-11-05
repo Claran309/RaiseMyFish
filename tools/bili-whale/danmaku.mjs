@@ -18,16 +18,34 @@ const stableID = value => {
 }
 const result = (outcome, error_kind = '', msg_id = '', evidence = 'none') => ({ outcome, msg_id, verified: evidence !== 'none', error_kind, evidence })
 
+// B站结构化 @：reply_mid 是被 @ 的用户UID，reply_uname 是展示昵称（可选）。
+// 只接受显式提供的字段：Go 侧用 omitempty，空值时整个键不出现。
+function replyFields(input) {
+  const fields = {}
+  if (input.reply_mid !== undefined) {
+    const mid = decimalID(input.reply_mid)
+    if (!mid) throw failure('invalid')
+    fields.reply_mid = mid
+  }
+  if (input.reply_uname !== undefined) {
+    const name = input.reply_uname
+    if (typeof name !== 'string' || !name.isWellFormed() || name.length === 0 || name !== name.trim() || [...name].length > 128 || /[\u0000-\u001f\u007f]/.test(name)) throw failure('invalid')
+    if (!fields.reply_mid) throw failure('invalid')
+    fields.reply_uname = name
+  }
+  return fields
+}
+
 function validRequest(input) {
   if (!input || !token(input.request_id) || !decimalID(input.room_id) || !decimalID(input.self_id) || input.private !== false || typeof input.text !== 'string' || !input.text.isWellFormed()) throw failure('invalid')
   const count = [...input.text].length
   if (count < 1 || count > 40) throw failure('invalid')
-  return Object.freeze({ request_id: input.request_id, room_id: decimalID(input.room_id), self_id: decimalID(input.self_id), private: false, text: input.text })
+  return Object.freeze({ request_id: input.request_id, room_id: decimalID(input.room_id), self_id: decimalID(input.self_id), private: false, text: input.text, ...replyFields(input) })
 }
 
 function boundRequest(request, session) {
-  const bound = sessions.get(session), given = validRequest(request)
-  if (!bound || Object.keys(given).some(key => given[key] !== bound.request[key])) throw failure('invalid')
+  const bound = sessions.get(session), given = validRequest(request), keys = Object.keys(given)
+  if (!bound || keys.length !== Object.keys(bound.request).length || keys.some(key => given[key] !== bound.request[key])) throw failure('invalid')
   return bound
 }
 
@@ -125,6 +143,10 @@ export async function postOnce(request, session, permit, deps = {}) {
   } catch { return result('not_posted', 'invalid') }
   const form = new URLSearchParams({ csrf: bound.csrf, csrf_token: bound.csrf, roomid: bound.request.room_id, msg: bound.request.text, rnd: nonce,
     fontsize: '25', color: '16777215', mode: '1', bubble: '0', room_type: '0', jumpfrom: '0', statistics: JSON.stringify({ appId: 100, platform: 5 }) })
+  if (bound.request.reply_mid) {
+    form.set('reply_mid', bound.request.reply_mid)
+    if (bound.request.reply_uname) form.set('reply_uname', bound.request.reply_uname)
+  }
   try {
     const data = await http(SEND, 'POST', bound, deps, form.toString())
     if (data?.code === 0) {

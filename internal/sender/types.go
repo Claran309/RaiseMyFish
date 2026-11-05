@@ -92,12 +92,15 @@ const (
 )
 
 // Attempt包含不可变快照与受控结果，不含Cookie、模型Meta或原始响应。
+// ReplyMID/ReplyName是运行时从事件Meta与正文反推的结构化@目标，不落库。
 type Attempt struct {
 	ID           string
 	EventID      string
 	ActorID      string
 	RoomID       string
 	Text         string
+	ReplyMID     string `gorm:"-" json:"-"`
+	ReplyName    string `gorm:"-" json:"-"`
 	Nonce        string
 	State        string
 	ErrorKind    string

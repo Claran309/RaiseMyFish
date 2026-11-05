@@ -42,6 +42,36 @@ test('单次POST/表单/CSRF与带稳定ID回执核验', async () => {
   assert.ok(!JSON.stringify(result).includes('fixture-csrf')); assert.ok(!JSON.stringify(result).includes('fixture-session'))
 })
 
+test('结构化@参数进入发送表单且与会话绑定，空值不带', async () => {
+  const withReply = { ...request, reply_mid: '12345', reply_uname: '弓长三益' }
+  const session = await preflight(withReply, preparation())
+  const result = await postOnce(withReply, session, permit(), { fetch: async (_url, init) => {
+    const form = new URLSearchParams(init.body)
+    assert.equal(form.get('reply_mid'), '12345')
+    assert.equal(form.get('reply_uname'), '弓长三益')
+    return response({ code: 0, data: { id_str: 'platform-2' } })
+  } })
+  assert.equal(result.outcome, 'accepted')
+  const plain = await preflight(request, preparation())
+  await postOnce(request, plain, permit(), { fetch: async (_url, init) => {
+    const form = new URLSearchParams(init.body)
+    assert.equal(form.has('reply_mid'), false)
+    assert.equal(form.has('reply_uname'), false)
+    return response({ code: 0, data: {} })
+  } })
+  for (const bad of [
+    { ...request, reply_mid: '0' }, { ...request, reply_mid: ['1'] }, { ...request, reply_mid: null },
+    { ...request, reply_uname: '没有mid' }, { ...request, reply_mid: '1', reply_uname: '' },
+    { ...request, reply_mid: '1', reply_uname: 'x'.repeat(129) }, { ...request, reply_mid: '1', reply_uname: 'a\u0001b' },
+    { ...request, reply_mid: '1', reply_uname: ' 弓长三益' },
+  ]) await assert.rejects(preflight(bad, preparation()))
+  let posts = 0
+  for (const changed of [{ ...withReply, reply_mid: '999' }, { ...withReply, reply_uname: undefined }, { ...withReply, reply_uname: '别人' }]) {
+    assert.equal((await postOnce(changed, session, permit(), { fetch: async () => { posts++; return response({ code: 0 }) } })).outcome, 'not_posted')
+  }
+  assert.equal(posts, 0)
+})
+
 test('code0但无ID不可冒充核验；网络/5xx未知，明确拒绝分类', async () => {
   const session = await preflight(request, preparation())
   const missing = await postOnce(request, session, permit(), { fetch: async () => response({ code: 0, data: {} }) })

@@ -169,6 +169,57 @@ func TestSearchKeywordOnlyWithoutEmbedder(t *testing.T) {
 	}
 }
 
+// questionProfileSource 只在剥掉问句外壳后命中，模拟真实昵称匹配。
+type questionProfileSource struct {
+	queries []string
+}
+
+func (s *questionProfileSource) KeywordProfiles(_ context.Context, keyword string, _ int) ([]store.ViewerProfileHit, error) {
+	s.queries = append(s.queries, keyword)
+	if keyword != "弓长三益" {
+		return nil, nil
+	}
+	return []store.ViewerProfileHit{hit("5005", "弓长三益", 0)}, nil
+}
+
+func (s *questionProfileSource) SemanticProfiles(context.Context, []float64, int) ([]store.ViewerProfileHit, error) {
+	return nil, nil
+}
+
+// TestSearchStripsQuestionShell 「弓长三益是谁」也要命中昵称「弓长三益」。
+func TestSearchStripsQuestionShell(t *testing.T) {
+	source := &questionProfileSource{}
+	s := newTestSearcher(t, source, nil, SearchOptions{})
+	hits, err := s.Search(context.Background(), "弓长三益是谁", 3)
+	if err != nil {
+		t.Fatalf("检索失败：%v", err)
+	}
+	if len(hits) != 1 || hits[0].Profile.UID != "5005" {
+		t.Fatalf("问句未命中昵称：%+v", hits)
+	}
+	if len(source.queries) != 2 || source.queries[0] != "弓长三益是谁" || source.queries[1] != "弓长三益" {
+		t.Errorf("关键词候选顺序不符：%v", source.queries)
+	}
+}
+
+// TestStripQuestionShell 前后缀剥离的边界。
+func TestStripQuestionShell(t *testing.T) {
+	cases := map[string]string{
+		"弓长三益是谁":    "弓长三益",
+		"弓长三益？":     "弓长三益",
+		"请问弓长三益吗":   "弓长三益",
+		"你还记得弓长三益吗": "弓长三益",
+		"那个爱要白饭的人":  "爱要白饭",
+		"弓长三益":      "弓长三益",
+		"是谁":        "是谁",
+	}
+	for input, want := range cases {
+		if got := stripQuestionShell(input); got != want {
+			t.Errorf("stripQuestionShell(%q) = %q，期望 %q", input, got, want)
+		}
+	}
+}
+
 // TestSearchKeywordErrorPropagates 关键词查询失败必须上抛。
 func TestSearchKeywordErrorPropagates(t *testing.T) {
 	source := &fakeProfileSource{keywordErr: errors.New("数据库挂了")}
