@@ -4,7 +4,7 @@
 #    今天吃了几碗饭——一律不进人格包（docs/08-persona.md §6），走配置或记忆。
 
 name: dafeiyu
-display_name: 大肥鱼
+display_name: 魔鱼魔鱼吃白饭饭饭饭
 
 # 版本号参与 A/B 与回滚（docs/08-persona.md §5）：prompt 一改就升版本
 version: v1.1
