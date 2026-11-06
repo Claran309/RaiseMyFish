@@ -24,6 +24,9 @@ type Embedding struct {
 	BatchSize int `toml:"batch_size"`
 	// Alpha 是混合召回里语义相似度的权重：score = 关键词档位 + alpha*sim。
 	Alpha float64 `toml:"alpha"`
+	// MinSimilarity 是语义召回的最低相关性（0~1）：低于它的向量命中直接丢弃。
+	// 不同 embedding 模型的相似度分布不同，阈值需要按真实负例校准。
+	MinSimilarity float64 `toml:"min_similarity"`
 	// AutoRefresh 开启后 fishd 按 refresh_interval_seconds 检查知识库 revision，
 	// 变化时增量 embedding。
 	AutoRefresh            bool `toml:"auto_refresh"`
@@ -38,6 +41,7 @@ func defaultEmbedding() Embedding {
 		Dimension:              embedding.DefaultDimension,
 		BatchSize:              32,
 		Alpha:                  0.5,
+		MinSimilarity:          0.6,
 		RefreshIntervalSeconds: 3600,
 	}
 }
@@ -71,6 +75,9 @@ func (e Embedding) Validate() error {
 	}
 	if math.IsNaN(e.Alpha) || e.Alpha < 0 || e.Alpha > 1 {
 		return errors.New("embedding alpha 必须在0至1之间")
+	}
+	if math.IsNaN(e.MinSimilarity) || e.MinSimilarity < 0 || e.MinSimilarity > 1 {
+		return errors.New("embedding min_similarity 必须在0至1之间")
 	}
 	if e.AutoRefresh && !e.Enabled {
 		return errors.New("embedding 定时增量需要先启用 embedding")

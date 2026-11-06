@@ -206,3 +206,68 @@ func TestViewerEmbeddingIncremental(t *testing.T) {
 		t.Fatalf("二次入库未全部跳过：%+v", stats)
 	}
 }
+
+// TestViewerIdentityTiersRealPostgres I01/I02：真实 PG 下验证身份档位与近似召回。
+//
+// 关键区别全在 SQL 之外：KeywordProfiles 只能证明「出现过」，
+// 昵称精确/UID 精确/编辑距离近似要靠 viewer 层归因。
+func TestViewerIdentityTiersRealPostgres(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatalf("迁移失败：%v", err)
+	}
+	repo, err := NewViewerRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	for _, profile := range []store.ViewerProfile{
+		{UID: "5005", Name: "弓长三益", Hits: 12, LastSeen: seen, RecentTexts: []string{"今晚也在"}},
+		{UID: "5006", Name: "路人甲", Hits: 3, LastSeen: seen, RecentTexts: []string{"昨天弓长三益说了个笑话"}},
+		{UID: "5007", Name: "今夜琴声温柔", Hits: 2, LastSeen: seen, RecentTexts: []string{"这歌好听"}},
+	} {
+		if err := repo.UpsertProfile(ctx, profile); err != nil {
+			t.Fatalf("写入档案失败：%v", err)
+		}
+	}
+	searcher, err := viewer.NewSearcher(repo, nil, viewer.SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// UID 精确：纯数字直接命中，档位最高。
+	got, err := searcher.Find(ctx, "5005", 5)
+	if err != nil {
+		t.Fatalf("UID 精确查询失败：%v", err)
+	}
+	if got.Status != viewer.StatusFound || len(got.Candidates) != 1 || got.Candidates[0].Tier != viewer.TierUID {
+		t.Fatalf("UID 精确档位不符：%+v", got)
+	}
+
+	// 昵称精确压过「发言里提到」。
+	got, err = searcher.Find(ctx, "弓长三益", 5)
+	if err != nil {
+		t.Fatalf("昵称查询失败：%v", err)
+	}
+	if got.Status != viewer.StatusFound || len(got.Candidates) < 2 {
+		t.Fatalf("应返回昵称命中与内容命中：%+v", got)
+	}
+	if got.Candidates[0].Profile.UID != "5005" || got.Candidates[0].Tier != viewer.TierName {
+		t.Fatalf("昵称精确应排第一：%+v", got.Candidates)
+	}
+	if got.Candidates[1].Profile.UID != "5006" || got.Candidates[1].Tier != viewer.TierContent {
+		t.Fatalf("提到名字的人应落在内容档：%+v", got.Candidates)
+	}
+
+	// 错字近似：SQL 的 ILIKE 不命中，靠活跃昵称池的编辑距离找到。
+	got, err = searcher.Find(ctx, "今夜琴身温柔", 5)
+	if err != nil {
+		t.Fatalf("近似查询失败：%v", err)
+	}
+	if got.Status != viewer.StatusFound || len(got.Candidates) == 0 {
+		t.Fatalf("近似未命中：%+v", got)
+	}
+	if got.Candidates[0].Profile.UID != "5007" || got.Candidates[0].Tier != viewer.TierNear {
+		t.Fatalf("近似档位不符：%+v", got.Candidates[0])
+	}
+}

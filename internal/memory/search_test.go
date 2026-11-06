@@ -35,14 +35,18 @@ func (f *fakeSearchBase) Shared(_ context.Context, scope Scope) (SharedState, er
 type fakeSearchSource struct {
 	keyword       []Record
 	semantic      []SemanticRecord
+	messages      []Message
 	keywordErr    error
 	semanticErr   error
+	messageErr    error
 	gotKeyword    string
+	gotMsgKeyword string
 	gotLimit      int
 	gotSemLimit   int
 	gotVector     []float64
 	keywordCalls  int
 	semanticCalls int
+	messageCalls  int
 }
 
 func (f *fakeSearchSource) KeywordRecords(_ context.Context, _ Scope, keyword string, limit int) ([]Record, error) {
@@ -50,6 +54,12 @@ func (f *fakeSearchSource) KeywordRecords(_ context.Context, _ Scope, keyword st
 	f.gotKeyword = keyword
 	f.gotLimit = limit
 	return f.keyword, f.keywordErr
+}
+
+func (f *fakeSearchSource) KeywordMessages(_ context.Context, _ Scope, keyword string, limit int) ([]Message, error) {
+	f.messageCalls++
+	f.gotMsgKeyword = keyword
+	return f.messages, f.messageErr
 }
 
 func (f *fakeSearchSource) SemanticRecords(_ context.Context, _ Scope, vector []float64, limit int) ([]SemanticRecord, error) {
@@ -107,11 +117,44 @@ func TestHybridSearchEmptyQueryUsesRecall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("空查询失败：%v", err)
 	}
-	if source.keywordCalls != 0 || source.semanticCalls != 0 || embedder.calls != 0 {
-		t.Errorf("空查询不应查检索源：kw=%d sem=%d embed=%d", source.keywordCalls, source.semanticCalls, embedder.calls)
+	if source.keywordCalls != 0 || source.semanticCalls != 0 || source.messageCalls != 0 || embedder.calls != 0 {
+		t.Errorf("空查询不应查检索源：kw=%d sem=%d msg=%d embed=%d", source.keywordCalls, source.semanticCalls, source.messageCalls, embedder.calls)
 	}
 	if len(got.Records) != 1 || got.Records[0].ID != "base-1" {
 		t.Errorf("应返回既有召回：%+v", got.Records)
+	}
+}
+
+// TestHybridSearchIncludesMessageText 摘要为空时也要从 events 原文召回。
+func TestHybridSearchIncludesMessageText(t *testing.T) {
+	message := Message{
+		EventID: "ev-1", Channel: "live", Session: "room-1", Dir: "in",
+		FromID: "1001", FromName: "弓长三益", Text: "今晚也在", At: readerBaseTime,
+	}
+	source := &fakeSearchSource{messages: []Message{message}}
+	h := newTestHybrid(t, source, nil, HybridSearchOptions{Alpha: 0.5})
+
+	got, err := h.Search(context.Background(), SearchQuery{Scope: searchScope(), Text: "弓长三益", Limit: 5})
+	if err != nil {
+		t.Fatalf("检索失败：%v", err)
+	}
+	if source.messageCalls != 1 || source.gotMsgKeyword != "弓长三益" {
+		t.Errorf("原文检索参数不符：calls=%d q=%q", source.messageCalls, source.gotMsgKeyword)
+	}
+	if len(got.Recent) != 1 || got.Recent[0].FromName != "弓长三益" {
+		t.Fatalf("原文召回不符：%+v", got.Recent)
+	}
+	if len(got.Records) != 0 {
+		t.Errorf("无摘要时 Records 应为空：%+v", got.Records)
+	}
+}
+
+// TestHybridSearchMessageErrorPropagates events 查询失败不能被吞成空结果。
+func TestHybridSearchMessageErrorPropagates(t *testing.T) {
+	source := &fakeSearchSource{messageErr: errors.New("events 查询失败")}
+	h := newTestHybrid(t, source, nil, HybridSearchOptions{})
+	if _, err := h.Search(context.Background(), SearchQuery{Scope: searchScope(), Text: "弓长三益"}); err == nil {
+		t.Fatal("原文查询失败应返回错误")
 	}
 }
 
@@ -235,6 +278,45 @@ func TestHybridSearchRejectsInvalidScope(t *testing.T) {
 	bad := Scope{Channel: "dm", Session: "u-1", Private: false}
 	if _, err := h.Search(context.Background(), SearchQuery{Scope: bad, Text: "鱼"}); err == nil {
 		t.Fatal("非法 Scope 应被拒绝")
+	}
+}
+
+// TestHybridSearchRejectsLowRelevanceSemantic I03/T13：低于下限的向量命中被丢弃。
+//
+// 允许返回 0 条：宁可不注入记忆，也不拿「最相近的无关内容」凑上下文。
+func TestHybridSearchRejectsLowRelevanceSemantic(t *testing.T) {
+	source := &fakeSearchSource{
+		semantic: []SemanticRecord{
+			{Record: searchRecord("sem-low", "无关歌词", 0.4), Similarity: 0.33},
+		},
+	}
+	embedder := &fakeQueryEmbedder{vectors: [][]float64{vectorWith(1)}}
+	h := newTestHybrid(t, source, embedder, HybridSearchOptions{Alpha: 0.5})
+
+	got, err := h.Search(context.Background(), SearchQuery{Scope: searchScope(), Text: "随便一个陌生名字", Limit: 5})
+	if err != nil {
+		t.Fatalf("检索失败：%v", err)
+	}
+	if len(got.Records) != 0 || len(got.Recent) != 0 {
+		t.Fatalf("低相关语义应被拒：records=%+v recent=%+v", got.Records, got.Recent)
+	}
+}
+
+// TestHybridSearchKeepsRelevantSemantic 过阈值的语义命中保留，并排在关键词之后。
+func TestHybridSearchKeepsRelevantSemantic(t *testing.T) {
+	source := &fakeSearchSource{
+		keyword:  []Record{searchRecord("kw", "关键词命中", 0.5)},
+		semantic: []SemanticRecord{{Record: searchRecord("sem", "语义命中", 0.5), Similarity: 0.85}},
+	}
+	embedder := &fakeQueryEmbedder{vectors: [][]float64{vectorWith(1)}}
+	h := newTestHybrid(t, source, embedder, HybridSearchOptions{Alpha: 0.5})
+
+	got, err := h.Search(context.Background(), SearchQuery{Scope: searchScope(), Text: "鱼", Limit: 5})
+	if err != nil {
+		t.Fatalf("检索失败：%v", err)
+	}
+	if len(got.Records) != 2 || got.Records[0].ID != "kw" || got.Records[1].ID != "sem" {
+		t.Fatalf("排序不符：%+v", got.Records)
 	}
 }
 

@@ -108,9 +108,12 @@ func (r *ViewerRepo) GetProfile(ctx context.Context, uid string) (store.ViewerPr
 	return row.profile()
 }
 
-// TopViewers 按 hits 倒序取前 limit 个。
+// TopViewers 按 hits 倒序取前 limit 个档案。
+//
+// 上限放宽到 500：身份近似匹配（错字/谐音）需要在一份较大的昵称池里找人，
+// 档案总量目前只有两百人左右，一次性读回内存做编辑距离是可接受的。
 func (r *ViewerRepo) TopViewers(ctx context.Context, limit int) ([]store.ViewerProfile, error) {
-	if ctx == nil || limit < 1 || limit > 100 {
+	if ctx == nil || limit < 1 || limit > 500 {
 		return nil, store.ErrInvalid
 	}
 	var rows []viewerRow

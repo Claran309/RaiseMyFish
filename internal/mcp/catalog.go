@@ -65,8 +65,8 @@ func objectSchema(props map[string]SchemaProperty, required ...string) InputSche
 // toolSpecs 是 MCP 暴露的全部工具元数据；实际暴露范围还要叠加「已注册 + 白名单」。
 var toolSpecs = map[string]toolSpec{
 	"memory_search": {
-		Description: "查本会话/跨通道的历史记忆与摘要；query 可为空",
-		Schema:      objectSchema(map[string]SchemaProperty{"query": textProp("检索词；留空表示按当前会话召回")}),
+		Description: "查本会话/跨通道的历史弹幕原文与记忆摘要；query 传昵称或关键词，可为空",
+		Schema:      objectSchema(map[string]SchemaProperty{"query": textProp("检索词（昵称/关键词）；留空表示按当前会话召回")}),
 		Args:        argsQuery,
 	},
 	"knowledge_search": {
@@ -93,8 +93,8 @@ var toolSpecs = map[string]toolSpec{
 		Args: argsJSON,
 	},
 	"viewer_search": {
-		Description: "按描述找观众档案（如「那个爱要白饭的人」）",
-		Schema:      objectSchema(map[string]SchemaProperty{"query": textProp("观众描述关键词")}, "query"),
+		Description: "查某个观众是谁（uid/昵称/别名/描述都行；问「XX是谁」就传 XX；结果会标明命中理由）",
+		Schema:      objectSchema(map[string]SchemaProperty{"query": textProp("观众昵称/uid/别名/描述关键词")}, "query"),
 		Args:        argsQuery,
 	},
 	"reply_history": {

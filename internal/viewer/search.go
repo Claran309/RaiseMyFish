@@ -1,14 +1,21 @@
 package viewer
 
-// 本文件实现观众档案的混合检索：关键词 + α * 向量余弦相似度。
+// 本文件实现观众档案的身份解析与混合检索。
 //
-// 典型用途：ReAct / fishctl 输入「那个爱要白饭的人」，
-// 先按昵称与最近发言做关键词匹配，再叠语义候选，返回对应 uid 档案。
+// 检索的目标不是「找一段相似文本」，而是回答「这句话在说谁」：
+//   - UID 精确命中最高（平台身份是唯一可信的锚点）；
+//   - 当前昵称精确次之；
+//   - 人工维护的别名再次（历史昵称/常见错字）；
+//   - 编��距离与拼音候选只用于「扩大候选」，不自动认定同一人；
+//   - 发言内容命中最低（提到某人 ≠ 这个人就是某人）。
+//
+// 语义（向量）候选只作补充：必须过最低相关性，且永远排在词法身份命中之后。
+// 低相关的语义 topK 会被直接丢弃——宁可返回「没找到」，也不用无关歌词/梗顶替。
 //
 // 边界：
 //   - 档案不含私密会话字段，查询不需要 Scope；
-//   - embedding 不可用时退回纯关键词，不把错误抛给调用方；
-//   - 关键词/语义的 SQL 过滤都在 database 层完成。
+//   - embedding 不可用时退回纯词法，不把错误抛给调用方；
+//   - 关键词/语义的 SQL 过滤都在 database 层完成，本包只做归因与排序。
 
 import (
 	"context"
@@ -16,6 +23,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"RaiseMyFish/internal/store"
@@ -28,7 +36,91 @@ const (
 	semanticCandidateLimit = 20
 	// maxSearchQueryRunes 防止把超长文本送进 embedding 服务。
 	maxSearchQueryRunes = 200
+
+	// defaultMinSimilarity 是语义候选的最低余弦相似度。
+	// 无关文本（随机人名/歌词）通常落在 0.2~0.5，0.6 能挡住大部分噪音；
+	// 阈值应由真实负例校准，不是「通用余弦真理」。
+	defaultMinSimilarity = 0.6
+	// defaultAmbiguityGap 是同档候选的分差阈值：分差小于它就不敢定人。
+	defaultAmbiguityGap = 0.15
+	// defaultNameScan 是全量昵称扫描的上限（按发言数排序的活跃档案）。
+	defaultNameScan = 300
 )
+
+// Tier 是命中理由的档位；数字越大越可信。
+//
+// 排序时档位优先于分数：「昵称精确」永远压过「发言里提过」，
+// 这样「甲提过乙」不会被误当成「乙本人」。
+type Tier int
+
+const (
+	// TierSemantic 只有向量相似度，没有任何词法身份理由。
+	TierSemantic Tier = iota
+	// TierContent 发言/回复正文里出现过查询词（是人提到，不是人本身）。
+	TierContent
+	// TierNear 编辑距离/拼音候选/去装饰后近似；只用于扩大候选。
+	TierNear
+	// TierAlias 别名表精确命中（历史昵称、常见错字等人工确认的写法）。
+	TierAlias
+	// TierName 当前昵称精确命中。
+	TierName
+	// TierUID 平台 UID 精确命中。
+	TierUID
+)
+
+// String 给日志和工具输出一个人话档位名。
+func (t Tier) String() string {
+	switch t {
+	case TierUID:
+		return "uid"
+	case TierName:
+		return "name"
+	case TierAlias:
+		return "alias"
+	case TierNear:
+		return "near"
+	case TierContent:
+		return "content"
+	default:
+		return "semantic"
+	}
+}
+
+// Status 是检索结果的状态。
+//
+// 调用方必须能区分「查不到这个人」和「这次查询失败」：
+// 前者可以说「不认识」，后者只能说「暂时没查到」。
+type Status string
+
+const (
+	// StatusFound 有高确定结果（第一个候选最可信）。
+	StatusFound Status = "found"
+	// StatusAmbiguous 有多个同档候选，不能替用户合并身份。
+	StatusAmbiguous Status = "ambiguous"
+	// StatusNotFound 确认没有匹配（可以回答「不认识」）。
+	StatusNotFound Status = "not_found"
+	// StatusUnavailable 查询能力不可用（不能伪装成「没有这个人」）。
+	StatusUnavailable Status = "unavailable"
+)
+
+// Candidate 是一条带理由的档案候选。
+type Candidate struct {
+	store.ViewerProfileHit
+	// Tier 是命中档位；Reason 是具体理由（uid_exact/name_exact/alias_exact/near_name/phonetic/content/semantic）。
+	Tier   Tier
+	Reason string
+}
+
+// Result 是一次身份解析的结果。
+type Result struct {
+	Status Status
+	// Candidates 已按可信度排序，最多 limit 个；ambiguous 时最多 3 个。
+	Candidates []Candidate
+	// Reason 说明状态成因（给工具层与日志，不直接给模型当事实）。
+	Reason string
+	// Degraded 表示语义路径不可用、只走了词法。
+	Degraded bool
+}
 
 // Embedder 由 OpenAI 兼容客户端实现；测试可注入 mock。
 type Embedder interface {
@@ -41,18 +133,62 @@ type ProfileSource interface {
 	SemanticProfiles(ctx context.Context, vector []float64, limit int) ([]store.ViewerProfileHit, error)
 }
 
-// SearchOptions 控制语义权重与降级回调。
+// uidSource 是按 UID 精确取档案的可选能力（database.ViewerRepo 已实现）。
+//
+// 用类型断言而不是扩大 ProfileSource：其他实现（测试桩、MCP 只读源）不必为了
+// UID 精确查询去实现一个用不到的方法。
+type uidSource interface {
+	GetProfile(ctx context.Context, uid string) (store.ViewerProfile, error)
+}
+
+// namePoolSource 是可选的「活跃档案池」，供音近/别名/拼音在全量昵称里找人。
+//
+// 只靠 ILIKE 无法命中「今夜琴身温柔」→「今夜琴声温柔」这种不共享子串的错字，
+// 所以需要一份按发言数排序的昵称池做编辑距离比较。database.ViewerRepo.TopViewers 满足。
+type namePoolSource interface {
+	TopViewers(ctx context.Context, limit int) ([]store.ViewerProfile, error)
+}
+
+// Alias 是一条人工维护的别名：同一个人可以被多个写法指向。
+//
+// 同一个别名可以对应多个人（不强制唯一），此时会保留多候选而不是二选一。
+type Alias struct {
+	// Alias 是别名原文（如「弓长三溢」「长弓三亿」）。
+	Alias string
+	// UID 非空时按 UID 归属；为空时按 Name 归属。
+	UID string
+	// Name 是归属人的当前昵称（UID 为空时使用）。
+	Name string
+}
+
+// SearchOptions 控制语义权重、阈值与身份扩展。
 type SearchOptions struct {
 	Alpha           float64
 	OnSemanticError func(error)
+	// MinSimilarity 是语义候选的最低相似度；<=0 用默认值 defaultMinSimilarity。
+	MinSimilarity float64
+	// AmbiguityGap 是同档候选的定人分差；<=0 用默认值 defaultAmbiguityGap。
+	AmbiguityGap float64
+	// Aliases 是人工别名表（可空）。
+	Aliases []Alias
+	// Phonetic 是可选的拼音扩展钩子：输入一个词，返回同音候选词。
+	// 为 nil 时只用编辑距离与子串近似（不引入拼音字典依赖）。
+	Phonetic func(string) []string
+	// MaxNameScan 是昵称池扫描上限；<=0 用默认值 defaultNameScan。
+	MaxNameScan int
 }
 
-// Searcher 组合两路档案查询。
+// Searcher 组合词法身份解析与语义补充。
 type Searcher struct {
 	source          ProfileSource
 	embedder        Embedder
 	alpha           float64
 	onSemanticError func(error)
+	minSimilarity   float64
+	ambiguityGap    float64
+	aliases         []Alias
+	phonetic        func(string) []string
+	maxNameScan     int
 }
 
 // NewSearcher 构造档案检索；embedder 允许为 nil（纯关键词）。
@@ -63,23 +199,63 @@ func NewSearcher(source ProfileSource, embedder Embedder, opts SearchOptions) (*
 	if math.IsNaN(opts.Alpha) || opts.Alpha < 0 || opts.Alpha > 1 {
 		return nil, errors.New("档案检索alpha必须在0至1之间")
 	}
-	return &Searcher{source: source, embedder: embedder, alpha: opts.Alpha, onSemanticError: opts.OnSemanticError}, nil
+	minSim := opts.MinSimilarity
+	if minSim <= 0 {
+		minSim = defaultMinSimilarity
+	}
+	if math.IsNaN(minSim) || minSim > 1 {
+		return nil, errors.New("档案检索最低相关性必须在0至1之间")
+	}
+	gap := opts.AmbiguityGap
+	if gap <= 0 {
+		gap = defaultAmbiguityGap
+	}
+	scan := opts.MaxNameScan
+	if scan <= 0 {
+		scan = defaultNameScan
+	}
+	return &Searcher{
+		source:          source,
+		embedder:        embedder,
+		alpha:           opts.Alpha,
+		onSemanticError: opts.OnSemanticError,
+		minSimilarity:   minSim,
+		ambiguityGap:    gap,
+		aliases:         opts.Aliases,
+		phonetic:        opts.Phonetic,
+		maxNameScan:     scan,
+	}, nil
 }
 
-// Search 执行混合检索；语义失败时只回关键词且不返回错误。
+// Search 保留旧的「返回命中列表」签名；新调用方应使用 Find 以拿到状态与档位。
 func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]store.ViewerProfileHit, error) {
+	result, err := s.Find(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	hits := make([]store.ViewerProfileHit, 0, len(result.Candidates))
+	for _, c := range result.Candidates {
+		hits = append(hits, c.ViewerProfileHit)
+	}
+	return hits, nil
+}
+
+// Find 执行一次身份解析：UID → 昵称 → 别名 → 近似 → 内容 → 语义。
+//
+// 语义失败只降级到词法；词法也空时返回 unavailable（不是 not_found）。
+func (s *Searcher) Find(ctx context.Context, query string, limit int) (Result, error) {
 	if ctx == nil {
-		return nil, errors.New("ctx 不能为 nil")
+		return Result{}, errors.New("ctx 不能为 nil")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	text := strings.TrimSpace(query)
 	if text == "" {
-		return nil, errors.New("档案检索查询词不能为空")
+		return Result{}, errors.New("档案检索查询词不能为空")
 	}
 	if utf8.RuneCountInString(text) > maxSearchQueryRunes {
-		return nil, errors.New("档案检索查询词不能超过200字")
+		return Result{}, errors.New("档案检索查询词不能超过200字")
 	}
 	if limit <= 0 {
 		limit = defaultSearchLimit
@@ -88,51 +264,333 @@ func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]store
 		limit = maxSearchLimit
 	}
 
-	keyword, err := s.keywordHits(ctx, text, limit)
+	// 1) UID 精确：平台身份是最强证据，命中即定人，不再扩散候选。
+	if uid, ok := parseUID(text); ok {
+		profile, err := s.profileByUID(ctx, uid)
+		if err == nil {
+			return Result{
+				Status:     StatusFound,
+				Candidates: []Candidate{{ViewerProfileHit: hitOf(profile), Tier: TierUID, Reason: "uid_exact"}},
+				Reason:     "uid_exact",
+			}, nil
+		}
+		if !errors.Is(err, store.ErrViewerNotFound) && !errors.Is(err, store.ErrInvalid) {
+			return Result{}, err
+		}
+	}
+
+	// 2) 词法身份解析（含别名与近似）。
+	candidates, err := s.lexicalCandidates(ctx, text, limit)
+	if err != nil {
+		return Result{}, err
+	}
+
+	// 3) 语义补充：仅作为词法之外的候选，且必须过最低相关性。
+	degraded := false
+	if s.embedder != nil && s.alpha > 0 {
+		semantic, serr := s.semanticCandidates(ctx, text)
+		switch {
+		case serr == nil:
+			s.mergeSemantic(candidates, semantic)
+		case ctx.Err() != nil:
+			return Result{}, ctx.Err()
+		default:
+			degraded = true
+			s.degrade(serr)
+		}
+	}
+
+	ordered := s.orderCandidates(candidates, limit)
+	if len(ordered) == 0 {
+		if degraded {
+			return Result{Status: StatusUnavailable, Reason: "semantic_unavailable", Degraded: true}, nil
+		}
+		return Result{Status: StatusNotFound, Reason: "no_match"}, nil
+	}
+	return s.decide(ordered, limit, degraded), nil
+}
+
+// decide 根据排序结果给出 found/ambiguous。
+//
+// 歧义只在「身份候选」之间判断（near 及以上）：内容命中常常有多条，
+// 那是证据而不是身份，不该因此拒绝回答。
+func (s *Searcher) decide(ordered []Candidate, limit int, degraded bool) Result {
+	top := ordered[0]
+	if len(ordered) > 1 && top.Tier >= TierNear {
+		second := ordered[1]
+		if second.Tier == top.Tier && top.Score-second.Score < s.ambiguityGap {
+			max := 3
+			if limit < max {
+				max = limit
+			}
+			if max > len(ordered) {
+				max = len(ordered)
+			}
+			return Result{
+				Status:     StatusAmbiguous,
+				Candidates: ordered[:max],
+				Reason:     "tier_gap_below_threshold",
+				Degraded:   degraded,
+			}
+		}
+	}
+	max := limit
+	if max > len(ordered) {
+		max = len(ordered)
+	}
+	return Result{
+		Status:     StatusFound,
+		Candidates: ordered[:max],
+		Reason:     top.Reason,
+		Degraded:   degraded,
+	}
+}
+
+// profileByUID 走可选接口；没有实现时返回不可用，由调用方当「没找到」继续。
+func (s *Searcher) profileByUID(ctx context.Context, uid string) (store.ViewerProfile, error) {
+	source, ok := s.source.(uidSource)
+	if !ok {
+		return store.ViewerProfile{}, store.ErrViewerNotFound
+	}
+	return source.GetProfile(ctx, uid)
+}
+
+// namePool 取活跃档案池；没有实现时返回 nil（跳过全量近似扫描）。
+//
+// 查询失败必须上抛：昵称池读不出来时，近似匹配就没有可信依据，
+// 不能让调用方误以为「查过了，确实没这个人」。
+func (s *Searcher) namePool(ctx context.Context) ([]store.ViewerProfile, error) {
+	source, ok := s.source.(namePoolSource)
+	if !ok {
+		return nil, nil
+	}
+	profiles, err := source.TopViewers(ctx, s.maxNameScan)
 	if err != nil {
 		return nil, err
 	}
-	if s.embedder == nil || s.alpha == 0 {
-		return sortHits(keyword, nil, 0, limit), nil
-	}
-	vector, err := s.embedQuery(ctx, text)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		s.degrade(err)
-		return sortHits(keyword, nil, 0, limit), nil
-	}
-	semantic, err := s.source.SemanticProfiles(ctx, vector, semanticCandidateLimit)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		s.degrade(err)
-		return sortHits(keyword, nil, 0, limit), nil
-	}
-	return sortHits(keyword, semantic, s.alpha, limit), nil
+	return profiles, nil
 }
 
-// keywordHits 先用原句查，查不到再剥掉「是谁/吗/那个」这类问句外壳。
-//
-// 观众问「弓长三益是谁」时昵称本身是「弓长三益」，整句 ILIKE 永远命不中。
-func (s *Searcher) keywordHits(ctx context.Context, text string, limit int) ([]store.ViewerProfileHit, error) {
-	for _, candidate := range keywordCandidates(text) {
-		hits, err := s.source.KeywordProfiles(ctx, candidate, limit)
+// lexicalCandidates 汇总词法与身份候选，按 uid 去重并保留最高档位。
+func (s *Searcher) lexicalCandidates(ctx context.Context, text string, limit int) (map[string]*Candidate, error) {
+	candidates := make(map[string]*Candidate)
+	keys := keywordCandidates(text)
+	keys = append(keys, decorationVariants(text)...)
+
+	// 2.1 SQL 关键词命中：只能证明「出现过」，档位由下面的归因决定。
+	for _, key := range keys {
+		hits, err := s.source.KeywordProfiles(ctx, key, limit)
 		if err != nil {
 			return nil, err
 		}
-		if len(hits) > 0 {
-			return hits, nil
+		for _, h := range hits {
+			if strings.TrimSpace(h.Profile.UID) == "" {
+				continue
+			}
+			tier, reason := s.identityTier(h.Profile, key, true)
+			consider(candidates, h, tier, reason)
 		}
 	}
-	return nil, nil
+
+	// 2.2 全量昵称池：处理不共享子串的错字/谐音/别名。
+	const maxNameCandidates = 40
+	profiles, err := s.namePool(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scanned := 0
+	for _, p := range profiles {
+		if strings.TrimSpace(p.UID) == "" {
+			continue
+		}
+		// keys 里的每个写法都可能是身份指代，取最高档位。
+		tier, reason := TierSemantic, ""
+		for _, key := range keys {
+			if t, r := s.identityTier(p, key, false); t > tier {
+				tier, reason = t, r
+			}
+		}
+		if tier < TierNear {
+			continue
+		}
+		consider(candidates, hitOf(p), tier, reason)
+		scanned++
+		if scanned >= maxNameCandidates {
+			break
+		}
+	}
+	return candidates, nil
+}
+
+// identityTier 判定一个档案在某个查询词下的命中档位与理由。
+//
+// contentFallback=true 表示这条记录来自 SQL 关键词命中（至少要算内容档）；
+// false 表示来自昵称池扫描，没有理由就不要。
+func (s *Searcher) identityTier(p store.ViewerProfile, key string, contentFallback bool) (Tier, string) {
+	normKey := normalizeIdentity(key)
+	name := normalizeIdentity(p.Name)
+
+	if normKey != "" {
+		if name != "" && name == normKey {
+			return TierName, "name_exact"
+		}
+		if s.aliasMatches(p, normKey) {
+			return TierAlias, "alias_exact"
+		}
+		if nearName(name, normKey) {
+			return TierNear, "near_name"
+		}
+		if s.phoneticMatches(p.Name, key) {
+			return TierNear, "phonetic"
+		}
+	}
+
+	if contentFallback {
+		// SQL 已证明 name/recent_texts/recent_replies 至少一处 ILIKE 命中。
+		return TierContent, "content"
+	}
+	return TierSemantic, ""
+}
+
+// aliasMatches 判断查询词是否是这条档案的别名。
+func (s *Searcher) aliasMatches(p store.ViewerProfile, normKey string) bool {
+	for _, a := range s.aliases {
+		if normalizeIdentity(a.Alias) != normKey || normKey == "" {
+			continue
+		}
+		if a.UID != "" && a.UID == p.UID {
+			return true
+		}
+		if a.UID == "" && normalizeIdentity(a.Name) == normalizeIdentity(p.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// phoneticMatches 走可选的拼音钩子；没有配置就明确不命中。
+func (s *Searcher) phoneticMatches(name, key string) bool {
+	if s.phonetic == nil {
+		return false
+	}
+	normName := normalizeIdentity(name)
+	for _, variant := range s.phonetic(key) {
+		if v := normalizeIdentity(variant); v != "" && v == normName {
+			return true
+		}
+	}
+	return false
+}
+
+// semanticCandidates 取向量候选并按最低相关性过滤。
+func (s *Searcher) semanticCandidates(ctx context.Context, text string) ([]store.ViewerProfileHit, error) {
+	vector, err := s.embedQuery(ctx, text)
+	if err != nil {
+		return nil, err
+	}
+	hits, err := s.source.SemanticProfiles(ctx, vector, semanticCandidateLimit)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]store.ViewerProfileHit, 0, len(hits))
+	for _, h := range hits {
+		if strings.TrimSpace(h.Profile.UID) == "" {
+			continue
+		}
+		if math.IsNaN(h.Similarity) || math.IsInf(h.Similarity, 0) {
+			continue
+		}
+		// 相关性拒绝：低分候选直接丢弃，允许最终返回 0 条。
+		if h.Similarity < s.minSimilarity {
+			continue
+		}
+		filtered = append(filtered, h)
+	}
+	return filtered, nil
+}
+
+// mergeSemantic 把语义候选并入词法候选：已有条目只抬分数，不降档位。
+func (s *Searcher) mergeSemantic(candidates map[string]*Candidate, semantic []store.ViewerProfileHit) {
+	for _, h := range semantic {
+		if c, ok := candidates[h.Profile.UID]; ok {
+			if h.Similarity > c.Similarity {
+				c.Similarity = h.Similarity
+			}
+			continue
+		}
+		candidates[h.Profile.UID] = &Candidate{
+			ViewerProfileHit: h,
+			Tier:             TierSemantic,
+			Reason:           "semantic",
+		}
+	}
+}
+
+// consider 合并一条候选，保留更高档位（同档保留更高相似度）。
+func consider(candidates map[string]*Candidate, hit store.ViewerProfileHit, tier Tier, reason string) {
+	uid := hit.Profile.UID
+	if existing, ok := candidates[uid]; ok {
+		if tier > existing.Tier {
+			existing.Tier, existing.Reason = tier, reason
+		}
+		// 昵称以最近一条快照为准（改名后要显示新名字），其余保留已有结果。
+		if hit.Profile.LastSeen.After(existing.ViewerProfileHit.Profile.LastSeen) {
+			existing.ViewerProfileHit.Profile = hit.Profile
+		}
+		if hit.Similarity > existing.Similarity {
+			existing.Similarity = hit.Similarity
+		}
+		return
+	}
+	candidates[uid] = &Candidate{ViewerProfileHit: hit, Tier: tier, Reason: reason}
+}
+
+// hitOf 把一份档案包成 0 相似度的命中。
+func hitOf(p store.ViewerProfile) store.ViewerProfileHit {
+	return store.ViewerProfileHit{Profile: p}
+}
+
+// orderCandidates 按「档位 → 分数 → 相似度 → 发言数 → 最近出现 → uid」排序。
+//
+// 分数口径与旧实现一致：词法命中给 1 分基础分，再叠 alpha×相似度。
+func (s *Searcher) orderCandidates(candidates map[string]*Candidate, limit int) []Candidate {
+	ordered := make([]Candidate, 0, len(candidates))
+	for _, c := range candidates {
+		if c.Tier == TierSemantic {
+			c.Score = s.alpha * c.Similarity
+		} else {
+			c.Score = 1 + s.alpha*c.Similarity
+		}
+		ordered = append(ordered, *c)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		a, b := ordered[i], ordered[j]
+		if a.Tier != b.Tier {
+			return a.Tier > b.Tier
+		}
+		if a.Score != b.Score {
+			return a.Score > b.Score
+		}
+		if a.Similarity != b.Similarity {
+			return a.Similarity > b.Similarity
+		}
+		if a.Profile.Hits != b.Profile.Hits {
+			return a.Profile.Hits > b.Profile.Hits
+		}
+		if !a.Profile.LastSeen.Equal(b.Profile.LastSeen) {
+			return a.Profile.LastSeen.After(b.Profile.LastSeen)
+		}
+		return a.Profile.UID < b.Profile.UID
+	})
+	if len(ordered) > limit {
+		ordered = ordered[:limit]
+	}
+	return ordered
 }
 
 // keywordCandidates 返回由精确到宽松的去重关键词（原句优先）。
 func keywordCandidates(text string) []string {
-	seen := make(map[string]bool, 2)
+	seen := make(map[string]bool, 4)
 	var out []string
 	add := func(s string) {
 		s = strings.TrimSpace(s)
@@ -145,6 +603,177 @@ func keywordCandidates(text string) []string {
 	add(text)
 	add(stripQuestionShell(text))
 	return out
+}
+
+// decorationVariants 生成「去掉首尾装饰」的写法用于身份比对。
+//
+// 只处理首尾（不删句内符号）：观众名常见「X奇迹与你X」「☆弓长三益☆」，
+// 但正文里的标点是语义的一部分，不能一起抹掉。
+func decorationVariants(text string) []string {
+	var out []string
+	for _, candidate := range keywordCandidates(text) {
+		trimmed := strings.TrimFunc(candidate, isDecorationRune)
+		if trimmed == "" || trimmed == candidate {
+			continue
+		}
+		if utf8.RuneCountInString(trimmed) < 2 {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+// isDecorationRune 判断首尾是否是可安全剥离的装饰字符。
+//
+// X/x 只在首尾同名出现时才被当作装饰（见 decorationVariants 的成对处理），
+// 这里先统一按「非文字符号」处理。
+func isDecorationRune(r rune) bool {
+	if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		return false
+	}
+	return true
+}
+
+// normalizeIdentity 规范化身份文本：全角转半角、去首尾空白与装饰、忽略大小写。
+//
+// 保留原始昵称，不修改库中数据；规范化只用于比较。
+func normalizeIdentity(text string) string {
+	text = strings.TrimSpace(text)
+	text = foldWidth(text)
+	text = strings.TrimFunc(text, isDecorationRune)
+	text = stripPairDecoration(text)
+	return strings.ToLower(text)
+}
+
+// stripPairDecoration 去掉首尾成对的同一 ASCII 字母（如「X奇迹与你X」）。
+func stripPairDecoration(text string) string {
+	runes := []rune(text)
+	if len(runes) < 3 {
+		return text
+	}
+	first, last := runes[0], runes[len(runes)-1]
+	if first == last && first < 0x80 && unicode.IsLetter(first) {
+		return strings.TrimSpace(string(runes[1 : len(runes)-1]))
+	}
+	return text
+}
+
+// foldWidth 把全角 ASCII（！～）与全角空格折成半角。
+func foldWidth(text string) string {
+	var b strings.Builder
+	b.Grow(len(text))
+	for _, r := range text {
+		switch {
+		case r == '\u3000':
+			b.WriteRune(' ')
+		case r >= '\uFF01' && r <= '\uFF5E':
+			b.WriteRune(r - 0xFEE0)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// parseUID 判断查询词是不是纯数字 UID（允许全角数字）。
+func parseUID(text string) (string, bool) {
+	text = strings.TrimSpace(foldWidth(text))
+	if text == "" || len(text) > 32 {
+		return "", false
+	}
+	for _, r := range text {
+		if r < '0' || r > '9' {
+			return "", false
+		}
+	}
+	if text[0] == '0' {
+		return "", false
+	}
+	return text, true
+}
+
+// nearName 判断两个规范化昵称是否「近似」。
+//
+// 规则刻意保守：只允许小编辑距离或子串包含，宁可漏认也不自动合并身份。
+func nearName(a, b string) bool {
+	if a == "" || b == "" || a == b {
+		return false
+	}
+	ar, br := []rune(a), []rune(b)
+	short, long := ar, br
+	if len(short) > len(long) {
+		short, long = long, short
+	}
+	// 两字昵称不做近似：太容易与其他名字撞上（「白饭」vs「白饭哥」），
+	// 宁可漏认，也不自动把两个人并成一个。
+	if len(short) < 3 {
+		return false
+	}
+	// 子串包含：短名是长名的一部分（「弓长三益」⊂「弓长三益的狗」）。
+	// 只允许 3 字以上的短名，避免描述词把所有相关昵称都拉成候选。
+	if strings.Contains(string(long), string(short)) {
+		return true
+	}
+	// 编辑距离：4 字以内最多 1，8 字以内最多 2，更长最多 3
+	if abs(len(ar)-len(br)) > 3 {
+		return false
+	}
+	maxDist := 1
+	switch {
+	case len(long) > 8:
+		maxDist = 3
+	case len(long) > 4:
+		maxDist = 2
+	}
+	return editDistance(ar, br) <= maxDist
+}
+
+// editDistance 是两行滚动数组的 Levenshtein（避免为去重再引一个依赖）。
+func editDistance(a, b []rune) int {
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := 0; j <= len(b); j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = minInt(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
+}
+
+func minInt(values ...int) int {
+	if len(values) == 0 {
+		return 0
+	}
+	min := values[0]
+	for _, v := range values[1:] {
+		if v < min {
+			min = v
+		}
+	}
+	return min
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // stripQuestionShell 去掉问句的前后缀；只作为原句无命中时的兜底。
@@ -186,79 +815,4 @@ func (s *Searcher) degrade(err error) {
 	if s.onSemanticError != nil {
 		s.onSemanticError(err)
 	}
-}
-
-type candidate struct {
-	hit     store.ViewerProfileHit
-	keyword bool
-	sim     float64
-	score   float64
-}
-
-// sortHits 合并两路候选：score = 关键词档位 + alpha * sim。
-func sortHits(keyword, semantic []store.ViewerProfileHit, alpha float64, limit int) []store.ViewerProfileHit {
-	candidates := make(map[string]*candidate, len(keyword)+len(semantic))
-	for _, hit := range keyword {
-		if strings.TrimSpace(hit.Profile.UID) == "" {
-			continue
-		}
-		c := candidates[hit.Profile.UID]
-		if c == nil {
-			c = &candidate{hit: hit}
-			candidates[hit.Profile.UID] = c
-		}
-		c.keyword = true
-	}
-	for _, hit := range semantic {
-		if strings.TrimSpace(hit.Profile.UID) == "" || math.IsNaN(hit.Similarity) || math.IsInf(hit.Similarity, 0) {
-			continue
-		}
-		c := candidates[hit.Profile.UID]
-		if c == nil {
-			c = &candidate{hit: hit}
-			candidates[hit.Profile.UID] = c
-		}
-		if hit.Similarity > c.sim {
-			c.sim = hit.Similarity
-			c.hit.Profile = hit.Profile
-		}
-	}
-
-	merged := make([]*candidate, 0, len(candidates))
-	for _, c := range candidates {
-		if c.keyword {
-			c.score += 1
-		}
-		c.score += alpha * c.sim
-		c.hit.Similarity = c.sim
-		c.hit.Score = c.score
-		merged = append(merged, c)
-	}
-	sort.Slice(merged, func(i, j int) bool {
-		a, b := merged[i], merged[j]
-		if a.score != b.score {
-			return a.score > b.score
-		}
-		if a.keyword != b.keyword {
-			return a.keyword
-		}
-		if a.sim != b.sim {
-			return a.sim > b.sim
-		}
-		if a.hit.Profile.Hits != b.hit.Profile.Hits {
-			return a.hit.Profile.Hits > b.hit.Profile.Hits
-		}
-		if !a.hit.Profile.LastSeen.Equal(b.hit.Profile.LastSeen) {
-			return a.hit.Profile.LastSeen.After(b.hit.Profile.LastSeen)
-		}
-		return a.hit.Profile.UID < b.hit.Profile.UID
-	})
-	if len(merged) > limit {
-		merged = merged[:limit]
-	}
-	hits := make([]store.ViewerProfileHit, 0, len(merged))
-	for _, c := range merged {
-		hits = append(hits, c.hit)
-	}
-	return hits
 }

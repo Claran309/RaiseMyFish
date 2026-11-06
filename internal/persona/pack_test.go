@@ -70,6 +70,9 @@ func TestLoadRealPack(t *testing.T) {
 	if len(p.Contexts) != len(ContextKeys()) {
 		t.Errorf("场景段数 = %d，期望 %d", len(p.Contexts), len(ContextKeys()))
 	}
+	if !strings.Contains(p.Rules, "「XX 是谁」不是在问本鱼") {
+		t.Error("rules 缺少认人规则：XX 是谁 ≠ 你是谁")
+	}
 
 	for _, ch := range []string{"live", "comment", "dm", "qq"} {
 		for _, priv := range []bool{false, true} {

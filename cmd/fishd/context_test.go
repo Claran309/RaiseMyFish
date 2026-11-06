@@ -256,10 +256,10 @@ func newCapturingReactRuntime(t *testing.T, llm *capturingReactLLM) *reactRuntim
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory := func(memory.Scope) (*reasoning.Agent, error) {
+	factory := func(memory.Scope, string) (*reasoning.Agent, error) {
 		return reasoning.New(llm, box, reasoning.Options{MaxSteps: 2, Timeout: 2 * time.Second}, zap.NewNop())
 	}
-	return &reactRuntime{factory: factory, defaultReact: true, cache: newReactCache(time.Now)}
+	return &reactRuntime{factory: factory, defaultReact: true}
 }
 
 // TestGenerateReactUsesSameContextSnapshot C01/T16：

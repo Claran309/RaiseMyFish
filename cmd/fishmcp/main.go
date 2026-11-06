@@ -152,7 +152,10 @@ func buildToolbox(ctx context.Context, cfg config.Config, db *gorm.DB, log *zap.
 		if err != nil {
 			log.Warn("观众档案仓储装配失败，viewer_search 不注册",
 				zap.String("action", "mcp_viewer"), zap.Error(err))
-		} else if searcher, err := viewer.NewSearcher(repo, nil, viewer.SearchOptions{Alpha: cfg.Embedding.Alpha}); err != nil {
+		} else if searcher, err := viewer.NewSearcher(repo, nil, viewer.SearchOptions{
+			Alpha:         cfg.Embedding.Alpha,
+			MinSimilarity: cfg.Embedding.MinSimilarity,
+		}); err != nil {
 			log.Warn("观众档案检索装配失败，viewer_search 不注册",
 				zap.String("action", "mcp_viewer"), zap.Error(err))
 		} else {

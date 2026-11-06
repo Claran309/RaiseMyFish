@@ -49,6 +49,7 @@ func attachKnowledgeSemantic(cfg config.Config, db *gorm.DB, assembly *knowledge
 	}
 	hybrid, err := knowledge.NewHybridReader(assembly.Base, client, store, knowledge.HybridOptions{
 		Alpha:           cfg.Embedding.Alpha,
+		MinSimilarity:   cfg.Embedding.MinSimilarity,
 		OnSemanticError: onError,
 	})
 	if err != nil {

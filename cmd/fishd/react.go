@@ -4,13 +4,10 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"math"
 	"net/http"
 	"sort"
-	"strings"
-	"sync"
 	"time"
 
 	"RaiseMyFish/internal/brain"
@@ -30,22 +27,20 @@ import (
 //
 // 为什么是工厂而不是单个实例：工具要在**当前事件**的 Scope 内查询，
 // 并发 worker 共享一个可变 Scope 会串会话（数据竞争 + 隐私越界）。
-type reactFactory func(scope memory.Scope) (*reasoning.Agent, error)
+// fromID 是本条事件的发送者平台 UID，供「我是谁」做精确身份查询。
+type reactFactory func(scope memory.Scope, fromID string) (*reasoning.Agent, error)
 
-// reactRuntime 是 Generate 阶段用到的 ReAct 装配：工厂 + 触发策略 + 结果缓存。
+// reactRuntime 是 Generate 阶段用到的 ReAct 装配：工厂 + 触发策略。
+//
+// 这里**刻意不带结果缓存**：ReAct 的最终答案依赖现场状态、提问人身份、
+// 双方最近对话和时间，同一句话隔 30 秒再问，正确答案就可能变了。
+// 缓存最终答案会造成「同房间跨人复用」（A 问的答案发给 B）和
+// 「纠正后仍复用旧回答」（用户说「不是那个」但拿到同样的答复）。
+// 需要省钱时应该缓存**只读检索结果**（记忆/知识/档案），而不是成品回复。
 type reactRuntime struct {
 	factory      reactFactory
 	defaultReact bool
-	cache        *reactCache
 }
-
-const (
-	// 短句门槛：少于 6 个字符（rune）单步，如「哈哈」「好」「在吗」。
-	// 同问题结果复用窗口，控制重复弹幕的模型成本。
-	reactCacheTTL = 5 * time.Minute
-	// 缓存条目上限；弹幕量大时不至于无界增长。
-	reactCacheMaxEntries = 1024
-)
 
 // shouldUseReAct 判断这条弹幕要不要走多步思考。
 //
@@ -66,91 +61,10 @@ func shouldUseReAct(text string, defaultReact bool) bool {
 	return d.NeedMemory || d.NeedKnowledge
 }
 
-// reactCacheEntry 保存一次 ReAct 回复及其过期时间。
-type reactCacheEntry struct {
-	text      string
-	expiresAt time.Time
-}
-
-// reactCache 按「查询文本 + 会话 Scope」复用 ReAct 结果。
-//
-// 带 Scope 是隐私底线：私信里的回答不能因为问题相同就复用给公开弹幕。
-type reactCache struct {
-	mu      sync.Mutex
-	now     func() time.Time
-	ttl     time.Duration
-	entries map[[32]byte]reactCacheEntry
-}
-
-// newReactCache 造一个结果缓存；now 可注入（测试时钟）。
-func newReactCache(now func() time.Time) *reactCache {
-	if now == nil {
-		now = time.Now
-	}
-	return &reactCache{now: now, ttl: reactCacheTTL, entries: make(map[[32]byte]reactCacheEntry)}
-}
-
-// reactCacheKey 把 Scope 与查询文本压成 SHA-256。
-func reactCacheKey(scope memory.Scope, text string) [32]byte {
-	h := sha256.New()
-	h.Write([]byte(scope.Channel))
-	h.Write([]byte{0})
-	h.Write([]byte(scope.Session))
-	h.Write([]byte{0})
-	if scope.Private {
-		h.Write([]byte{1})
-	} else {
-		h.Write([]byte{0})
-	}
-	h.Write([]byte(strings.TrimSpace(text)))
-	var key [32]byte
-	copy(key[:], h.Sum(nil))
-	return key
-}
-
-// Get 返回未过期的缓存答案；过期条目顺手清掉。
-func (c *reactCache) Get(scope memory.Scope, text string) (string, bool) {
-	if c == nil {
-		return "", false
-	}
-	key := reactCacheKey(scope, text)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	entry, ok := c.entries[key]
-	if !ok {
-		return "", false
-	}
-	if !c.now().Before(entry.expiresAt) {
-		delete(c.entries, key)
-		return "", false
-	}
-	return entry.text, true
-}
-
-// Put 只缓存非空答案；超过容量先清过期条目，仍满则放弃写入。
-func (c *reactCache) Put(scope memory.Scope, text, reply string) {
-	if c == nil || strings.TrimSpace(reply) == "" {
-		return
-	}
-	now := c.now()
-	key := reactCacheKey(scope, text)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.entries) >= reactCacheMaxEntries {
-		for k, entry := range c.entries {
-			if !now.Before(entry.expiresAt) {
-				delete(c.entries, k)
-			}
-		}
-		if len(c.entries) >= reactCacheMaxEntries {
-			return
-		}
-	}
-	c.entries[key] = reactCacheEntry{text: reply, expiresAt: now.Add(c.ttl)}
-}
-
 // runReact 执行一次 ReAct 并记录预算相关日志（步数/工具/降级/耗时）。
-// 命中缓存时不再造 Agent，也不再消耗模型调用。
+//
+// 不做结果缓存：最终答案依赖现场、提问人、最近对话与时间，
+// 复用成品会带来跨人串答案和「纠正后照旧」两类错误（见 reactRuntime 注释）。
 //
 // 上下文与单步 Brain 同源：input 是 ContextBuilder 组装的统一快照，
 // 渲染成 Context 后进入 user 段，ReAct 因此能看到档案/双方对话/状态/长期设定。
@@ -158,14 +72,7 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 	if runtime == nil || runtime.factory == nil {
 		return "", nil
 	}
-	if text, ok := runtime.cache.Get(scope, ev.Text); ok {
-		log.Info("ReAct 结果缓存命中",
-			zap.String("action", "react_cache"),
-			zap.String("event_id", ev.ID),
-		)
-		return text, nil
-	}
-	agent, err := runtime.factory(scope)
+	agent, err := runtime.factory(scope, ev.FromID)
 	if err != nil || agent == nil {
 		return "", err
 	}
@@ -197,9 +104,6 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 	if err != nil {
 		return "", err
 	}
-	if text := strings.TrimSpace(res.Text); text != "" {
-		runtime.cache.Put(scope, ev.Text, text)
-	}
 	return res.Text, nil
 }
 
@@ -230,7 +134,7 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 		presenceFn = pres.Summary
 	}
 
-	return func(scope memory.Scope) (*reasoning.Agent, error) {
+	return func(scope memory.Scope, fromID string) (*reasoning.Agent, error) {
 		recall, err := reasoning.BuildTools(reasoning.ToolDeps{
 			Memory:    mem,
 			Knowledge: know,
@@ -253,6 +157,7 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 			FrameRead:    exec.FrameRead,
 			Search:       exec.Search,
 			Room:         scope.Session,
+			SpeakerUID:   fromID,
 			Now:          time.Now,
 		})
 		if err != nil {

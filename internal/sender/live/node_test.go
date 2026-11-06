@@ -170,6 +170,55 @@ func TestNodeHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
+func TestNodeForwardsStructuredMention(t *testing.T) {
+	n, path := helperTransport(t, "ok")
+	a := nodeAttempt()
+	a.ReplyMID, a.ReplyName = "789", "弓长三益"
+	s, err := n.Open(context.Background(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeNodeTestSession(t, s)
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), `"reply_mid":"789"`) || !strings.Contains(string(data), `"reply_uname":"弓长三益"`) {
+		t.Fatalf("预检帧丢失结构化@参数：%s", data)
+	}
+}
+
+func TestNodeVerifyOmitsStructuredMention(t *testing.T) {
+	n, path := helperTransport(t, "ok")
+	a := nodeAttempt()
+	a.ReplyMID, a.ReplyName = "789", "弓长三益"
+	if _, err := n.Verify(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "reply_mid") || strings.Contains(string(data), "reply_uname") {
+		t.Fatalf("核验帧携带了@参数：%s", data)
+	}
+}
+
+func TestNodeRejectsInvalidReplyTarget(t *testing.T) {
+	n, _ := helperTransport(t, "ok")
+	for name, mutate := range map[string]func(*sender.Attempt){
+		"mid零":     func(a *sender.Attempt) { a.ReplyMID = "0" },
+		"mid前导零":   func(a *sender.Attempt) { a.ReplyMID = "08" },
+		"只有昵称":     func(a *sender.Attempt) { a.ReplyName = "弓长三益" },
+		"昵称未修剪":    func(a *sender.Attempt) { a.ReplyMID, a.ReplyName = "1", " 弓长三益" },
+		"昵称超长":     func(a *sender.Attempt) { a.ReplyMID, a.ReplyName = "1", strings.Repeat("鱼", 129) },
+		"昵称控制字符":   func(a *sender.Attempt) { a.ReplyMID, a.ReplyName = "1", "坏\x01蛋" },
+		"昵称非法UTF8": func(a *sender.Attempt) { a.ReplyMID, a.ReplyName = "1", "\xff" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := nodeAttempt()
+			mutate(&a)
+			if _, err := n.Open(context.Background(), a); err == nil {
+				t.Fatal("接受了非法@目标")
+			}
+		})
+	}
+}
+
 func TestNodeHandshakeAndSinglePost(t *testing.T) {
 	n, path := helperTransport(t, "ok")
 	s, err := n.Open(context.Background(), nodeAttempt())

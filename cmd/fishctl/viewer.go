@@ -116,7 +116,8 @@ func runViewer(ctx context.Context, configPath, envPath string, args []string, o
 			embedder = client
 		}
 		searcher, err := viewer.NewSearcher(repo, embedder, viewer.SearchOptions{
-			Alpha: cfg.Embedding.Alpha,
+			Alpha:         cfg.Embedding.Alpha,
+			MinSimilarity: cfg.Embedding.MinSimilarity,
 			OnSemanticError: func(err error) {
 				fmt.Fprintf(stderr, "viewer search: 语义检索不可用，已降级为关键词：%v\n", err)
 			},

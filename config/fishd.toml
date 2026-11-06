@@ -129,6 +129,10 @@ dimension = 1024
 batch_size = 32
 # 混合召回 score = 关键词档位 + alpha * 语义相似度（0~1）。
 alpha = 0.5
+# 语义召回的最低相关性：低于它的向量命中直接丢弃（允许 0 条结果）。
+# 「最相近」不等于「相关」——随机人名/无关歌词不能被当成知识或记忆。
+# 该阈值需要按真实负例校准：不同 embedding 模型的相似度分布不同。
+min_similarity = 0.6
 auto_refresh = false
 refresh_interval_seconds = 3600
 

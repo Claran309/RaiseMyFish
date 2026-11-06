@@ -6,6 +6,7 @@ import (
 	"RaiseMyFish/internal/sender"
 	"RaiseMyFish/internal/store"
 	"context"
+	"encoding/json"
 	"errors"
 	"go.uber.org/zap"
 	"strings"
@@ -49,6 +50,8 @@ func (r *fakeRepo) Settle(_ context.Context, _ event.Claim, _ string, v sender.V
 
 type fakeTransport struct {
 	opened, posted, verified, closed int
+	openedAttempt                    sender.Attempt
+	verifiedAttempt                  sender.Attempt
 	verdict                          sender.Verdict
 	// verdicts 按调用顺序返回；用完后回落到 verdict。
 	verdicts  []sender.Verdict
@@ -56,11 +59,13 @@ type fakeTransport struct {
 	postErr   error
 }
 
-func (f *fakeTransport) Open(context.Context, sender.Attempt) (Session, error) {
+func (f *fakeTransport) Open(_ context.Context, a sender.Attempt) (Session, error) {
 	f.opened++
+	f.openedAttempt = a
 	return &fakeSession{f: f}, nil
 }
-func (f *fakeTransport) Verify(context.Context, sender.Attempt) (sender.Verdict, error) {
+func (f *fakeTransport) Verify(_ context.Context, a sender.Attempt) (sender.Verdict, error) {
+	f.verifiedAttempt = a
 	index := f.verified
 	f.verified++
 	if index < len(f.verdicts) {
@@ -230,6 +235,59 @@ func TestVerifyExhaustedKeepsUnconfirmed(t *testing.T) {
 	}
 	if f.posted != 0 {
 		t.Errorf("核验失败后重新投递了：posted=%d", f.posted)
+	}
+}
+
+func TestReplyTargetFromEventMeta(t *testing.T) {
+	for _, tc := range []struct {
+		name, text string
+		meta       string
+		fromID     string
+		fromName   string
+		wantMID    string
+		wantName   string
+	}{
+		{"别人@鱼时回给发送者", "@弓长三益 收到", `{"reply_to_id":"8","reply_to_name":"大肥鱼"}`, "123", "弓长三益", "123", "弓长三益"},
+		{"回复其他观众", "@弓长三益 你说得对", `{"reply_to_id":"999","reply_to_name":"弓长三益"}`, "123", "路人", "999", "弓长三益"},
+		{"全角@", "＠弓长三益 好", `{"reply_to_id":"8","reply_to_name":"大肥鱼"}`, "123", "弓长三益", "123", "弓长三益"},
+		{"正文没有@前缀", "收到", `{"reply_to_id":"8","reply_to_name":"大肥鱼"}`, "123", "弓长三益", "", ""},
+		{"@鱼自己不产生目标", "@大肥鱼 我", `{"reply_to_id":"8","reply_to_name":"大肥鱼"}`, "123", "弓长三益", "", ""},
+		{"更长昵称不算命中", "@弓长三益二号 好", `{"reply_to_id":"8","reply_to_name":"大肥鱼"}`, "123", "弓长三益", "", ""},
+		{"损坏Meta", "@弓长三益 好", `{`, "123", "弓长三益", "", ""},
+		{"昵称含控制字符", "@坏\x01蛋 好", `{"reply_to_id":"8"}`, "123", "坏\x01蛋", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := event.Event{Channel: event.ChLive, FromID: tc.fromID, FromName: tc.fromName, Meta: json.RawMessage(tc.meta)}
+			mid, name := replyTarget(e, tc.text, "8")
+			if mid != tc.wantMID || name != tc.wantName {
+				t.Fatalf("目标=%q/%q，期望=%q/%q", mid, name, tc.wantMID, tc.wantName)
+			}
+		})
+	}
+}
+
+func TestSendForwardsStructuredMention(t *testing.T) {
+	s, _, f, c, p := fixture(t)
+	p.Text = "@弓长三益 收到"
+	c.Event.FromID, c.Event.FromName = "123", "弓长三益"
+	c.Event.Meta = json.RawMessage(`{"reply_to_id":"8","reply_to_name":"大肥鱼"}`)
+	if _, err := s.Send(context.Background(), c, p); err != nil {
+		t.Fatal(err)
+	}
+	if f.openedAttempt.ReplyMID != "123" || f.openedAttempt.ReplyName != "弓长三益" {
+		t.Fatalf("投递目标=%q/%q", f.openedAttempt.ReplyMID, f.openedAttempt.ReplyName)
+	}
+
+	s, r, f, c, _ := fixture(t)
+	r.a.State = sender.StateUnknown
+	r.a.Text = "@弓长三益 收到"
+	c.Stage = event.StageVerify
+	c.Event.FromID, c.Event.FromName = "123", "弓长三益"
+	c.Event.Meta = json.RawMessage(`{"reply_to_id":"8","reply_to_name":"大肥鱼"}`)
+	f.verdict = sender.Verdict{Outcome: sender.OutcomeUnknown, ErrorKind: "unconfirmed", Evidence: "none"}
+	_, _ = s.Resume(context.Background(), c)
+	if f.verifiedAttempt.ReplyMID != "123" || f.verifiedAttempt.ReplyName != "弓长三益" {
+		t.Fatalf("核验恢复的目标=%q/%q", f.verifiedAttempt.ReplyMID, f.verifiedAttempt.ReplyName)
 	}
 }
 

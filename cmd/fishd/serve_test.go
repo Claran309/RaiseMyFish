@@ -1813,11 +1813,11 @@ func newFakeReactFactory(t *testing.T, llm *fakeReactLLM) (*reactRuntime, *int) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory := func(_ memory.Scope) (*reasoning.Agent, error) {
+	factory := func(_ memory.Scope, _ string) (*reasoning.Agent, error) {
 		calls++
 		return reasoning.New(llm, box, reasoning.Options{MaxSteps: 3, Timeout: 2 * time.Second}, zap.NewNop())
 	}
-	runtime := &reactRuntime{factory: factory, defaultReact: true, cache: newReactCache(time.Now)}
+	runtime := &reactRuntime{factory: factory, defaultReact: true}
 	return runtime, &calls
 }
 
@@ -1943,10 +1943,10 @@ func TestReactFailureFallsBackToSingleStep(t *testing.T) {
 	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
 
 	// 工厂直接报错，模拟工具装配失败
-	factory := reactFactory(func(memory.Scope) (*reasoning.Agent, error) {
+	factory := reactFactory(func(memory.Scope, string) (*reasoning.Agent, error) {
 		return nil, errors.New("工具装配失败")
 	})
-	react := &reactRuntime{factory: factory, defaultReact: true, cache: newReactCache(time.Now)}
+	react := &reactRuntime{factory: factory, defaultReact: true}
 
 	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, nil, react, nil, zap.NewNop())
 	if err != nil {
@@ -1992,15 +1992,21 @@ func TestDefaultReactUsesReActWithoutCueWords(t *testing.T) {
 	}
 }
 
-// TestReactCacheReusesSameQuestion 同会话同问题 5 分钟内复用 ReAct 结果。
-func TestReactCacheReusesSameQuestion(t *testing.T) {
+// TestReactDoesNotCacheFinalAnswer C03：同会话同问题不得复用最终答案。
+//
+// 旧实现按「Scope + 正文」缓存 5 分钟成品回复，导致
+// ① A 问到的答案被下一个问同一句话的 B 拿去（跨人串答案）；
+// ② 用户纠正「不是那个」后仍拿到同一份旧答复。
+// 现在每条事件都必须重新走 ReAct。
+func TestReactDoesNotCacheFinalAnswer(t *testing.T) {
 	const first = "live:30308220:9305"
 	const second = "live:30308220:9306"
 	bus := newFakeBus(first, second)
 	engine := &fakeBrain{reply: brain.Reply{Text: "单步回复"}}
 	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
 	llm := &fakeReactLLM{replies: []string{
-		`{"thought":"够了","action":"final","final":"缓存答案"}`,
+		`{"thought":"够了","action":"final","final":"第一次答案"}`,
+		`{"thought":"够了","action":"final","final":"第二次答案"}`,
 	}}
 	runtime, calls := newFakeReactFactory(t, llm)
 
@@ -2010,78 +2016,20 @@ func TestReactCacheReusesSameQuestion(t *testing.T) {
 	}
 
 	const question = "主播今天中午吃的什么好吃的"
-	for _, id := range []string{first, second} {
+	// 两个不同的发送者问同一句话：旧缓存会把 A 的答案直接发给 B。
+	for i, id := range []string{first, second} {
 		claim := liveClaim(id)
 		claim.Event.Text = question
+		claim.Event.FromID = []string{"1001", "1002"}[i]
 		if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
 			t.Fatalf("Generate 失败：%v", err)
 		}
 	}
-	if *calls != 1 || llm.calls != 1 {
-		t.Errorf("缓存未复用：factory=%d llm=%d，期望都只 1 次", *calls, llm.calls)
+	if *calls != 2 || llm.calls != 2 {
+		t.Errorf("不应复用最终答案：factory=%d llm=%d，期望都 2 次", *calls, llm.calls)
 	}
-	if snd.sendCalls != 2 || snd.gotReply.Text != "缓存答案" {
+	if snd.sendCalls != 2 || snd.gotReply.Text != "第二次答案" {
 		t.Errorf("第二条弹幕结果不符：send=%d text=%q", snd.sendCalls, snd.gotReply.Text)
-	}
-}
-
-// TestReactCacheExpiresAfterFiveMinutes 超过 5 分钟必须重新走 ReAct。
-func TestReactCacheExpiresAfterFiveMinutes(t *testing.T) {
-	const first = "live:30308220:9307"
-	const second = "live:30308220:9308"
-	const third = "live:30308220:9309"
-	bus := newFakeBus(first, second, third)
-	engine := &fakeBrain{reply: brain.Reply{Text: "单步回复"}}
-	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
-	llm := &fakeReactLLM{replies: []string{
-		`{"thought":"够","action":"final","final":"第一次"}`,
-		`{"thought":"够","action":"final","final":"第二次"}`,
-	}}
-	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
-	runtime, calls := newFakeReactFactory(t, llm)
-	runtime.cache = newReactCache(func() time.Time { return now })
-
-	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, nil, runtime, nil, zap.NewNop())
-	if err != nil {
-		t.Fatalf("装配失败：%v", err)
-	}
-
-	const question = "主播今天中午吃的什么好吃的"
-	run := func(id string) {
-		t.Helper()
-		claim := liveClaim(id)
-		claim.Event.Text = question
-		if _, err := workers.Generate(context.Background(), scheduler.Work{Claim: claim, Task: liveTask(id)}); err != nil {
-			t.Fatalf("Generate 失败：%v", err)
-		}
-	}
-
-	run(first)
-	now = now.Add(5*time.Minute - time.Second)
-	run(second)
-	if *calls != 1 || snd.gotReply.Text != "第一次" {
-		t.Errorf("4分59秒应命中缓存：factory=%d text=%q", *calls, snd.gotReply.Text)
-	}
-	now = now.Add(time.Second)
-	run(third)
-	if *calls != 2 || llm.calls != 2 || snd.gotReply.Text != "第二次" {
-		t.Errorf("满5分钟应过期重算：factory=%d llm=%d text=%q", *calls, llm.calls, snd.gotReply.Text)
-	}
-}
-
-// TestReactCacheSeparatesScopes 相同问题在不同通道/私密标记下不能互相复用。
-func TestReactCacheSeparatesScopes(t *testing.T) {
-	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
-	cache := newReactCache(func() time.Time { return now })
-	live := memory.Scope{Channel: event.ChLive, Session: "room"}
-	dm := memory.Scope{Channel: event.ChDM, Session: "room", Private: true}
-
-	cache.Put(live, "在吗", "公开答案")
-	if got, ok := cache.Get(live, "在吗"); !ok || got != "公开答案" {
-		t.Fatalf("同 Scope 应命中：ok=%v text=%q", ok, got)
-	}
-	if _, ok := cache.Get(dm, "在吗"); ok {
-		t.Error("私信不应命中公开弹幕的缓存")
 	}
 }
 

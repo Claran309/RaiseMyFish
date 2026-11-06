@@ -6,12 +6,16 @@ import (
 	"RaiseMyFish/internal/sender"
 	"RaiseMyFish/internal/store"
 	"context"
+	"encoding/json"
 	"errors"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 type Session interface {
@@ -88,6 +92,7 @@ func (s *Service) Send(ctx context.Context, c event.Claim, p sender.Reply) (send
 	if err != nil {
 		return sender.Result{}, err
 	}
+	a.ReplyMID, a.ReplyName = replyTarget(c.Event, a.Text, s.options.SelfID)
 	return s.process(ctx, c, a)
 }
 func (s *Service) Resume(ctx context.Context, c event.Claim) (sender.Result, error) {
@@ -101,7 +106,62 @@ func (s *Service) Resume(ctx context.Context, c event.Claim) (sender.Result, err
 	if err != nil {
 		return sender.Result{}, err
 	}
+	a.ReplyMID, a.ReplyName = replyTarget(c.Event, a.Text, s.options.SelfID)
 	return s.process(ctx, c, a)
+}
+
+type replyTargetMeta struct {
+	ReplyToID   string `json:"reply_to_id"`
+	ReplyToName string `json:"reply_to_name"`
+}
+
+func usableReplyName(name string) string {
+	name = strings.TrimSpace(name)
+	if !validReplyName(name) {
+		return ""
+	}
+	return name
+}
+
+// mentionsName 判断正文是否以「@昵称」开头；后接空白或结尾才算，避免 @小鱼 命中 @小鱼干。
+func mentionsName(text, name string) bool {
+	trimmed := strings.TrimLeftFunc(text, unicode.IsSpace)
+	for _, marker := range []string{"@", "＠"} {
+		rest, ok := strings.CutPrefix(trimmed, marker)
+		if !ok || !strings.HasPrefix(rest, name) {
+			continue
+		}
+		tail := rest[len(name):]
+		if tail == "" {
+			return true
+		}
+		if r, _ := utf8.DecodeRuneInString(tail); unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// replyTarget 从事件Meta与已带@前缀的正文反推结构化@目标。
+//
+// B站语义：别人回复/@鱼时 reply_to_id 是鱼自己，此时要 @ 的是发弹幕的人；
+// 只有回复对象确实是其他观众时，才使用 reply_to_id/reply_to_name。
+func replyTarget(e event.Event, text, selfID string) (string, string) {
+	if e.Channel != event.ChLive || len(e.Meta) == 0 {
+		return "", ""
+	}
+	var meta replyTargetMeta
+	if json.Unmarshal(e.Meta, &meta) != nil {
+		return "", ""
+	}
+	fromName, replyName := usableReplyName(e.FromName), usableReplyName(meta.ReplyToName)
+	if fromName != "" && fromName != replyName && mentionsName(text, fromName) && sender.ValidActor(e.FromID) && e.FromID != selfID {
+		return e.FromID, fromName
+	}
+	if replyName != "" && mentionsName(text, replyName) && sender.ValidActor(meta.ReplyToID) && meta.ReplyToID != selfID {
+		return meta.ReplyToID, replyName
+	}
+	return "", ""
 }
 func (s *Service) cleanup(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), s.options.CleanupTimeout)

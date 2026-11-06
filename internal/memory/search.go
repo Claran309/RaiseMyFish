@@ -24,6 +24,9 @@ const (
 	semanticCandidateLimit = 20
 	// maxSemanticQueryBytes 限制送进 embedding 的查询长度，超长只走关键词。
 	maxSemanticQueryBytes = 4 << 10
+	// defaultMinSimilarity 是语义召回的最低余弦相似度。
+	// 「相对最近」不等于「相关」：无关内容的 top1 不能因为排第一就被塞进上下文。
+	defaultMinSimilarity = 0.6
 )
 
 // SearchQuery 是一次带文本的记忆检索请求。
@@ -49,15 +52,25 @@ type SearchRecordSource interface {
 	SemanticRecords(ctx context.Context, scope Scope, vector []float64, limit int) ([]SemanticRecord, error)
 }
 
+// SearchMessageSource 是可选的原始消息检索能力，由 database.MemoryRepo 实现。
+//
+// 摘要可能还没提炼出来（memory_records 为空），但 events 里已有原始弹幕；
+// 没有这一路会出现「数据明明在、鱼却说不知道」。实现方必须在 SQL 层做范围过滤。
+type SearchMessageSource interface {
+	KeywordMessages(ctx context.Context, scope Scope, keyword string, limit int) ([]Message, error)
+}
+
 // Embedder 由 OpenAI 兼容客户端实现；测试可注入 mock。
 type Embedder interface {
 	Embed(ctx context.Context, inputs []string) ([][]float64, error)
 }
 
-// HybridSearchOptions 控制语义权重与降级回调。
+// HybridSearchOptions 控制语义权重、相关性下限与降级回调。
 type HybridSearchOptions struct {
 	Alpha           float64
 	OnSemanticError func(error)
+	// MinSimilarity 是语义召回的最低相关性；<=0 用默认值。
+	MinSimilarity float64
 }
 
 // HybridSearcher 在既有 Reader 上叠加带查询词的混合检索。
@@ -68,6 +81,7 @@ type HybridSearcher struct {
 	source          SearchRecordSource
 	embedder        Embedder
 	alpha           float64
+	minSimilarity   float64
 	onSemanticError func(error)
 }
 
@@ -81,11 +95,19 @@ func NewHybridSearcher(base Reader, source SearchRecordSource, embedder Embedder
 	if math.IsNaN(opts.Alpha) || opts.Alpha < 0 || opts.Alpha > 1 {
 		return nil, errors.New("混合检索alpha必须在0至1之间")
 	}
+	minSim := opts.MinSimilarity
+	if minSim <= 0 {
+		minSim = defaultMinSimilarity
+	}
+	if math.IsNaN(minSim) || minSim > 1 {
+		return nil, errors.New("混合检索最低相关性必须在0至1之间")
+	}
 	return &HybridSearcher{
 		base:            base,
 		source:          source,
 		embedder:        embedder,
 		alpha:           opts.Alpha,
+		minSimilarity:   minSim,
 		onSemanticError: opts.OnSemanticError,
 	}, nil
 }
@@ -128,12 +150,13 @@ func (h *HybridSearcher) Search(ctx context.Context, query SearchQuery) (Context
 	if err != nil {
 		return Context{}, err
 	}
+	// 原始弹幕是摘要的兜底：提炼还没跑过时，events 仍然能被关键词搜到。
+	messages, err := h.keywordMessages(ctx, query.Scope, text, limit)
+	if err != nil {
+		return Context{}, err
+	}
 	if h.embedder == nil || h.alpha == 0 || len(query.Text) > maxSemanticQueryBytes {
-		result := Context{Scope: query.Scope, Records: sortSearchRecords(keywordRecords, nil, 0, limit)}
-		if err := result.Validate(); err != nil {
-			return Context{}, errors.New("关键词记忆召回数据无效")
-		}
-		return result, nil
+		return buildSearchContext(query.Scope, messages, keywordRecords, nil, 0, limit, "关键词记忆召回数据无效")
 	}
 
 	vector, err := h.embedQuery(ctx, text)
@@ -142,11 +165,7 @@ func (h *HybridSearcher) Search(ctx context.Context, query SearchQuery) (Context
 			return Context{}, ctx.Err()
 		}
 		h.degrade(err)
-		result := Context{Scope: query.Scope, Records: sortSearchRecords(keywordRecords, nil, 0, limit)}
-		if err := result.Validate(); err != nil {
-			return Context{}, errors.New("关键词记忆召回数据无效")
-		}
-		return result, nil
+		return buildSearchContext(query.Scope, messages, keywordRecords, nil, 0, limit, "关键词记忆召回数据无效")
 	}
 	semantic, err := h.source.SemanticRecords(ctx, query.Scope, vector, semanticCandidateLimit)
 	if err != nil {
@@ -154,16 +173,41 @@ func (h *HybridSearcher) Search(ctx context.Context, query SearchQuery) (Context
 			return Context{}, ctx.Err()
 		}
 		h.degrade(err)
-		result := Context{Scope: query.Scope, Records: sortSearchRecords(keywordRecords, nil, 0, limit)}
-		if err := result.Validate(); err != nil {
-			return Context{}, errors.New("关键词记忆召回数据无效")
-		}
-		return result, nil
+		return buildSearchContext(query.Scope, messages, keywordRecords, nil, 0, limit, "关键词记忆召回数据无效")
 	}
 
-	result := Context{Scope: query.Scope, Records: sortSearchRecords(keywordRecords, semantic, h.alpha, limit)}
+	semantic = filterSemanticRecords(semantic, h.minSimilarity)
+	return buildSearchContext(query.Scope, messages, keywordRecords, semantic, h.alpha, limit, "混合记忆召回数据无效")
+}
+
+// filterSemanticRecords 丢掉低于相关性下限的向量命中。
+//
+// 允许结果为空：查不到相关内容时，宁可不注入，也不拿「最相近的无关条目」凑数。
+func filterSemanticRecords(records []SemanticRecord, minSimilarity float64) []SemanticRecord {
+	filtered := make([]SemanticRecord, 0, len(records))
+	for _, record := range records {
+		if record.Similarity < minSimilarity {
+			continue
+		}
+		filtered = append(filtered, record)
+	}
+	return filtered
+}
+
+// keywordMessages 查询原始消息；来源不支持时返回 nil，不影响摘要检索。
+func (h *HybridSearcher) keywordMessages(ctx context.Context, scope Scope, keyword string, limit int) ([]Message, error) {
+	source, ok := h.source.(SearchMessageSource)
+	if !ok {
+		return nil, nil
+	}
+	return source.KeywordMessages(ctx, scope, keyword, limit)
+}
+
+// buildSearchContext 组装并二次校验检索结果。
+func buildSearchContext(scope Scope, messages []Message, keyword []Record, semantic []SemanticRecord, alpha float64, limit int, invalid string) (Context, error) {
+	result := Context{Scope: scope, Recent: messages, Records: sortSearchRecords(keyword, semantic, alpha, limit)}
 	if err := result.Validate(); err != nil {
-		return Context{}, errors.New("混合记忆召回数据无效")
+		return Context{}, errors.New(invalid)
 	}
 	return result, nil
 }

@@ -16,12 +16,17 @@ const (
 	semanticCandidateLimit = 20
 	// 超长查询不做语义检索，避免把数 MB 文本发给 embedding 服务。
 	maxSemanticQueryBytes = 4 << 10
+	// defaultMinSimilarity 是语义命中的最低余弦相似度。
+	// 「相对最近」不等于「相关」：随机人名/无关歌词的 top1 也必须被拒。
+	defaultMinSimilarity = 0.6
 )
 
-// HybridOptions 控制语义权重与降级回调。
+// HybridOptions 控制语义权重、相关性下限与降级回调。
 type HybridOptions struct {
 	Alpha           float64
 	OnSemanticError func(error)
+	// MinSimilarity 是语义命中的最低相关性；<=0 用默认值。
+	MinSimilarity float64
 }
 
 // HybridReader 在 FileReader 的关键词召回上叠加语义候选。
@@ -30,6 +35,7 @@ type HybridReader struct {
 	embedder        Embedder
 	store           EmbeddingStore
 	alpha           float64
+	minSimilarity   float64
 	onSemanticError func(error)
 }
 
@@ -40,7 +46,14 @@ func NewHybridReader(base *FileReader, embedder Embedder, store EmbeddingStore, 
 	if math.IsNaN(opts.Alpha) || opts.Alpha < 0 || opts.Alpha > 1 {
 		return nil, errors.New("混合召回alpha必须在0至1之间")
 	}
-	return &HybridReader{base: base, embedder: embedder, store: store, alpha: opts.Alpha, onSemanticError: opts.OnSemanticError}, nil
+	minSim := opts.MinSimilarity
+	if minSim <= 0 {
+		minSim = defaultMinSimilarity
+	}
+	if math.IsNaN(minSim) || minSim > 1 {
+		return nil, errors.New("混合召回最低相关性必须在0至1之间")
+	}
+	return &HybridReader{base: base, embedder: embedder, store: store, alpha: opts.Alpha, minSimilarity: minSim, onSemanticError: opts.OnSemanticError}, nil
 }
 
 // Recall 关键词与语义同时可用时按混合分排序；任一步失败都降级为纯关键词。
@@ -96,6 +109,10 @@ func (h *HybridReader) semanticHits(ctx context.Context, query string) (map[stri
 	result := make(map[string]float64, len(hits))
 	for _, hit := range hits {
 		if hit.ID == "" || math.IsNaN(hit.Similarity) || math.IsInf(hit.Similarity, 0) {
+			continue
+		}
+		// 相关性拒绝：低于下限的向量命中不算「查到了这个知识点」。
+		if hit.Similarity < h.minSimilarity {
 			continue
 		}
 		if old, ok := result[hit.ID]; !ok || hit.Similarity > old {

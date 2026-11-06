@@ -10,6 +10,7 @@ import (
 
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/store"
+	"RaiseMyFish/internal/viewer"
 )
 
 type fakeViewer struct {
@@ -89,17 +90,17 @@ func (f *fakeFrameRead) Describe(_ context.Context, path string) (string, error)
 }
 
 type fakeViewerProfileSearch struct {
-	hits    []store.ViewerProfileHit
+	result  viewer.Result
 	err     error
 	gotQ    string
 	gotLim  int
 	gotCall int
 }
 
-func (f *fakeViewerProfileSearch) Search(_ context.Context, query string, limit int) ([]store.ViewerProfileHit, error) {
+func (f *fakeViewerProfileSearch) Find(_ context.Context, query string, limit int) (viewer.Result, error) {
 	f.gotCall++
 	f.gotQ, f.gotLim = query, limit
-	return f.hits, f.err
+	return f.result, f.err
 }
 
 func readonlyDeps() ReadOnlyDeps {
@@ -173,9 +174,16 @@ func TestViewerMemoryRejectsBadArgs(t *testing.T) {
 // TestViewerSearchOptionalTool 注入档案检索时才注册 viewer_search，查询参数透传。
 func TestViewerSearchOptionalTool(t *testing.T) {
 	d := readonlyDeps()
-	search := &fakeViewerProfileSearch{hits: []store.ViewerProfileHit{{
-		Profile: store.ViewerProfile{UID: "2002", Name: "白饭哥", RecentTexts: []string{"今天也要白饭"}},
-	}}}
+	search := &fakeViewerProfileSearch{result: viewer.Result{
+		Status: viewer.StatusFound,
+		Candidates: []viewer.Candidate{{
+			ViewerProfileHit: store.ViewerProfileHit{
+				Profile: store.ViewerProfile{UID: "2002", Name: "白饭哥", Hits: 12, Replies: 3, RecentTexts: []string{"今天也要白饭"}},
+			},
+			Tier:   viewer.TierName,
+			Reason: "name_exact",
+		}},
+	}}
 	d.ViewerSearch = search
 	box, err := BuildReadOnlyTools(d)
 	if err != nil {
@@ -185,8 +193,8 @@ func TestViewerSearchOptionalTool(t *testing.T) {
 	if len(names) != 8 || names[1] != ToolViewerSearch {
 		t.Fatalf("应额外注册 viewer_search：%v", names)
 	}
-	if !strings.Contains(box.Descriptions(), ToolViewerSearch) {
-		t.Error("描述里应列出 viewer_search")
+	if descriptions := box.Descriptions(); !strings.Contains(descriptions, ToolViewerSearch) || !strings.Contains(descriptions, "昵称") {
+		t.Errorf("描述里应列出 viewer_search 且提示可按昵称查：%s", descriptions)
 	}
 
 	got, err := box.Run(context.Background(), ToolViewerSearch, "  那个爱要白饭的人 ")
@@ -198,6 +206,9 @@ func TestViewerSearchOptionalTool(t *testing.T) {
 	}
 	if !strings.Contains(got, "2002") || !strings.Contains(got, "白饭哥") || !strings.Contains(got, "今天也要白饭") {
 		t.Errorf("结果格式不符：%q", got)
+	}
+	if !strings.Contains(got, "说过 12 次") || !strings.Contains(got, "鱼回过 3 次") {
+		t.Errorf("结果应带互动次数：%q", got)
 	}
 
 	if _, err := box.Run(context.Background(), ToolViewerSearch, "  "); err == nil {
@@ -211,14 +222,118 @@ func TestViewerSearchOptionalTool(t *testing.T) {
 // TestViewerSearchEmptyResult 没有命中时给明确文案。
 func TestViewerSearchEmptyResult(t *testing.T) {
 	d := readonlyDeps()
-	d.ViewerSearch = &fakeViewerProfileSearch{}
+	d.ViewerSearch = &fakeViewerProfileSearch{result: viewer.Result{Status: viewer.StatusNotFound}}
 	box, _ := BuildReadOnlyTools(d)
 	got, err := box.Run(context.Background(), ToolViewerSearch, "不存在的人")
 	if err != nil {
 		t.Fatalf("执行失败：%v", err)
 	}
-	if got != "没有找到匹配的观众" {
+	if got != "没有找到匹配的观众（可以老实说不认识）" {
 		t.Errorf("空结果文案 = %q", got)
+	}
+}
+
+// TestViewerSearchAmbiguous 多候选时明确说「不能确定」，不替用户合并身份。
+func TestViewerSearchAmbiguous(t *testing.T) {
+	d := readonlyDeps()
+	d.ViewerSearch = &fakeViewerProfileSearch{result: viewer.Result{
+		Status: viewer.StatusAmbiguous,
+		Candidates: []viewer.Candidate{
+			{ViewerProfileHit: store.ViewerProfileHit{Profile: store.ViewerProfile{UID: "7001", Name: "琴声温柔"}}, Tier: viewer.TierNear},
+			{ViewerProfileHit: store.ViewerProfileHit{Profile: store.ViewerProfile{UID: "7002", Name: "琴身温柔"}}, Tier: viewer.TierNear},
+		},
+	}}
+	box, _ := BuildReadOnlyTools(d)
+	got, err := box.Run(context.Background(), ToolViewerSearch, "琴深温柔")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if !strings.Contains(got, "多个候选") || !strings.Contains(got, "7001") || !strings.Contains(got, "7002") {
+		t.Errorf("歧义文案不符：%q", got)
+	}
+}
+
+// TestViewerSearchUnavailable 查询不可用时不能说成「没这个人」。
+func TestViewerSearchUnavailable(t *testing.T) {
+	d := readonlyDeps()
+	d.ViewerSearch = &fakeViewerProfileSearch{result: viewer.Result{Status: viewer.StatusUnavailable, Degraded: true}}
+	box, _ := BuildReadOnlyTools(d)
+	got, err := box.Run(context.Background(), ToolViewerSearch, "弓长三益")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if !strings.Contains(got, "暂时不可用") || strings.Contains(got, "没有找到") {
+		t.Errorf("不可用文案不符：%q", got)
+	}
+}
+
+// TestViewerSearchContentIsNotIdentity 内容命中要提示「只是提到」，避免幻觉成本人。
+func TestViewerSearchContentIsNotIdentity(t *testing.T) {
+	d := readonlyDeps()
+	d.ViewerSearch = &fakeViewerProfileSearch{result: viewer.Result{
+		Status: viewer.StatusFound,
+		Candidates: []viewer.Candidate{{
+			ViewerProfileHit: store.ViewerProfileHit{Profile: store.ViewerProfile{UID: "1002", Name: "路人甲"}},
+			Tier:             viewer.TierContent,
+			Reason:           "content",
+		}},
+	}}
+	box, _ := BuildReadOnlyTools(d)
+	got, err := box.Run(context.Background(), ToolViewerSearch, "弓长三益")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if !strings.Contains(got, "不一定是本人") {
+		t.Errorf("内容命中要标注不确定性：%q", got)
+	}
+}
+
+// TestViewerSearchSelfQuery 「我是谁」用可信 UID 查，「你是谁」直接回答不查档案。
+func TestViewerSearchSelfQuery(t *testing.T) {
+	d := readonlyDeps()
+	d.SpeakerUID = "4242"
+	search := &fakeViewerProfileSearch{result: viewer.Result{
+		Status:     viewer.StatusFound,
+		Candidates: []viewer.Candidate{{ViewerProfileHit: store.ViewerProfileHit{Profile: store.ViewerProfile{UID: "4242", Name: "提问的人"}}, Tier: viewer.TierUID}},
+	}}
+	d.ViewerSearch = search
+	box, _ := BuildReadOnlyTools(d)
+
+	if _, err := box.Run(context.Background(), ToolViewerSearch, "我是谁"); err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if search.gotQ != "4242" {
+		t.Errorf("「我是谁」应查发送者 UID，实际 %q", search.gotQ)
+	}
+
+	before := search.gotCall
+	got, err := box.Run(context.Background(), ToolViewerSearch, "你是谁")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if search.gotCall != before {
+		t.Error("「你是谁」不该查观众档案")
+	}
+	if !strings.Contains(got, "本鱼") {
+		t.Errorf("「你是谁」应说明指鱼自己：%q", got)
+	}
+}
+
+// TestViewerSearchSelfQueryWithoutSpeaker 没有发送者 UID 时不猜。
+func TestViewerSearchSelfQueryWithoutSpeaker(t *testing.T) {
+	d := readonlyDeps()
+	search := &fakeViewerProfileSearch{}
+	d.ViewerSearch = search
+	box, _ := BuildReadOnlyTools(d)
+	got, err := box.Run(context.Background(), ToolViewerSearch, "我是谁")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if search.gotCall != 0 {
+		t.Error("缺 UID 时不该去档案库猜")
+	}
+	if !strings.Contains(got, "不知道") {
+		t.Errorf("文案不符：%q", got)
 	}
 }
 

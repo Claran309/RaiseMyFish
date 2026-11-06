@@ -71,8 +71,19 @@ func (n *NodeTransport) buildCommand(ctx context.Context, action string) *exec.C
 
 var nodeToken = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
+// validReplyName 允许空昵称，但拒绝未修剪、超长、含控制字符或非法UTF-8的展示名。
+func validReplyName(name string) bool {
+	if name == "" {
+		return true
+	}
+	if !utf8.ValidString(name) || name != strings.TrimSpace(name) || utf8.RuneCountInString(name) > 128 {
+		return false
+	}
+	return !strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f })
+}
+
 func validNodeAttempt(a sender.Attempt) bool {
-	return nodeToken.MatchString(a.ID) && a.EventID != "" && utf8.ValidString(a.EventID) && !strings.ContainsRune(a.EventID, 0) && sender.ValidActor(a.ActorID) && sender.ValidActor(a.RoomID) && strings.TrimSpace(a.Text) != "" && utf8.ValidString(a.Text) && utf8.RuneCountInString(a.Text) <= 40 && !strings.ContainsRune(a.Text, 0)
+	return nodeToken.MatchString(a.ID) && a.EventID != "" && utf8.ValidString(a.EventID) && !strings.ContainsRune(a.EventID, 0) && sender.ValidActor(a.ActorID) && sender.ValidActor(a.RoomID) && strings.TrimSpace(a.Text) != "" && utf8.ValidString(a.Text) && utf8.RuneCountInString(a.Text) <= 40 && !strings.ContainsRune(a.Text, 0) && (a.ReplyMID == "" || sender.ValidActor(a.ReplyMID)) && (a.ReplyName == "" || a.ReplyMID != "") && validReplyName(a.ReplyName)
 }
 
 type nodeRequest struct {
@@ -83,6 +94,9 @@ type nodeRequest struct {
 	SelfID    string `json:"self_id"`
 	Private   bool   `json:"private"`
 	Text      string `json:"text"`
+	// 仅发送帧携带；核验无需@目标。
+	ReplyMID  string `json:"reply_mid,omitempty"`
+	ReplyName string `json:"reply_uname,omitempty"`
 }
 
 type nodeVerifyRequest struct {
@@ -176,7 +190,11 @@ func (n *NodeTransport) start(parent context.Context, a sender.Attempt, action s
 }
 
 func requestFor(a sender.Attempt, kind string) nodeRequest {
-	return nodeRequest{Protocol: 1, Type: kind, RequestID: a.ID, RoomID: a.RoomID, SelfID: a.ActorID, Text: a.Text}
+	request := nodeRequest{Protocol: 1, Type: kind, RequestID: a.ID, RoomID: a.RoomID, SelfID: a.ActorID, Text: a.Text}
+	if kind == "prepare" {
+		request.ReplyMID, request.ReplyName = a.ReplyMID, a.ReplyName
+	}
+	return request
 }
 
 func (n *NodeTransport) Open(ctx context.Context, a sender.Attempt) (Session, error) {

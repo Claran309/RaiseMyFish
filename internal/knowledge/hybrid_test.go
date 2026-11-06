@@ -253,3 +253,36 @@ func TestHybridRecallRejectsInvalidQueryLikeFileReader(t *testing.T) {
 		t.Fatal("非法UTF-8未拒绝")
 	}
 }
+
+// TestHybridRecallRejectsLowRelevanceSemantic I03/T13：语义 topK 里低于下限的条目被拒。
+//
+// 「相对最近」不等于「相关」：随机人名/无关歌词即使排在向量第一，也不能当知识返回。
+func TestHybridRecallRejectsLowRelevanceSemantic(t *testing.T) {
+	base := loadEntries(t, testEntry("title", "甲乙丙"), testEntry("lyric", "无关的歌词标题"))
+	store := newFakeEmbeddingStore()
+	store.semantic = []SemanticHit{
+		{ID: "lyric", Similarity: 0.31},
+		{ID: "title", Similarity: 0.25},
+	}
+	reader, err := NewHybridReader(base, &fakeEmbedder{}, store, HybridOptions{Alpha: 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hybridIDs(t, reader, publicScope(), "甲乙丙"); !reflect.DeepEqual(got, []string{"title"}) {
+		t.Fatalf("低相关语义应被拒，只留关键词命中：%v", got)
+	}
+}
+
+// TestHybridRecallKeepsRelevantSemantic 过阈值的语义条目仍然保留。
+func TestHybridRecallKeepsRelevantSemantic(t *testing.T) {
+	base := loadEntries(t, testEntry("title", "甲乙丙"), testEntry("semantic", "丙丁戊相关设定"))
+	store := newFakeEmbeddingStore()
+	store.semantic = []SemanticHit{{ID: "semantic", Similarity: 0.88}}
+	reader, err := NewHybridReader(base, &fakeEmbedder{}, store, HybridOptions{Alpha: 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hybridIDs(t, reader, publicScope(), "甲乙丙"); !reflect.DeepEqual(got, []string{"title", "semantic"}) {
+		t.Fatalf("高相关语义应保留在关键词之后：%v", got)
+	}
+}

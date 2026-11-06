@@ -14,6 +14,7 @@ import (
 
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/store"
+	"RaiseMyFish/internal/viewer"
 )
 
 // 只读工具名（协议的一部分，改名等于改协议）。
@@ -36,9 +37,12 @@ type ViewerSearcher interface {
 	ViewerRecent(ctx context.Context, fromID string, limit int) ([]event.Event, error)
 }
 
-// ViewerProfileSearcher 按自然语言描述检索观众档案（语义 + 关键词）。
+// ViewerProfileSearcher 解析「这句话在说谁」：UID/昵称/别名/近似/内容/语义。
+//
+// 用 Find 而不是 Search：调用方需要知道结果状态（找到/歧义/没找到/不可用），
+// 否则「查询失败」会被模型讲成「没有这个人」。
 type ViewerProfileSearcher interface {
-	Search(ctx context.Context, query string, limit int) ([]store.ViewerProfileHit, error)
+	Find(ctx context.Context, query string, limit int) (viewer.Result, error)
 }
 
 // ReplySearcher 查本会话最近发出的回复。
@@ -85,6 +89,8 @@ type ReadOnlyDeps struct {
 	Search       WebSearcher
 	// Room 是本会话房间号；空串时直播类工具返回未配置。
 	Room string
+	// SpeakerUID 是本条事件的发送者 UID（可信平台身份），用于「我是谁」。
+	SpeakerUID string
 	// QuotaLimit 是每日送礼上限（0 表示未配置）。
 	QuotaLimit int
 	// Now 可注入时钟（测试用）。
@@ -129,7 +135,7 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 	if d.ViewerSearch != nil {
 		tools = append(tools, Tool{
 			Name: ToolViewerSearch,
-			Desc: "按描述找观众档案（如「那个爱要白饭的人」）；args 传描述词",
+			Desc: "查某个观众是谁（uid/昵称/别名/描述都行）；args 传名字或描述（问「XX是谁」就传 XX）",
 			Run: func(ctx context.Context, args string) (string, error) {
 				query := strings.TrimSpace(args)
 				if query == "" {
@@ -138,18 +144,16 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 				if len([]rune(query)) > 100 {
 					return "", fmt.Errorf("查询词不能超过100字")
 				}
-				hits, err := d.ViewerSearch.Search(ctx, query, 3)
+				// 先解析「我是谁/你是谁」这类主体，再决定查谁。
+				resolved, direct := resolveIdentitySubject(query, d.SpeakerUID)
+				if direct != "" {
+					return direct, nil
+				}
+				result, err := d.ViewerSearch.Find(ctx, resolved, 3)
 				if err != nil {
 					return "", err
 				}
-				if len(hits) == 0 {
-					return "没有找到匹配的观众", nil
-				}
-				var parts []string
-				for _, hit := range hits {
-					parts = append(parts, formatViewerHit(hit.Profile))
-				}
-				return clip(strings.Join(parts, " / "), maxReadOnlyRunes), nil
+				return clip(formatIdentityResult(result), maxReadOnlyRunes), nil
 			},
 		})
 	}
@@ -268,13 +272,89 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 	return NewToolbox(tools...)
 }
 
-// formatViewerHit 把一条档案压成「uid 昵称：最近发言」的一行。
+// formatViewerHit 把一条档案压成「uid 昵称（说过/回过次数）：最近发言」的一行。
 func formatViewerHit(p store.ViewerProfile) string {
-	line := p.UID + " " + p.Name
+	line := fmt.Sprintf("%s %s（说过 %d 次 / 鱼回过 %d 次）", p.UID, p.Name, p.Hits, p.Replies)
 	if len(p.RecentTexts) > 0 {
 		line += "：" + clip(strings.Join(p.RecentTexts, " / "), 60)
 	}
 	return line
+}
+
+// resolveIdentitySubject 解析提问主体，返回真正要查的词与「可直接回答」的答案。
+//
+// 「我是谁」问的是发送者本人（用可信 UID 精确查，不在档案库里猜）；
+// 「你是谁」问的是鱼自己，不该占用观众检索。
+func resolveIdentitySubject(query, speakerUID string) (string, string) {
+	trimmed := strings.TrimSpace(strings.Trim(query, " 　?？!！。.，,、～~：:"))
+	switch trimmed {
+	case "我", "自己", "本人", "我是谁", "我是谁呀", "我是谁啊", "你知道我是谁", "知道我是谁", "猜猜我是谁":
+		if strings.TrimSpace(speakerUID) == "" {
+			return "", "不知道当前提问者是谁（本条消息没有携带平台 UID）"
+		}
+		return strings.TrimSpace(speakerUID), ""
+	case "你", "你自己", "你是谁", "你是谁呀", "你是谁啊", "你是哪位":
+		return "", "「你」指的是本鱼自己，不是观众，不用查观众档案"
+	}
+	return query, ""
+}
+
+// formatIdentityResult 把身份解析结果讲成模型能正确使用的一段话。
+//
+// 关键是要把「命中理由」说清楚：只在发言里提到过名字，不等于那个人就是本人。
+func formatIdentityResult(result viewer.Result) string {
+	switch result.Status {
+	case viewer.StatusNotFound:
+		return "没有找到匹配的观众（可以老实说不认识）"
+	case viewer.StatusUnavailable:
+		return "观众档案检索暂时不可用（这不等于「没有这个人」，只能说暂时查不到）"
+	case viewer.StatusAmbiguous:
+		parts := make([]string, 0, len(result.Candidates))
+		for _, c := range result.Candidates {
+			parts = append(parts, formatIdentityCandidate(c))
+		}
+		return "有多个候选，不能确定是哪一位（不要替用户合并成一个人）：" + strings.Join(parts, " / ")
+	}
+	if len(result.Candidates) == 0 {
+		return "没有找到匹配的观众"
+	}
+	parts := make([]string, 0, len(result.Candidates))
+	for _, c := range result.Candidates {
+		parts = append(parts, formatIdentityCandidate(c))
+	}
+	text := strings.Join(parts, " / ")
+	if result.Degraded {
+		text += "（语义检索不可用，仅按关键词/昵称匹配）"
+	}
+	return text
+}
+
+// formatIdentityCandidate 给一条候选加上「凭什么认为是他」的档位说明。
+func formatIdentityCandidate(c viewer.Candidate) string {
+	line := formatViewerHit(c.Profile)
+	line += "【" + tierReasonText(c) + "】"
+	return line
+}
+
+// tierReasonText 把档位翻译成对模型有意义的一句话。
+func tierReasonText(c viewer.Candidate) string {
+	switch c.Tier {
+	case viewer.TierUID:
+		return "UID 精确命中"
+	case viewer.TierName:
+		return "昵称精确命中"
+	case viewer.TierAlias:
+		return "别名命中（可能是历史昵称/常见写法）"
+	case viewer.TierNear:
+		if c.Reason == "phonetic" {
+			return "发音相近的候选，需确认"
+		}
+		return "昵称近似（可能是错字/谐音），需确认"
+	case viewer.TierContent:
+		return "仅在发言里提到过这个名字，不一定是本人"
+	default:
+		return "语义相近，不保证是本人"
+	}
 }
 
 // parseViewerArgs 解析 viewer_memory 的参数：from_id（纯数字）+ limit(1-20)。

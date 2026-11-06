@@ -21,6 +21,7 @@ import (
 	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/proactive"
+	"RaiseMyFish/internal/reasoning"
 	senderlive "RaiseMyFish/internal/sender/live"
 	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/watch"
@@ -108,7 +109,10 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 		if err != nil {
 			return nil, err
 		}
-		react = proactive.ReactFactory(factory)
+		// 主动弹幕没有「提问者」，身份查询用空 UID（「我是谁」会被明确拒绝）。
+		react = proactive.ReactFactory(func(scope memory.Scope) (*reasoning.Agent, error) {
+			return factory(scope, "")
+		})
 	}
 	options := senderlive.DefaultProactiveOptions()
 	options.RoomID = cfg.Collector.Live.RoomID

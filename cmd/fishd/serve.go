@@ -372,7 +372,8 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 		memEmbedder = embedClient
 	}
 	hybrid, err := memory.NewHybridSearcher(memReader, memRepo, memEmbedder, memory.HybridSearchOptions{
-		Alpha: cfg.Embedding.Alpha,
+		Alpha:         cfg.Embedding.Alpha,
+		MinSimilarity: cfg.Embedding.MinSimilarity,
 		OnSemanticError: func(err error) {
 			log.Warn("记忆语义召回降级为关键词", zap.String("action", "memory_semantic"), zap.Error(err))
 		},
@@ -418,7 +419,8 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 			embedder = embedClient
 		}
 		searcher, err := viewer.NewSearcher(viewerStore, embedder, viewer.SearchOptions{
-			Alpha: cfg.Embedding.Alpha,
+			Alpha:         cfg.Embedding.Alpha,
+			MinSimilarity: cfg.Embedding.MinSimilarity,
 			OnSemanticError: func(err error) {
 				log.Warn("档案语义检索降级为关键词", zap.String("action", "viewer_semantic"), zap.Error(err))
 			},
@@ -435,13 +437,12 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	// ReAct 运行期策略：默认全量走多步，结果按 Scope + 问题文本缓存 5 分钟。
+	// ReAct 运行期策略：默认全量走多步；不缓存最终答案（见 reactRuntime 注释）。
 	var reactCfg *reactRuntime
 	if react != nil {
 		reactCfg = &reactRuntime{
 			factory:      react,
 			defaultReact: cfg.Reasoning.DefaultReact,
-			cache:        newReactCache(time.Now),
 		}
 	}
 	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log)
