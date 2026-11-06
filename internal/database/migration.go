@@ -92,6 +92,11 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取投递计划迁移：%w", err)
 	}
 	deliveryPlansHash := sha256.Sum256(deliveryPlans)
+	sendLogPlannedAttempt, err := migrations.Files.ReadFile("0012_send_log_planned_attempt.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取发送审计迁移：%w", err)
+	}
+	sendLogPlannedAttemptHash := sha256.Sum256(sendLogPlannedAttempt)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -104,6 +109,7 @@ func migrationSteps() ([]migrationStep, error) {
 		{9, string(extractionJobs), hex.EncodeToString(extractionJobsHash[:])},
 		{10, string(viewerEmbeddingKinds), hex.EncodeToString(viewerEmbeddingKindsHash[:])},
 		{11, string(deliveryPlans), hex.EncodeToString(deliveryPlansHash[:])},
+		{12, string(sendLogPlannedAttempt), hex.EncodeToString(sendLogPlannedAttemptHash[:])},
 	}, nil
 }
 

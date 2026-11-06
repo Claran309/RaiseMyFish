@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -368,6 +369,52 @@ func (r *PlannedRepo) ArmPlan(ctx context.Context, c event.Claim, key store.Plan
 	return out, queueFailure("授予投递许可失败", err)
 }
 
+// planAuditAccepted 写评论/私信成功投递的审计事实。
+//
+// 正文取计划快照（平台实际收到的文字），平台ID进 send_log.msg_id；
+// out 事件只在 done 时进入记忆的「已发言」历史。
+func planAuditAccepted(tx *gorm.DB, p deliveryPlanRow, a deliveryAttemptRow) error {
+	at := a.CreatedAt
+	atKind := "local_attempt"
+	if a.ArmedAt != nil {
+		at = *a.ArmedAt
+		atKind = "permit_observed"
+	}
+	evidence := "none"
+	if a.Verified {
+		evidence = "platform_receipt"
+	}
+	meta, err := json.Marshal(map[string]any{
+		"attempt_id": a.ID,
+		"input_id":   p.EventID,
+		"outcome":    a.State,
+		"error_kind": a.ErrorKind,
+		"verified":   a.Verified,
+		"evidence":   evidence,
+		"at_kind":    atKind,
+	})
+	if err != nil {
+		return err
+	}
+	if err := tx.Exec(`INSERT INTO send_log(event_id,channel,ok,verified,msg_id,error,at,attempt_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET event_id=excluded.event_id,channel=excluded.channel,ok=excluded.ok,verified=excluded.verified,msg_id=excluded.msg_id,error=excluded.error,at=excluded.at`,
+		p.EventID, p.Channel, a.OK, a.Verified, a.MsgID, a.ErrorKind, at, a.ID).Error; err != nil {
+		return err
+	}
+	outID := p.Channel + ":out:" + p.Destination + ":" + a.ID
+	return tx.Exec(`INSERT INTO events(id,channel,dir,session,from_id,text,private,reply_to,at,status,meta,stage) VALUES(?,?,?,?,?,?,?,?,?,?,?,'verify') ON CONFLICT(id) DO UPDATE SET status=excluded.status,meta=excluded.meta,at=excluded.at,status_changed_at=CASE WHEN events.status<>excluded.status THEN clock_timestamp() ELSE events.status_changed_at END`,
+		outID, p.Channel, event.DirOut, p.Destination, p.AccountID, p.Text, p.Channel == string(event.ChDM), p.EventID, at, event.StatusDone, string(meta)).Error
+}
+
+// planSettleAccepted 在同一事务里结清输入事件。
+//
+// POST 期间租约可能刚好过期：审计事实仍要落库，输入交给恢复流程补结算，
+// 不能用过期租约强行改写别人的行。
+func planSettleAccepted(tx *gorm.DB, c event.Claim, p deliveryPlanRow) error {
+	return tx.Exec(`UPDATE events SET status=?,stage=?,retry_at=NULL,status_changed_at=clock_timestamp(),lease_owner=NULL,lease_until=NULL,lease_version=lease_version+1 WHERE id=? AND lease_owner=? AND lease_version=? AND lease_until>clock_timestamp() AND status IN (?,?,?)`,
+		event.StatusDone, event.StageVerify, p.EventID, c.Lease.Owner, c.Lease.Version,
+		event.StatusQueued, event.StatusReplying, event.StatusSent).Error
+}
+
 // RecordPlan 记录一次平台调用结果；已知成功不会被后续结果覆盖。
 func (r *PlannedRepo) RecordPlan(ctx context.Context, c event.Claim, key store.PlanKey, attemptID string, outcome store.PlanOutcome) (sender.Attempt, error) {
 	if ctx == nil || !validClaim(c) || !validPlanKey(key) || strings.TrimSpace(attemptID) == "" || !validPlanOutcome(outcome) {
@@ -408,6 +455,12 @@ func (r *PlannedRepo) RecordPlan(ctx context.Context, c event.Claim, key store.P
 			return err
 		}
 		if a.State == sender.StateAccepted {
+			if err := planAuditAccepted(tx, p, a); err != nil {
+				return err
+			}
+			if err := planSettleAccepted(tx, c, p); err != nil {
+				return err
+			}
 			out = p.attempt(a)
 			return nil
 		}
@@ -438,6 +491,14 @@ func (r *PlannedRepo) RecordPlan(ctx context.Context, c event.Claim, key store.P
 			return err
 		}
 		a.State, a.OK, a.Verified, a.MsgID, a.ErrorKind = outcome.State, ok, outcome.Verified, outcome.MsgID, outcome.ErrorKind
+		if outcome.State == sender.StateAccepted {
+			if err := planAuditAccepted(tx, p, a); err != nil {
+				return err
+			}
+			if err := planSettleAccepted(tx, c, p); err != nil {
+				return err
+			}
+		}
 		out = p.attempt(a)
 		return nil
 	})

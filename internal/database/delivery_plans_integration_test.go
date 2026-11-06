@@ -14,6 +14,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -185,13 +186,7 @@ func TestDeliveryPlanCrashAfterPlanReusesOriginalText(t *testing.T) {
 		t.Fatalf("应按计划原文重投：sends=%d texts=%v", post.sends, post.texts)
 	}
 
-	b := makeBus(t, db)
-	if err := b.Mark(ctx, resumed, []event.Status{event.StatusReplying}, event.StatusSent); err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Mark(ctx, resumed, []event.Status{event.StatusSent}, event.StatusDone); err != nil {
-		t.Fatal(err)
-	}
+	// S05：accepted 记账与输入结算同事务，Send 返回时输入已 done。
 	sendState(t, db, id, event.StatusDone, event.StageVerify)
 	p, cur := planCurrent(t, db, id)
 	if p.AttemptCount != 1 || cur.State != sender.StateAccepted || cur.Number != 1 {
@@ -267,6 +262,9 @@ func TestDeliveryPlanUnknownResultStopsAutomatically(t *testing.T) {
 }
 
 // TestDeliveryPlanCrashAfterAcceptBeforeSent 对应窗口 4：记录已 accepted，尚未标 sent。
+//
+// S05 起 accepted 记账与输入结算同事务，正常路径不再留下这个窗口；
+// 这里用旧数据形态（accepted 尝试 + 未结算输入）验证恢复只核验不重发。
 func TestDeliveryPlanCrashAfterAcceptBeforeSent(t *testing.T) {
 	db, ctx := repositoryDB(t)
 	ch, id, session := event.ChComment, "comment:666:999", "666"
@@ -274,38 +272,34 @@ func TestDeliveryPlanCrashAfterAcceptBeforeSent(t *testing.T) {
 	repo, snd, post := planSetup(t, db, ch)
 	key := planKey(ch, session)
 
-	res, err := snd.Send(ctx, c, planReply(ch, session, false, "原文"))
-	if err != nil || !res.OK {
-		t.Fatalf("首次投递=%+v %v", res, err)
+	a, err := repo.PreparePlan(ctx, c, key, "原文")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if post.sends != 1 {
-		t.Fatalf("首次投递次数=%d", post.sends)
+	if _, err := repo.ArmPlan(ctx, c, key, a.ID); err != nil {
+		t.Fatal(err)
 	}
-	// 模拟「接受后、标 sent 前」崩溃：事件仍停在 replying/generate。
-	sendState(t, db, id, event.StatusReplying, event.StageGenerate)
-	_, accepted := planCurrent(t, db, id)
-	if accepted.State != sender.StateAccepted {
-		t.Fatalf("attempt=%s want accepted", accepted.State)
+	// 模拟 S05 之前的旧形态：尝试已 accepted，但输入事件与审计尚未结清。
+	if err := db.Exec("UPDATE delivery_attempts SET state='accepted',ok=TRUE,verified=TRUE,msg_id='legacy-rpid' WHERE id=?", a.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("UPDATE delivery_plans SET state='accepted' WHERE event_id=?", id).Error; err != nil {
+		t.Fatal(err)
 	}
 
 	resumed := planRecover(t, db, ctx, id)
-	res, err = snd.Send(ctx, resumed, planReply(ch, session, false, "模型重新生成"))
-	if err != nil || !res.OK || !res.Verified {
+	res, err := snd.Send(ctx, resumed, planReply(ch, session, false, "模型重新生成"))
+	if err != nil || !res.OK || !res.Verified || res.MsgID != "legacy-rpid" {
 		t.Fatalf("恢复核验=%+v %v", res, err)
 	}
-	if post.sends != 1 {
+	if post.sends != 0 {
 		t.Fatalf("已接受结果被重复投递：%d", post.sends)
-	}
-	// 重复结算只保留一份尝试记录。
-	if _, err := repo.RecordPlan(ctx, resumed, key, accepted.ID, store.PlanOutcome{
-		State: sender.StateAccepted, OK: true, Verified: true, MsgID: accepted.MsgID,
-	}); err != nil {
-		t.Fatal(err)
 	}
 	if n := planAttemptCount(t, db, id); n != 1 {
 		t.Fatalf("重复结算产生新尝试：%d", n)
 	}
 
+	// 旧数据没有 S05 审计，仍由既有 Generate 标记结清。
 	b := makeBus(t, db)
 	if err := b.Mark(ctx, resumed, []event.Status{event.StatusReplying}, event.StatusSent); err != nil {
 		t.Fatal(err)
@@ -362,5 +356,150 @@ func TestDeliveryPlanTrustedNotPostedIsBounded(t *testing.T) {
 	}
 	if p, a := planCurrent(t, db, id); p.AttemptCount != 3 || a.State != sender.StateNotPosted {
 		t.Fatalf("最终计划/尝试=%+v/%+v", p, a)
+	}
+}
+
+// TestDeliveryPlanAcceptedWritesSendLogAndOut S05：评论/私信成功投递写 send_log + out，
+// 并在同一事务把输入事件结清为 done。
+func TestDeliveryPlanAcceptedWritesSendLogAndOut(t *testing.T) {
+	cases := []struct {
+		name    string
+		ch      event.Channel
+		id      string
+		session string
+		private bool
+	}{
+		{"comment", event.ChComment, "comment:321:654", "321", false},
+		{"dm", event.ChDM, "dm:20002:901", "20002", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, ctx := repositoryDB(t)
+			c := planFixture(t, db, ctx, tc.id, tc.ch, tc.session, tc.private)
+			repo, snd, post := planSetup(t, db, tc.ch)
+			post.result = sender.Result{OK: true, MsgID: "platform-" + tc.name, Verified: true}
+
+			res, err := snd.Send(ctx, c, planReply(tc.ch, tc.session, tc.private, "平台实际正文"))
+			if err != nil || !res.OK || !res.Verified || res.MsgID != "platform-"+tc.name {
+				t.Fatalf("投递=%+v %v", res, err)
+			}
+			p, a := planCurrent(t, db, tc.id)
+			if p.State != sender.StateAccepted || a.State != sender.StateAccepted || a.MsgID != "platform-"+tc.name {
+				t.Fatalf("计划/尝试=%+v/%+v", p, a)
+			}
+
+			// 输入结算与两条输出事实同一事务：Send 返回时全部可见。
+			var row queueRow
+			if err := db.Table("events").Where("id=?", tc.id).Take(&row).Error; err != nil {
+				t.Fatal(err)
+			}
+			if row.Event.Status != event.StatusDone || row.Stage != event.StageVerify || row.Owner != nil || row.Version != c.Lease.Version+1 {
+				t.Fatalf("输入结算=%+v owner=%v version=%d", row, row.Owner, row.Version)
+			}
+
+			var logRow struct {
+				EventID   string `gorm:"column:event_id"`
+				Channel   string
+				OK        bool
+				Verified  bool
+				MsgID     string `gorm:"column:msg_id"`
+				Error     string
+				AttemptID string `gorm:"column:attempt_id"`
+			}
+			if err := db.Table("send_log").Where("attempt_id=?", a.ID).Take(&logRow).Error; err != nil {
+				t.Fatalf("缺少 send_log：%v", err)
+			}
+			if logRow.EventID != tc.id || logRow.Channel != string(tc.ch) || !logRow.OK || !logRow.Verified ||
+				logRow.MsgID != "platform-"+tc.name || logRow.Error != "" || logRow.AttemptID != a.ID {
+				t.Fatalf("send_log=%+v", logRow)
+			}
+
+			type outRow struct {
+				ID      string
+				Channel string
+				Dir     string
+				Session string
+				FromID  string `gorm:"column:from_id"`
+				Text    string
+				Private bool
+				ReplyTo string `gorm:"column:reply_to"`
+				Status  string
+				Stage   string
+				Meta    json.RawMessage
+			}
+			outID := string(tc.ch) + ":out:" + tc.session + ":" + a.ID
+			var out outRow
+			if err := db.Table("events").Where("id=?", outID).Take(&out).Error; err != nil {
+				t.Fatalf("缺少 out 事件：%v", err)
+			}
+			if out.Channel != string(tc.ch) || out.Dir != string(event.DirOut) || out.Session != tc.session ||
+				out.FromID != planAccount || out.Text != "平台实际正文" || out.Private != tc.private ||
+				out.ReplyTo != tc.id || out.Status != string(event.StatusDone) || out.Stage != string(event.StageVerify) {
+				t.Fatalf("out=%+v", out)
+			}
+			var meta map[string]any
+			if err := json.Unmarshal(out.Meta, &meta); err != nil || meta["attempt_id"] != a.ID || meta["input_id"] != tc.id {
+				t.Fatalf("out meta=%s %v", out.Meta, err)
+			}
+
+			// 重复记录（恢复/重复回调）不重复插账，也不二次递增租约。
+			if _, err := repo.RecordPlan(ctx, c, planKey(tc.ch, tc.session), a.ID, store.PlanOutcome{
+				State: sender.StateAccepted, OK: true, Verified: true, MsgID: a.MsgID,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var logs, outs int64
+			if err := db.Table("send_log").Where("attempt_id=?", a.ID).Count(&logs).Error; err != nil || logs != 1 {
+				t.Fatalf("send_log 行数=%d %v", logs, err)
+			}
+			if err := db.Table("events").Where("id=?", outID).Count(&outs).Error; err != nil || outs != 1 {
+				t.Fatalf("out 行数=%d %v", outs, err)
+			}
+			var version int64
+			if err := db.Table("events").Select("lease_version").Where("id=?", tc.id).Scan(&version).Error; err != nil || version != c.Lease.Version+1 {
+				t.Fatalf("重复记录改写了租约：%d %v", version, err)
+			}
+		})
+	}
+}
+
+// TestDeliveryPlanAccountingIsAtomic 记账中任一写入失败时整体回滚，不留下半套事实。
+func TestDeliveryPlanAccountingIsAtomic(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	ch, id, session := event.ChComment, "comment:444:555", "444"
+	c := planFixture(t, db, ctx, id, ch, session, false)
+	_, snd, post := planSetup(t, db, ch)
+
+	if err := db.Exec("ALTER TABLE events ADD CONSTRAINT reject_plan_out CHECK(id NOT LIKE 'comment:out:%') NOT VALID").Error; err != nil {
+		t.Fatalf("注入 out 事件失败：%v", err)
+	}
+	defer func() { _ = db.Exec("ALTER TABLE events DROP CONSTRAINT IF EXISTS reject_plan_out").Error }()
+
+	_, err := snd.Send(ctx, c, planReply(ch, session, false, "原文"))
+	if planKind(t, err) != sender.KindUncertain {
+		t.Fatalf("kind=%s want uncertain", planKind(t, err))
+	}
+	if post.sends != 1 {
+		t.Fatalf("POST 次数=%d", post.sends)
+	}
+
+	var logs, outs int64
+	if err := db.Table("send_log").Where("event_id=?", id).Count(&logs).Error; err != nil || logs != 0 {
+		t.Fatalf("回滚后仍有 send_log=%d %v", logs, err)
+	}
+	if err := db.Table("events").Where("reply_to=?", id).Count(&outs).Error; err != nil || outs != 0 {
+		t.Fatalf("回滚后仍有 out 事件=%d %v", outs, err)
+	}
+	p, a := planCurrent(t, db, id)
+	if p.State != sender.StateArmed || a.State != sender.StateArmed {
+		t.Fatalf("计划/尝试未回滚=%+v/%+v", p, a)
+	}
+	var row queueRow
+	if err := db.Table("events").Where("id=?", id).Take(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Event.Status != event.StatusReplying || row.Stage != event.StageGenerate ||
+		row.Owner == nil || *row.Owner != c.Lease.Owner || row.Version != c.Lease.Version {
+		t.Fatalf("输入被半套记账改写=%+v owner=%v version=%d", row, row.Owner, row.Version)
 	}
 }
