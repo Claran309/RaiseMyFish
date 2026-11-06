@@ -9,7 +9,7 @@ import (
 )
 
 // TestExactTermsCoversTitleKeywordsTags 词表 = title + keywords + tags。
-func TestExactTermsCoversTitleKeywordsTags(t *testing.T) {
+func TestExactTermsCoversTitleKeywordsNotTags(t *testing.T) {
 	entry := testEntry("m1", "蚌埠住了")
 	entry.Keywords = []string{"蚌埠", "绷不住"}
 	tags := []string{"弹幕梗", "直播"}
@@ -20,7 +20,7 @@ func TestExactTermsCoversTitleKeywordsTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取精确词表失败：%v", err)
 	}
-	want := map[string]bool{"蚌埠住了": true, "蚌埠": true, "绷不住": true, "弹幕梗": true, "直播": true}
+	want := map[string]bool{"蚌埠住了": true, "蚌埠": true, "绷不住": true}
 	got := make(map[string]bool, len(terms))
 	for _, term := range terms {
 		got[term] = true
@@ -28,6 +28,12 @@ func TestExactTermsCoversTitleKeywordsTags(t *testing.T) {
 	for term := range want {
 		if !got[term] {
 			t.Errorf("词表缺少 %q（实际 %v）", term, terms)
+		}
+	}
+	// tags 是通用分类词，不应进入精确词表（否则「弹幕梗」这类候选会被误判已收录）。
+	for _, tag := range []string{"弹幕梗", "直播"} {
+		if got[tag] {
+			t.Errorf("精确词表不应包含 tag %q", tag)
 		}
 	}
 	// summary/usage 是解释性正文，不属于规范词。

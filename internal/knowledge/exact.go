@@ -22,9 +22,11 @@ type ExactTermSource interface {
 	ExactTerms(ctx context.Context) ([]string, error)
 }
 
-// ExactTerms 返回知识库快照里所有规范词（title、keywords、tags）。
+// ExactTerms 返回知识库快照里所有规范词（title、keywords）。
 //
-// 同一词可能出现多次（不同条目的 tag 相同），调用方用集合去重即可。
+// 不含 tags：tags 是分类标签（「弹幕梗」「直播间」这类通用词），
+// 拿它做精确去重会把与标签同名的候选误判为「已收录」。
+// 同一词可能出现多次（不同条目共享 keyword），调用方用集合去重即可。
 func (r *FileReader) ExactTerms(ctx context.Context) ([]string, error) {
 	if err := checkContext(ctx); err != nil {
 		return nil, err
@@ -33,11 +35,10 @@ func (r *FileReader) ExactTerms(ctx context.Context) ([]string, error) {
 		return nil, errors.New("知识Reader不能为空")
 	}
 	st := r.current()
-	terms := make([]string, 0, len(st.entries)*3)
+	terms := make([]string, 0, len(st.entries)*2)
 	for _, e := range st.entries {
 		terms = append(terms, e.title)
 		terms = append(terms, e.keywords...)
-		terms = append(terms, e.tags...)
 	}
 	return terms, nil
 }
