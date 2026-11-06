@@ -134,7 +134,7 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 	})
 	// deliver 与 verify 是同一件事：事件已经投递出去，只需要 Resume 核验并结清。
 	resume := resumeDeps{channels: channels,
-		sender: snd, bus: bus, retryDelay: retryDelay}
+		sender: snd, bus: bus, retryDelay: retryDelay, log: log}
 
 	return scheduler.Workers{
 		Generate: withErrorLog(log, "generate_failed", generate),

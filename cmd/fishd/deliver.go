@@ -10,6 +10,7 @@ import (
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
+	"go.uber.org/zap"
 )
 
 // resumeDeps 是 Deliver / Verify handler 的只读依赖投影。
@@ -18,6 +19,7 @@ type resumeDeps struct {
 	channels   *channelSet
 	bus        event.Bus
 	retryDelay time.Duration
+	log        *zap.Logger
 }
 
 // deliverHandler 返回 Deliver 阶段的调度 handler。
@@ -41,7 +43,10 @@ func deliverHandler(deps resumeDeps) scheduler.Handler {
 			if settleErr := settleFailure(ctx, deps.bus, w.Claim, err, from, deps.retryDelay); settleErr != nil {
 				return scheduler.Result{}, errors.Join(err, settleErr)
 			}
-			return scheduler.Result{}, err
+			// 业务失败已结清（retry/dead）：可预期错误，返回 nil 让消费循环继续。
+			// 只有结清失败（上面的 join）才是需要终止调度的基础设施错误。
+			logWorkFailure(deps.log, "resume_settled", w, err)
+			return scheduler.Result{Replied: res.OK}, nil
 		}
 		if err := settleDelivered(ctx, deps.bus, w.Claim, res.Verified, deps.retryDelay); err != nil {
 			// Resume 成功同样意味着 sender 已原子结清；旧 claim 写 Bus 会报租约失效。

@@ -933,7 +933,7 @@ func TestVerifySettlesToDone(t *testing.T) {
 	}
 }
 
-// TestVerifySettlesFailureByKind 恢复失败同样按 Kind 结清，不留未结清状态。
+// TestVerifySettlesFailureByKind 恢复失败按 Kind 结清；已结清就不再向调度器报错。
 func TestVerifySettlesFailureByKind(t *testing.T) {
 	const id = "live:30308220:9006"
 	boom := &sender.Error{Kind: sender.KindDead, Settled: false}
@@ -942,8 +942,8 @@ func TestVerifySettlesFailureByKind(t *testing.T) {
 
 	claim := liveClaim(id)
 	claim.Stage = event.StageVerify
-	if _, err := workers.Verify(context.Background(), scheduler.Work{Claim: claim}); err == nil {
-		t.Fatal("Resume 失败时应返回错误")
+	if _, err := workers.Verify(context.Background(), scheduler.Work{Claim: claim}); err != nil {
+		t.Fatalf("业务失败已结清，不应返回错误：%v", err)
 	}
 	if got := bus.finalStatus(id); got != event.StatusDead {
 		t.Errorf("最终状态 = %q，期望 dead", got)
@@ -1001,8 +1001,8 @@ func TestDeliverStageSettlesFailure(t *testing.T) {
 
 	claim := liveClaim(id)
 	claim.Stage = event.StageDeliver
-	if _, err := workers.Deliver(context.Background(), scheduler.Work{Claim: claim}); err == nil {
-		t.Fatal("Resume 失败时应返回错误")
+	if _, err := workers.Deliver(context.Background(), scheduler.Work{Claim: claim}); err != nil {
+		t.Fatalf("业务失败已结清，不应返回错误：%v", err)
 	}
 	if got := bus.finalStatus(id); got != event.StatusDead {
 		t.Errorf("最终状态 = %q，期望 dead", got)
@@ -1017,11 +1017,14 @@ func TestDeliverStageRetriesOnRetryable(t *testing.T) {
 
 	claim := liveClaim(id)
 	claim.Stage = event.StageDeliver
-	if _, err := workers.Deliver(context.Background(), scheduler.Work{Claim: claim}); err == nil {
-		t.Fatal("Resume 失败时应返回错误")
+	if _, err := workers.Deliver(context.Background(), scheduler.Work{Claim: claim}); err != nil {
+		t.Fatalf("业务失败已结清，不应返回错误：%v", err)
 	}
 	if got := bus.finalStatus(id); got != event.StatusRetry {
 		t.Errorf("最终状态 = %q，期望 retry", got)
+	}
+	if _, ok := bus.defers[id]; !ok {
+		t.Error("可重试失败应通过 Defer 交回")
 	}
 }
 
