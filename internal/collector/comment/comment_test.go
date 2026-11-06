@@ -6,9 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +20,7 @@ import (
 	"RaiseMyFish/internal/bili"
 	"RaiseMyFish/internal/event"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 const testCookie = "SESSDATA=fixture; bili_jct=csrf"
@@ -24,29 +28,87 @@ const testCookie = "SESSDATA=fixture; bili_jct=csrf"
 type replyJSON map[string]any
 
 // commentServer 是可动态追加评论的假平台，记录每次请求的查询参数与 Cookie。
+// 顶层评论按时间倒序、楼中楼按时间正序分页；fail 里的一次性状态码用于模拟翻页失败。
 type commentServer struct {
-	mu      sync.Mutex
-	replies map[string][]replyJSON
-	code    int
-	queries []url.Values
-	cookies []string
+	mu         sync.Mutex
+	replies    map[string][]replyJSON
+	subReplies map[string][]replyJSON
+	code       int
+	fail       map[string]int
+	after      func(url.Values)
+	queries    []url.Values
+	cookies    []string
 }
 
 func newCommentServer(t *testing.T) (*commentServer, *httptest.Server) {
 	t.Helper()
-	fixture := &commentServer{replies: map[string][]replyJSON{}}
+	fixture := &commentServer{
+		replies:    map[string][]replyJSON{},
+		subReplies: map[string][]replyJSON{},
+		fail:       map[string]int{},
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/x/v2/reply" {
+		sub := r.URL.Path == "/x/v2/reply/reply"
+		if !sub && r.URL.Path != "/x/v2/reply" {
 			http.NotFound(w, r)
 			return
 		}
+		q := r.URL.Query()
+		pn := queryInt(q.Get("pn"), 1)
+		ps := queryInt(q.Get("ps"), 20)
 		fixture.mu.Lock()
-		fixture.queries = append(fixture.queries, r.URL.Query())
+		fixture.queries = append(fixture.queries, q)
 		fixture.cookies = append(fixture.cookies, r.Header.Get("Cookie"))
+		key := pageKey(r.URL.Path, q)
+		status := fixture.fail[key]
+		if status != 0 {
+			delete(fixture.fail, key)
+		}
+		var all []replyJSON
+		if sub {
+			all = append([]replyJSON(nil), fixture.subReplies[q.Get("root")]...)
+			sort.SliceStable(all, func(i, j int) bool {
+				left, right := replyInt(all[i]["ctime"]), replyInt(all[j]["ctime"])
+				if left != right {
+					return left < right
+				}
+				return replyText(all[i]["rpid"]) < replyText(all[j]["rpid"])
+			})
+		} else {
+			all = append([]replyJSON(nil), fixture.replies[q.Get("oid")]...)
+			sort.SliceStable(all, func(i, j int) bool {
+				left, right := replyInt(all[i]["ctime"]), replyInt(all[j]["ctime"])
+				if left != right {
+					return left > right
+				}
+				return replyText(all[i]["rpid"]) > replyText(all[j]["rpid"])
+			})
+		}
+		total := len(all)
+		start := (pn - 1) * ps
+		if start > total {
+			start = total
+		}
+		end := start + ps
+		if end > total {
+			end = total
+		}
+		page := append([]replyJSON(nil), all[start:end]...)
 		code := fixture.code
-		replies := append([]replyJSON(nil), fixture.replies[r.URL.Query().Get("oid")]...)
+		hook := fixture.after
 		fixture.mu.Unlock()
-		payload := map[string]any{"code": code, "message": "0", "data": map[string]any{"replies": replies}}
+
+		if status != 0 {
+			w.WriteHeader(status)
+			return
+		}
+		if hook != nil {
+			hook(q)
+		}
+		payload := map[string]any{"code": code, "message": "0", "data": map[string]any{
+			"replies": page,
+			"page":    map[string]any{"count": total, "num": pn, "size": ps},
+		}}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(payload)
 	}))
@@ -60,10 +122,60 @@ func (s *commentServer) add(oid string, replies ...replyJSON) {
 	s.replies[oid] = append(s.replies[oid], replies...)
 }
 
+func (s *commentServer) addSub(root string, replies ...replyJSON) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.subReplies[root] = append(s.subReplies[root], replies...)
+}
+
 func (s *commentServer) snapshot() ([]url.Values, []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]url.Values(nil), s.queries...), append([]string(nil), s.cookies...)
+}
+
+func (s *commentServer) queriesSince(index int) []url.Values {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if index > len(s.queries) {
+		index = len(s.queries)
+	}
+	return append([]url.Values(nil), s.queries[index:]...)
+}
+
+func pageKey(path string, q url.Values) string {
+	if path == "/x/v2/reply/reply" {
+		return "sub:" + q.Get("root") + ":" + q.Get("pn")
+	}
+	return "top:" + q.Get("oid") + ":" + q.Get("pn")
+}
+
+func queryInt(value string, fallback int) int {
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+func replyInt(value any) int64 {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed)
+	case int64:
+		return typed
+	case float64:
+		return int64(typed)
+	case json.Number:
+		n, _ := typed.Int64()
+		return n
+	default:
+		return 0
+	}
+}
+
+func replyText(value any) string {
+	return fmt.Sprint(value)
 }
 
 func reply(rpid, mid int, uname, text string) replyJSON {
@@ -78,7 +190,27 @@ func reply(rpid, mid int, uname, text string) replyJSON {
 	}
 }
 
+func timedReply(rpid, mid int, uname, text string, ctime int64, rcount int) replyJSON {
+	r := reply(rpid, mid, uname, text)
+	r["ctime"] = ctime
+	r["rcount"] = rcount
+	return r
+}
+
+func subReply(rpid, mid int, uname, text string, ctime int64, root int) replyJSON {
+	r := reply(rpid, mid, uname, text)
+	r["ctime"] = ctime
+	r["root"] = root
+	r["parent"] = root
+	return r
+}
+
 func newCollector(t *testing.T, root string, videos []string, interval time.Duration) *Collector {
+	t.Helper()
+	return newCollectorWith(t, root, videos, interval, zap.NewNop(), nil)
+}
+
+func newCollectorWith(t *testing.T, root string, videos []string, interval time.Duration, log *zap.Logger, edit func(*Options)) *Collector {
 	t.Helper()
 	o := DefaultOptions()
 	o.Videos = videos
@@ -87,7 +219,10 @@ func newCollector(t *testing.T, root string, videos []string, interval time.Dura
 	o.Cookie = testCookie
 	o.APIRoot = root
 	o.HTTPTimeout = time.Second
-	c, err := New(o, zap.NewNop())
+	if edit != nil {
+		edit(&o)
+	}
+	c, err := New(o, log)
 	if err != nil {
 		t.Fatalf("构造采集器失败：%v", err)
 	}
@@ -107,8 +242,13 @@ func (f *fakeDiscoverer) Discover(context.Context) ([]Target, error) {
 
 func startCollector(t *testing.T, c *Collector) (context.CancelFunc, chan event.Event, chan error, chan error) {
 	t.Helper()
+	return startCollectorWithBuffer(t, c, 32)
+}
+
+func startCollectorWithBuffer(t *testing.T, c *Collector, buffer int) (context.CancelFunc, chan event.Event, chan error, chan error) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	out := make(chan event.Event, 32)
+	out := make(chan event.Event, buffer)
 	errc := make(chan error, 16)
 	done := make(chan error, 1)
 	go func() { done <- c.Start(ctx, out, errc) }()
@@ -132,6 +272,55 @@ func awaitEvent(t *testing.T, out <-chan event.Event) event.Event {
 		t.Fatal("等待评论事件超时")
 		return event.Event{}
 	}
+}
+
+func collectEvents(t *testing.T, out <-chan event.Event, n int) []event.Event {
+	t.Helper()
+	events := make([]event.Event, 0, n)
+	for i := 0; i < n; i++ {
+		events = append(events, awaitEvent(t, out))
+	}
+	return events
+}
+
+func assertUniqueEvents(t *testing.T, events []event.Event, want ...string) {
+	t.Helper()
+	counts := make(map[string]int, len(events))
+	for _, ev := range events {
+		counts[ev.ID]++
+	}
+	for id, count := range counts {
+		if count != 1 {
+			t.Errorf("事件 %s 出现 %d 次，期望恰好一次", id, count)
+		}
+	}
+	for _, id := range want {
+		if counts[id] != 1 {
+			t.Errorf("事件 %s 入库次数 = %d，期望 1", id, counts[id])
+		}
+	}
+}
+
+func assertNoEvents(t *testing.T, out <-chan event.Event, wait time.Duration) {
+	t.Helper()
+	select {
+	case ev := <-out:
+		t.Fatalf("不应再产生事件：%+v", ev)
+	case <-time.After(wait):
+	}
+}
+
+func waitForLog(t *testing.T, logs *observer.ObservedLogs, message string) observer.LoggedEntry {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if entries := logs.FilterMessage(message).All(); len(entries) > 0 {
+			return entries[0]
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("未等到日志 %q", message)
+	return observer.LoggedEntry{}
 }
 
 func TestCollectorParsesFiltersAndDeduplicates(t *testing.T) {
@@ -197,7 +386,7 @@ func TestCollectorParsesFiltersAndDeduplicates(t *testing.T) {
 		t.Fatal("未记录到请求")
 	}
 	q := queries[0]
-	if q.Get("type") != "1" || q.Get("oid") != "123" || q.Get("pn") != "1" || q.Get("ps") != "20" || q.Get("sort") != "2" {
+	if q.Get("type") != "1" || q.Get("oid") != "123" || q.Get("pn") != "1" || q.Get("ps") != "20" || q.Get("sort") != "0" {
 		t.Errorf("查询参数不符：%v", q)
 	}
 	if len(cookies) == 0 || cookies[0] != testCookie {
@@ -372,6 +561,207 @@ func TestCollectorMultipleVideos(t *testing.T) {
 	}
 }
 
+// TestT20PaginationWatermarkInsertionExactlyOnce 覆盖 45 条跨页评论、翻页时插入、
+// 跨页重复与水位早停：稳定 rpid 最终恰好一次入库。
+func TestT20PaginationWatermarkInsertionExactlyOnce(t *testing.T) {
+	fixture, srv := newCommentServer(t)
+	for i := 1; i <= 45; i++ {
+		fixture.add("123", timedReply(i, 40+i%5, fmt.Sprintf("观众%d", i), fmt.Sprintf("评论%d", i), int64(1700000000+i), 0))
+	}
+	var inserted sync.Once
+	fixture.after = func(q url.Values) {
+		if q.Get("root") != "" || q.Get("pn") != "1" {
+			return
+		}
+		inserted.Do(func() {
+			fixture.add("123", timedReply(46, 77, "插队者", "翻页时插入", 1700000046, 0))
+		})
+	}
+	c := newCollectorWith(t, srv.URL, []string{"123"}, 20*time.Millisecond, zap.NewNop(), nil)
+	_, out, _, _ := startCollectorWithBuffer(t, c, 256)
+
+	events := collectEvents(t, out, 46)
+	want := make([]string, 0, 46)
+	for i := 1; i <= 46; i++ {
+		want = append(want, fmt.Sprintf("comment:123:%d", i))
+	}
+	assertUniqueEvents(t, events, want...)
+	assertNoEvents(t, out, 120*time.Millisecond)
+
+	// 水位已追平：之后每轮只应取第一页，不再深翻。
+	fixture.mu.Lock()
+	before := len(fixture.queries)
+	fixture.mu.Unlock()
+	time.Sleep(120 * time.Millisecond)
+	for _, q := range fixture.queriesSince(before) {
+		if q.Get("root") != "" || q.Get("pn") != "1" {
+			t.Errorf("追平后仍继续深翻：%v", q)
+		}
+	}
+}
+
+// TestT20SecondPageFailureRecoversExactlyOnce 第二页一次失败后，下一轮从页首
+// 重新追平；已入库的 rpid 不重复，缺口只补一次。
+func TestT20SecondPageFailureRecoversExactlyOnce(t *testing.T) {
+	fixture, srv := newCommentServer(t)
+	for i := 1; i <= 45; i++ {
+		fixture.add("123", timedReply(i, 40+i%5, fmt.Sprintf("观众%d", i), fmt.Sprintf("评论%d", i), int64(1700000000+i), 0))
+	}
+	fixture.fail["top:123:2"] = http.StatusInternalServerError
+	c := newCollectorWith(t, srv.URL, []string{"123"}, 20*time.Millisecond, zap.NewNop(), nil)
+	_, out, errc, _ := startCollectorWithBuffer(t, c, 256)
+
+	events := collectEvents(t, out, 45)
+	want := make([]string, 0, 45)
+	for i := 1; i <= 45; i++ {
+		want = append(want, fmt.Sprintf("comment:123:%d", i))
+	}
+	assertUniqueEvents(t, events, want...)
+	select {
+	case err := <-errc:
+		if err == nil {
+			t.Error("第二页失败应上报非 nil 错误")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("第二页失败未上报到错误通道")
+	}
+	assertNoEvents(t, out, 120*time.Millisecond)
+}
+
+// TestT20PageLimitTruncationLogged 超过页数上限时只保证前缀并记录截断。
+func TestT20PageLimitTruncationLogged(t *testing.T) {
+	fixture, srv := newCommentServer(t)
+	for i := 1; i <= 45; i++ {
+		fixture.add("123", timedReply(i, 40+i%5, fmt.Sprintf("观众%d", i), fmt.Sprintf("评论%d", i), int64(1700000000+i), 0))
+	}
+	core, logs := observer.New(zap.WarnLevel)
+	c := newCollectorWith(t, srv.URL, []string{"123"}, 20*time.Millisecond, zap.New(core), func(o *Options) {
+		o.MaxPages = 1
+	})
+	_, out, _, _ := startCollectorWithBuffer(t, c, 128)
+
+	events := collectEvents(t, out, 20)
+	want := make([]string, 0, 20)
+	for i := 45; i >= 26; i-- {
+		want = append(want, fmt.Sprintf("comment:123:%d", i))
+	}
+	assertUniqueEvents(t, events, want...)
+	assertNoEvents(t, out, 100*time.Millisecond)
+
+	entry := waitForLog(t, logs, "顶层评论超过单轮页数上限，已截断")
+	fields := entry.ContextMap()
+	if fields["action"] != "comment_page_limit" || fields["oid"] != "123" || fmt.Sprint(fields["page_count"]) != "45" {
+		t.Errorf("截断日志字段不符：%v", fields)
+	}
+	queries, _ := fixture.snapshot()
+	for _, q := range queries {
+		if q.Get("pn") != "1" {
+			t.Errorf("页数上限为 1 却翻到了 %s", q.Get("pn"))
+		}
+	}
+}
+
+// TestT20OldThreadNewSubReplyDetected 顶层评论滚出首屏后仍跟踪楼中楼，
+// 老线程新增回复能被下一轮发现。
+func TestT20OldThreadNewSubReplyDetected(t *testing.T) {
+	fixture, srv := newCommentServer(t)
+	for i := 0; i < 40; i++ {
+		fixture.add("123", timedReply(1000+i, 40+i%5, fmt.Sprintf("新观众%d", i), fmt.Sprintf("新评论%d", i), int64(1700001000+i), 0))
+	}
+	fixture.add("123", timedReply(900, 41, "楼主", "老线程", 1700000000, 45))
+	for i := 1; i <= 45; i++ {
+		fixture.addSub("900", subReply(900+i, 42+i%3, "楼内观众", fmt.Sprintf("楼中楼%d", i), int64(1700000000+i), 900))
+	}
+	c := newCollectorWith(t, srv.URL, []string{"123"}, 20*time.Millisecond, zap.NewNop(), func(o *Options) {
+		o.MaxPages = 3
+	})
+	_, out, _, _ := startCollectorWithBuffer(t, c, 256)
+
+	events := collectEvents(t, out, 86)
+	want := make([]string, 0, 86)
+	want = append(want, "comment:123:900")
+	for i := 0; i < 40; i++ {
+		want = append(want, fmt.Sprintf("comment:123:%d", 1000+i))
+	}
+	for i := 1; i <= 45; i++ {
+		want = append(want, fmt.Sprintf("comment:123:%d", 900+i))
+	}
+	assertUniqueEvents(t, events, want...)
+	assertNoEvents(t, out, 100*time.Millisecond)
+
+	fixture.addSub("900", subReply(946, 43, "新楼内", "老线程的新回复", 1700001000, 900))
+	ev := awaitEvent(t, out)
+	if ev.ID != "comment:123:946" {
+		t.Fatalf("老线程新回复事件 ID = %s", ev.ID)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(ev.Meta, &meta); err != nil || meta["root"] != "900" {
+		t.Errorf("楼中楼 Meta 不符：%s (%v)", ev.Meta, err)
+	}
+	assertNoEvents(t, out, 120*time.Millisecond)
+}
+
+// TestT20SubReplyGrowthAcrossPageBoundary 楼中楼一次新增跨越页边界时，
+// 不能只取末页：从旧总数所在页向尾部追，新增回复全部恰好一次。
+func TestT20SubReplyGrowthAcrossPageBoundary(t *testing.T) {
+	fixture, srv := newCommentServer(t)
+	fixture.add("123", timedReply(900, 41, "楼主", "根评论", 1700000000, 45))
+	for i := 1; i <= 45; i++ {
+		fixture.addSub("900", subReply(900+i, 42, "楼内观众", fmt.Sprintf("楼中楼%d", i), int64(1700000000+i), 900))
+	}
+	c := newCollectorWith(t, srv.URL, []string{"123"}, 20*time.Millisecond, zap.NewNop(), nil)
+	_, out, _, _ := startCollectorWithBuffer(t, c, 256)
+
+	initial := collectEvents(t, out, 46)
+	want := []string{"comment:123:900"}
+	for i := 1; i <= 45; i++ {
+		want = append(want, fmt.Sprintf("comment:123:%d", 900+i))
+	}
+	assertUniqueEvents(t, initial, want...)
+	assertNoEvents(t, out, 100*time.Millisecond)
+
+	// 45→61：旧末页是第 3 页，新增区间从第 3 页跨到第 4 页。
+	for i := 46; i <= 61; i++ {
+		fixture.addSub("900", subReply(900+i, 42, "楼内观众", fmt.Sprintf("楼中楼%d", i), int64(1700000000+i), 900))
+	}
+	grown := collectEvents(t, out, 16)
+	grownWant := make([]string, 0, 16)
+	for i := 46; i <= 61; i++ {
+		grownWant = append(grownWant, fmt.Sprintf("comment:123:%d", 900+i))
+	}
+	assertUniqueEvents(t, grown, grownWant...)
+	assertNoEvents(t, out, 120*time.Millisecond)
+}
+
+// TestT20SubReplyPageLimitBackfills 楼中楼超过单轮页数上限时记录落后，
+// 下一轮继续回填中间页，最终全部恰好一次。
+func TestT20SubReplyPageLimitBackfills(t *testing.T) {
+	fixture, srv := newCommentServer(t)
+	fixture.add("123", timedReply(900, 41, "楼主", "根评论", 1700000000, 45))
+	for i := 1; i <= 45; i++ {
+		fixture.addSub("900", subReply(900+i, 42, "楼内观众", fmt.Sprintf("楼中楼%d", i), int64(1700000000+i), 900))
+	}
+	core, logs := observer.New(zap.WarnLevel)
+	c := newCollectorWith(t, srv.URL, []string{"123"}, 20*time.Millisecond, zap.New(core), func(o *Options) {
+		o.MaxReplyPages = 2
+	})
+	_, out, _, _ := startCollectorWithBuffer(t, c, 256)
+
+	events := collectEvents(t, out, 46)
+	want := []string{"comment:123:900"}
+	for i := 1; i <= 45; i++ {
+		want = append(want, fmt.Sprintf("comment:123:%d", 900+i))
+	}
+	assertUniqueEvents(t, events, want...)
+	entry := waitForLog(t, logs, "楼中楼尚未追平，按页数上限分批回填")
+	fields := entry.ContextMap()
+	if fields["action"] != "comment_reply_limit" || fields["root"] != "900" ||
+		fmt.Sprint(fields["total"]) != "45" || fmt.Sprint(fields["last_page"]) != "3" {
+		t.Errorf("楼中楼落后日志字段不符：%v", fields)
+	}
+	assertNoEvents(t, out, 120*time.Millisecond)
+}
+
 func TestCollectorAuthStops(t *testing.T) {
 	fixture, srv := newCommentServer(t)
 	fixture.code = -101
@@ -423,6 +813,10 @@ func TestNewRejectsInvalidOptions(t *testing.T) {
 		{"无凭据", func(o *Options) { o.Cookie = "" }},
 		{"凭据换行", func(o *Options) { o.Cookie = "SESSDATA=x\r\nX: 1" }},
 		{"非法self", func(o *Options) { o.SelfID = "self" }},
+		{"顶层页数过大", func(o *Options) { o.MaxPages = maxPagesUpper + 1 }},
+		{"根跟踪过大", func(o *Options) { o.MaxRoots = maxRootsUpper + 1 }},
+		{"楼中楼页数不足", func(o *Options) { o.MaxReplyPages = 1 }},
+		{"楼中楼页数过大", func(o *Options) { o.MaxReplyPages = maxReplyPagesUpper + 1 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
