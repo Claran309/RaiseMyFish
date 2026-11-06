@@ -45,7 +45,7 @@ func TestWebEmbeddingStatusCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.WithContext(ctx).Exec(
-		"UPDATE viewer_profiles SET profile_embedding=NULL, profile_embedding_hash=NULL, profile_embedding_updated_at=NULL WHERE uid='4004'").Error; err != nil {
+		"UPDATE viewer_profiles SET facts_embedding=NULL, facts_embedding_hash=NULL, facts_embedding_updated_at=NULL WHERE uid='4004'").Error; err != nil {
 		t.Fatal(err)
 	}
 

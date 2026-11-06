@@ -108,6 +108,17 @@ fish-knowledge/v1\n
 - BOM/CRLF 解析时可规范化，但原始字节变化必须改变 Revision
 - 评估器冻结实际使用的文件快照，不能只存路径或 mtime
 
+### 4.1 灵魂记忆文件（soul-memories/v1，M12 增补）
+
+`soul-memories.md` 沿用 K0 的 YAML 风格（`schema: soul-memories/v1` + `entries`），独立于知识召回索引，由提炼 worker 重建后每轮注入 system prompt。
+
+- entries 字段：`title`、`summary`、`importance`、`valid_from`、`manual`；M12 增补 `subject`、`source`、`visibility`、`from_id`、`from_name`
+- `subject` 主体仅允许 `fish`（本鱼设定）、`owner`（主人设定）、`viewer`（单个观众）
+- `visibility` 仅允许 `public` / `private`；`source` 是不含本机绝对路径的来源引用
+- `from_id` / `from_name` 是事实来源主体（说话人），转换时不得丢弃
+- 全局注入只允许 `subject ∈ {fish, owner}` 且 `visibility=public` 的条目；`viewer` 或 `private` 条目不得进入 system prompt
+- 候选只选 `valid_from <= now()`、当前有效、未归档、公开来源的记录；观众自述不得转成全局设定
+
 ## 5. 预算（Brain 侧）
 
 - 本轮主人已明确收紧上限：知识预算整数百分比，默认 **10**，合法 **0–10**；>10 或负值拒绝。历史计划中的0–15不再作为K0-5依据，后续配置接缝也须遵守本上限。

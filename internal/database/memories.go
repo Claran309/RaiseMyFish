@@ -597,8 +597,10 @@ func validateMemoryRecordQuery(ctx context.Context, limit int) error {
 // 返回前用 memory.SharedState.Validate 再核一遍范围与字段。
 // SoulCandidates 选「够格进灵魂记忆」的记录：fact/preference 且 importance 达标。
 //
-// 灵魂记忆是公开长期设定：只取有效、未归档、公开来源的记录；
-// 私密 DM 与其错误降密行不能进入。排序按重要度与新鲜度，供上层去重后截断。
+// 灵魂记忆是公开长期设定：只取当前有效、未归档、公开来源的记录；
+// 私密 DM 与其错误降密行不能进入。未来才生效（valid_from > now()）的记录
+// 同样不能提前进入，避免历史回放/预写事实污染当前设定。
+// 排序按重要度与新鲜度，供上层去重后截断。
 func (r *MemoryRepo) SoulCandidates(ctx context.Context, minImportance float64, limit int) ([]store.MemoryRecord, error) {
 	if ctx == nil || minImportance <= 0 || minImportance > 1 || limit < 1 || limit > 200 {
 		return nil, store.ErrInvalid
@@ -621,7 +623,7 @@ func (r *MemoryRepo) SoulCandidates(ctx context.Context, minImportance float64, 
 		IDs        json.RawMessage
 	}
 	err := r.db.WithContext(ctx).Table("memory_records").
-		Where("kind IN ? AND valid_to IS NULL AND NOT archived AND importance >= ?", []string{"fact", "preference"}, minImportance).
+		Where("kind IN ? AND valid_to IS NULL AND NOT archived AND valid_from <= now() AND importance >= ?", []string{"fact", "preference"}, minImportance).
 		Where("NOT private AND (channel IS NULL OR channel <> 'dm' OR private)").
 		Select("id, source, kind, title, summary, importance, confidence, private, COALESCE(channel,'') AS channel, COALESCE(session,'') AS session, COALESCE(from_id,'') AS from_id, COALESCE(from_name,'') AS from_name, valid_from, created_at, to_json(event_ids) AS ids").
 		Order("importance DESC, valid_from DESC, id ASC").Limit(limit).Find(&rows).Error

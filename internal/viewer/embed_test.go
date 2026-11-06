@@ -1,6 +1,6 @@
 package viewer
 
-// 本文件测观众档案的增量向量化：跳过未变更、空档案、批量与重试。
+// 本文件测观众档案的增量向量化（M10 三路版）：分路跳过、空路跳过、批量与重试。
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 type fakeEmbedStore struct {
 	inputs  []EmbeddingInput
-	hashes  map[string]string
+	hashes  map[string]map[EmbeddingKind]string
 	upserts []EmbeddingRecord
 	err     error
 }
@@ -20,7 +20,7 @@ func (f *fakeEmbedStore) ViewerEmbeddingInputs(context.Context) ([]EmbeddingInpu
 	return f.inputs, f.err
 }
 
-func (f *fakeEmbedStore) ExistingProfileEmbeddingHashes(context.Context) (map[string]string, error) {
+func (f *fakeEmbedStore) ExistingProfileEmbeddingHashes(context.Context) (map[string]map[EmbeddingKind]string, error) {
 	return f.hashes, nil
 }
 
@@ -50,17 +50,56 @@ func (f *fakeEmbedWorker) Embed(_ context.Context, inputs []string) ([][]float64
 	return vectors, nil
 }
 
-// TestRunEmbeddingIncrementalSkipsUnchanged 未变更与空档案跳过，只算新增/变化。
-func TestRunEmbeddingIncrementalSkipsUnchanged(t *testing.T) {
-	unchanged := EmbeddingInput{UID: "u-a", Name: "白饭", Texts: []string{"今天也要白饭"}}
+// TestDocumentsAreIsolatedByKind M10 核心：三路各自只放自己的内容。
+//
+// 回归背景：旧实现把「昵称 + 本人发言 + 鱼的回复」拼成一个向量，
+// 鱼说的「白饭」被算成观众特点，认人和查证都被污染。
+func TestDocumentsAreIsolatedByKind(t *testing.T) {
+	docs := documentsFor(EmbeddingInput{
+		UID:     "u-1",
+		Name:    "白饭哥",
+		Texts:   []string{"我爱白饭", "今天也要白饭"},
+		Replies: []string{"鱼说白饭真香"},
+	})
+	if len(docs) != 3 {
+		t.Fatalf("应产出三条文档：%+v", docs)
+	}
+	byKind := make(map[EmbeddingKind]string, len(docs))
+	for _, doc := range docs {
+		byKind[doc.kind] = doc.text
+	}
+	if byKind[KindIdentity] != "白饭哥" {
+		t.Errorf("identity 只该有昵称：%q", byKind[KindIdentity])
+	}
+	if byKind[KindFacts] != "我爱白饭\n今天也要白饭" {
+		t.Errorf("facts 只该有本人发言：%q", byKind[KindFacts])
+	}
+	if byKind[KindInteraction] != "鱼说白饭真香" {
+		t.Errorf("interaction 只该有鱼的回复：%q", byKind[KindInteraction])
+	}
+	// 三路互不包含：鱼的话不能进 facts，观众的话也不能进 interaction。
+	if strings.Contains(byKind[KindFacts], "鱼说") {
+		t.Error("facts 混入了鱼的话")
+	}
+	if strings.Contains(byKind[KindInteraction], "我爱白饭") {
+		t.Error("interaction 混入了观众的话")
+	}
+}
+
+// TestRunEmbeddingSkipsPerKind 分路增量：只有内容变化的那一路重算。
+func TestRunEmbeddingSkipsPerKind(t *testing.T) {
+	unchanged := EmbeddingInput{UID: "u-a", Name: "白饭", Texts: []string{"今天也要白饭"}, Replies: []string{"好"}}
 	changed := EmbeddingInput{UID: "u-b", Name: "熟客", Texts: []string{"又来了"}}
-	empty := EmbeddingInput{UID: "u-c"}
-	fresh := EmbeddingInput{UID: "u-d", Name: "新人", Texts: []string{"你好"}}
 	store := &fakeEmbedStore{
-		inputs: []EmbeddingInput{unchanged, changed, empty, fresh},
-		hashes: map[string]string{
-			"u-a": hashText(embeddingText(unchanged)),
-			"u-b": "stale-hash",
+		inputs: []EmbeddingInput{unchanged, changed},
+		hashes: map[string]map[EmbeddingKind]string{
+			"u-a": {
+				KindIdentity:    hashText("白饭"),
+				KindFacts:       hashText("今天也要白饭"),
+				KindInteraction: hashText("好"),
+			},
+			// u-b 的 identity 没变，facts 缺失 → 只该重算 facts；interaction 无内容。
+			"u-b": {KindIdentity: hashText("熟客")},
 		},
 	}
 	embedder := &fakeEmbedWorker{}
@@ -68,30 +107,40 @@ func TestRunEmbeddingIncrementalSkipsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("增量入库失败：%v", err)
 	}
-	if stats.Total != 4 || stats.Skipped != 2 || stats.Pending != 2 || stats.Batches != 1 || stats.Embedded != 2 {
+	// 2 份档案 × 3 路 = 6 份文档；跳过 u-a 三路 + u-b 的 identity 与空 interaction。
+	if stats.Total != 6 || stats.Skipped != 5 || stats.Pending != 1 || stats.Embedded != 1 {
 		t.Fatalf("统计不符：%+v", stats)
 	}
-	if embedder.calls != 1 {
-		t.Errorf("embedding 调用次数 = %d，期望 1", embedder.calls)
+	if len(store.upserts) != 1 {
+		t.Fatalf("只应写回 1 条：%+v", store.upserts)
 	}
-	if len(store.upserts) != 2 {
-		t.Fatalf("写回条数 = %d，期望 2", len(store.upserts))
+	record := store.upserts[0]
+	if record.UID != "u-b" || record.Kind != KindFacts {
+		t.Fatalf("写回的路不对：%+v", record)
 	}
-	got := map[string]string{}
+	if record.Hash != hashText("又来了") {
+		t.Errorf("facts hash = %q", record.Hash)
+	}
+	if len(record.Embedding) != EmbeddingDimension {
+		t.Errorf("向量维度 = %d", len(record.Embedding))
+	}
+}
+
+// TestRunEmbeddingSkipsEmptyKind 从没被回复过的人没有 interaction 向量，不算待处理。
+func TestRunEmbeddingSkipsEmptyKind(t *testing.T) {
+	store := &fakeEmbedStore{inputs: []EmbeddingInput{{UID: "u-a", Name: "新人", Texts: []string{"你好"}}}}
+	embedder := &fakeEmbedWorker{}
+	stats, err := RunEmbedding(context.Background(), store, embedder, EmbedOptions{})
+	if err != nil {
+		t.Fatalf("入库失败：%v", err)
+	}
+	if stats.Total != 3 || stats.Skipped != 1 || stats.Pending != 2 || stats.Embedded != 2 {
+		t.Fatalf("空 interaction 应跳过：%+v", stats)
+	}
 	for _, record := range store.upserts {
-		got[record.UID] = record.Hash
-		if len(record.Embedding) != EmbeddingDimension {
-			t.Errorf("%s 向量维度 = %d", record.UID, len(record.Embedding))
+		if record.Kind == KindInteraction {
+			t.Error("空 interaction 不该写入")
 		}
-	}
-	if got["u-b"] != hashText("熟客\n又来了") {
-		t.Errorf("变化档案 hash 不符：%q", got["u-b"])
-	}
-	if got["u-d"] != hashText("新人\n你好") {
-		t.Errorf("新增档案 hash 不符：%q", got["u-d"])
-	}
-	if _, ok := got["u-a"]; ok {
-		t.Error("未变更档案不应重新写入")
 	}
 }
 
@@ -100,7 +149,9 @@ func TestRunEmbeddingNoPending(t *testing.T) {
 	input := EmbeddingInput{UID: "u-a", Name: "白饭"}
 	store := &fakeEmbedStore{
 		inputs: []EmbeddingInput{input},
-		hashes: map[string]string{"u-a": hashText(embeddingText(input))},
+		hashes: map[string]map[EmbeddingKind]string{
+			"u-a": {KindIdentity: hashText("白饭")},
+		},
 	}
 	embedder := &fakeEmbedWorker{}
 	stats, err := RunEmbedding(context.Background(), store, embedder, EmbedOptions{})
@@ -125,10 +176,11 @@ func TestRunEmbeddingRetriesOnce(t *testing.T) {
 	}
 }
 
-// TestRunEmbeddingBatchAndProgress 3 条按 2 条一批，进度两次。
+// TestRunEmbeddingBatchAndProgress 5 条文档按 2 条一批，进度三次。
 func TestRunEmbeddingBatchAndProgress(t *testing.T) {
 	store := &fakeEmbedStore{inputs: []EmbeddingInput{
-		{UID: "u-a", Name: "一"}, {UID: "u-b", Name: "二"}, {UID: "u-c", Name: "三"},
+		{UID: "u-a", Name: "一", Texts: []string{"说一"}},
+		{UID: "u-b", Name: "二", Replies: []string{"回二"}},
 	}}
 	embedder := &fakeEmbedWorker{}
 	progress := 0
@@ -139,7 +191,8 @@ func TestRunEmbeddingBatchAndProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("入库失败：%v", err)
 	}
-	if stats.Batches != 2 || embedder.calls != 2 || progress != 2 || stats.Embedded != 3 {
+	// u-a: identity+facts，u-b: identity+interaction → 4 份文档，2 批。
+	if stats.Batches != 2 || embedder.calls != 2 || progress != 2 || stats.Embedded != 4 {
 		t.Errorf("批量行为不符：stats=%+v calls=%d progress=%d", stats, embedder.calls, progress)
 	}
 }
@@ -180,19 +233,24 @@ func TestRunEmbeddingDependencyAndOptionValidation(t *testing.T) {
 	}
 }
 
-// TestEmbeddingTextJoin 昵称 + 最近发言 + 最近回复按换行拼接。
-func TestEmbeddingTextJoin(t *testing.T) {
-	cases := []struct {
-		input EmbeddingInput
-		want  string
-	}{
-		{EmbeddingInput{UID: "u", Name: " 白饭 ", Texts: []string{" 今天 ", ""}, Replies: []string{"好"}}, "白饭\n今天\n好"},
-		{EmbeddingInput{UID: "u", Name: "", Texts: []string{"只有发言"}}, "只有发言"},
-		{EmbeddingInput{UID: "u"}, ""},
+// TestKindTextHelpers 三路文本函数的拼接与空段处理。
+func TestKindTextHelpers(t *testing.T) {
+	input := EmbeddingInput{
+		UID:     "u",
+		Name:    " 白饭 ",
+		Texts:   []string{" 今天 ", "", " 也要白饭 "},
+		Replies: []string{" 好 "},
 	}
-	for _, tc := range cases {
-		if got := embeddingText(tc.input); got != tc.want {
-			t.Errorf("embeddingText(%+v) = %q，期望 %q", tc.input, got, tc.want)
-		}
+	if got := identityText(input); got != "白饭" {
+		t.Errorf("identityText = %q", got)
+	}
+	if got := factsText(input); got != "今天\n也要白饭" {
+		t.Errorf("factsText = %q", got)
+	}
+	if got := interactionText(input); got != "好" {
+		t.Errorf("interactionText = %q", got)
+	}
+	if got := identityText(EmbeddingInput{UID: "u"}); got != "" {
+		t.Errorf("空昵称应返回空串：%q", got)
 	}
 }

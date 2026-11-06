@@ -90,6 +90,82 @@ func (r *memoryTestRepo) count() int {
 	return len(r.records)
 }
 
+// memoryTestSoul 提供灵魂记忆候选，记录调用次数。
+type memoryTestSoul struct {
+	records []store.MemoryRecord
+	calls   int
+}
+
+func (s *memoryTestSoul) SoulCandidates(context.Context, float64, int) ([]store.MemoryRecord, error) {
+	s.calls++
+	return s.records, nil
+}
+
+// TestNewMemoryWorkerWiresSoul soul_enabled=true 时装配并真正重建文件。
+func TestNewMemoryWorkerWiresSoul(t *testing.T) {
+	dir := t.TempDir()
+	soulPath := filepath.Join(dir, "soul-memories.md")
+	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	soul := &memoryTestSoul{records: []store.MemoryRecord{{
+		Record: memory.Record{ID: "soul-1", Summary: "主人是学生", Importance: 0.9, ValidFrom: at},
+		Source: "persona", Kind: "fact", Title: "主人是学生",
+	}}}
+	worker, err := newMemoryWorker(memoryWorkerDeps{
+		Config: config.Memory{
+			Enabled: true, IntervalSeconds: 300,
+			SoulEnabled: true, SoulPath: soulPath, SoulMaxEntries: 5,
+		},
+		Source:        &memoryTestSource{},
+		Repo:          &memoryTestRepo{},
+		Soul:          soul,
+		WatermarkPath: filepath.Join(dir, "watermark.json"),
+	})
+	if err != nil {
+		t.Fatalf("装配 worker 失败：%v", err)
+	}
+	stats, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if soul.calls != 1 || stats.SoulEntries != 1 {
+		t.Fatalf("灵魂记忆未接线：calls=%d stats=%+v", soul.calls, stats)
+	}
+	entries, err := memory.LoadSoul(context.Background(), soulPath)
+	if err != nil || len(entries) != 1 || entries[0].Title != "主人是学生" {
+		t.Fatalf("灵魂记忆文件不符：%+v / %v", entries, err)
+	}
+}
+
+// TestNewMemoryWorkerSoulDisabled soul_enabled=false 时不接来源、不写文件。
+func TestNewMemoryWorkerSoulDisabled(t *testing.T) {
+	dir := t.TempDir()
+	soulPath := filepath.Join(dir, "soul-memories.md")
+	soul := &memoryTestSoul{}
+	worker, err := newMemoryWorker(memoryWorkerDeps{
+		Config: config.Memory{
+			Enabled: true, IntervalSeconds: 300,
+			SoulEnabled: false, SoulPath: soulPath, SoulMaxEntries: 5,
+		},
+		Source:        &memoryTestSource{},
+		Repo:          &memoryTestRepo{},
+		Soul:          soul,
+		WatermarkPath: filepath.Join(dir, "watermark.json"),
+	})
+	if err != nil {
+		t.Fatalf("装配 worker 失败：%v", err)
+	}
+	stats, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if soul.calls != 0 || stats.SoulEntries != -1 {
+		t.Fatalf("关闭时不应重建：calls=%d stats=%+v", soul.calls, stats)
+	}
+	if entries, err := memory.LoadSoul(context.Background(), soulPath); err != nil || len(entries) != 0 {
+		t.Fatalf("关闭时不应写文件：%+v / %v", entries, err)
+	}
+}
+
 // TestNewMemoryWorkerAdvancesWatermark 装配真实 worker（mock 来源/仓库 + 文件水位），
 // 一轮扫描后记录落库、水位推进到事件位置。
 func TestNewMemoryWorkerAdvancesWatermark(t *testing.T) {

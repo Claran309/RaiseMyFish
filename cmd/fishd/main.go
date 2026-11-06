@@ -353,7 +353,7 @@ type memoryExtractWorker interface {
 
 // memoryWorkerDeps 是提炼 worker 的装配依赖。
 //
-// 用结构体而不是长参数列表：M06 接线后依赖项已达 9 个，
+// 用结构体而不是长参数列表：接线后依赖项已超过 10 个，
 // 位置参数很容易在新增依赖时传错（且编译器不会报错，因为类型都是接口）。
 type memoryWorkerDeps struct {
 	Config config.Memory
@@ -366,6 +366,8 @@ type memoryWorkerDeps struct {
 	Repo   store.MemoryRepo
 	// Profiles 非 nil 时附带观众档案重建（每小时节流 + 只在直播活跃时）。
 	Profiles extractworker.ProfileSource
+	// Soul 非 nil 且 SoulEnabled 时重建灵魂记忆（M12）。
+	Soul extractworker.SoulSource
 	// Extractor 非 nil 时按触发策略走 LLM，否则规则版。
 	Extractor     memory.Extractor
 	WatermarkPath string
@@ -378,8 +380,7 @@ func newMemoryWorker(deps memoryWorkerDeps) (*extractworker.Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 间隔由 runMemoryExtract 的循环控制；worker 的 Run 不在本装配中使用。
-	return extractworker.New(deps.Source, deps.Repo, watermark, extractworker.Options{
+	opts := extractworker.Options{
 		AllowPrivate: deps.Config.AllowPrivate,
 		Frozen:       deps.Config.Frozen,
 		FreezePath:   deps.FreezePath,
@@ -390,9 +391,18 @@ func newMemoryWorker(deps memoryWorkerDeps) (*extractworker.Worker, error) {
 		// 提炼上下文：只读「严格早于当前事件」的历史，避免回放时混入未来发言（M07）。
 		Recent:    deps.Recent,
 		OwnerName: deps.Config.OwnerName,
-		// Soul/SoulOpts 暂不接：M12 要求「先修权限/主体/来源再接线」，
-		// 其中主体/来源要扩展 K0 的 YAML schema（属契约变更），未获授权前不接。
-	})
+	}
+	// 灵魂记忆（M12）：只有显式开启时才接来源；路径由配置派生/显式给出，
+	// 主体/未来生效/私密筛选在仓库与重建层各自兜底。
+	if deps.Config.SoulEnabled {
+		opts.Soul = deps.Soul
+		opts.SoulOpts = extractworker.SoulOptions{
+			Path:       deps.Config.SoulPath,
+			MaxEntries: deps.Config.SoulMaxEntries,
+		}
+	}
+	// 间隔由 runMemoryExtract 的循环控制；worker 的 Run 不在本装配中使用。
+	return extractworker.New(deps.Source, deps.Repo, watermark, opts)
 }
 
 // extractJobOwner 是提炼任务的租约标识：主机名+进程号，便于排查「谁卡住了任务」。
@@ -557,13 +567,6 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, l
 		logger.Warn("提炼上下文装配失败，将不带上下文提炼", zap.String("action", "memory_extract"), zap.Error(rerr))
 		recent = nil
 	}
-	// 灵魂记忆重建尚未接线：M12 要求先修「私密范围/未来生效/主体与来源」，
-	// 其中主体与来源要扩展 K0 的 YAML schema（契约变更），未获授权前不接。
-	// 这里显式打一条，避免 soul_enabled=true 时被误以为在跑。
-	if cfg.Memory.SoulEnabled {
-		logger.Warn("灵魂记忆重建未接线（待 M12 权限/主体约束），soul_enabled 暂不生效",
-			zap.String("action", "memory_extract"), zap.String("result", "soul_disabled"))
-	}
 	worker, err := newMemoryWorker(memoryWorkerDeps{
 		Config:        cfg.Memory,
 		Source:        source,
@@ -571,6 +574,7 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, l
 		Recent:        recent,
 		Repo:          repo,
 		Profiles:      profiles,
+		Soul:          repo,
 		Extractor:     extractor,
 		WatermarkPath: memoryWatermarkPath,
 		FreezePath:    memoryFreezePath,
@@ -587,6 +591,8 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, l
 		zap.Bool("allow_private", cfg.Memory.AllowPrivate),
 		zap.Bool("llm_extract", cfg.Memory.LLMExtract),
 		zap.Bool("frozen", cfg.Memory.Frozen),
+		zap.Bool("soul_enabled", cfg.Memory.SoulEnabled),
+		zap.Int("soul_max_entries", cfg.Memory.SoulMaxEntries),
 	)
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})

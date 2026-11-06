@@ -7,11 +7,16 @@ package extractworker
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/store"
 )
+
+// soulOwnerKeyword 是「关于主人」的文本标记：带这个标记的记录归主人主体，
+// 即使发言人是观众（观众也可能提供主人的设定）。
+const soulOwnerKeyword = "主人"
 
 // SoulSource 是灵魂记忆重建所需的最小能力（由 database.MemoryRepo 实现）。
 type SoulSource interface {
@@ -64,7 +69,7 @@ func (w *Worker) rebuildSoul(ctx context.Context, stats *Stats) {
 		stats.SoulSkipped = "failed"
 		return
 	}
-	generated := memory.NormalizeSoul(soulEntriesFrom(records))
+	generated := memory.NormalizeSoul(soulEntriesFrom(records, w.opts.OwnerName))
 	entries := memory.MergeSoul(existing, generated)
 	if len(entries) > maxEntries {
 		entries = entries[:maxEntries]
@@ -77,10 +82,17 @@ func (w *Worker) rebuildSoul(ctx context.Context, stats *Stats) {
 	stats.SoulSkipped = ""
 }
 
-// soulEntriesFrom 把记录转成灵魂条目并去重（同标题取重要的那条）。
-func soulEntriesFrom(records []store.MemoryRecord) []memory.SoulMemory {
+// soulEntriesFrom 把记录转成灵魂条目，保留主体与来源。
+//
+// 观众自述（from_id/from_name 指向非主人，且正文不是关于主人）一律不写全局设定；
+// 主人本人的设定、关于主人的陈述、以及没有主体标识的系统设定才入选。
+func soulEntriesFrom(records []store.MemoryRecord, ownerName string) []memory.SoulMemory {
 	entries := make([]memory.SoulMemory, 0, len(records))
 	for _, rec := range records {
+		subject := soulSubjectFrom(rec, ownerName)
+		if subject == memory.SoulSubjectViewer {
+			continue
+		}
 		title := rec.Title
 		if title == "" {
 			title = rec.Summary
@@ -93,7 +105,45 @@ func soulEntriesFrom(records []store.MemoryRecord) []memory.SoulMemory {
 			Summary:    rec.Summary,
 			Importance: rec.Importance,
 			ValidFrom:  rec.ValidFrom,
+			Subject:    subject,
+			Source:     rec.Source,
+			Visibility: soulVisibility(rec.Private),
+			FromID:     rec.FromID,
+			FromName:   rec.FromName,
 		})
 	}
 	return entries
+}
+
+// soulSubjectFrom 推导条目主体。
+//
+// 顺序很重要：
+//  1. 发言人就是主人 → owner；
+//  2. 正文明确提到主人 → owner（观众提供的主人设定也有效）；
+//  3. 其余带发送者标识的记录是观众自述 → viewer，不进全局；
+//  4. 没有任何主体标识时，preference 按主人相关处理，其余按本鱼设定。
+func soulSubjectFrom(rec store.MemoryRecord, ownerName string) string {
+	name := strings.TrimSpace(rec.FromName)
+	owner := strings.TrimSpace(ownerName)
+	if owner != "" && name == owner {
+		return memory.SoulSubjectOwner
+	}
+	if strings.Contains(rec.Title+"\n"+rec.Summary, soulOwnerKeyword) {
+		return memory.SoulSubjectOwner
+	}
+	if strings.TrimSpace(rec.FromID) != "" || name != "" {
+		return memory.SoulSubjectViewer
+	}
+	if rec.Kind == memory.KindPreference {
+		return memory.SoulSubjectOwner
+	}
+	return memory.SoulSubjectFish
+}
+
+// soulVisibility 把「私密记录」映射成条目可见性；私密条目不会进全局注入。
+func soulVisibility(private bool) string {
+	if private {
+		return memory.SoulVisibilityPrivate
+	}
+	return memory.SoulVisibilityPublic
 }

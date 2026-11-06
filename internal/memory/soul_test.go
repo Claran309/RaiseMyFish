@@ -146,3 +146,80 @@ func TestMergeSoulManualWinsOnSameTitle(t *testing.T) {
 		t.Fatalf("手写应优先：%+v", got)
 	}
 }
+
+// TestSoulSubjectFieldsRoundTrip 主体/来源/可见性/发送者写入后读回不丢。
+func TestSoulSubjectFieldsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "soul-memories.md")
+	base := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	want := SoulMemory{
+		Title: "主人是学生", Summary: "在读大学", Importance: 0.9, ValidFrom: base,
+		Subject: SoulSubjectOwner, Source: "owner_direct", Visibility: SoulVisibilityPublic,
+		FromID: "1000", FromName: "Claran",
+	}
+	if err := WriteSoulAtomic(context.Background(), path, []SoulMemory{want}); err != nil {
+		t.Fatalf("写入失败：%v", err)
+	}
+	got, err := LoadSoul(context.Background(), path)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("读回失败：%+v / %v", got, err)
+	}
+	e := got[0]
+	if e.Subject != SoulSubjectOwner || e.Source != "owner_direct" ||
+		e.Visibility != SoulVisibilityPublic || e.FromID != "1000" || e.FromName != "Claran" {
+		t.Fatalf("主体/来源字段丢失：%+v", e)
+	}
+}
+
+// TestSoulLegacyEntryDefaults 旧文件缺 subject/visibility 时按 fish/public 处理。
+func TestSoulLegacyEntryDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "soul.md")
+	payload := "schema: soul-memories/v1\nentries:\n  - title: 本鱼是鱼\n    summary: 陪聊\n    importance: 0.9\n    valid_from: 2026-11-01T00:00:00Z\n"
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadSoul(context.Background(), path)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("读取失败：%+v / %v", got, err)
+	}
+	if got[0].Subject != SoulSubjectFish || got[0].Visibility != SoulVisibilityPublic {
+		t.Fatalf("旧条目默认值不符：%+v", got[0])
+	}
+}
+
+// TestRenderSoulOnlyGlobalEntries 观众/私密条目不进全局注入。
+func TestRenderSoulOnlyGlobalEntries(t *testing.T) {
+	base := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	entries := []SoulMemory{
+		{Title: "主人是学生", Summary: "在读大学", Importance: 0.9, ValidFrom: base,
+			Subject: SoulSubjectOwner, Visibility: SoulVisibilityPublic},
+		{Title: "观众是大三学生", Summary: "某位观众的自述", Importance: 0.95, ValidFrom: base,
+			Subject: SoulSubjectViewer, Visibility: SoulVisibilityPublic, FromID: "u-1"},
+		{Title: "私密设定", Summary: "只属于私聊", Importance: 0.98, ValidFrom: base,
+			Subject: SoulSubjectOwner, Visibility: SoulVisibilityPrivate},
+		{Title: "本鱼是直播鱼", Summary: "陪主人聊天", Importance: 0.9, ValidFrom: base,
+			Subject: SoulSubjectFish, Visibility: SoulVisibilityPublic},
+	}
+	got := RenderSoul(entries)
+	for _, want := range []string{"主人是学生", "本鱼是直播鱼"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("全局条目缺失 %q：%q", want, got)
+		}
+	}
+	for _, banned := range []string{"观众是大三学生", "私密设定"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("非全局条目被注入 %q：%q", banned, got)
+		}
+	}
+}
+
+// TestSanitizeSoulKeepsDifferentSubjects 同标题不同主体不互相去重。
+func TestSanitizeSoulKeepsDifferentSubjects(t *testing.T) {
+	base := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	got := sanitizeSoul([]SoulMemory{
+		{Title: "我是学生", Summary: "主人版", Importance: 0.9, ValidFrom: base, Subject: SoulSubjectOwner},
+		{Title: "我是学生", Summary: "观众版", Importance: 0.95, ValidFrom: base, Subject: SoulSubjectViewer, FromID: "u-1"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("不同主体不应去重：%+v", got)
+	}
+}

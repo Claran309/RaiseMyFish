@@ -209,3 +209,78 @@ func TestSoulRebuildKeepsManualEntries(t *testing.T) {
 		t.Error("旧自动条目应被替换掉")
 	}
 }
+
+// TestSoulRebuildExcludesViewerIdentity 观众自述不能变成全局设定。
+func TestSoulRebuildExcludesViewerIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "soul.md")
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+
+	// 「我是大三学生」来自观众；即使 important 很高也不能进全局。
+	viewerFact := soulRec("v1", "事实：我是大三学生", "我是大三学生", 0.95)
+	viewerFact.FromID, viewerFact.FromName, viewerFact.Source = "u-42", "小明", "persona"
+	// LLM 误标成 preference 的观众自述（不含「主人」）同样要排除。
+	viewerPref := soulRec("v2", "事实：我爱吃辣", "我爱吃辣", 0.9)
+	viewerPref.Kind = "preference"
+	viewerPref.FromID, viewerPref.FromName, viewerPref.Source = "u-43", "小红", "persona"
+
+	src := &fakeSoul{records: []store.MemoryRecord{viewerFact, viewerPref}}
+	w := newSoulWorker(t, src, path, &now)
+	var stats Stats
+	w.rebuildSoul(context.Background(), &stats)
+	if stats.SoulEntries != 0 {
+		t.Fatalf("观众自述不应写入：%+v", stats)
+	}
+	got, err := memory.LoadSoul(context.Background(), path)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("全局设定不应包含观众自述：%+v / %v", got, err)
+	}
+}
+
+// TestSoulRebuildKeepsSubjectAndSource 主体/来源/发送者在转换时保留。
+func TestSoulRebuildKeepsSubjectAndSource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "soul.md")
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+
+	// 主人本人的事实：靠 OwnerName 判定。
+	ownerFact := soulRec("o1", "事实：我是学生", "我是学生", 0.9)
+	ownerFact.FromID, ownerFact.FromName, ownerFact.Source = "1000", "Claran", "persona"
+	// 观众提供的主人设定：主体是 owner，但发送者字段要保留。
+	viewerOwnerPref := soulRec("p1", "主人相关：主人爱吃甜", "主人爱吃甜", 0.9)
+	viewerOwnerPref.Kind = "preference"
+	viewerOwnerPref.FromID, viewerOwnerPref.FromName, viewerOwnerPref.Source = "u-2", "路人", "persona"
+	// 无主体标识的系统设定：按本鱼处理。
+	fishFact := soulRec("f1", "本鱼是直播鱼", "陪大家聊天", 0.9)
+	fishFact.Source = "owner_direct"
+
+	src := &fakeSoul{records: []store.MemoryRecord{ownerFact, viewerOwnerPref, fishFact}}
+	w := newSoulWorker(t, src, path, &now)
+	w.opts.OwnerName = "Claran"
+	var stats Stats
+	w.rebuildSoul(context.Background(), &stats)
+	if stats.SoulEntries != 3 {
+		t.Fatalf("应写入 3 条：%+v", stats)
+	}
+
+	got, err := memory.LoadSoul(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := map[string]memory.SoulMemory{}
+	for _, e := range got {
+		byTitle[e.Title] = e
+	}
+
+	owner := byTitle["事实：我是学生"]
+	if owner.Subject != memory.SoulSubjectOwner || owner.FromID != "1000" ||
+		owner.FromName != "Claran" || owner.Source != "persona" || owner.Visibility != memory.SoulVisibilityPublic {
+		t.Errorf("主人主体字段不符：%+v", owner)
+	}
+	pref := byTitle["主人相关：主人爱吃甜"]
+	if pref.Subject != memory.SoulSubjectOwner || pref.FromID != "u-2" || pref.FromName != "路人" {
+		t.Errorf("主人陈述的主体/说话人不符：%+v", pref)
+	}
+	fish := byTitle["本鱼是直播鱼"]
+	if fish.Subject != memory.SoulSubjectFish || fish.Source != "owner_direct" {
+		t.Errorf("本鱼主体字段不符：%+v", fish)
+	}
+}
