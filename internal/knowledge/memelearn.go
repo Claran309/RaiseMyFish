@@ -7,6 +7,9 @@ package knowledge
 //   - 只读公开入向事件，私密内容在查询层就已排除；
 //   - 模型只负责判断与措辞，落盘前仍按 K0 规则完整解析校验；
 //   - learned.md 由机器维护，同 title 幂等；每日条数可选，用 ID 的日期前缀持久化限流（0=不限）。
+//   - **去重口径是「精确词表」不是「召回结果」**：Recall 是相关性检索，
+//     语义相近的不同梗也会命中，用它判断「已收录」会把新梗永久丢掉（M09）。
+//     现在只比较知识库的 title/keywords/tags 是否字面相等。
 
 import (
 	"context"
@@ -194,6 +197,11 @@ func (l *MemeLearner) RunOnce(ctx context.Context) (MemeLearnStats, error) {
 			learnedToday++
 		}
 	}
+	// 知识库规范词：精确去重的唯一依据（与语义检索解耦）。
+	known, err := l.exactTermSet(ctx)
+	if err != nil {
+		return stats, err
+	}
 
 	for _, cand := range candidates {
 		if err := checkContext(ctx); err != nil {
@@ -216,11 +224,8 @@ func (l *MemeLearner) RunOnce(ctx context.Context) (MemeLearnStats, error) {
 			stats.Duplicated++
 			continue
 		}
-		hit, err := l.reader.Recall(ctx, Query{Scope: Scope{Channel: event.ChLive, Session: "meme-learn"}, Text: cand.text})
-		if err != nil {
-			return stats, fmt.Errorf("查询已有梗知识：%w", err)
-		}
-		if len(hit.Items) > 0 {
+		// 精确命中才算「已收录」：语义相近不是重复。
+		if known[key] {
 			stats.Duplicated++
 			continue
 		}
@@ -240,6 +245,10 @@ func (l *MemeLearner) RunOnce(ctx context.Context) (MemeLearnStats, error) {
 			stats.Duplicated++
 			continue
 		}
+		if known[titleKey] {
+			stats.Duplicated++
+			continue
+		}
 		entry := learned.diskEntry(today)
 		if err := appendMemeDoc(ctx, path, &doc, entry); err != nil {
 			return stats, err
@@ -251,6 +260,28 @@ func (l *MemeLearner) RunOnce(ctx context.Context) (MemeLearnStats, error) {
 		stats.Learned++
 	}
 	return stats, nil
+}
+
+// exactTermSet 取知识库的规范词集合（已规范化）。
+//
+// 只接受实现了 ExactTermSource 的 Reader：不支持时不退回 Recall——
+// 相关性检索会把语义相近的不同梗算成重复，那是丢梗的根因。
+func (l *MemeLearner) exactTermSet(ctx context.Context) (map[string]bool, error) {
+	source, ok := l.reader.(ExactTermSource)
+	if !ok {
+		return nil, errors.New("知识Reader不支持精确词表，无法判定梗是否已收录")
+	}
+	terms, err := source.ExactTerms(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("读取知识规范词：%w", err)
+	}
+	known := make(map[string]bool, len(terms))
+	for _, term := range terms {
+		if key := normalize(term); key != "" {
+			known[key] = true
+		}
+	}
+	return known, nil
 }
 
 // judge 调模型并解析；模型原文不进入错误信息，避免把提示词或弹幕带进日志。

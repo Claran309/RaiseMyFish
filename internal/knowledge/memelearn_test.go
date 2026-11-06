@@ -29,10 +29,19 @@ func (s *memeTestSource) PublicSince(_ context.Context, ch event.Channel, since 
 
 type memeTestReader struct {
 	items []Item
+	// terms 是「精确词表」：梗白学习只用它判断是否已收录。
+	terms []string
+	// recallCalls 记录 Recall 调用次数：M09 之后必须恒为 0。
+	recallCalls int
 }
 
 func (r *memeTestReader) Recall(_ context.Context, query Query) (Context, error) {
+	r.recallCalls++
 	return Context{Scope: query.Scope, Revision: strings.Repeat("a", 64), Items: r.items}, nil
+}
+
+func (r *memeTestReader) ExactTerms(context.Context) ([]string, error) {
+	return r.terms, nil
 }
 
 type memeTestLLM struct {
@@ -341,7 +350,7 @@ func TestMemeLearnerSkipsKnownKnowledge(t *testing.T) {
 		memeEvent("e1", "老梗", now, false),
 		memeEvent("e2", "老梗", now, false),
 	}
-	reader := &memeTestReader{items: []Item{{ID: "known", Source: "test", Text: "主题：老梗", Scenes: []string{"live"}, Priority: 50}}}
+	reader := &memeTestReader{terms: []string{"老梗"}}
 	llm := &memeTestLLM{reply: learnEveryCandidate()}
 	learner, err := NewMemeLearner(dir, reader, &memeTestSource{events: events}, llm, MemeLearnOptions{Now: func() time.Time { return now }})
 	if err != nil {
@@ -356,6 +365,101 @@ func TestMemeLearnerSkipsKnownKnowledge(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "memes", "learned.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("没有学习时不应创建 learned.md：%v", err)
+	}
+}
+
+// TestMemeLearnSemanticCloseButDistinctIsLearned T15：语义相近但不是同一个梗 → 必须收录
+//
+// 回归背景：旧实现用 Recall（相关性检索）判断「已收录」，
+// 知识库里有语义相近的「绷不住了」时，新梗「蚌埠住了」会被误判成重复而永久丢失。
+// 这里刻意让 Recall 仍返回「相近条目」，验证它不再参与去重。
+func TestMemeLearnSemanticCloseButDistinctIsLearned(t *testing.T) {
+	dir := knowledgeDir(t)
+	now := time.Now().UTC()
+	events := []event.Event{
+		memeEvent("s1", "蚌埠住了", now, false),
+		memeEvent("s2", "蚌埠住了", now, false),
+	}
+	reader := &memeTestReader{
+		terms: []string{"绷不住了"}, // 规范词不同
+		items: []Item{{ID: "near", Source: "test", Text: "主题：绷不住了", Scenes: []string{"live"}, Priority: 50}},
+	}
+	llm := &memeTestLLM{reply: learnEveryCandidate()}
+	learner, err := NewMemeLearner(dir, reader, &memeTestSource{events: events}, llm, MemeLearnOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := learner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if stats.Learned != 1 || stats.Duplicated != 0 {
+		t.Fatalf("语义相近的不同梗应被收录：%+v", stats)
+	}
+	if reader.recallCalls != 0 {
+		t.Fatalf("去重不应再用 Recall（调用 %d 次）", reader.recallCalls)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "memes", "learned.md")); err != nil {
+		t.Fatalf("新梗未落盘：%v", err)
+	}
+}
+
+// TestMemeLearnExactTermIsDuplicated T15：规范词字面相同才算重复。
+func TestMemeLearnExactTermIsDuplicated(t *testing.T) {
+	dir := knowledgeDir(t)
+	now := time.Now().UTC()
+	events := []event.Event{
+		memeEvent("d1", "蚌埠住了", now, false),
+		memeEvent("d2", "蚌埠住了", now, false),
+	}
+	reader := &memeTestReader{terms: []string{"蚌埠住了"}}
+	llm := &memeTestLLM{reply: learnEveryCandidate()}
+	learner, err := NewMemeLearner(dir, reader, &memeTestSource{events: events}, llm, MemeLearnOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := learner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if stats.Duplicated != 1 || stats.Learned != 0 {
+		t.Fatalf("同名精确命中应判重复：%+v", stats)
+	}
+	if llm.count() != 0 {
+		t.Fatalf("已收录的梗不该再问模型，实际 %d 次", llm.count())
+	}
+}
+
+// plainTestReader 只实现 Reader，没有精确词表能力。
+type plainTestReader struct{ recallCalls int }
+
+func (r *plainTestReader) Recall(_ context.Context, query Query) (Context, error) {
+	r.recallCalls++
+	return Context{Scope: query.Scope}, nil
+}
+
+// TestMemeLearnRequiresExactTermSource 不支持精确词表时明确报错，不退回 Recall。
+func TestMemeLearnRequiresExactTermSource(t *testing.T) {
+	dir := knowledgeDir(t)
+	now := time.Now().UTC()
+	events := []event.Event{
+		memeEvent("p1", "蚌埠住了", now, false),
+		memeEvent("p2", "蚌埠住了", now, false),
+	}
+	reader := &plainTestReader{}
+	llm := &memeTestLLM{reply: learnEveryCandidate()}
+	learner, err := NewMemeLearner(dir, reader, &memeTestSource{events: events}, llm, MemeLearnOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := learner.RunOnce(context.Background()); err == nil {
+		t.Fatal("缺少精确词表能力时应报错，而不是静默退回相关性检索")
+	}
+	if reader.recallCalls != 0 {
+		t.Fatalf("不应退回 Recall，实际调用 %d 次", reader.recallCalls)
 	}
 }
 
