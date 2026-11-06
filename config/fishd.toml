@@ -246,6 +246,9 @@ soul_max_entries = 20
 # 留空表示跟随 [llm] persona_dir：<persona_dir>/knowledge/soul-memories.md，
 # 多 persona 各用各的；显式填写则优先。
 soul_path = ""
+# 主人昵称：提炼时发言人昵称等于它 → 记成「主人相关」偏好（Importance 0.8）。
+# 留空表示只靠正文里的「主人」关键词判定，不按昵称。
+owner_name = "Claran309"
 
 # 消费循环（Claim → Scheduler → Brain → Sender）。
 # 整段缺失表示「只采集不回复」；这里保留默认值，实际是否回复还取决于 [llm] enabled 与路由。
