@@ -56,6 +56,25 @@ func (f *fakeRecordSource) Records(_ context.Context, _ Scope, limit int) ([]Rec
 	return f.records, nil
 }
 
+// fakeQueryRecordSource 在既有三段查询上多实现 RecordsFor。
+type fakeQueryRecordSource struct {
+	fakeRecordSource
+
+	queryCalls int
+	gotQuery   string
+}
+
+func (f *fakeQueryRecordSource) RecordsFor(_ context.Context, _ Scope, query string, limit int) ([]Record, error) {
+	f.queryCalls++
+	f.gotQuery = query
+	f.calls++
+	f.gotRecords = limit
+	if f.failOn == "records" {
+		return nil, f.err
+	}
+	return f.records, nil
+}
+
 // fakeFactSource 只实现 FactSource，用来验证 Shared 的可选注入。
 type fakeFactSource struct {
 	facts    []Fact
@@ -275,6 +294,65 @@ func TestReaderSharedWithFactSource(t *testing.T) {
 	fsErr := &fakeFactSource{failWith: errFake}
 	rErr, _ := NewReader(&fakeRecordSource{}, fsErr, ReaderOptions{})
 	if _, err := rErr.Shared(context.Background(), liveScope()); !errors.Is(err, errFake) {
+		t.Fatalf("错误未透传：%v", err)
+	}
+}
+
+// TestReaderRecallWithQueryUsesRecordsFor 有查询词且来源支持时走 RecordsFor，并透传查询与 limit。
+func TestReaderRecallWithQueryUsesRecordsFor(t *testing.T) {
+	src := &fakeQueryRecordSource{fakeRecordSource: fakeRecordSource{
+		records: []Record{{ID: "mem_1", Summary: "摘要", Importance: 0.5, Confidence: 0.5, ValidFrom: readerBaseTime}},
+	}}
+	r, err := NewReader(src, nil, ReaderOptions{RecordsLimit: 2})
+	if err != nil {
+		t.Fatalf("构造失败：%v", err)
+	}
+
+	got, err := r.RecallWithQuery(context.Background(), liveScope(), "  白饭  ")
+	if err != nil {
+		t.Fatalf("RecallWithQuery 失败：%v", err)
+	}
+	if src.queryCalls != 1 || src.gotQuery != "白饭" {
+		t.Errorf("RecordsFor 调用 = %d，query = %q", src.queryCalls, src.gotQuery)
+	}
+	if src.gotRecords != 2 {
+		t.Errorf("RecordsFor limit = %d，期望 2", src.gotRecords)
+	}
+	if len(got.Records) != 1 || got.Records[0].ID != "mem_1" {
+		t.Errorf("摘要未进入上下文：%+v", got.Records)
+	}
+
+	// 空查询只走普通 Records，不额外触发相关性路径
+	src.queryCalls = 0
+	if _, err := r.RecallWithQuery(context.Background(), liveScope(), "   "); err != nil {
+		t.Fatalf("空查询失败：%v", err)
+	}
+	if src.queryCalls != 0 {
+		t.Errorf("空查询不应调用 RecordsFor，实际 %d 次", src.queryCalls)
+	}
+}
+
+// TestReaderRecallWithQueryFallsBack 来源没有 RecordsFor 时退回 Records，不报错。
+func TestReaderRecallWithQueryFallsBack(t *testing.T) {
+	src := &fakeRecordSource{records: []Record{{
+		ID: "mem_1", Summary: "摘要", Importance: 0.5, Confidence: 0.5, ValidFrom: readerBaseTime,
+	}}}
+	r, _ := NewReader(src, nil, ReaderOptions{RecordsLimit: 4})
+
+	got, err := r.RecallWithQuery(context.Background(), liveScope(), "白饭")
+	if err != nil {
+		t.Fatalf("回退失败：%v", err)
+	}
+	if src.gotRecords != 4 || len(got.Records) != 1 {
+		t.Errorf("未退回 Records：limit=%d records=%+v", src.gotRecords, got.Records)
+	}
+}
+
+// TestReaderRecallWithQueryPropagatesError RecordsFor 失败必须原样透传，不能当作空记忆。
+func TestReaderRecallWithQueryPropagatesError(t *testing.T) {
+	src := &fakeQueryRecordSource{fakeRecordSource: fakeRecordSource{failOn: "records", err: errFake}}
+	r, _ := NewReader(src, nil, ReaderOptions{})
+	if _, err := r.RecallWithQuery(context.Background(), liveScope(), "白饭"); !errors.Is(err, errFake) {
 		t.Fatalf("错误未透传：%v", err)
 	}
 }

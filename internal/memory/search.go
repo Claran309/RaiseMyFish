@@ -85,7 +85,10 @@ type HybridSearcher struct {
 	onSemanticError func(error)
 }
 
-var _ Reader = (*HybridSearcher)(nil)
+var (
+	_ Reader      = (*HybridSearcher)(nil)
+	_ QueryReader = (*HybridSearcher)(nil)
+)
 
 // NewHybridSearcher 构造混合检索；embedder 允许为 nil（纯关键词）。
 func NewHybridSearcher(base Reader, source SearchRecordSource, embedder Embedder, opts HybridSearchOptions) (*HybridSearcher, error) {
@@ -114,6 +117,14 @@ func NewHybridSearcher(base Reader, source SearchRecordSource, embedder Embedder
 
 // Recall 保持既有召回口径（最近消息 + 摘要 + 跨通道）。
 func (h *HybridSearcher) Recall(ctx context.Context, scope Scope) (Context, error) {
+	return h.base.Recall(ctx, scope)
+}
+
+// RecallWithQuery 把问题文本转发给底层召回；底层不支持时退回 Recall。
+func (h *HybridSearcher) RecallWithQuery(ctx context.Context, scope Scope, query string) (Context, error) {
+	if reader, ok := h.base.(QueryReader); ok {
+		return reader.RecallWithQuery(ctx, scope, query)
+	}
 	return h.base.Recall(ctx, scope)
 }
 

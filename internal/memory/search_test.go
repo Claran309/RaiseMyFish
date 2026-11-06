@@ -338,6 +338,62 @@ func TestHybridSearcherDelegatesReader(t *testing.T) {
 	}
 }
 
+// fakeQuerySearchBase 在委托基类上实现 QueryReader，用于验证转发。
+type fakeQuerySearchBase struct {
+	fakeSearchBase
+
+	queryCalls int
+	gotQuery   string
+}
+
+func (f *fakeQuerySearchBase) RecallWithQuery(_ context.Context, scope Scope, query string) (Context, error) {
+	f.queryCalls++
+	f.gotQuery = query
+	f.gotScope = scope
+	if f.err != nil {
+		return Context{}, f.err
+	}
+	return f.ctx, nil
+}
+
+// TestHybridRecallWithQueryForwardsReader 底层支持 QueryReader 时原样转发问题文本。
+func TestHybridRecallWithQueryForwardsReader(t *testing.T) {
+	base := &fakeQuerySearchBase{fakeSearchBase: fakeSearchBase{ctx: searchBaseContext()}}
+	h, err := NewHybridSearcher(base, &fakeSearchSource{}, nil, HybridSearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.RecallWithQuery(context.Background(), searchScope(), "白饭还有吗")
+	if err != nil {
+		t.Fatalf("RecallWithQuery 失败：%v", err)
+	}
+	if base.queryCalls != 1 || base.gotQuery != "白饭还有吗" {
+		t.Errorf("未转发：calls=%d query=%q", base.queryCalls, base.gotQuery)
+	}
+	if base.recalls != 0 {
+		t.Errorf("底层支持时不应再走普通 Recall，实际 %d 次", base.recalls)
+	}
+	if len(got.Records) != 1 {
+		t.Errorf("上下文不符：%+v", got)
+	}
+}
+
+// TestHybridRecallWithQueryFallsBack 底层不支持 QueryReader 时退回普通 Recall。
+func TestHybridRecallWithQueryFallsBack(t *testing.T) {
+	base := &fakeSearchBase{ctx: searchBaseContext()}
+	h, err := NewHybridSearcher(base, &fakeSearchSource{}, nil, HybridSearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.RecallWithQuery(context.Background(), searchScope(), "白饭"); err != nil {
+		t.Fatalf("回退失败：%v", err)
+	}
+	if base.recalls != 1 {
+		t.Errorf("未退回 Recall，实际 %d 次", base.recalls)
+	}
+}
+
 // TestNewHybridSearcherValidation 依赖与 alpha 边界。
 func TestNewHybridSearcherValidation(t *testing.T) {
 	if _, err := NewHybridSearcher(nil, &fakeSearchSource{}, nil, HybridSearchOptions{}); err == nil {

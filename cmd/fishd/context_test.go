@@ -107,6 +107,40 @@ func TestBuildPassiveInputAlwaysRecallsMemory(t *testing.T) {
 	}
 }
 
+// fakeQueryMemoryReader 记录 RecallWithQuery 收到的问题文本。
+type fakeQueryMemoryReader struct {
+	*fakeMemoryReader
+
+	queryCalls int
+	gotQuery   string
+}
+
+func (f *fakeQueryMemoryReader) RecallWithQuery(_ context.Context, scope memory.Scope, query string) (memory.Context, error) {
+	f.queryCalls++
+	f.gotQuery = query
+	return f.fakeMemoryReader.Recall(context.Background(), scope)
+}
+
+// TestBuildPassiveInputPassesQuestionToQueryReader M11：当前事件正文要进入摘要选取路径。
+func TestBuildPassiveInputPassesQuestionToQueryReader(t *testing.T) {
+	base, recent := snapshotTestMemory()
+	mem := &fakeQueryMemoryReader{fakeMemoryReader: base}
+	builder := newContextBuilder(snapshotTestPack(), mem, nil, nil, nil, nil, zap.NewNop())
+
+	ev := snapshotTestEvent("白饭还有吗")
+	input, _ := buildPassiveInput(context.Background(), builder, ev)
+
+	if mem.queryCalls != 1 || mem.gotQuery != ev.Text {
+		t.Fatalf("问题未传入：calls=%d query=%q", mem.queryCalls, mem.gotQuery)
+	}
+	if mem.recallCalls != 1 || mem.sharedCalls != 1 {
+		t.Fatalf("召回次数不符：recall=%d shared=%d", mem.recallCalls, mem.sharedCalls)
+	}
+	if len(input.Memory.Recent) != 1 || input.Memory.Recent[0].Text != recent.Text {
+		t.Fatalf("记忆未注入：%+v", input.Memory)
+	}
+}
+
 // TestViewerProfileLookupSeparatesNotFoundAndFailure C04：
 // 陌生人（ErrNotFound）不注入；真实故障注入显式状态并记日志，不能伪装成陌生人。
 func TestViewerProfileLookupSeparatesNotFoundAndFailure(t *testing.T) {

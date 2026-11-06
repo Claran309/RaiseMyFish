@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -19,6 +20,11 @@ const (
 	memoryRecordLimitMax = 200
 	// memorySearchMaxRunes 限制搜索词长度，防止构造超长 SQL 参数。
 	memorySearchMaxRunes = 200
+	// defaultRecordSubjectQuota 是同一主体一次召回最多占用的摘要条数。
+	// 高重要度的固定主题不能靠重要度长期占满窗口，普通熟人才有机会出现。
+	defaultRecordSubjectQuota = 3
+	// recordQueryTermLimit 限制一次相关性匹配使用的检索词数量。
+	recordQueryTermLimit = 8
 )
 
 // MemoryRepo 执行范围受限的持久化读写，不实现提炼/Reader编排。
@@ -26,9 +32,11 @@ type MemoryRepo struct{ db *gorm.DB }
 
 // 编译期断言：事实查询同时满足 store 与 memory 两侧的窄接口。
 var (
-	_ store.MemoryRepo  = (*MemoryRepo)(nil)
-	_ store.FactSource  = (*MemoryRepo)(nil)
-	_ memory.FactSource = (*MemoryRepo)(nil)
+	_ store.MemoryRepo         = (*MemoryRepo)(nil)
+	_ store.FactSource         = (*MemoryRepo)(nil)
+	_ memory.FactSource        = (*MemoryRepo)(nil)
+	_ memory.RecordSource      = (*MemoryRepo)(nil)
+	_ memory.RecordQuerySource = (*MemoryRepo)(nil)
 )
 
 // NewMemoryRepo 复用infra连接。
@@ -110,41 +118,127 @@ func (r *MemoryRepo) CrossChannel(ctx context.Context, s memory.Scope, limit int
 }
 
 // Records 只返回有效的可见摘要，不返回Body。
+//
+// 先在每个主体内限额，再按重要度取前 limit 条：同一 from_id/主题最多
+// defaultRecordSubjectQuota 条，避免少数固定主题长期占满上下文。
 func (r *MemoryRepo) Records(ctx context.Context, s memory.Scope, limit int) ([]memory.Record, error) {
+	return r.records(ctx, s, "", limit)
+}
+
+// RecordsFor 在 Records 的基础上优先返回与 query 相关的摘要。
+//
+// query 只影响排序与主体内的取舍，不改变可见范围；空查询等同 Records。
+func (r *MemoryRepo) RecordsFor(ctx context.Context, s memory.Scope, query string, limit int) ([]memory.Record, error) {
+	return r.records(ctx, s, query, limit)
+}
+
+// records 是 Records/RecordsFor 的共享实现。
+//
+// 主体优先取 from_id（同一观众），没有主体时才退回 title（同一主题）；
+// 两者都缺时用自身 ID 自成一组，避免把无关记录误合并。
+func (r *MemoryRepo) records(ctx context.Context, s memory.Scope, query string, limit int) ([]memory.Record, error) {
 	if err := validateRecall(ctx, s, limit); err != nil {
 		return nil, err
 	}
-	query := memoryScopeQuery(r.db.WithContext(ctx), s)
-	// SQL行与领域DTO分离，GORM不能直接映射DTO的[]string。
-	var rows []struct {
-		ID         string
-		Channel    event.Channel
-		Session    string
-		Summary    string
-		Importance float64
-		Confidence float64
-		Private    bool
-		ValidFrom  time.Time
-		IDs        json.RawMessage
+
+	terms := recordQueryTerms(query)
+	relevance := "FALSE"
+	args := make([]any, 0, len(terms)*2+4)
+	if len(terms) > 0 {
+		clauses := make([]string, 0, len(terms))
+		for _, term := range terms {
+			pattern := "%" + escapeLikePattern(term) + "%"
+			clauses = append(clauses, `(title ILIKE ? ESCAPE '\' OR summary ILIKE ? ESCAPE '\')`)
+			args = append(args, pattern, pattern)
+		}
+		relevance = "(" + strings.Join(clauses, " OR ") + ")"
 	}
-	err := query.Select("id, channel, session, summary, importance, confidence, private, valid_from, to_json(event_ids) AS ids").Order("importance DESC, id ASC").Limit(limit).Find(&rows).Error
+	visibility, visArgs := memoryVisibilitySQL(s)
+	args = append(args, visArgs...)
+	args = append(args, defaultRecordSubjectQuota, limit)
+
+	var rows []memoryRecordRow
+	err := r.db.WithContext(ctx).Raw(`
+WITH candidates AS (
+    SELECT id, COALESCE(channel,'') AS channel, COALESCE(session,'') AS session,
+           summary, importance, confidence, private, valid_from,
+           to_json(event_ids) AS ids,
+           CASE WHEN `+relevance+` THEN 1 ELSE 0 END AS relevant,
+           CASE
+             WHEN COALESCE(btrim(from_id), '') <> '' THEN 'uid:' || btrim(from_id)
+             WHEN COALESCE(btrim(title), '') <> '' THEN 'title:' || lower(btrim(title))
+             ELSE 'id:' || id
+           END AS subject
+    FROM memory_records
+    WHERE valid_to IS NULL AND NOT archived AND valid_from <= now()
+      AND `+visibility+`
+),
+ranked AS (
+    SELECT candidates.*,
+           ROW_NUMBER() OVER (
+               PARTITION BY subject
+               ORDER BY relevant DESC, importance DESC, valid_from DESC, id ASC
+           ) AS subject_rank
+    FROM candidates
+)
+SELECT id, channel, session, summary, importance, confidence, private, valid_from, ids
+FROM ranked
+WHERE subject_rank <= ?
+ORDER BY relevant DESC, importance DESC, id ASC
+LIMIT ?`, args...).Scan(&rows).Error
 	if err != nil {
 		return nil, &safeError{"查询记忆摘要失败", err}
 	}
-	result := make([]memory.Record, 0, len(rows))
-	for _, row := range rows {
-		record := memory.Record{ID: row.ID, Channel: row.Channel, Session: row.Session, Summary: row.Summary, Importance: row.Importance, Confidence: row.Confidence, Private: row.Private, ValidFrom: row.ValidFrom}
-		if len(row.IDs) > 0 {
-			if err := json.Unmarshal(row.IDs, &record.EventIDs); err != nil {
-				return nil, &safeError{"读取记忆来源失败", err}
-			}
-		}
-		result = append(result, record)
+	records, err := memoryRows(rows)
+	if err != nil {
+		return nil, err
 	}
-	if err := (memory.Context{Scope: s, Records: result}).Validate(); err != nil {
+	if err := (memory.Context{Scope: s, Records: records}).Validate(); err != nil {
 		return nil, &safeError{"记忆摘要存量数据无效", err}
 	}
-	return result, nil
+	return records, nil
+}
+
+// recordQueryTerms 把问题文本拆成 title/summary 匹配词。
+//
+// 整句优先（短查询直接命中），再按空白与常见标点切分；
+// 单字词不参与，避免「的/是」这类字把无关摘要抬到前面。
+func recordQueryTerms(query string) []string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil
+	}
+	if runes := []rune(query); len(runes) > memorySearchMaxRunes {
+		query = string(runes[:memorySearchMaxRunes])
+	}
+	seen := make(map[string]bool, recordQueryTermLimit)
+	terms := make([]string, 0, recordQueryTermLimit)
+	add := func(term string) {
+		term = strings.TrimSpace(term)
+		if term == "" || utf8.RuneCountInString(term) < 2 || seen[term] {
+			return
+		}
+		seen[term] = true
+		terms = append(terms, term)
+	}
+	add(query)
+	for _, term := range strings.FieldsFunc(query, isRecordQuerySeparator) {
+		if len(terms) >= recordQueryTermLimit {
+			break
+		}
+		add(term)
+	}
+	return terms
+}
+
+// isRecordQuerySeparator 是问句里不承载主题的切分符。
+func isRecordQuerySeparator(r rune) bool {
+	return unicode.IsSpace(r) || strings.ContainsRune("，。！？、；：,.!?;:（）()[]【】…—－-“”\"'", r)
+}
+
+// escapeLikePattern 转义 LIKE 通配符，让查询词按字面匹配。
+func escapeLikePattern(term string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(term)
 }
 
 // memoryScopeQuery 统一 Records/KeywordRecords 的有效期与公开私密过滤。

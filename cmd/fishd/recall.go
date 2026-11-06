@@ -61,15 +61,22 @@ func brainStateSource(currentRoom func() string, watch config.Watch) func(time.T
 // recallMemory 召回记忆与共享事实。
 //
 //   - mem 为 nil（未装配）→ 返回只带 Scope 的空快照，不报错；
+//   - 有查询文本且 Reader 支持 → 摘要优先匹配当前问题，否则退回普通召回；
 //   - 召回失败 → 降级为只带 Scope 的空快照 + 记日志，**不阻塞回复**；
 //   - 隐私：Scope 由事件派生，Reader 内部按 Scope 做隔离，这里不做任何越界拼装。
-func recallMemory(ctx context.Context, mem memory.Reader, scope memory.Scope, log *zap.Logger) (memory.Context, memory.SharedState) {
+func recallMemory(ctx context.Context, mem memory.Reader, scope memory.Scope, query string, log *zap.Logger) (memory.Context, memory.SharedState) {
 	empty := memory.Context{Scope: scope}
 	emptyShared := memory.SharedState{Scope: scope}
 	if mem == nil {
 		return empty, emptyShared
 	}
-	recalled, err := mem.Recall(ctx, scope)
+	var recalled memory.Context
+	var err error
+	if reader, ok := mem.(memory.QueryReader); ok && strings.TrimSpace(query) != "" {
+		recalled, err = reader.RecallWithQuery(ctx, scope, query)
+	} else {
+		recalled, err = mem.Recall(ctx, scope)
+	}
 	if err != nil {
 		log.Warn("记忆召回失败，降级为空快照",
 			zap.String("action", "memory_recall"),

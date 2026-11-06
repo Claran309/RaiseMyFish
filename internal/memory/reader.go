@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // RecordSource 是 Reader 需要的只读能力，store.MemoryRepo 天然满足。
@@ -23,8 +24,23 @@ type RecordSource interface {
 	Recent(ctx context.Context, scope Scope, limit int) ([]Message, error)
 	// CrossChannel 取其他通道的公开消息，升序返回。
 	CrossChannel(ctx context.Context, scope Scope, limit int) ([]Message, error)
-	// Records 取当前有效的记忆摘要，按重要度降序返回。
+	// Records 取当前有效的记忆摘要，按主体配额与重要度选取。
 	Records(ctx context.Context, scope Scope, limit int) ([]Record, error)
+}
+
+// RecordQuerySource 是 RecordSource 的可选扩展：带问题文本选取摘要。
+//
+// 未实现时 RecallWithQuery 退回 Records，既有来源不需要改动。
+type RecordQuerySource interface {
+	RecordsFor(ctx context.Context, scope Scope, query string, limit int) ([]Record, error)
+}
+
+// QueryReader 是 Reader 的可选扩展：把当前问题交给摘要选取。
+//
+// 隐私与范围过滤仍由 repository 的 SQL 负责；本接口只多传一个排序线索。
+type QueryReader interface {
+	Reader
+	RecallWithQuery(ctx context.Context, scope Scope, query string) (Context, error)
 }
 
 // FactSource 是可选的共享事实来源。
@@ -64,7 +80,10 @@ type AssembledReader struct {
 }
 
 // 编译期断言：装配结果必须满足 Brain 依赖的 Reader 接口。
-var _ Reader = (*AssembledReader)(nil)
+var (
+	_ Reader      = (*AssembledReader)(nil)
+	_ QueryReader = (*AssembledReader)(nil)
+)
 
 // NewReader 构造召回装配器。
 //
@@ -101,6 +120,17 @@ func clampLimit(limit, fallback int) int {
 // 顺序固定：Recent → CrossChannel → Records；任一段失败立即返回错误，
 // 不返回「部分数据 + nil error」——半份记忆比没有记忆更危险。
 func (r *AssembledReader) Recall(ctx context.Context, scope Scope) (Context, error) {
+	return r.recall(ctx, scope, "")
+}
+
+// RecallWithQuery 与 Recall 相同，但摘要选取优先匹配当前问题。
+//
+// 来源未实现 RecordQuerySource 时退回 Records；消息类窗口不受查询词影响。
+func (r *AssembledReader) RecallWithQuery(ctx context.Context, scope Scope, query string) (Context, error) {
+	return r.recall(ctx, scope, strings.TrimSpace(query))
+}
+
+func (r *AssembledReader) recall(ctx context.Context, scope Scope, query string) (Context, error) {
 	if ctx == nil {
 		return Context{}, errors.New("ctx 不能为 nil")
 	}
@@ -119,7 +149,7 @@ func (r *AssembledReader) Recall(ctx context.Context, scope Scope) (Context, err
 	if err != nil {
 		return Context{}, fmt.Errorf("召回跨通道消息失败：%w", err)
 	}
-	records, err := r.source.Records(ctx, scope, r.opts.RecordsLimit)
+	records, err := r.records(ctx, scope, query)
 	if err != nil {
 		return Context{}, fmt.Errorf("召回记忆摘要失败：%w", err)
 	}
@@ -130,6 +160,16 @@ func (r *AssembledReader) Recall(ctx context.Context, scope Scope) (Context, err
 		return Context{}, fmt.Errorf("召回数据越界或无效：%w", err)
 	}
 	return data, nil
+}
+
+// records 选择摘要来源：有查询词且来源支持时走 RecordsFor。
+func (r *AssembledReader) records(ctx context.Context, scope Scope, query string) ([]Record, error) {
+	if query != "" {
+		if source, ok := r.source.(RecordQuerySource); ok {
+			return source.RecordsFor(ctx, scope, query, r.opts.RecordsLimit)
+		}
+	}
+	return r.source.Records(ctx, scope, r.opts.RecordsLimit)
 }
 
 // Shared 装配当前范围的共享事实快照。

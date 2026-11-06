@@ -63,7 +63,7 @@ func newContextBuilder(pack persona.Pack, mem memory.Reader, know knowledge.Read
 // withKnowledge 由调用方按意图决定，避免每条短句都触发语义检索。
 func (b *contextBuilder) BuildContext(ctx context.Context, ev event.Event, visual string, withKnowledge bool) brain.ContextInput {
 	scope := memory.Scope{Channel: ev.Channel, Session: ev.Session, Private: ev.Private}
-	memCtx, shared := recallMemory(ctx, b.memory, scope, b.log)
+	memCtx, shared := recallMemory(ctx, b.memory, scope, ev.Text, b.log)
 
 	var knowCtx *knowledge.Context
 	if withKnowledge {
