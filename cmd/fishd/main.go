@@ -150,6 +150,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	defer stopMemory()
 	stopEmbeddingRefresh := startKnowledgeEmbeddingRefresh(ctx, cfg, knowledgeRuntime, logger)
 	defer stopEmbeddingRefresh()
+	// 记忆/档案向量：同一套增量语义，节奏独立（默认 5 分钟）。
+	stopMemoryEmbedding := startMemoryEmbeddingRefresh(ctx, cfg, resources.DB, logger)
+	defer stopMemoryEmbedding()
 	stopHeartbeatLike := startHeartbeatLike(ctx, cfg, logger)
 	defer stopHeartbeatLike()
 	logger.Info("Brain装配检查完成，未消费事件", zap.String("action", "brain_setup"), zap.Int("routes", len(routes)))

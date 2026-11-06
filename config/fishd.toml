@@ -133,8 +133,15 @@ alpha = 0.5
 # 「最相近」不等于「相关」——随机人名/无关歌词不能被当成知识或记忆。
 # 该阈值需要按真实负例校准：不同 embedding 模型的相似度分布不同。
 min_similarity = 0.6
+# auto_refresh 是「知识库 + 记忆/档案向量」的定时增量总开关：
+# 知识库按 revision 变化触发，记忆/档案按 memory_refresh_interval_seconds 轮询。
+# 关掉后只能手工跑 fishctl knowledge embed / fishctl memory embed / fishctl viewer embed。
+# 开启需同时 enabled = true；首次开启会立刻补一轮全量增量（有 embedding 费用）。
 auto_refresh = false
 refresh_interval_seconds = 3600
+# 记忆/观众档案向量的增量刷新间隔（60-86400 秒，默认 300）：
+# 只重算 embedding 为空或内容 hash 变化过的行，内容没变不重复调用模型。
+memory_refresh_interval_seconds = 300
 
 # 联网搜索（ReAct 的 web_search 工具）：留空表示未配置，工具明确回「未配置搜索源」。
 # 协议：POST {"query": "..."} → {"results": [{"title","snippet","url"}]}，

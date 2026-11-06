@@ -31,18 +31,22 @@ type Embedding struct {
 	// 变化时增量 embedding。
 	AutoRefresh            bool `toml:"auto_refresh"`
 	RefreshIntervalSeconds int  `toml:"refresh_interval_seconds"`
+	// MemoryRefreshIntervalSeconds 是记忆/观众档案向量的增量刷新间隔（默认 300）。
+	// 与知识库共用 auto_refresh 总开关，但节奏独立：记忆写得多、知识变得少。
+	MemoryRefreshIntervalSeconds int `toml:"memory_refresh_interval_seconds"`
 }
 
 func defaultEmbedding() Embedding {
 	return Embedding{
-		URL:                    "https://open.bigmodel.cn/api/paas/v4/embeddings",
-		Model:                  "embedding-3",
-		KeyEnv:                 "FISH_EMBEDDING_KEY",
-		Dimension:              embedding.DefaultDimension,
-		BatchSize:              32,
-		Alpha:                  0.5,
-		MinSimilarity:          0.6,
-		RefreshIntervalSeconds: 3600,
+		URL:                          "https://open.bigmodel.cn/api/paas/v4/embeddings",
+		Model:                        "embedding-3",
+		KeyEnv:                       "FISH_EMBEDDING_KEY",
+		Dimension:                    embedding.DefaultDimension,
+		BatchSize:                    32,
+		Alpha:                        0.5,
+		MinSimilarity:                0.6,
+		RefreshIntervalSeconds:       3600,
+		MemoryRefreshIntervalSeconds: 300,
 	}
 }
 
@@ -84,6 +88,9 @@ func (e Embedding) Validate() error {
 	}
 	if e.AutoRefresh && (e.RefreshIntervalSeconds < 60 || e.RefreshIntervalSeconds > 86400) {
 		return errors.New("embedding 刷新间隔必须在60至86400秒之间")
+	}
+	if e.MemoryRefreshIntervalSeconds != 0 && (e.MemoryRefreshIntervalSeconds < 60 || e.MemoryRefreshIntervalSeconds > 86400) {
+		return errors.New("embedding 记忆刷新间隔必须在60至86400秒之间")
 	}
 	if strings.ContainsAny(e.KeyEnv, "\r\n\x00") {
 		return errors.New("embedding key_env 不能包含控制字符")

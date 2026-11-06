@@ -20,7 +20,6 @@ import (
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
-	"RaiseMyFish/internal/embedding"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/gift"
 	"RaiseMyFish/internal/infra"
@@ -348,23 +347,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	memReader := memory.Reader(assembled)
 
 	// embedding 是增强能力：装配失败只记日志，记忆/档案检索退回纯关键词。
-	var embedClient *embedding.Client
-	if cfg.Embedding.Enabled {
-		client, err := embedding.New(embedding.Options{
-			URL:       cfg.Embedding.URL,
-			Model:     cfg.Embedding.Model,
-			APIKey:    cfg.Embedding.Key,
-			Dimension: cfg.Embedding.Dimension,
-			BatchSize: cfg.Embedding.BatchSize,
-			Timeout:   embedding.DefaultTimeout,
-		})
-		if err != nil {
-			log.Warn("embedding客户端装配失败，语义检索降级为关键词",
-				zap.String("action", "semantic_setup"), zap.Error(err))
-		} else {
-			embedClient = client
-		}
-	}
+	embedClient := buildEmbeddingClient(cfg, log)
 	// 即使没有 embedding 也要装混合检索：关键词档位包含 events 原文，
 	// 否则 memory_search 只能走 Recall，摘要没提炼出来时会「数据在却说不知道」。
 	var memEmbedder memory.Embedder

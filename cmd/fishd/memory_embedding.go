@@ -1,0 +1,183 @@
+package main
+
+// 本文件是 M08：记忆 / 观众档案向量的定时增量刷新。
+//
+// 背景：memory_records 与 viewer_profiles 的向量此前只能靠
+// `fishctl memory embed` / `fishctl viewer embed` 手工跑，新提炼的事实
+// 和刚重建的档案要等到有人记得执行命令才会被语义召回看见。
+//
+// 与知识库刷新（knowledge_embedding.go）同一套模式：
+//   - 共用 [embedding] auto_refresh 总开关；
+//   - 立即跑一轮，之后按间隔轮询；
+//   - 失败只记日志、下一轮重试，绝不影响采集/消费主链路。
+//
+// 增量语义在领域层（memory.RunEmbedding / viewer.RunEmbedding）：
+// 只重算「没有向量」或「内容 hash 变了」的行，没变化不花 embedding 费用。
+
+import (
+	"context"
+	"time"
+
+	"RaiseMyFish/internal/config"
+	"RaiseMyFish/internal/database"
+	"RaiseMyFish/internal/embedding"
+	"RaiseMyFish/internal/memory"
+	"RaiseMyFish/internal/viewer"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
+)
+
+// vectorEmbedder 是两个领域包 Embedder 的公共形状；*embedding.Client 满足它。
+type vectorEmbedder interface {
+	Embed(ctx context.Context, inputs []string) ([][]float64, error)
+}
+
+// defaultMemoryRefreshInterval 是未配置 memory_refresh_interval_seconds 时的节奏。
+const defaultMemoryRefreshInterval = 5 * time.Minute
+
+// buildEmbeddingClient 是 embedding 客户端的唯一装配点。
+//
+// 返回 nil 表示「未启用或装配失败」：调用方一律降级为纯关键词检索，
+// 不允许因为向量服务不可用而挡住主链路。
+func buildEmbeddingClient(cfg config.Config, logger *zap.Logger) *embedding.Client {
+	if !cfg.Embedding.Enabled {
+		return nil
+	}
+	client, err := embedding.New(embedding.Options{
+		URL:       cfg.Embedding.URL,
+		Model:     cfg.Embedding.Model,
+		APIKey:    cfg.Embedding.Key,
+		Dimension: cfg.Embedding.Dimension,
+		BatchSize: cfg.Embedding.BatchSize,
+		Timeout:   embedding.DefaultTimeout,
+	})
+	if err != nil {
+		if logger != nil {
+			logger.Warn("embedding客户端装配失败，语义检索降级为关键词",
+				zap.String("action", "semantic_setup"), zap.Error(err))
+		}
+		return nil
+	}
+	return client
+}
+
+// memoryEmbeddingRefresher 跑一轮「记忆 + 档案」增量向量化。
+type memoryEmbeddingRefresher struct {
+	memoryStore memory.EmbeddingStore
+	viewerStore viewer.EmbeddingStore
+	embedder    vectorEmbedder
+	batchSize   int
+	logger      *zap.Logger
+}
+
+// embedSummary 把两个领域包的统计收敛成同一个形状（字段名相同、类型不同）。
+type embedSummary struct {
+	total, skipped, pending, embedded int
+}
+
+// refreshOnce 依次刷新两类索引。
+//
+// 记忆与档案互不阻塞：一侧失败另一侧照跑；失败只记日志，下一轮自然重试。
+func (r *memoryEmbeddingRefresher) refreshOnce(ctx context.Context) {
+	r.embedAndLog(ctx, "memory", func() (embedSummary, error) {
+		stats, err := memory.RunEmbedding(ctx, r.memoryStore, r.embedder, memory.EmbedOptions{BatchSize: r.batchSize})
+		return embedSummary{stats.Total, stats.Skipped, stats.Pending, stats.Embedded}, err
+	})
+	r.embedAndLog(ctx, "viewer", func() (embedSummary, error) {
+		stats, err := viewer.RunEmbedding(ctx, r.viewerStore, r.embedder, viewer.EmbedOptions{BatchSize: r.batchSize})
+		return embedSummary{stats.Total, stats.Skipped, stats.Pending, stats.Embedded}, err
+	})
+}
+
+// embedAndLog 执行一类增量并按统一口径记日志。
+func (r *memoryEmbeddingRefresher) embedAndLog(ctx context.Context, kind string, run func() (embedSummary, error)) {
+	stats, err := run()
+	if err != nil {
+		if ctx.Err() != nil {
+			return // 正常停止，不当作失败
+		}
+		r.logger.Warn("向量增量刷新失败，等待下一轮",
+			zap.String("action", "vector_embed"),
+			zap.String("index", kind),
+			zap.Error(err),
+		)
+		return
+	}
+	// 没有待处理行时不打日志，避免每 5 分钟刷一条无意义记录
+	if stats.embedded == 0 {
+		return
+	}
+	r.logger.Info("向量增量刷新完成",
+		zap.String("action", "vector_embed"),
+		zap.String("index", kind),
+		zap.Int("total", stats.total),
+		zap.Int("skipped", stats.skipped),
+		zap.Int("pending", stats.pending),
+		zap.Int("embedded", stats.embedded),
+	)
+}
+
+// startMemoryEmbeddingRefresh 立即跑一轮，之后按 memory_refresh_interval_seconds 轮询。
+//
+// 关闭条件（任一）：embedding 未启用、auto_refresh 关闭、数据库/日志不可用。
+// 返回的 stop 会取消并等待 goroutine 退出。
+func startMemoryEmbeddingRefresh(ctx context.Context, cfg config.Config, db *gorm.DB, logger *zap.Logger) func() {
+	noop := func() {}
+	if !cfg.Embedding.Enabled || !cfg.Embedding.AutoRefresh || db == nil || logger == nil {
+		return noop
+	}
+	client := buildEmbeddingClient(cfg, logger)
+	if client == nil {
+		return noop
+	}
+	memoryStore, err := database.NewMemoryRepo(db)
+	if err != nil {
+		logger.Warn("记忆向量刷新装配失败", zap.String("action", "vector_embed"), zap.Error(err))
+		return noop
+	}
+	viewerStore, err := database.NewViewerRepo(db)
+	if err != nil {
+		logger.Warn("档案向量刷新装配失败", zap.String("action", "vector_embed"), zap.Error(err))
+		return noop
+	}
+	interval := time.Duration(cfg.Embedding.MemoryRefreshIntervalSeconds) * time.Second
+	if interval <= 0 {
+		interval = defaultMemoryRefreshInterval
+	}
+	refresher := &memoryEmbeddingRefresher{
+		memoryStore: memoryStore,
+		viewerStore: viewerStore,
+		embedder:    client,
+		batchSize:   cfg.Embedding.BatchSize,
+		logger:      logger,
+	}
+	logger.Info("记忆/档案向量定时增量已启动",
+		zap.String("action", "vector_embed"),
+		zap.Duration("interval", interval),
+	)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		refresher.refreshOnce(runCtx)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-ticker.C:
+				refresher.refreshOnce(runCtx)
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+// 确保 *embedding.Client 满足两个领域包的 Embedder 接口（编译期约定）。
+var _ memory.Embedder = (*embedding.Client)(nil)
+var _ viewer.Embedder = (*embedding.Client)(nil)
