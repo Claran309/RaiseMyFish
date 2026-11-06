@@ -82,6 +82,11 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取提炼任务迁移：%w", err)
 	}
 	extractionJobsHash := sha256.Sum256(extractionJobs)
+	viewerEmbeddingKinds, err := migrations.Files.ReadFile("0010_viewer_embedding_kinds.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取档案向量拆分迁移：%w", err)
+	}
+	viewerEmbeddingKindsHash := sha256.Sum256(viewerEmbeddingKinds)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -92,6 +97,7 @@ func migrationSteps() ([]migrationStep, error) {
 		{7, string(memoryViewerEmbeddings), hex.EncodeToString(memoryViewerEmbeddingsHash[:])},
 		{8, string(accounts), hex.EncodeToString(accountsHash[:])},
 		{9, string(extractionJobs), hex.EncodeToString(extractionJobsHash[:])},
+		{10, string(viewerEmbeddingKinds), hex.EncodeToString(viewerEmbeddingKindsHash[:])},
 	}, nil
 }
 
@@ -207,7 +213,7 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	if err := db.Exec("SELECT embedding,embedding_text_hash,embedding_updated_at FROM " + table("memory_records") + " LIMIT 0").Error; err != nil {
 		return &safeError{"记忆向量字段不完整", err}
 	}
-	if err := db.Exec("SELECT profile_embedding,profile_embedding_hash,profile_embedding_updated_at FROM " + table("viewer_profiles") + " LIMIT 0").Error; err != nil {
+	if err := db.Exec("SELECT identity_embedding,identity_embedding_hash,identity_embedding_updated_at,facts_embedding,facts_embedding_hash,facts_embedding_updated_at,interaction_embedding,interaction_embedding_hash,interaction_embedding_updated_at FROM " + table("viewer_profiles") + " LIMIT 0").Error; err != nil {
 		return &safeError{"档案向量字段不完整", err}
 	}
 	if err := db.Exec("SELECT id,mid,name,cookie,csrf,status,last_check,note,is_active FROM " + table("accounts") + " LIMIT 0").Error; err != nil {

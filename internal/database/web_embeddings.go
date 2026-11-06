@@ -58,10 +58,12 @@ WHERE COALESCE(summary, '') <> ''`).Scan(&memory).Error; err != nil {
 		Embedded    int64
 		LastUpdated *time.Time
 	}
+	// 档案向量有三路（identity/facts/interaction）；面板按「本人发言」口径统计，
+	// 因为那才是认人检索实际用的索引，另两路是补充。
 	if err := r.db.WithContext(ctx).Raw(`
 SELECT count(*) AS total,
-       count(*) FILTER (WHERE profile_embedding IS NOT NULL) AS embedded,
-       max(profile_embedding_updated_at) FILTER (WHERE profile_embedding IS NOT NULL) AS last_updated
+       count(*) FILTER (WHERE facts_embedding IS NOT NULL) AS embedded,
+       max(facts_embedding_updated_at) FILTER (WHERE facts_embedding IS NOT NULL) AS last_updated
 FROM viewer_profiles`).Scan(&viewer).Error; err != nil {
 		return store.WebEmbeddingStatus{}, &safeError{"统计档案向量失败", err}
 	}

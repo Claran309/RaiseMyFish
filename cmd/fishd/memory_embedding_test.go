@@ -85,7 +85,7 @@ func (f *fakeMemoryEmbedStore) UpsertMemoryEmbeddings(_ context.Context, records
 // fakeViewerEmbedStore 是内存版档案向量存储。
 type fakeViewerEmbedStore struct {
 	inputs    []viewer.EmbeddingInput
-	existing  map[string]string
+	existing  map[string]map[viewer.EmbeddingKind]string
 	upserted  []viewer.EmbeddingRecord
 	inputsErr error
 }
@@ -97,9 +97,9 @@ func (f *fakeViewerEmbedStore) ViewerEmbeddingInputs(context.Context) ([]viewer.
 	return f.inputs, nil
 }
 
-func (f *fakeViewerEmbedStore) ExistingProfileEmbeddingHashes(context.Context) (map[string]string, error) {
+func (f *fakeViewerEmbedStore) ExistingProfileEmbeddingHashes(context.Context) (map[string]map[viewer.EmbeddingKind]string, error) {
 	if f.existing == nil {
-		return map[string]string{}, nil
+		return map[string]map[viewer.EmbeddingKind]string{}, nil
 	}
 	return f.existing, nil
 }
@@ -136,11 +136,12 @@ func TestVectorRefreshEmbedsPending(t *testing.T) {
 	if len(memStore.upserted) != 2 {
 		t.Fatalf("记忆应写入 2 条向量：%+v", memStore.upserted)
 	}
-	if len(vwStore.upserted) != 1 || vwStore.upserted[0].UID != "2002" {
-		t.Fatalf("档案应写入 1 条向量：%+v", vwStore.upserted)
+	// M10：一份档案拆成 identity + facts 两路（没有回复 → 无 interaction）。
+	if len(vwStore.upserted) != 2 || vwStore.upserted[0].UID != "2002" {
+		t.Fatalf("档案应写入 2 条向量：%+v", vwStore.upserted)
 	}
-	if emb.count() != 3 {
-		t.Errorf("embedding 调用条数 = %d，期望 3", emb.count())
+	if emb.count() != 4 {
+		t.Errorf("embedding 调用条数 = %d，期望 4", emb.count())
 	}
 	for _, rec := range memStore.upserted {
 		if rec.Hash == "" || len(rec.Embedding) != memory.EmbeddingDimension {
@@ -162,8 +163,9 @@ func TestVectorRefreshSkipsUnchanged(t *testing.T) {
 
 	r.refreshOnce(context.Background())
 	first := emb.count()
-	if first != 2 {
-		t.Fatalf("首轮应调用 2 次 embedding，实际 %d", first)
+	// 记忆 1 条 + 档案 identity/facts 两路 = 3。
+	if first != 3 {
+		t.Fatalf("首轮应调用 3 次 embedding，实际 %d", first)
 	}
 
 	// 把首轮结果当成「已入库」的 hash，模拟下一次轮询。
@@ -171,9 +173,12 @@ func TestVectorRefreshSkipsUnchanged(t *testing.T) {
 	for _, rec := range memStore.upserted {
 		memStore.existing[rec.ID] = rec.Hash
 	}
-	vwStore.existing = map[string]string{}
+	vwStore.existing = map[string]map[viewer.EmbeddingKind]string{}
 	for _, rec := range vwStore.upserted {
-		vwStore.existing[rec.UID] = rec.Hash
+		if vwStore.existing[rec.UID] == nil {
+			vwStore.existing[rec.UID] = map[viewer.EmbeddingKind]string{}
+		}
+		vwStore.existing[rec.UID][rec.Kind] = rec.Hash
 	}
 
 	r.refreshOnce(context.Background())
@@ -192,11 +197,11 @@ func TestVectorRefreshFailureDoesNotBlockOther(t *testing.T) {
 
 	newTestRefresher(memStore, vwStore, emb).refreshOnce(context.Background())
 
-	if len(vwStore.upserted) != 1 {
+	if len(vwStore.upserted) != 2 {
 		t.Fatalf("记忆失败不应阻塞档案刷新：%+v", vwStore.upserted)
 	}
-	if emb.count() != 1 {
-		t.Errorf("embedding 调用 = %d，期望 1", emb.count())
+	if emb.count() != 2 {
+		t.Errorf("embedding 调用 = %d，期望 2（identity+facts）", emb.count())
 	}
 }
 

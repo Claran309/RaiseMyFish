@@ -124,11 +124,12 @@ func TestVectorRefreshAgainstRealPostgres(t *testing.T) {
 	}
 
 	r.refreshOnce(ctx)
-	if emb.count() != 2 {
-		t.Fatalf("首轮应向量化 2 条（记忆+档案），实际 %d", emb.count())
+	// 记忆 1 条 + 档案 identity/facts 两路（没有回复 → 无 interaction）= 3。
+	if emb.count() != 3 {
+		t.Fatalf("首轮应向量化 3 条（记忆 + identity + facts），实际 %d", emb.count())
 	}
 
-	var memEmbedded, vwEmbedded bool
+	var memEmbedded bool
 	if err := db.WithContext(ctx).Raw(
 		"SELECT embedding IS NOT NULL FROM memory_records WHERE id = ?", "fact:public:2002:vec1").Scan(&memEmbedded).Error; err != nil {
 		t.Fatal(err)
@@ -136,17 +137,23 @@ func TestVectorRefreshAgainstRealPostgres(t *testing.T) {
 	if !memEmbedded {
 		t.Fatal("记忆向量未写入")
 	}
+	// M10：认人用 identity、查发言用 facts，两路都必须独立落库。
+	var identityEmbedded, factsEmbedded, interactionEmbedded bool
 	if err := db.WithContext(ctx).Raw(
-		"SELECT profile_embedding IS NOT NULL FROM viewer_profiles WHERE uid = ?", "2002").Scan(&vwEmbedded).Error; err != nil {
+		"SELECT identity_embedding IS NOT NULL, facts_embedding IS NOT NULL, interaction_embedding IS NOT NULL FROM viewer_profiles WHERE uid = ?",
+		"2002").Row().Scan(&identityEmbedded, &factsEmbedded, &interactionEmbedded); err != nil {
 		t.Fatal(err)
 	}
-	if !vwEmbedded {
-		t.Fatal("档案向量未写入")
+	if !identityEmbedded || !factsEmbedded {
+		t.Fatalf("档案 identity/facts 向量未写入：identity=%v facts=%v", identityEmbedded, factsEmbedded)
+	}
+	if interactionEmbedded {
+		t.Fatal("没有回复时不该产生 interaction 向量")
 	}
 
 	// 第二轮：内容没变，不应再调用 embedding。
 	r.refreshOnce(ctx)
-	if emb.count() != 2 {
+	if emb.count() != 3 {
 		t.Fatalf("第二轮不应重复向量化：累计 %d 次", emb.count())
 	}
 
@@ -161,7 +168,7 @@ func TestVectorRefreshAgainstRealPostgres(t *testing.T) {
 		t.Fatalf("更新记忆失败：%v", err)
 	}
 	r.refreshOnce(ctx)
-	if emb.count() != 3 {
+	if emb.count() != 4 {
 		t.Fatalf("内容变化应重算一次：累计 %d 次", emb.count())
 	}
 }
