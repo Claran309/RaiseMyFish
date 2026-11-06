@@ -86,6 +86,15 @@ type Options struct {
 	BatchSize int
 	// ScanInterval 定时扫描间隔，<=0 用 5 分钟。
 	ScanInterval time.Duration
+	// Jobs 是任务队列（M05）。非 nil 时走「入队→领取→完成」路径；
+	// 为 nil 时保留旧的水位扫描路径（兼容尚未迁移任务表的部署与测试）。
+	Jobs JobSource
+	// JobOwner 是本进程的租约标识（建议 hostname+pid），<=0 时用默认值。
+	JobOwner string
+	// JobTTL 是单条任务的租约时长，<=0 用 2 分钟。
+	JobTTL time.Duration
+	// MaxAttempts 是任务最大尝试次数（含首次），<=0 用 5。
+	MaxAttempts int
 	// Source 覆盖 memory_sources 的来源 id；为空时按候选类型推导。
 	Source string
 	// Now 注入时钟，仅测试需要；为空时用 time.Now。
@@ -138,6 +147,10 @@ type Stats struct {
 	Duplicated int
 	// Skipped 没提炼出候选（含私密未授权、空文本、无规则命中、时间缺失）的事件条数。
 	Skipped int
+	// Failed 处理失败、已回队等待重试（或已置 failed）的任务条数。
+	Failed int
+	// Enqueued 本轮新入队的任务条数（任务队列模式）。
+	Enqueued int
 	// ProfilesRebuilt 本轮重建的档案数（-1 表示本轮跳过）。
 	ProfilesRebuilt int
 	// ProfileSkipped 是跳过重建的原因（throttled / idle / none）。
@@ -158,6 +171,8 @@ type Worker struct {
 	repo   store.MemoryRepo
 	wm     Watermark
 	opts   Options
+	// jobs 非 nil 时走任务队列模式（M05），source/wm 仅作兼容保留
+	jobs JobSource
 	// 档案重建节流状态（进程内，重启后立刻允许跑一次）
 	lastProfile time.Time
 	// 灵魂记忆重建节流状态
@@ -209,9 +224,18 @@ func New(source DoneSource, repo store.MemoryRepo, wm Watermark, opts Options) (
 	if opts.SoulOpts.Interval <= 0 {
 		opts.SoulOpts.Interval = time.Hour
 	}
+	if strings.TrimSpace(opts.JobOwner) == "" {
+		opts.JobOwner = "extract-worker"
+	}
+	if opts.JobTTL <= 0 {
+		opts.JobTTL = 2 * time.Minute
+	}
+	if opts.MaxAttempts <= 0 {
+		opts.MaxAttempts = 5
+	}
 	opts.Source = strings.TrimSpace(opts.Source)
 
-	return &Worker{source: source, repo: repo, wm: wm, opts: opts}, nil
+	return &Worker{source: source, repo: repo, wm: wm, jobs: opts.Jobs, opts: opts}, nil
 }
 
 // Run 按 ScanInterval 定时扫描，直到 ctx 被取消。
@@ -265,6 +289,12 @@ func (w *Worker) RunOnce(ctx context.Context) (Stats, error) {
 		return stats, nil
 	}
 
+	// 任务队列模式（M05）：入队 → 领取 → 完成/失败。
+	// 它不看事件是否已完成，也不使用事件时间水位。
+	if w.jobs != nil {
+		return w.runJobs(ctx, &stats)
+	}
+
 	start, err := w.wm.Load(ctx)
 	if err != nil {
 		return stats, fmt.Errorf("读取提炼水位：%w", err)
@@ -304,6 +334,79 @@ func (w *Worker) RunOnce(ctx context.Context) (Stats, error) {
 	w.rebuildProfiles(ctx, &stats)
 	w.rebuildSoul(ctx, &stats)
 	return stats, nil
+}
+
+// maxJobBatches 限制单轮领取批数：积压特别多时留一部分给下一轮，
+// 避免一轮扫描长时间占住循环、把心跳和其他子任务饿死。
+const maxJobBatches = 10
+
+// runJobs 是任务队列模式（M05）的一轮：入队 → 领取 → 处理 → 完成/失败。
+//
+// 与水位路径的关键差异：
+//   - 入队只看「入向且正文非空」，不看 status，未回复的弹幕也能被提炼；
+//   - 没有事件时间游标，晚完成事件不会因为时间早于水位而被跳过；
+//   - 单条失败只记账并回队，本轮立即结束，下一轮（5 分钟后）再试。
+func (w *Worker) runJobs(ctx context.Context, stats *Stats) (Stats, error) {
+	// 入队批次比领取批次大：首次上线时历史事件可能上万条，
+	// 入队太慢会让队列长期喂不饱（每轮只入队 200、却能处理 2000）。
+	enqueueLimit := w.opts.BatchSize * 10
+	if enqueueLimit > 500 {
+		enqueueLimit = 500
+	}
+
+	for batch := 0; batch < maxJobBatches; batch++ {
+		if err := ctx.Err(); err != nil {
+			return *stats, err
+		}
+		// 每批前补一次入队：新事件能在本轮就被处理，不必等下一轮。
+		enqueued, err := w.jobs.Enqueue(ctx, enqueueLimit)
+		if err != nil {
+			return *stats, fmt.Errorf("入队提炼任务：%w", err)
+		}
+		stats.Enqueued += enqueued
+
+		jobs, err := w.jobs.Claim(ctx, w.opts.JobOwner, w.opts.JobTTL, w.opts.BatchSize)
+		if err != nil {
+			return *stats, fmt.Errorf("领取提炼任务：%w", err)
+		}
+		if len(jobs) == 0 {
+			break
+		}
+		for _, job := range jobs {
+			if err := w.handleJob(ctx, job, stats); err != nil {
+				// 单条失败已记账并回队，本轮到此为止（不做紧密重试）。
+				w.rebuildProfiles(ctx, stats)
+				w.rebuildSoul(ctx, stats)
+				return *stats, nil
+			}
+		}
+	}
+	w.rebuildProfiles(ctx, stats)
+	w.rebuildSoul(ctx, stats)
+	return *stats, nil
+}
+
+// handleJob 处理一条任务：提炼 → 落库 → 标记完成；失败则记录原因并回队。
+func (w *Worker) handleJob(ctx context.Context, job Job, stats *Stats) error {
+	stats.Scanned++
+	// 事件已被删除（隐私撤回 / 清理）：任务直接完成，不无限重试。
+	if strings.TrimSpace(job.Event.ID) == "" {
+		stats.Skipped++
+		if err := w.jobs.Complete(ctx, job); err != nil && !errors.Is(err, store.ErrConflict) {
+			return fmt.Errorf("完成空任务：%w", err)
+		}
+		return nil
+	}
+	if err := w.processEvent(ctx, job.Event, stats); err != nil {
+		stats.Failed++
+		// 失败原因写进任务表；租约被抢时忽略（持有者变了，由对方接手）。
+		_ = w.jobs.Fail(ctx, job, err.Error(), true, w.opts.MaxAttempts)
+		return err
+	}
+	if err := w.jobs.Complete(ctx, job); err != nil && !errors.Is(err, store.ErrConflict) {
+		return fmt.Errorf("完成提炼任务：%w", err)
+	}
+	return nil
 }
 
 // 冻结来源，用于日志区分「配置写死」与「运行时开关」。
@@ -366,20 +469,29 @@ func (w *Worker) rebuildProfiles(ctx context.Context, stats *Stats) {
 
 // handleEvent 处理单条事件，返回本条事件对应的新水位。
 func (w *Worker) handleEvent(ctx context.Context, ev event.Event, stats *Stats) (Cursor, error) {
-	// 本条事件处理完后的位置
 	next := Cursor{At: ev.At, ID: ev.ID}
+	if err := w.processEvent(ctx, ev, stats); err != nil {
+		return next, err
+	}
+	return next, nil
+}
 
+// processEvent 提炼并落库一条事件（任务队列与水位模式共用）。
+//
+// 「有意跳过」（时间缺失 / 私密未授权 / 没有候选）返回 nil：
+// 这些是正常结论，不该让任务反复重试。
+func (w *Worker) processEvent(ctx context.Context, ev event.Event, stats *Stats) error {
 	// 事件时间缺失：算不出有效期，也过不了持久化校验（valid_from 不能为零）
 	if ev.At.IsZero() {
 		stats.Skipped++
-		return next, nil
+		return nil
 	}
 
 	// 私密边界在任何上下文拼装、提炼器调用和模型调用之前：未授权直接跳过。
-	// 跳过也要推进水位，否则每轮都会重复扫描同一批私信。
+	// 跳过也算处理完毕，否则每轮都会重复扫描同一批私信。
 	if ev.Private && !w.opts.AllowPrivate {
 		stats.Skipped++
-		return next, nil
+		return nil
 	}
 
 	extractOpts := memory.ExtractOptions{
@@ -407,14 +519,14 @@ func (w *Worker) handleEvent(ctx context.Context, ev event.Event, stats *Stats) 
 	}
 	if len(candidates) == 0 {
 		stats.Skipped++
-		return next, nil
+		return nil
 	}
 
 	for _, candidate := range candidates {
 		stats.Extracted++
 		inserted, err := w.repo.InsertRecord(ctx, w.buildRecord(ev, candidate))
 		if err != nil {
-			return next, fmt.Errorf("写入记忆记录：%w", err)
+			return fmt.Errorf("写入记忆记录：%w", err)
 		}
 		if inserted {
 			stats.Inserted++
@@ -422,7 +534,7 @@ func (w *Worker) handleEvent(ctx context.Context, ev event.Event, stats *Stats) 
 			stats.Duplicated++
 		}
 	}
-	return next, nil
+	return nil
 }
 
 // withoutCurrent 去掉当前这条事件，保留旧→新顺序。

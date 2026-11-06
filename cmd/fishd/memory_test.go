@@ -102,7 +102,7 @@ func TestNewMemoryWorkerAdvancesWatermark(t *testing.T) {
 	source := &memoryTestSource{events: []event.Event{ev}}
 	repo := &memoryTestRepo{}
 
-	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, repo, nil, nil, path, "")
+	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, nil, repo, nil, nil, path, "")
 	if err != nil {
 		t.Fatalf("装配 worker 失败：%v", err)
 	}
@@ -215,7 +215,7 @@ func TestNewMemoryWorkerHonorsConfigAndStateFreeze(t *testing.T) {
 	repo := &memoryTestRepo{}
 	wmPath := filepath.Join(t.TempDir(), "watermark.json")
 	freezePath := filepath.Join(t.TempDir(), "state", "memory.frozen")
-	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300, Frozen: true}, source, repo, nil, nil, wmPath, freezePath)
+	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300, Frozen: true}, source, nil, repo, nil, nil, wmPath, freezePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestNewMemoryWorkerHonorsConfigAndStateFreeze(t *testing.T) {
 	if err := memory.Freeze(freezePath); err != nil {
 		t.Fatal(err)
 	}
-	worker, err = newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, repo, nil, nil, wmPath, freezePath)
+	worker, err = newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, nil, repo, nil, nil, wmPath, freezePath)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -348,7 +349,10 @@ type memoryExtractWorker interface {
 }
 
 // newMemoryWorker 只用接口依赖装配 worker，测试可注入 mock 来源与仓库。
-func newMemoryWorker(cfg config.Memory, source extractworker.DoneSource, repo store.MemoryRepo, profiles extractworker.ProfileSource, extractor memory.Extractor, watermarkPath, freezePath string) (*extractworker.Worker, error) {
+//
+// jobs 非 nil 时走任务队列（M05）：入队/租约/完成，不再依赖 done 事件与事件时间水位；
+// 为 nil 时保留旧水位扫描路径（兼容未迁移任务表的部署）。
+func newMemoryWorker(cfg config.Memory, source extractworker.DoneSource, jobs extractworker.JobSource, repo store.MemoryRepo, profiles extractworker.ProfileSource, extractor memory.Extractor, watermarkPath, freezePath string) (*extractworker.Worker, error) {
 	watermark, err := extractworker.NewFileWatermark(watermarkPath)
 	if err != nil {
 		return nil, err
@@ -362,7 +366,18 @@ func newMemoryWorker(cfg config.Memory, source extractworker.DoneSource, repo st
 		FreezePath:   freezePath,
 		Profiles:     profiles,
 		Extractor:    extractor,
+		Jobs:         jobs,
+		JobOwner:     extractJobOwner(),
 	})
+}
+
+// extractJobOwner 是提炼任务的租约标识：主机名+进程号，便于排查「谁卡住了任务」。
+func extractJobOwner() string {
+	host, err := os.Hostname()
+	if err != nil || strings.TrimSpace(host) == "" {
+		host = "fishd"
+	}
+	return fmt.Sprintf("%s:%d", host, os.Getpid())
 }
 
 // buildMemoryExtractor 构造记忆提炼器：LLM 版（按触发策略）或 nil（规则版）。
@@ -506,7 +521,13 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, l
 		profiles = nil
 	}
 	extractor := buildMemoryExtractor(cfg, logger)
-	worker, err := newMemoryWorker(cfg.Memory, source, repo, profiles, extractor, memoryWatermarkPath, memoryFreezePath)
+	// 任务队列（M05）：装配失败时回落旧的水位扫描，不让提炼整体停掉。
+	jobs, jerr := database.NewExtractionJobsRepo(db)
+	if jerr != nil {
+		logger.Warn("提炼任务队列装配失败，回落到水位扫描", zap.String("action", "memory_extract"), zap.Error(jerr))
+		jobs = nil
+	}
+	worker, err := newMemoryWorker(cfg.Memory, source, jobs, repo, profiles, extractor, memoryWatermarkPath, memoryFreezePath)
 	if err != nil {
 		logger.Error("记忆提炼初始化失败，降级运行", zap.String("action", "memory_extract"), zap.Error(err))
 		return noop

@@ -77,6 +77,11 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取账号管理迁移：%w", err)
 	}
 	accountsHash := sha256.Sum256(accounts)
+	extractionJobs, err := migrations.Files.ReadFile("0009_extraction_jobs.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取提炼任务迁移：%w", err)
+	}
+	extractionJobsHash := sha256.Sum256(extractionJobs)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -86,6 +91,7 @@ func migrationSteps() ([]migrationStep, error) {
 		{6, string(knowledgeEmbeddings), hex.EncodeToString(knowledgeEmbeddingsHash[:])},
 		{7, string(memoryViewerEmbeddings), hex.EncodeToString(memoryViewerEmbeddingsHash[:])},
 		{8, string(accounts), hex.EncodeToString(accountsHash[:])},
+		{9, string(extractionJobs), hex.EncodeToString(extractionJobsHash[:])},
 	}, nil
 }
 
@@ -181,7 +187,7 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 		return errors.New("数据库需要升级，请执行 fishd migrate up")
 	}
 	var exists bool
-	err = db.Raw(`SELECT bool_and(to_regclass(format('%I.%I', ?::text, name)) IS NOT NULL) FROM unnest(ARRAY['events','tasks','memory_sources','memory_records','llm_usage','send_log','dlq']) AS name`, schema).Scan(&exists).Error
+	err = db.Raw(`SELECT bool_and(to_regclass(format('%I.%I', ?::text, name)) IS NOT NULL) FROM unnest(ARRAY['events','tasks','memory_sources','memory_records','llm_usage','send_log','dlq','extraction_jobs']) AS name`, schema).Scan(&exists).Error
 	if err != nil {
 		return &safeError{"检查数据库表失败", err}
 	}
@@ -206,6 +212,9 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	}
 	if err := db.Exec("SELECT id,mid,name,cookie,csrf,status,last_check,note,is_active FROM " + table("accounts") + " LIMIT 0").Error; err != nil {
 		return &safeError{"账号管理表不完整", err}
+	}
+	if err := db.Exec("SELECT event_id,extraction_version,status,lease_owner,lease_until,attempts,last_error,created_at,updated_at FROM " + table("extraction_jobs") + " LIMIT 0").Error; err != nil {
+		return &safeError{"提炼任务表不完整", err}
 	}
 	return nil
 }
