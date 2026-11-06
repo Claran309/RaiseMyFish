@@ -348,26 +348,47 @@ type memoryExtractWorker interface {
 	RunOnce(context.Context) (extractworker.Stats, error)
 }
 
-// newMemoryWorker 只用接口依赖装配 worker，测试可注入 mock 来源与仓库。
+// memoryWorkerDeps 是提炼 worker 的装配依赖。
 //
-// jobs 非 nil 时走任务队列（M05）：入队/租约/完成，不再依赖 done 事件与事件时间水位；
-// 为 nil 时保留旧水位扫描路径（兼容未迁移任务表的部署）。
-func newMemoryWorker(cfg config.Memory, source extractworker.DoneSource, jobs extractworker.JobSource, repo store.MemoryRepo, profiles extractworker.ProfileSource, extractor memory.Extractor, watermarkPath, freezePath string) (*extractworker.Worker, error) {
-	watermark, err := extractworker.NewFileWatermark(watermarkPath)
+// 用结构体而不是长参数列表：M06 接线后依赖项已达 9 个，
+// 位置参数很容易在新增依赖时传错（且编译器不会报错，因为类型都是接口）。
+type memoryWorkerDeps struct {
+	Config config.Memory
+	// Source 是旧水位路径的事件来源；Jobs 非 nil 时仅作兼容保留。
+	Source extractworker.DoneSource
+	// Jobs 非 nil 时走任务队列（M05）：入队/租约/完成，不再依赖 done 事件与事件时间水位。
+	Jobs extractworker.JobSource
+	// Recent 提供提炼上下文；必须是带时间上界的实现（M07），否则历史回放会读到未来。
+	Recent extractworker.RecentEventsSource
+	Repo   store.MemoryRepo
+	// Profiles 非 nil 时附带观众档案重建（每小时节流 + 只在直播活跃时）。
+	Profiles extractworker.ProfileSource
+	// Extractor 非 nil 时按触发策略走 LLM，否则规则版。
+	Extractor     memory.Extractor
+	WatermarkPath string
+	FreezePath    string
+}
+
+// newMemoryWorker 只用接口依赖装配 worker，测试可注入 mock 来源与仓库。
+func newMemoryWorker(deps memoryWorkerDeps) (*extractworker.Worker, error) {
+	watermark, err := extractworker.NewFileWatermark(deps.WatermarkPath)
 	if err != nil {
 		return nil, err
 	}
 	// 间隔由 runMemoryExtract 的循环控制；worker 的 Run 不在本装配中使用。
-	// Profiles 非 nil 时会在提炼循环里附带档案重建（每小时节流 + 只在直播活跃时）。
-	// Extractor 非 nil 时按触发策略走 LLM，否则规则版。
-	return extractworker.New(source, repo, watermark, extractworker.Options{
-		AllowPrivate: cfg.AllowPrivate,
-		Frozen:       cfg.Frozen,
-		FreezePath:   freezePath,
-		Profiles:     profiles,
-		Extractor:    extractor,
-		Jobs:         jobs,
+	return extractworker.New(deps.Source, deps.Repo, watermark, extractworker.Options{
+		AllowPrivate: deps.Config.AllowPrivate,
+		Frozen:       deps.Config.Frozen,
+		FreezePath:   deps.FreezePath,
+		Profiles:     deps.Profiles,
+		Extractor:    deps.Extractor,
+		Jobs:         deps.Jobs,
 		JobOwner:     extractJobOwner(),
+		// 提炼上下文：只读「严格早于当前事件」的历史，避免回放时混入未来发言（M07）。
+		Recent:    deps.Recent,
+		OwnerName: deps.Config.OwnerName,
+		// Soul/SoulOpts 暂不接：M12 要求「先修权限/主体/来源再接线」，
+		// 其中主体/来源要扩展 K0 的 YAML schema（属契约变更），未获授权前不接。
 	})
 }
 
@@ -527,7 +548,30 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, l
 		logger.Warn("提炼任务队列装配失败，回落到水位扫描", zap.String("action", "memory_extract"), zap.Error(jerr))
 		jobs = nil
 	}
-	worker, err := newMemoryWorker(cfg.Memory, source, jobs, repo, profiles, extractor, memoryWatermarkPath, memoryFreezePath)
+	// 提炼上下文（M06/M07）：EventRepo 同时提供「严格早于当前事件」的上界查询。
+	recent, rerr := database.NewEventRepo(db)
+	if rerr != nil {
+		logger.Warn("提炼上下文装配失败，将不带上下文提炼", zap.String("action", "memory_extract"), zap.Error(rerr))
+		recent = nil
+	}
+	// 灵魂记忆重建尚未接线：M12 要求先修「私密范围/未来生效/主体与来源」，
+	// 其中主体与来源要扩展 K0 的 YAML schema（契约变更），未获授权前不接。
+	// 这里显式打一条，避免 soul_enabled=true 时被误以为在跑。
+	if cfg.Memory.SoulEnabled {
+		logger.Warn("灵魂记忆重建未接线（待 M12 权限/主体约束），soul_enabled 暂不生效",
+			zap.String("action", "memory_extract"), zap.String("result", "soul_disabled"))
+	}
+	worker, err := newMemoryWorker(memoryWorkerDeps{
+		Config:        cfg.Memory,
+		Source:        source,
+		Jobs:          jobs,
+		Recent:        recent,
+		Repo:          repo,
+		Profiles:      profiles,
+		Extractor:     extractor,
+		WatermarkPath: memoryWatermarkPath,
+		FreezePath:    memoryFreezePath,
+	})
 	if err != nil {
 		logger.Error("记忆提炼初始化失败，降级运行", zap.String("action", "memory_extract"), zap.Error(err))
 		return noop

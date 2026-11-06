@@ -127,6 +127,16 @@ type RecentEventsSource interface {
 	RecentEvents(ctx context.Context, scope memory.Scope, limit int) ([]event.Event, error)
 }
 
+// RecentBeforeSource 是「带时间上界」的最近上下文查询（database.EventRepo 满足）。
+//
+// M07：补提炼历史事件时，上下文必须以**被处理事件**为上界。
+// 只实现 RecentEvents 的来源仍可用，worker 会在客户端剔除不早于当前事件的行，
+// 但那样会白白占掉配额（取 6 条里有 4 条是未来的，实际只剩 2 条），
+// 所以生产装配必须提供本方法。
+type RecentBeforeSource interface {
+	RecentEventsBefore(ctx context.Context, scope memory.Scope, at time.Time, id string, limit int) ([]event.Event, error)
+}
+
 // ProfileSource 是观众档案重建所需的最小能力（由 database.ViewerRepo 实现）。
 type ProfileSource interface {
 	// ActiveSince 判断 since 之后是否有入向事件。
@@ -501,10 +511,10 @@ func (w *Worker) processEvent(ctx context.Context, ev event.Event, stats *Stats)
 		IsFirstNick:  false,
 		AllowPrivate: w.opts.AllowPrivate,
 	}
-	// 上下文：取同 session 最近几条（去掉当前这条），失败降级为无上下文
+	// 上下文：取同 session、且严格早于当前事件的历史（M07），失败降级为无上下文
 	if w.opts.Recent != nil {
 		scope := memory.Scope{Channel: ev.Channel, Session: ev.Session, Private: ev.Private}
-		if recent, err := w.opts.Recent.RecentEvents(ctx, scope, w.opts.ContextLimit+1); err == nil {
+		if recent, err := w.recentBefore(ctx, scope, ev, w.opts.ContextLimit+1); err == nil {
 			extractOpts.Context = withoutCurrent(recent, ev.ID)
 		}
 	}
@@ -535,6 +545,37 @@ func (w *Worker) processEvent(ctx context.Context, ev event.Event, stats *Stats)
 		}
 	}
 	return nil
+}
+
+// recentBefore 取「严格早于当前事件」的上下文（M07）。
+//
+// 优先用带 SQL 上界的来源；旧来源退回「最近 N 条 + 客户端过滤」，
+// 语义仍正确，只是可能因配额被未来事件占用而变浅。
+func (w *Worker) recentBefore(ctx context.Context, scope memory.Scope, ev event.Event, limit int) ([]event.Event, error) {
+	if src, ok := w.opts.Recent.(RecentBeforeSource); ok {
+		return src.RecentEventsBefore(ctx, scope, ev.At, ev.ID, limit)
+	}
+	rows, err := w.opts.Recent.RecentEvents(ctx, scope, limit)
+	if err != nil {
+		return nil, err
+	}
+	return keepBefore(rows, ev.At, ev.ID), nil
+}
+
+// keepBefore 只保留严格早于 (at, id) 的行，与 SQL 的 `(at,id) < (?,?)` 语义一致。
+func keepBefore(rows []event.Event, at time.Time, id string) []event.Event {
+	out := make([]event.Event, 0, len(rows))
+	for _, row := range rows {
+		if row.At.After(at) {
+			continue
+		}
+		// 同一时刻：按 id 排序，等于或更大的都算「未来/当前」。
+		if row.At.Equal(at) && row.ID >= id {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 // withoutCurrent 去掉当前这条事件，保留旧→新顺序。

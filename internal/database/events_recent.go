@@ -10,6 +10,7 @@ package database
 import (
 	"context"
 	"strings"
+	"time"
 
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
@@ -25,6 +26,23 @@ const maxRecentEvents = 50
 // 调用方不能只凭 channel/session 推断私密权限，否则同房间的历史工具会把私密内容
 // 带进公开回复。
 func (r *EventRepo) RecentEvents(ctx context.Context, s memory.Scope, limit int) ([]event.Event, error) {
+	return r.recentEvents(ctx, s, time.Time{}, "", limit)
+}
+
+// RecentEventsBefore 返回严格早于 (at, id) 的最近入向事件，按时间倒序。
+//
+// 历史回放（补提炼旧事件）必须用它：直接查「最近 N 条」会读到当前最新的内容，
+// 把晚于被处理事件的发言当成前文，回放结果既不可复现，也会污染提炼语义。
+// 用 (at, id) 行值比较而不是只比 at，保证同一毫秒内的事件也不越界。
+func (r *EventRepo) RecentEventsBefore(ctx context.Context, s memory.Scope, at time.Time, id string, limit int) ([]event.Event, error) {
+	if at.IsZero() {
+		return nil, store.ErrInvalid
+	}
+	return r.recentEvents(ctx, s, at, id, limit)
+}
+
+// recentEvents 是两条查询的共同实现；before 为零值表示不限上界。
+func (r *EventRepo) recentEvents(ctx context.Context, s memory.Scope, before time.Time, beforeID string, limit int) ([]event.Event, error) {
 	if ctx == nil || limit < 1 || limit > maxRecentEvents {
 		return nil, store.ErrInvalid
 	}
@@ -38,6 +56,10 @@ func (r *EventRepo) RecentEvents(ctx context.Context, s memory.Scope, limit int)
 	} else {
 		// 即使旧数据把 DM 错误降密，也不允许它进入公开视角。
 		query = query.Where("NOT private AND channel <> ?", event.ChDM)
+	}
+	if !before.IsZero() {
+		// 行值比较：只取严格早于被处理事件的历史。
+		query = query.Where("(at, id) < (?, ?)", before, beforeID)
 	}
 	var rows []eventRow
 	err := query.Order("at DESC, id DESC").Limit(limit).Find(&rows).Error

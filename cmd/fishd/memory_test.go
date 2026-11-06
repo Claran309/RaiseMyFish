@@ -102,7 +102,10 @@ func TestNewMemoryWorkerAdvancesWatermark(t *testing.T) {
 	source := &memoryTestSource{events: []event.Event{ev}}
 	repo := &memoryTestRepo{}
 
-	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, nil, repo, nil, nil, path, "")
+	worker, err := newMemoryWorker(memoryWorkerDeps{
+		Config: config.Memory{Enabled: true, IntervalSeconds: 300},
+		Source: source, Repo: repo, WatermarkPath: path,
+	})
 	if err != nil {
 		t.Fatalf("装配 worker 失败：%v", err)
 	}
@@ -215,7 +218,10 @@ func TestNewMemoryWorkerHonorsConfigAndStateFreeze(t *testing.T) {
 	repo := &memoryTestRepo{}
 	wmPath := filepath.Join(t.TempDir(), "watermark.json")
 	freezePath := filepath.Join(t.TempDir(), "state", "memory.frozen")
-	worker, err := newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300, Frozen: true}, source, nil, repo, nil, nil, wmPath, freezePath)
+	worker, err := newMemoryWorker(memoryWorkerDeps{
+		Config: config.Memory{Enabled: true, IntervalSeconds: 300, Frozen: true},
+		Source: source, Repo: repo, WatermarkPath: wmPath, FreezePath: freezePath,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +237,10 @@ func TestNewMemoryWorkerHonorsConfigAndStateFreeze(t *testing.T) {
 	if err := memory.Freeze(freezePath); err != nil {
 		t.Fatal(err)
 	}
-	worker, err = newMemoryWorker(config.Memory{Enabled: true, IntervalSeconds: 300}, source, nil, repo, nil, nil, wmPath, freezePath)
+	worker, err = newMemoryWorker(memoryWorkerDeps{
+		Config: config.Memory{Enabled: true, IntervalSeconds: 300},
+		Source: source, Repo: repo, WatermarkPath: wmPath, FreezePath: freezePath,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,6 +270,108 @@ type frozenWorker struct{}
 
 func (frozenWorker) RunOnce(context.Context) (extractworker.Stats, error) {
 	return extractworker.Stats{Frozen: true, FrozenReason: "state_file"}, nil
+}
+
+// fakeRecentEvents 记录上下文查询的边界参数，并按预置返回历史。
+type fakeRecentEvents struct {
+	rows  []event.Event
+	gotAt time.Time
+	gotID string
+	calls int
+}
+
+func (f *fakeRecentEvents) RecentEvents(_ context.Context, _ memory.Scope, _ int) ([]event.Event, error) {
+	f.calls++
+	return f.rows, nil
+}
+
+// RecentEventsBefore 实现带时间上界的查询（M07 生产装配依赖它）。
+func (f *fakeRecentEvents) RecentEventsBefore(_ context.Context, _ memory.Scope, at time.Time, id string, _ int) ([]event.Event, error) {
+	f.calls++
+	f.gotAt, f.gotID = at, id
+	return f.rows, nil
+}
+
+// captureTestExtractor 记录提炼器收到的上下文，用来证明 Recent 真的接进了 worker。
+type captureTestExtractor struct {
+	seen []event.Event
+}
+
+func (c *captureTestExtractor) Extract(_ context.Context, _ event.Event, opts memory.ExtractOptions) ([]memory.Candidate, error) {
+	c.seen = opts.Context
+	return nil, nil
+}
+
+// TestNewMemoryWorkerWiresRecent M06/M07：生产装配必须把 Recent 接进 worker，
+// 且查询要带「被处理事件」的时间上界，不能读现在最新的内容。
+func TestNewMemoryWorkerWiresRecent(t *testing.T) {
+	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	ev := event.Event{
+		ID: "live:room:w1", Channel: event.ChLive, Dir: event.DirIn, Session: "room",
+		FromID: "u1", FromName: "路人", Text: "我保证明天带话", At: at, Status: event.StatusDone,
+	}
+	past := event.Event{
+		ID: "live:room:w0", Channel: event.ChLive, Dir: event.DirIn, Session: "room",
+		FromID: "u2", FromName: "甲", Text: "前面说的话", At: at.Add(-time.Minute), Status: event.StatusDone,
+	}
+	recent := &fakeRecentEvents{rows: []event.Event{past}}
+	cap := &captureTestExtractor{}
+
+	worker, err := newMemoryWorker(memoryWorkerDeps{
+		Config:        config.Memory{Enabled: true, IntervalSeconds: 300},
+		Source:        &memoryTestSource{events: []event.Event{ev}},
+		Recent:        recent,
+		Repo:          &memoryTestRepo{},
+		Extractor:     cap,
+		WatermarkPath: filepath.Join(t.TempDir(), "watermark.json"),
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	if _, err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if recent.calls != 1 {
+		t.Fatalf("Recent 未接线：查询 %d 次", recent.calls)
+	}
+	if !recent.gotAt.Equal(ev.At) || recent.gotID != ev.ID {
+		t.Fatalf("上下文上界不符：at=%v id=%q（期望 %v / %q）", recent.gotAt, recent.gotID, ev.At, ev.ID)
+	}
+	if len(cap.seen) != 1 || cap.seen[0].ID != past.ID {
+		t.Fatalf("历史未进入提炼器：%+v", cap.seen)
+	}
+}
+
+// TestNewMemoryWorkerWiresOwnerName M06：owner_name 必须真正传到提炼规则。
+//
+// 发言人昵称等于 owner_name → 额外产出一条 preference；
+// 没接线时 OwnerName 为空，这条规则永远不会命中。
+func TestNewMemoryWorkerWiresOwnerName(t *testing.T) {
+	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	ev := event.Event{
+		ID: "live:room:o1", Channel: event.ChLive, Dir: event.DirIn, Session: "room",
+		FromID: "1000", FromName: "Claran", Text: "晚安", At: at, Status: event.StatusDone,
+	}
+	repo := &memoryTestRepo{}
+	worker, err := newMemoryWorker(memoryWorkerDeps{
+		Config:        config.Memory{Enabled: true, IntervalSeconds: 300, OwnerName: "Claran"},
+		Source:        &memoryTestSource{events: []event.Event{ev}},
+		Repo:          repo,
+		WatermarkPath: filepath.Join(t.TempDir(), "watermark.json"),
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	stats, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if stats.Inserted != 1 || repo.count() != 1 {
+		t.Fatalf("未按 owner_name 产生偏好：stats=%+v records=%d", stats, repo.count())
+	}
+	if kind := repo.records[0].Kind; kind != memory.KindPreference {
+		t.Fatalf("记录类型 = %q，期望 preference", kind)
+	}
 }
 
 // TestRunMemoryExtractLogsFrozen 冻结轮必须打 action=memory_frozen，且不把它记成一次成功提炼。
