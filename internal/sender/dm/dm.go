@@ -160,6 +160,30 @@ func (s *Sender) Resume(_ context.Context, claim event.Claim) (sender.Result, er
 	return sender.Result{}, &Error{Kind: KindUncertain, Cause: errors.New("私信不支持重投")}
 }
 
+// Normalize 校验回复并返回平台实际会发送的正文（去首尾空白，不截断）。
+//
+// 投递计划用它落不可变快照：计划一旦写入，恢复时只按快照正文重投。
+func Normalize(c event.Claim, p sender.Reply) (sender.Reply, error) {
+	if c.Lease.Owner == "" || c.Lease.Version < 1 || c.Event.Channel != event.ChDM || c.Event.Dir != event.DirIn || !c.Event.Private {
+		return sender.Reply{}, &Error{Kind: KindInput, Cause: errors.New("私信事件不匹配")}
+	}
+	mid := strings.TrimSpace(c.Event.Session)
+	if mid == "" || !isDigits(mid) {
+		return sender.Reply{}, &Error{Kind: KindInput, Cause: errors.New("私信缺少收信人")}
+	}
+	if p.Scope.Channel != c.Event.Channel || p.Scope.Session != c.Event.Session || !p.Scope.Private {
+		return sender.Reply{}, &Error{Kind: KindInput, Cause: errors.New("回复作用域不匹配")}
+	}
+	text := strings.TrimSpace(p.Text)
+	if text == "" {
+		return sender.Reply{}, &Error{Kind: KindInput, Cause: errors.New("私信缺少正文")}
+	}
+	if len([]rune(text)) > maxTextRunes {
+		return sender.Reply{}, &Error{Kind: KindInput, Cause: errors.New("私信正文不能超过200字")}
+	}
+	return sender.Reply{Text: text, Scope: p.Scope}, nil
+}
+
 // Send 走完整护栏链后发送。claim.Session 是对话 mid，reply.Text 是正文。
 func (s *Sender) Send(ctx context.Context, claim event.Claim, reply sender.Reply) (sender.Result, error) {
 	if ctx == nil {

@@ -227,6 +227,17 @@ func (s *Service) Resume(context.Context, event.Claim) (sender.Result, error) {
 	return sender.Result{}, &sender.Error{Kind: sender.KindUncertain, Cause: errors.New("评论发送不支持恢复核验")}
 }
 
+// Normalize 校验回复并返回平台实际会发送的正文（超长截断）。
+//
+// 投递计划用它落不可变快照：计划一旦写入，恢复时只按快照正文重投。
+func Normalize(c event.Claim, p sender.Reply) (sender.Reply, error) {
+	_, _, _, text, err := validate(c, p)
+	if err != nil {
+		return sender.Reply{}, err
+	}
+	return sender.Reply{Text: text, Scope: p.Scope}, nil
+}
+
 func validate(c event.Claim, p sender.Reply) (string, string, string, string, error) {
 	input := func() (string, string, string, string, error) {
 		return "", "", "", "", &sender.Error{Kind: sender.KindInput}

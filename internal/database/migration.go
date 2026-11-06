@@ -87,6 +87,11 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取档案向量拆分迁移：%w", err)
 	}
 	viewerEmbeddingKindsHash := sha256.Sum256(viewerEmbeddingKinds)
+	deliveryPlans, err := migrations.Files.ReadFile("0011_delivery_plans.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取投递计划迁移：%w", err)
+	}
+	deliveryPlansHash := sha256.Sum256(deliveryPlans)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -98,6 +103,7 @@ func migrationSteps() ([]migrationStep, error) {
 		{8, string(accounts), hex.EncodeToString(accountsHash[:])},
 		{9, string(extractionJobs), hex.EncodeToString(extractionJobsHash[:])},
 		{10, string(viewerEmbeddingKinds), hex.EncodeToString(viewerEmbeddingKindsHash[:])},
+		{11, string(deliveryPlans), hex.EncodeToString(deliveryPlansHash[:])},
 	}, nil
 }
 

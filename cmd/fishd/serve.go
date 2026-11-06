@@ -31,6 +31,8 @@ import (
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
 	sendercomment "RaiseMyFish/internal/sender/comment"
+	senderdm "RaiseMyFish/internal/sender/dm"
+	"RaiseMyFish/internal/sender/durable"
 	senderlive "RaiseMyFish/internal/sender/live"
 	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/viewer"
@@ -212,13 +214,36 @@ type dmWhitelistSetter interface {
 
 // buildSender 按已启用通道装配发送路由；Generate/Deliver 仍只看到一个 sender.Sender。
 //
-// live 走既有 Node 传输与投递账本；comment 走纯 Go HTTP（不主动限速，平台限流时被动退避）。
-// 两者都没有启用时明确报错，避免消费循环「能生成却不能发」。
+// live 走既有 Node 传输与投递账本；comment/dm 走不可变投递计划 + attempt，
+// 先落正文与许可再 POST，避免「平台已接受、本地未记录」窗口里恢复重发。
+// 都没有启用时明确报错，避免消费循环「能生成却不能发」。
 func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger) (sender.Sender, dmWhitelistSetter, error) {
 	if cfg.Sender == nil {
 		return nil, nil, errors.New("未配置 [sender] 发送通道，无法装配发送器")
 	}
 	routes := make(map[event.Channel]sender.Sender, 2)
+	var planned store.PlannedRepo
+	plannedRepo := func() (store.PlannedRepo, error) {
+		if planned != nil {
+			return planned, nil
+		}
+		if resources == nil || resources.DB == nil {
+			return nil, errors.New("评论/私信投递计划需要可用数据库")
+		}
+		repo, err := database.NewPlannedRepo(resources.DB)
+		if err != nil {
+			return nil, fmt.Errorf("装配投递计划仓储失败：%w", err)
+		}
+		planned = repo
+		return repo, nil
+	}
+	account := strings.TrimSpace(selfMID(cfg))
+	requireAccount := func() error {
+		if !sender.ValidActor(account) {
+			return errors.New("评论/私信发送需要合法的本账号 self_id（[sender].self_id 或采集侧 self_id）")
+		}
+		return nil
+	}
 	if cfg.Channels.Live.Enabled {
 		liveSender, err := buildLiveSender(cfg, resources, log)
 		if err != nil {
@@ -237,7 +262,20 @@ func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger)
 		if err != nil {
 			return nil, nil, fmt.Errorf("装配评论发送通道失败：%w", err)
 		}
-		routes[event.ChComment] = commentSender
+		if err := requireAccount(); err != nil {
+			return nil, nil, err
+		}
+		repo, err := plannedRepo()
+		if err != nil {
+			return nil, nil, err
+		}
+		plannedSender, err := durable.New(repo, commentSender, durable.Options{
+			Channel: event.ChComment, AccountID: account, Validate: sendercomment.Normalize, MaxAttempts: 3,
+		}, log)
+		if err != nil {
+			return nil, nil, fmt.Errorf("装配评论投递计划失败：%w", err)
+		}
+		routes[event.ChComment] = plannedSender
 	}
 	if cfg.Collector.Comment.Enabled && routes[event.ChComment] == nil {
 		log.Warn("评论采集已启用但未配置评论发送，评论事件将无法回复", zap.String("action", "comment_sender_missing"))
@@ -247,7 +285,20 @@ func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger)
 	if dmSender, err := buildDMSender(cfg, log); err != nil {
 		return nil, nil, fmt.Errorf("装配私信发送通道失败：%w", err)
 	} else if dmSender != nil {
-		routes[event.ChDM] = dmSender
+		if err := requireAccount(); err != nil {
+			return nil, nil, err
+		}
+		repo, err := plannedRepo()
+		if err != nil {
+			return nil, nil, err
+		}
+		plannedSender, err := durable.New(repo, dmSender, durable.Options{
+			Channel: event.ChDM, AccountID: account, Validate: senderdm.Normalize, MaxAttempts: 3,
+		}, log)
+		if err != nil {
+			return nil, nil, fmt.Errorf("装配私信投递计划失败：%w", err)
+		}
+		routes[event.ChDM] = plannedSender
 		if setter, ok := dmSender.(dmWhitelistSetter); ok {
 			dmWhitelist = setter
 		}
