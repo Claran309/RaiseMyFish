@@ -1,13 +1,18 @@
 package viewer
 
-// 本文件实现观众档案的增量向量化任务：昵称 + 最近发言/回复拼接后入库。
+// 本文件实现观众档案的增量向量化任务。
 //
-// 档案没有 title/summary 列，这里把「昵称」当作标题位、把最近发言与回复
-// 当作摘要位；语义查询「那个爱要白饭的人」正是靠发言内容命中。
+// **一路一个向量（M10）**：以前把「昵称 + 本人发言 + 鱼的回复」拼成一个向量，
+// 于是鱼经常说的「白饭」被算成所有被回复过的人的特点——认人和查证都被污染。
+// 现在按用途拆成三路，各自独立计算、独立失效：
+//
+//	identity    = 昵称（认人：同音、改名、模糊昵称）
+//	facts       = 本人发言（查「他说过什么 / 谁爱要白饭」）
+//	interaction = 鱼的回复（查互动关系，**不参与认人**）
 //
 // 边界：
 //   - 不直接访问数据库或 HTTP，由注入的 EmbeddingStore / Embedder 完成；
-//   - 增量判断用文本 SHA-256：档案内容没变就不重复调用 embedding。
+//   - 增量判断用文本 SHA-256：某一路内容没变就跳过该路，不影响另外两路。
 
 import (
 	"context"
@@ -29,6 +34,33 @@ const (
 	embedRetries          = 1
 )
 
+// EmbeddingKind 是向量的用途；同时是数据库列的选择依据。
+type EmbeddingKind string
+
+const (
+	// KindIdentity 只含昵称。
+	KindIdentity EmbeddingKind = "identity"
+	// KindFacts 只含本人发言。
+	KindFacts EmbeddingKind = "facts"
+	// KindInteraction 只含鱼的回复。
+	KindInteraction EmbeddingKind = "interaction"
+)
+
+// AllEmbeddingKinds 返回稳定顺序的三路，便于统计、测试与入库循环。
+func AllEmbeddingKinds() []EmbeddingKind {
+	return []EmbeddingKind{KindIdentity, KindFacts, KindInteraction}
+}
+
+// Valid 判断是否是已知的向量用途。
+func (k EmbeddingKind) Valid() bool {
+	switch k {
+	case KindIdentity, KindFacts, KindInteraction:
+		return true
+	default:
+		return false
+	}
+}
+
 // EmbeddingInput 是一份待向量化档案的源字段。
 type EmbeddingInput struct {
 	UID     string
@@ -37,9 +69,10 @@ type EmbeddingInput struct {
 	Replies []string
 }
 
-// EmbeddingRecord 是一次批量 upsert 的单行。
+// EmbeddingRecord 是一次批量 upsert 的单行（一条向量）。
 type EmbeddingRecord struct {
 	UID       string
+	Kind      EmbeddingKind
 	Hash      string
 	Embedding []float64
 }
@@ -47,7 +80,8 @@ type EmbeddingRecord struct {
 // EmbeddingStore 由 database 层实现，负责读取源字段、增量状态与写回向量。
 type EmbeddingStore interface {
 	ViewerEmbeddingInputs(ctx context.Context) ([]EmbeddingInput, error)
-	ExistingProfileEmbeddingHashes(ctx context.Context) (map[string]string, error)
+	// ExistingProfileEmbeddingHashes 返回 uid → kind → 内容 hash（只含有向量的路）。
+	ExistingProfileEmbeddingHashes(ctx context.Context) (map[string]map[EmbeddingKind]string, error)
 	UpsertProfileEmbeddings(ctx context.Context, records []EmbeddingRecord) error
 }
 
@@ -60,6 +94,9 @@ type EmbedOptions struct {
 }
 
 // EmbedStats 汇总一次增量任务的结果。
+//
+// 统计口径是**向量文档**而不是档案：一份档案最多贡献三条（identity/facts/interaction），
+// 所以 Total 可能是档案数的 3 倍。
 type EmbedStats struct {
 	Total    int
 	Skipped  int
@@ -70,6 +107,7 @@ type EmbedStats struct {
 
 type embedDocument struct {
 	uid  string
+	kind EmbeddingKind
 	text string
 	hash string
 }
@@ -109,20 +147,27 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 		return EmbedStats{}, err
 	}
 
-	stats := EmbedStats{Total: len(inputs)}
+	stats := EmbedStats{}
 	pending := make([]embedDocument, 0, len(inputs))
 	for _, input := range inputs {
-		text := embeddingText(input)
-		if text == "" {
-			stats.Skipped++
+		if strings.TrimSpace(input.UID) == "" {
 			continue
 		}
-		hash := hashText(text)
-		if existing[input.UID] == hash {
-			stats.Skipped++
-			continue
+		known := existing[input.UID]
+		for _, doc := range documentsFor(input) {
+			stats.Total++
+			if doc.text == "" {
+				// 这一路没有内容（比如从没被回复过 → 没有 interaction 向量）
+				stats.Skipped++
+				continue
+			}
+			doc.hash = hashText(doc.text)
+			if known[doc.kind] == doc.hash {
+				stats.Skipped++
+				continue
+			}
+			pending = append(pending, doc)
 		}
-		pending = append(pending, embedDocument{uid: input.UID, text: text, hash: hash})
 	}
 	stats.Pending = len(pending)
 	if len(pending) == 0 {
@@ -148,7 +193,10 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 			if err := validateEmbeddingVector(vector); err != nil {
 				return stats, err
 			}
-			records = append(records, EmbeddingRecord{UID: batch[i].uid, Hash: batch[i].hash, Embedding: vector})
+			records = append(records, EmbeddingRecord{
+				UID: batch[i].uid, Kind: batch[i].kind,
+				Hash: batch[i].hash, Embedding: vector,
+			})
 		}
 		if err := store.UpsertProfileEmbeddings(ctx, records); err != nil {
 			return stats, fmt.Errorf("写入档案向量失败：%w", err)
@@ -161,23 +209,42 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 	return stats, nil
 }
 
-// embeddingText 按「昵称 + 最近发言 + 最近回复」拼接，空段不产生多余换行。
-func embeddingText(input EmbeddingInput) string {
-	parts := make([]string, 0, len(input.Texts)+len(input.Replies)+1)
-	if name := strings.TrimSpace(input.Name); name != "" {
-		parts = append(parts, name)
+// documentsFor 把一份档案拆成三路文档（M10）。
+//
+// 每一路只放自己该有的内容：把「鱼说的话」放进 identity 或 facts，
+// 就会出现「所有被回复过的人都爱吃白饭」这类污染。
+func documentsFor(input EmbeddingInput) []embedDocument {
+	return []embedDocument{
+		{uid: input.UID, kind: KindIdentity, text: identityText(input)},
+		{uid: input.UID, kind: KindFacts, text: factsText(input)},
+		{uid: input.UID, kind: KindInteraction, text: interactionText(input)},
 	}
-	for _, text := range input.Texts {
-		if trimmed := strings.TrimSpace(text); trimmed != "" {
-			parts = append(parts, trimmed)
+}
+
+// identityText 只保留昵称：认人只该看「他叫什么」，不看他说了什么。
+func identityText(input EmbeddingInput) string {
+	return strings.TrimSpace(input.Name)
+}
+
+// factsText 只拼本人发言：这是「谁说过这句话」的唯一依据。
+func factsText(input EmbeddingInput) string {
+	return joinNonEmpty(input.Texts)
+}
+
+// interactionText 只拼鱼的回复：用于互动关系，不参与认人。
+func interactionText(input EmbeddingInput) string {
+	return joinNonEmpty(input.Replies)
+}
+
+// joinNonEmpty 用换行拼接非空片段，空段不产生多余换行。
+func joinNonEmpty(parts []string) string {
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
 		}
 	}
-	for _, reply := range input.Replies {
-		if trimmed := strings.TrimSpace(reply); trimmed != "" {
-			parts = append(parts, trimmed)
-		}
-	}
-	return strings.Join(parts, "\n")
+	return strings.Join(out, "\n")
 }
 
 func hashText(text string) string {

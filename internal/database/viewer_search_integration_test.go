@@ -112,7 +112,8 @@ func TestViewerSemanticSearchFindsUID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("档案入库失败：%v", err)
 	}
-	if stats.Embedded != 3 || stats.Pending != 3 {
+	// 3 份档案各有 identity + facts 两路，共 6 份向量文档。
+	if stats.Embedded != 6 || stats.Pending != 6 {
 		t.Fatalf("档案入库统计不符：%+v", stats)
 	}
 
@@ -129,6 +130,104 @@ func TestViewerSemanticSearchFindsUID(t *testing.T) {
 	}
 	if hits[0].Similarity < 0.99 {
 		t.Errorf("相似度 = %v，期望接近 1", hits[0].Similarity)
+	}
+}
+
+// TestViewerIndexesIsolatedByKind M10：身份/本人事实/互动三路互不污染。
+//
+// 关键回归：鱼对 6001 说过「白饭」，但 6001 本人没说过白饭——
+// 认人时不能把鱼的话当成观众特点，facts/interaction 必须各查各的索引。
+func TestViewerIndexesIsolatedByKind(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatalf("迁移失败：%v", err)
+	}
+	repo, err := NewViewerRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	for _, profile := range []store.ViewerProfile{
+		{UID: "6001", Name: "路人甲", Hits: 2, Replies: 1, LastSeen: seen,
+			RecentTexts: []string{"今天天气不错"}, RecentReplies: []string{"白饭真香"}},
+		{UID: "6002", Name: "熟客乙", Hits: 2, Replies: 0, LastSeen: seen,
+			RecentTexts: []string{"我爱白饭"}},
+	} {
+		if err := repo.UpsertProfile(ctx, profile); err != nil {
+			t.Fatalf("写入档案 %s 失败：%v", profile.UID, err)
+		}
+	}
+	if _, err := viewer.RunEmbedding(ctx, repo, &fakeViewerEmbedder{}, viewer.EmbedOptions{}); err != nil {
+		t.Fatalf("档案入库失败：%v", err)
+	}
+
+	// 「白饭」= 第 0 维；identity 两路（路人甲/熟客乙）都落在第 2 维，与查询正交。
+	vector := viewerVector(0)
+	relevantUIDs := func(rows []store.ViewerProfileHit) string {
+		t.Helper()
+		var uids []string
+		for _, row := range rows {
+			if row.Similarity >= 0.99 {
+				uids = append(uids, row.Profile.UID)
+			}
+		}
+		return strings.Join(uids, ",")
+	}
+	semantic := func(kind viewer.EmbeddingKind) string {
+		t.Helper()
+		rows, err := repo.SemanticProfiles(ctx, kind, vector, 10)
+		if err != nil {
+			t.Fatalf("%s 向量检索失败：%v", kind, err)
+		}
+		return relevantUIDs(rows)
+	}
+	if got := semantic(viewer.KindFacts); got != "6002" {
+		t.Errorf("facts 向量应只命中说过白饭的 6002：%q", got)
+	}
+	if got := semantic(viewer.KindInteraction); got != "6001" {
+		t.Errorf("interaction 向量应只命中被鱼回复过的 6001：%q", got)
+	}
+	if got := semantic(viewer.KindIdentity); got != "" {
+		t.Errorf("identity 向量不应命中昵称无关的人：%q", got)
+	}
+
+	keyword := func(kind viewer.EmbeddingKind) string {
+		t.Helper()
+		rows, err := repo.KeywordProfiles(ctx, kind, "白饭", 10)
+		if err != nil {
+			t.Fatalf("%s 关键词检索失败：%v", kind, err)
+		}
+		var uids []string
+		for _, row := range rows {
+			uids = append(uids, row.Profile.UID)
+		}
+		return strings.Join(uids, ",")
+	}
+	if got := keyword(viewer.KindFacts); got != "6002" {
+		t.Errorf("facts 关键词应只命中 6002：%q", got)
+	}
+	if got := keyword(viewer.KindIdentity); got != "" {
+		t.Errorf("identity 关键词不应命中 6001/6002：%q", got)
+	}
+	if got := keyword(viewer.KindInteraction); got != "6001" {
+		t.Errorf("interaction 关键词应只命中 6001：%q", got)
+	}
+
+	// 认人链路：鱼的「白饭真香」不能把 6001 拉成候选。
+	searcher, err := viewer.NewSearcher(repo, &fakeViewerEmbedder{}, viewer.SearchOptions{Alpha: 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits, err := searcher.Search(ctx, "白饭", 10)
+	if err != nil {
+		t.Fatalf("认人检索失败：%v", err)
+	}
+	var uids []string
+	for _, hit := range hits {
+		uids = append(uids, hit.Profile.UID)
+	}
+	if got := strings.Join(uids, ","); got != "6002" {
+		t.Fatalf("认人不应被鱼的回复污染：%q", got)
 	}
 }
 
@@ -195,14 +294,14 @@ func TestViewerEmbeddingIncremental(t *testing.T) {
 	if err != nil {
 		t.Fatalf("首次入库失败：%v", err)
 	}
-	if stats.Embedded != 3 {
+	if stats.Embedded != 6 {
 		t.Fatalf("首次入库统计不符：%+v", stats)
 	}
 	stats, err = viewer.RunEmbedding(ctx, repo, embedder, viewer.EmbedOptions{})
 	if err != nil {
 		t.Fatalf("二次入库失败：%v", err)
 	}
-	if stats.Skipped != 3 || stats.Pending != 0 || stats.Embedded != 0 {
+	if stats.Skipped != 9 || stats.Pending != 0 || stats.Embedded != 0 {
 		t.Fatalf("二次入库未全部跳过：%+v", stats)
 	}
 }

@@ -148,8 +148,8 @@ func TestKnowledgeEmbeddingsRealPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 语义-only：越界的 dm-only 被过滤，按相似度取前三。
-	if got := recallKnowledgeIDs(t, hybrid, scope, "完全无关的查询"); len(got) != 3 || got[0] != "semantic-first" || got[1] != "semantic-second" || got[2] != "title-entry" {
+	// 语义-only：越界的 dm-only 被过滤；title-entry 余弦为 0，低于相关性下限被拒。
+	if got := recallKnowledgeIDs(t, hybrid, scope, "完全无关的查询"); len(got) != 2 || got[0] != "semantic-first" || got[1] != "semantic-second" {
 		t.Fatalf("混合语义召回不符：%v", got)
 	}
 	// 关键词标题档压过语义：标题命中仍排第一。

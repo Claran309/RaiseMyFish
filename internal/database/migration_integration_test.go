@@ -104,7 +104,7 @@ func TestMigrationRealPostgres(t *testing.T) {
 	if err := db.WithContext(ctx).Exec("INSERT INTO tasks(id,event_id,channel,session,brain) VALUES ('missing','missing','live','room','openai')").Error; err == nil {
 		t.Fatal("外键未生效")
 	}
-	for _, index := range []string{"idx_events_status", "idx_events_session", "idx_events_private", "idx_tasks_status", "uq_tasks_event", "idx_mem_valid", "idx_mem_channel", "knowledge_embeddings_vec_idx", "memory_records_embedding_idx", "viewer_profiles_embedding_idx", "accounts_one_active_idx"} {
+	for _, index := range []string{"idx_events_status", "idx_events_session", "idx_events_private", "idx_tasks_status", "uq_tasks_event", "idx_mem_valid", "idx_mem_channel", "knowledge_embeddings_vec_idx", "memory_records_embedding_idx", "viewer_profiles_identity_embedding_idx", "viewer_profiles_facts_embedding_idx", "viewer_profiles_interaction_embedding_idx", "accounts_one_active_idx"} {
 		var exists bool
 		if err := db.WithContext(ctx).Raw("SELECT EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname=current_schema() AND indexname=?)", index).Scan(&exists).Error; err != nil || !exists {
 			t.Fatalf("缺索引 %s", index)

@@ -60,16 +60,6 @@ type ViewerProfileHit struct {
 	Score      float64
 }
 
-// ViewerProfileSearcher 是档案检索的两路查询能力，由 database.ViewerRepo 实现。
-//
-// 档案不含渠道/会话私密字段，查询不涉及 Scope；调用方仍只能拿公开档案做认人。
-type ViewerProfileSearcher interface {
-	// KeywordProfiles 按昵称/最近发言做关键词匹配。
-	KeywordProfiles(ctx context.Context, keyword string, limit int) ([]ViewerProfileHit, error)
-	// SemanticProfiles 按档案向量余弦距离取最相近的 limit 个。
-	SemanticProfiles(ctx context.Context, vector []float64, limit int) ([]ViewerProfileHit, error)
-}
-
 // ViewerRebuildOptions 是档案重建参数。
 type ViewerRebuildOptions struct {
 	MinHits       int

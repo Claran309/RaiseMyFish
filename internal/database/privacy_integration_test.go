@@ -210,9 +210,10 @@ func TestPublicProjectionExcludesPrivateSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, uid := range []string{privacyUID, "999", "888"} {
+		// M10：用 facts 路演示「内容变化 → 旧向量失效」（重建比对的是 recent_texts）。
 		if err := db.WithContext(ctx).Exec(`
 			UPDATE viewer_profiles
-			SET profile_embedding=?::vector, profile_embedding_hash='stale-hash', profile_embedding_updated_at=now()
+			SET facts_embedding=?::vector, facts_embedding_hash='stale-hash', facts_embedding_updated_at=now()
 			WHERE uid=?`, literal, uid).Error; err != nil {
 			t.Fatalf("写入旧向量 %s 失败：%v", uid, err)
 		}
@@ -249,21 +250,23 @@ func TestPublicProjectionExcludesPrivateSources(t *testing.T) {
 		HashEmpty     bool
 	}
 	if err := db.WithContext(ctx).Raw(`
-		SELECT profile_embedding IS NULL AS embedding_null,
-		       COALESCE(profile_embedding_hash,'') = '' AS hash_empty
+		SELECT facts_embedding IS NULL AS embedding_null,
+		       COALESCE(facts_embedding_hash,'') = '' AS hash_empty
 		FROM viewer_profiles WHERE uid = ?`, privacyUID).Scan(&embeddingCleared).Error; err != nil {
 		t.Fatal(err)
 	}
 	if !embeddingCleared.EmbeddingNull || !embeddingCleared.HashEmpty {
 		t.Fatalf("档案内容变化后旧向量未失效：%+v", embeddingCleared)
 	}
-	keywords, err := viewers.KeywordProfiles(ctx, "私密", 10)
-	if err != nil || len(keywords) != 0 {
-		t.Fatalf("关键词检索不应命中私密来源：%+v / %v", keywords, err)
-	}
-	semantic, err := viewers.SemanticProfiles(ctx, vector, 10)
-	if err != nil || len(semantic) != 0 {
-		t.Fatalf("失效向量不应再参与召回：%+v / %v", semantic, err)
+	for _, kind := range viewer.AllEmbeddingKinds() {
+		keywords, err := viewers.KeywordProfiles(ctx, kind, "私密", 10)
+		if err != nil || len(keywords) != 0 {
+			t.Fatalf("%s 关键词检索不应命中私密来源：%+v / %v", kind, keywords, err)
+		}
+		semantic, err := viewers.SemanticProfiles(ctx, kind, vector, 10)
+		if err != nil || len(semantic) != 0 {
+			t.Fatalf("%s 失效向量不应再参与召回：%+v / %v", kind, semantic, err)
+		}
 	}
 	inputs, err := viewers.ViewerEmbeddingInputs(ctx)
 	if err != nil {

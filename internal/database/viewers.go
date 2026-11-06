@@ -212,18 +212,33 @@ ON CONFLICT (uid) DO UPDATE SET
   last_seen = EXCLUDED.last_seen,
   recent_texts = EXCLUDED.recent_texts,
   recent_replies = EXCLUDED.recent_replies,
-  profile_embedding = CASE
-    WHEN ROW(viewer_profiles.name, viewer_profiles.recent_texts, viewer_profiles.recent_replies)
-       IS DISTINCT FROM ROW(EXCLUDED.name, EXCLUDED.recent_texts, EXCLUDED.recent_replies)
-    THEN NULL ELSE viewer_profiles.profile_embedding END,
-  profile_embedding_hash = CASE
-    WHEN ROW(viewer_profiles.name, viewer_profiles.recent_texts, viewer_profiles.recent_replies)
-       IS DISTINCT FROM ROW(EXCLUDED.name, EXCLUDED.recent_texts, EXCLUDED.recent_replies)
-    THEN NULL ELSE viewer_profiles.profile_embedding_hash END,
-  profile_embedding_updated_at = CASE
-    WHEN ROW(viewer_profiles.name, viewer_profiles.recent_texts, viewer_profiles.recent_replies)
-       IS DISTINCT FROM ROW(EXCLUDED.name, EXCLUDED.recent_texts, EXCLUDED.recent_replies)
-    THEN NULL ELSE viewer_profiles.profile_embedding_updated_at END,
+  identity_embedding = CASE
+    WHEN viewer_profiles.name IS DISTINCT FROM EXCLUDED.name
+    THEN NULL ELSE viewer_profiles.identity_embedding END,
+  identity_embedding_hash = CASE
+    WHEN viewer_profiles.name IS DISTINCT FROM EXCLUDED.name
+    THEN NULL ELSE viewer_profiles.identity_embedding_hash END,
+  identity_embedding_updated_at = CASE
+    WHEN viewer_profiles.name IS DISTINCT FROM EXCLUDED.name
+    THEN NULL ELSE viewer_profiles.identity_embedding_updated_at END,
+  facts_embedding = CASE
+    WHEN viewer_profiles.recent_texts IS DISTINCT FROM EXCLUDED.recent_texts
+    THEN NULL ELSE viewer_profiles.facts_embedding END,
+  facts_embedding_hash = CASE
+    WHEN viewer_profiles.recent_texts IS DISTINCT FROM EXCLUDED.recent_texts
+    THEN NULL ELSE viewer_profiles.facts_embedding_hash END,
+  facts_embedding_updated_at = CASE
+    WHEN viewer_profiles.recent_texts IS DISTINCT FROM EXCLUDED.recent_texts
+    THEN NULL ELSE viewer_profiles.facts_embedding_updated_at END,
+  interaction_embedding = CASE
+    WHEN viewer_profiles.recent_replies IS DISTINCT FROM EXCLUDED.recent_replies
+    THEN NULL ELSE viewer_profiles.interaction_embedding END,
+  interaction_embedding_hash = CASE
+    WHEN viewer_profiles.recent_replies IS DISTINCT FROM EXCLUDED.recent_replies
+    THEN NULL ELSE viewer_profiles.interaction_embedding_hash END,
+  interaction_embedding_updated_at = CASE
+    WHEN viewer_profiles.recent_replies IS DISTINCT FROM EXCLUDED.recent_replies
+    THEN NULL ELSE viewer_profiles.interaction_embedding_updated_at END,
   updated_at = clock_timestamp()`
 	profiles := 0
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

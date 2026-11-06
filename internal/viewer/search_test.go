@@ -21,20 +21,24 @@ type fakeProfileSource struct {
 	gotKeywords []string
 	gotLimit    int
 	gotVector   []float64
+	kwKinds     []EmbeddingKind
+	semKinds    []EmbeddingKind
 	kwCalls     int
 	semCalls    int
 }
 
-func (f *fakeProfileSource) KeywordProfiles(_ context.Context, keyword string, limit int) ([]store.ViewerProfileHit, error) {
+func (f *fakeProfileSource) KeywordProfiles(_ context.Context, kind EmbeddingKind, keyword string, limit int) ([]store.ViewerProfileHit, error) {
 	f.kwCalls++
+	f.kwKinds = append(f.kwKinds, kind)
 	f.gotKeyword = keyword
 	f.gotKeywords = append(f.gotKeywords, keyword)
 	f.gotLimit = limit
 	return f.keyword, f.keywordErr
 }
 
-func (f *fakeProfileSource) SemanticProfiles(_ context.Context, vector []float64, limit int) ([]store.ViewerProfileHit, error) {
+func (f *fakeProfileSource) SemanticProfiles(_ context.Context, kind EmbeddingKind, vector []float64, limit int) ([]store.ViewerProfileHit, error) {
 	f.semCalls++
+	f.semKinds = append(f.semKinds, kind)
 	f.gotVector = vector
 	if len(vector) != EmbeddingDimension {
 		return nil, errors.New("向量维度不符")
@@ -116,6 +120,23 @@ func TestSearchScoresKeywordAndSemantic(t *testing.T) {
 	if len(embedder.inputs) != 1 || embedder.inputs[0] != "那个爱要白饭的人" {
 		t.Errorf("embedding 输入不符：%v", embedder.inputs)
 	}
+	// M10：认人只用 identity/facts，绝不能查 interaction。
+	if !hasKind(source.kwKinds, KindIdentity) || !hasKind(source.kwKinds, KindFacts) || hasKind(source.kwKinds, KindInteraction) {
+		t.Errorf("关键词索引用途不符：%v", source.kwKinds)
+	}
+	if !hasKind(source.semKinds, KindIdentity) || !hasKind(source.semKinds, KindFacts) || hasKind(source.semKinds, KindInteraction) {
+		t.Errorf("语义索引用途不符：%v", source.semKinds)
+	}
+}
+
+// hasKind 判断索引用途列表里是否出现某个 kind。
+func hasKind(kinds []EmbeddingKind, want EmbeddingKind) bool {
+	for _, kind := range kinds {
+		if kind == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestSearchDegradesOnEmbeddingError 语义不可用时退回关键词且不报错。
@@ -180,15 +201,15 @@ type questionProfileSource struct {
 	queries []string
 }
 
-func (s *questionProfileSource) KeywordProfiles(_ context.Context, keyword string, _ int) ([]store.ViewerProfileHit, error) {
+func (s *questionProfileSource) KeywordProfiles(_ context.Context, kind EmbeddingKind, keyword string, _ int) ([]store.ViewerProfileHit, error) {
 	s.queries = append(s.queries, keyword)
-	if keyword != "弓长三益" {
+	if kind != KindIdentity || keyword != "弓长三益" {
 		return nil, nil
 	}
 	return []store.ViewerProfileHit{hit("5005", "弓长三益", 0)}, nil
 }
 
-func (s *questionProfileSource) SemanticProfiles(context.Context, []float64, int) ([]store.ViewerProfileHit, error) {
+func (s *questionProfileSource) SemanticProfiles(context.Context, EmbeddingKind, []float64, int) ([]store.ViewerProfileHit, error) {
 	return nil, nil
 }
 
@@ -203,8 +224,15 @@ func TestSearchStripsQuestionShell(t *testing.T) {
 	if len(hits) != 1 || hits[0].Profile.UID != "5005" {
 		t.Fatalf("问句未命中昵称：%+v", hits)
 	}
-	if len(source.queries) != 2 || source.queries[0] != "弓长三益是谁" || source.queries[1] != "弓长三益" {
-		t.Errorf("关键词候选顺序不符：%v", source.queries)
+	wantQueries := []string{"弓长三益是谁", "弓长三益是谁", "弓长三益", "弓长三益"}
+	if len(source.queries) != len(wantQueries) {
+		t.Fatalf("关键词候选数量不符：%v", source.queries)
+	}
+	for i, want := range wantQueries {
+		if source.queries[i] != want {
+			t.Errorf("关键词候选顺序不符：%v", source.queries)
+			break
+		}
 	}
 }
 
@@ -286,14 +314,14 @@ type identitySource struct {
 	semCalls    int
 }
 
-func (f *identitySource) KeywordProfiles(_ context.Context, keyword string, limit int) ([]store.ViewerProfileHit, error) {
+func (f *identitySource) KeywordProfiles(_ context.Context, kind EmbeddingKind, keyword string, limit int) ([]store.ViewerProfileHit, error) {
 	f.gotKeywords = append(f.gotKeywords, keyword)
 	if f.keywordErr != nil {
 		return nil, f.keywordErr
 	}
 	var hits []store.ViewerProfileHit
 	for _, p := range f.pool {
-		if profileMentions(p, keyword) {
+		if profileMatches(p, kind, keyword) {
 			hits = append(hits, store.ViewerProfileHit{Profile: p})
 		}
 	}
@@ -303,7 +331,7 @@ func (f *identitySource) KeywordProfiles(_ context.Context, keyword string, limi
 	return hits, nil
 }
 
-func (f *identitySource) SemanticProfiles(context.Context, []float64, int) ([]store.ViewerProfileHit, error) {
+func (f *identitySource) SemanticProfiles(context.Context, EmbeddingKind, []float64, int) ([]store.ViewerProfileHit, error) {
 	f.semCalls++
 	if f.semanticErr != nil {
 		return nil, f.semanticErr
@@ -329,21 +357,30 @@ func (f *identitySource) TopViewers(_ context.Context, limit int) ([]store.Viewe
 	return f.pool, nil
 }
 
-// profileMentions 模拟 SQL 的 name/recent_texts/recent_replies ILIKE。
-func profileMentions(p store.ViewerProfile, keyword string) bool {
+// profileMatches 模拟 SQL 按索引路做 ILIKE：identity=昵称，facts=本人发言，interaction=鱼的回复。
+func profileMatches(p store.ViewerProfile, kind EmbeddingKind, keyword string) bool {
 	keyword = strings.ToLower(strings.TrimSpace(keyword))
 	if keyword == "" {
 		return false
 	}
-	if strings.Contains(strings.ToLower(p.Name), keyword) {
-		return true
-	}
-	for _, text := range append(append([]string{}, p.RecentTexts...), p.RecentReplies...) {
-		if strings.Contains(strings.ToLower(text), keyword) {
-			return true
+	match := func(values []string) bool {
+		for _, value := range values {
+			if strings.Contains(strings.ToLower(value), keyword) {
+				return true
+			}
 		}
+		return false
 	}
-	return false
+	switch kind {
+	case KindIdentity:
+		return match([]string{p.Name})
+	case KindFacts:
+		return match(p.RecentTexts)
+	case KindInteraction:
+		return match(p.RecentReplies)
+	default:
+		return false
+	}
 }
 
 // namedProfile 造一份带最近发言的档案。
@@ -415,6 +452,28 @@ func TestFindContentOnlyIsNotIdentity(t *testing.T) {
 	}
 	if got.Candidates[0].Reason != "content" {
 		t.Errorf("理由 = %q，期望 content", got.Candidates[0].Reason)
+	}
+}
+
+// TestFindIgnoresInteractionReplies M10：鱼对观众说的话不能当成观众特点。
+func TestFindIgnoresInteractionReplies(t *testing.T) {
+	p := namedProfile("1003", "路人乙", "今天天气不错")
+	p.RecentReplies = []string{"白饭真香"}
+	source := &identitySource{pool: []store.ViewerProfile{p}}
+	s := newTestSearcher(t, source, nil, SearchOptions{})
+
+	got, err := s.Find(context.Background(), "白饭", 5)
+	if err != nil {
+		t.Fatalf("检索失败：%v", err)
+	}
+	if got.Status != StatusNotFound || len(got.Candidates) != 0 {
+		t.Fatalf("鱼的回复不应参与认人：%+v", got)
+	}
+
+	// 互动索引本身仍应能查到（只是不用于认人）。
+	hits, err := source.KeywordProfiles(context.Background(), KindInteraction, "白饭", 5)
+	if err != nil || len(hits) != 1 || hits[0].Profile.UID != "1003" {
+		t.Fatalf("互动索引应能独立命中：%+v / %v", hits, err)
 	}
 }
 

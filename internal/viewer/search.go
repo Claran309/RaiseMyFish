@@ -6,11 +6,17 @@ package viewer
 //   - UID 精确命中最高（平台身份是唯一可信的锚点）；
 //   - 当前昵称精确次之；
 //   - 人工维护的别名再次（历史昵称/常见错字）；
-//   - 编��距离与拼音候选只用于「扩大候选」，不自动认定同一人；
+//   - 编辑距离与拼音候选只用于「扩大候选」，不自动认定同一人；
 //   - 发言内容命中最低（提到某人 ≠ 这个人就是某人）。
 //
 // 语义（向量）候选只作补充：必须过最低相关性，且永远排在词法身份命中之后。
 // 低相关的语义 topK 会被直接丢弃——宁可返回「没找到」，也不用无关歌词/梗顶替。
+//
+// M10 起档案索引拆成三路（EmbeddingKind）：
+//   - identity：昵称，用于认人（同音、改名、模糊昵称）；
+//   - facts：本人发言，用于查「他说过什么 / 谁爱要白饭」；
+//   - interaction：鱼的回复，只用于互动关系，**永不参与认人**。
+// 否则鱼经常回「白饭」，所有被鱼回复过的人都会像「爱吃白饭的人」。
 //
 // 边界：
 //   - 档案不含私密会话字段，查询不需要 Scope；
@@ -46,6 +52,10 @@ const (
 	// defaultNameScan 是全量昵称扫描的上限（按发言数排序的活跃档案）。
 	defaultNameScan = 300
 )
+
+// identitySearchKinds 是认人允许使用的索引：昵称 + 本人事实。
+// interaction 是鱼自己的话，永远不进入认人候选，否则鱼的口头禅会被算成观众特点。
+var identitySearchKinds = []EmbeddingKind{KindIdentity, KindFacts}
 
 // Tier 是命中理由的档位；数字越大越可信。
 //
@@ -127,10 +137,13 @@ type Embedder interface {
 	Embed(ctx context.Context, inputs []string) ([][]float64, error)
 }
 
-// ProfileSource 是检索需要的最小查询能力，由 database.ViewerRepo 实现。
+// ProfileSource 是按索引用途查询档案的能力，由 database.ViewerRepo 实现。
+//
+// kind 决定查哪一路索引：identity=昵称、facts=本人发言、interaction=鱼的回复。
+// 认人只允许查 identity/facts；interaction 留给互动查询，不能拿来认人。
 type ProfileSource interface {
-	KeywordProfiles(ctx context.Context, keyword string, limit int) ([]store.ViewerProfileHit, error)
-	SemanticProfiles(ctx context.Context, vector []float64, limit int) ([]store.ViewerProfileHit, error)
+	KeywordProfiles(ctx context.Context, kind EmbeddingKind, keyword string, limit int) ([]store.ViewerProfileHit, error)
+	SemanticProfiles(ctx context.Context, kind EmbeddingKind, vector []float64, limit int) ([]store.ViewerProfileHit, error)
 }
 
 // uidSource 是按 UID 精确取档案的可选能力（database.ViewerRepo 已实现）。
@@ -378,17 +391,20 @@ func (s *Searcher) lexicalCandidates(ctx context.Context, text string, limit int
 	keys = append(keys, decorationVariants(text)...)
 
 	// 2.1 SQL 关键词命中：只能证明「出现过」，档位由下面的归因决定。
+	// 只查 identity（昵称）与 facts（本人发言）；鱼的回复不参与认人。
 	for _, key := range keys {
-		hits, err := s.source.KeywordProfiles(ctx, key, limit)
-		if err != nil {
-			return nil, err
-		}
-		for _, h := range hits {
-			if strings.TrimSpace(h.Profile.UID) == "" {
-				continue
+		for _, kind := range identitySearchKinds {
+			hits, err := s.source.KeywordProfiles(ctx, kind, key, limit)
+			if err != nil {
+				return nil, err
 			}
-			tier, reason := s.identityTier(h.Profile, key, true)
-			consider(candidates, h, tier, reason)
+			for _, h := range hits {
+				if strings.TrimSpace(h.Profile.UID) == "" {
+					continue
+				}
+				tier, reason := s.identityTier(h.Profile, key, true)
+				consider(candidates, h, tier, reason)
+			}
 		}
 	}
 
@@ -482,28 +498,41 @@ func (s *Searcher) phoneticMatches(name, key string) bool {
 	return false
 }
 
-// semanticCandidates 取向量候选并按最低相关性过滤。
+// semanticCandidates 按用途分别取 identity / facts 向量候选，再按 uid 合并。
+//
+// 两路共用同一个查询向量：三路索引由同一个 embedding 模型生成，向量空间一致。
+// interaction 不参与认人，所以这里永远不查它。
 func (s *Searcher) semanticCandidates(ctx context.Context, text string) ([]store.ViewerProfileHit, error) {
 	vector, err := s.embedQuery(ctx, text)
 	if err != nil {
 		return nil, err
 	}
-	hits, err := s.source.SemanticProfiles(ctx, vector, semanticCandidateLimit)
-	if err != nil {
-		return nil, err
+	merged := make(map[string]store.ViewerProfileHit, semanticCandidateLimit*len(identitySearchKinds))
+	for _, kind := range identitySearchKinds {
+		hits, err := s.source.SemanticProfiles(ctx, kind, vector, semanticCandidateLimit)
+		if err != nil {
+			return nil, err
+		}
+		for _, h := range hits {
+			uid := strings.TrimSpace(h.Profile.UID)
+			if uid == "" {
+				continue
+			}
+			if math.IsNaN(h.Similarity) || math.IsInf(h.Similarity, 0) {
+				continue
+			}
+			// 相关性拒绝：低分候选直接丢弃，允许最终返回 0 条。
+			if h.Similarity < s.minSimilarity {
+				continue
+			}
+			existing, ok := merged[uid]
+			if !ok || h.Similarity > existing.Similarity {
+				merged[uid] = h
+			}
+		}
 	}
-	filtered := make([]store.ViewerProfileHit, 0, len(hits))
-	for _, h := range hits {
-		if strings.TrimSpace(h.Profile.UID) == "" {
-			continue
-		}
-		if math.IsNaN(h.Similarity) || math.IsInf(h.Similarity, 0) {
-			continue
-		}
-		// 相关性拒绝：低分候选直接丢弃，允许最终返回 0 条。
-		if h.Similarity < s.minSimilarity {
-			continue
-		}
+	filtered := make([]store.ViewerProfileHit, 0, len(merged))
+	for _, h := range merged {
 		filtered = append(filtered, h)
 	}
 	return filtered, nil

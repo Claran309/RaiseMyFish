@@ -67,7 +67,7 @@ func TestParseViewerArgsRejectsBadInput(t *testing.T) {
 // mockViewerEmbedStore 是命令层测试用的增量向量化仓储。
 type mockViewerEmbedStore struct {
 	inputs  []viewer.EmbeddingInput
-	hashes  map[string]string
+	hashes  map[string]map[viewer.EmbeddingKind]string
 	records []viewer.EmbeddingRecord
 }
 
@@ -75,7 +75,7 @@ func (m *mockViewerEmbedStore) ViewerEmbeddingInputs(context.Context) ([]viewer.
 	return m.inputs, nil
 }
 
-func (m *mockViewerEmbedStore) ExistingProfileEmbeddingHashes(context.Context) (map[string]string, error) {
+func (m *mockViewerEmbedStore) ExistingProfileEmbeddingHashes(context.Context) (map[string]map[viewer.EmbeddingKind]string, error) {
 	return m.hashes, nil
 }
 
@@ -99,19 +99,23 @@ func TestExecuteViewerEmbedIncremental(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
 		t.Fatalf("输出不是合法JSON：%v %s", err, out.String())
 	}
-	if summary.Total != 2 || summary.Pending != 2 || summary.Embedded != 2 || summary.Batches != 2 || summary.Skipped != 0 {
+	// 每份档案拆 identity/facts/interaction 三路；两人都没有回复 → 2 条空 interaction 跳过。
+	if summary.Total != 6 || summary.Pending != 4 || summary.Embedded != 4 || summary.Batches != 4 || summary.Skipped != 2 {
 		t.Fatalf("入库摘要不正确：%+v", summary)
 	}
-	if embedder.calls != 2 || len(store.records) != 2 {
+	if embedder.calls != 4 || len(store.records) != 4 {
 		t.Fatalf("批量写入不符：calls=%d records=%d", embedder.calls, len(store.records))
 	}
-	if !strings.Contains(progress.String(), "viewer embed: 已处理 1/2 条（1/2 批）") {
+	if !strings.Contains(progress.String(), "viewer embed: 已处理 1/4 条（1/4 批）") {
 		t.Fatalf("进度日志不正确：%s", progress.String())
 	}
 
-	store.hashes = map[string]string{}
+	store.hashes = map[string]map[viewer.EmbeddingKind]string{}
 	for _, record := range store.records {
-		store.hashes[record.UID] = record.Hash
+		if store.hashes[record.UID] == nil {
+			store.hashes[record.UID] = map[viewer.EmbeddingKind]string{}
+		}
+		store.hashes[record.UID][record.Kind] = record.Hash
 	}
 	out.Reset()
 	progress.Reset()
@@ -121,10 +125,10 @@ func TestExecuteViewerEmbedIncremental(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
 		t.Fatal(err)
 	}
-	if summary.Skipped != 2 || summary.Pending != 0 || summary.Embedded != 0 {
+	if summary.Skipped != 6 || summary.Pending != 0 || summary.Embedded != 0 {
 		t.Fatalf("二次增量未全部跳过：%+v", summary)
 	}
-	if embedder.calls != 2 || progress.Len() != 0 {
+	if embedder.calls != 4 || progress.Len() != 0 {
 		t.Fatalf("二次增量仍调用embedding：calls=%d progress=%q", embedder.calls, progress.String())
 	}
 }
@@ -147,11 +151,11 @@ type cliProfileSource struct {
 	hits []store.ViewerProfileHit
 }
 
-func (s *cliProfileSource) KeywordProfiles(context.Context, string, int) ([]store.ViewerProfileHit, error) {
+func (s *cliProfileSource) KeywordProfiles(context.Context, viewer.EmbeddingKind, string, int) ([]store.ViewerProfileHit, error) {
 	return s.hits, nil
 }
 
-func (s *cliProfileSource) SemanticProfiles(context.Context, []float64, int) ([]store.ViewerProfileHit, error) {
+func (s *cliProfileSource) SemanticProfiles(context.Context, viewer.EmbeddingKind, []float64, int) ([]store.ViewerProfileHit, error) {
 	return nil, nil
 }
 

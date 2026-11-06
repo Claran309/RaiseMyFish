@@ -2,17 +2,30 @@ package database
 
 // 本文件实现观众档案的关键词/向量检索。
 //
+// M10 起按索引用途查询：identity（昵称）/ facts（本人发言）/ interaction（鱼的回复）。
+// 认人只查 identity/facts；interaction 只在互动查询里使用，避免鱼的口头禅污染认人。
+//
 // 档案本身是公开投影（uid/昵称/累计次数/最近发言），不含渠道私密字段，
 // 所以查询不需要 Scope；SQL 仍然全部参数化。
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/viewer"
 )
+
+// profileKeywordColumns 是「索引路 → 关键词列」的白名单。
+//
+// 列名不能参数化，只能拼进 SQL，所以必须走白名单（绝不接受外部输入）。
+var profileKeywordColumns = map[viewer.EmbeddingKind]string{
+	viewer.KindIdentity:    "name",
+	viewer.KindFacts:       "recent_texts::text",
+	viewer.KindInteraction: "recent_replies::text",
+}
 
 // viewerHitRow 是检索结果的 SQL 投影；recent_* 以 JSONB 文本扫描。
 type viewerHitRow struct {
@@ -39,20 +52,24 @@ func (row viewerHitRow) hit() (store.ViewerProfileHit, error) {
 	return store.ViewerProfileHit{Profile: profile, Similarity: row.Sim, Score: row.Sim}, nil
 }
 
-// KeywordProfiles 按昵称/最近发言/最近回复做关键词模糊匹配。
-func (r *ViewerRepo) KeywordProfiles(ctx context.Context, keyword string, limit int) ([]store.ViewerProfileHit, error) {
+// KeywordProfiles 按指定索引做关键词模糊匹配。
+//
+// kind 必须是 identity/facts/interaction 之一；列名由白名单决定，keyword 走参数。
+func (r *ViewerRepo) KeywordProfiles(ctx context.Context, kind viewer.EmbeddingKind, keyword string, limit int) ([]store.ViewerProfileHit, error) {
 	keyword = strings.TrimSpace(keyword)
-	if ctx == nil || keyword == "" || limit < 1 || limit > 50 {
+	column, ok := profileKeywordColumns[kind]
+	if ctx == nil || !ok || keyword == "" || limit < 1 || limit > 50 {
 		return nil, store.ErrInvalid
 	}
 	pattern := "%" + keyword + "%"
 	var rows []viewerHitRow
-	err := r.db.WithContext(ctx).Table("viewer_profiles").
-		Where("name ILIKE ? OR recent_texts::text ILIKE ? OR recent_replies::text ILIKE ?", pattern, pattern, pattern).
-		Select("uid, name, hits, replies, last_seen, recent_texts, recent_replies, updated_at, 0 AS sim").
-		Order("hits DESC, last_seen DESC, uid ASC").
-		Limit(limit).
-		Find(&rows).Error
+	query := fmt.Sprintf(`
+SELECT uid, name, hits, replies, last_seen, recent_texts, recent_replies, updated_at, 0 AS sim
+FROM viewer_profiles
+WHERE %s ILIKE ?
+ORDER BY hits DESC, last_seen DESC, uid ASC
+LIMIT ?`, column)
+	err := r.db.WithContext(ctx).Raw(query, pattern, limit).Scan(&rows).Error
 	if err != nil {
 		return nil, &safeError{"关键词检索观众档案失败", err}
 	}
@@ -68,9 +85,16 @@ func (r *ViewerRepo) KeywordProfiles(ctx context.Context, keyword string, limit 
 	return hits, nil
 }
 
-// SemanticProfiles 按档案向量余弦距离取最相近的 limit 个。
-func (r *ViewerRepo) SemanticProfiles(ctx context.Context, vector []float64, limit int) ([]store.ViewerProfileHit, error) {
-	if ctx == nil || limit < 1 || limit > 200 {
+// SemanticProfiles 按指定索引取最相近的 limit 个档案。
+//
+//   - identity：昵称向量，用于同音/改名/模糊昵称；
+//   - facts：本人发言向量，用于「谁说过这句话 / 谁爱要白饭」；
+//   - interaction：鱼的回复向量，只用于互动查询，不参与认人。
+//
+// 列名来自白名单（profileEmbeddingColumnSet），不接受外部输入。
+func (r *ViewerRepo) SemanticProfiles(ctx context.Context, kind viewer.EmbeddingKind, vector []float64, limit int) ([]store.ViewerProfileHit, error) {
+	columns, ok := profileEmbeddingColumnSet[kind]
+	if ctx == nil || !ok || limit < 1 || limit > 200 {
 		return nil, store.ErrInvalid
 	}
 	literal, err := vectorLiteral(vector, viewer.EmbeddingDimension)
@@ -78,14 +102,15 @@ func (r *ViewerRepo) SemanticProfiles(ctx context.Context, vector []float64, lim
 		return nil, store.ErrInvalid
 	}
 	var rows []viewerHitRow
-	err = r.db.WithContext(ctx).Raw(`
+	query := fmt.Sprintf(`
 WITH q AS (SELECT ?::vector AS v)
 SELECT uid, name, hits, replies, last_seen, recent_texts, recent_replies, updated_at,
-       1 - (profile_embedding <=> q.v) AS sim
+       1 - (%s <=> q.v) AS sim
 FROM viewer_profiles, q
-WHERE profile_embedding IS NOT NULL
-ORDER BY profile_embedding <=> q.v, uid ASC
-LIMIT ?`, literal, limit).Scan(&rows).Error
+WHERE %s IS NOT NULL
+ORDER BY %s <=> q.v, uid ASC
+LIMIT ?`, columns.vector, columns.vector, columns.vector)
+	err = r.db.WithContext(ctx).Raw(query, literal, limit).Scan(&rows).Error
 	if err != nil {
 		return nil, &safeError{"向量检索观众档案失败", err}
 	}
