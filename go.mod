@@ -6,7 +6,7 @@ require (
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/joho/godotenv v1.5.1
 	github.com/pelletier/go-toml/v2 v2.2.4
-	go.uber.org/zap v1.27.0
+	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v3 v3.0.5
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
