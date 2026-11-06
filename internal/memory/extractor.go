@@ -5,6 +5,9 @@ package memory
 // 设计取舍：
 //   - LLM 只对「值得多花一次调用」的事件跑（@鱼 / 长文本 / 强互动），普通弹幕走规则版省成本；
 //   - LLM 输出解析失败、超时、限流 → **一律回落规则版**，绝不让提炼断掉；
+//   - 但模型**明确否决**（archive=false）不是失败：一条都不写，也不回退规则版，
+//     否则「模型说不值得记」会被规则版的兜底覆盖掉；
+//   - 提炼记录的主体（from_id/from_name）只从可信事件取，模型只决定「记什么」；
 //   - 限流是进程内滑动小时窗口，超出即回落规则版（不是报错）。
 
 import (
@@ -101,6 +104,10 @@ func (e *LLMExtractor) Extract(ctx context.Context, ev event.Event, opts Extract
 		return ruleResult, nil // 限流：回落规则，不报错
 	}
 	out, err := e.llmOut(ctx, ev, opts)
+	if errors.Is(err, errArchiveRejected) {
+		// 模型明确否决：一条都不写，也不拿规则版兜底。
+		return nil, nil
+	}
 	if err != nil || len(out) == 0 {
 		// 解析失败/模型失败：回落规则版（降级是设计，不是错误）
 		return ruleResult, nil //nolint:nilerr // 有意吞掉：LLM 只是增强
@@ -187,7 +194,16 @@ func buildLLMInput(ev event.Event, opts ExtractOptions) string {
 	return sb.String()
 }
 
+// errArchiveRejected 表示模型**明确否决**归档（archive=false）。
+//
+// 它和「解析失败」必须分开：解析失败可以回落规则版兜底，
+// 但模型看过上下文后说「不值得记」，规则版再写一遍等于无视判定。
+var errArchiveRejected = errors.New("模型明确拒绝归档")
+
 // llmRecord 是模型返回的单个记录。
+//
+// 刻意不包含 from_id/from_name：主体必须来自可信事件，
+// 模型输出里就算带了也一律忽略（提示词里也没有这两个字段）。
 type llmRecord struct {
 	Kind       string  `json:"kind"`
 	Title      string  `json:"title"`
@@ -202,6 +218,10 @@ type llmReply struct {
 }
 
 // parseLLMRecords 解析模型输出并校验成 Candidate。
+//
+// 两条硬规则（M04）：
+//  1. 主体只从事件取（FromID/FromName），模型只负责「记什么」，不负责「谁的」；
+//  2. archive=false 返回 errArchiveRejected，由调用方决定「一条都不写」。
 func parseLLMRecords(raw string, ev event.Event) ([]Candidate, error) {
 	text := strings.TrimSpace(raw)
 	if text == "" {
@@ -222,9 +242,16 @@ func parseLLMRecords(raw string, ev event.Event) ([]Candidate, error) {
 	if err := json.Unmarshal([]byte(text), &reply); err != nil {
 		return nil, err
 	}
-	if !reply.Archive || len(reply.Records) == 0 {
+	if !reply.Archive {
+		// 明确否决：不产候选，也不允许回退规则版。
+		return nil, errArchiveRejected
+	}
+	if len(reply.Records) == 0 {
+		// archive=true 但没有记录：属于模型输出不完整，按解析失败处理。
 		return nil, nil
 	}
+	subjectID := strings.TrimSpace(ev.FromID)
+	subjectName := strings.TrimSpace(ev.FromName)
 	out := make([]Candidate, 0, len(reply.Records))
 	for _, r := range reply.Records {
 		kind := normalizeKind(r.Kind)
@@ -241,12 +268,16 @@ func parseLLMRecords(raw string, ev event.Event) ([]Candidate, error) {
 		if confidence <= 0 || confidence > 1 {
 			confidence = 0.7
 		}
-		out = append(out, Candidate{Kind: kind, Title: title, Summary: summary, Importance: importance, Confidence: confidence})
+		out = append(out, Candidate{
+			Kind: kind, Title: title, Summary: summary,
+			Importance: importance, Confidence: confidence,
+			// 主体由可信事件带出：模型编造的名字不会被采信。
+			FromID: subjectID, FromName: subjectName,
+		})
 	}
 	if len(out) == 0 {
 		return nil, errors.New("模型返回的记录不可用")
 	}
-	_ = ev
 	return out, nil
 }
 

@@ -218,3 +218,91 @@ func TestLLMExtractorPrivateRequiresAuthorization(t *testing.T) {
 		t.Errorf("授权后应调用模型 1 次，实际 %d", llm.calls)
 	}
 }
+
+// TestLLMExtractorFillsSubjectFromEvent M04/T05：模型只给内容，主体由可信事件提供。
+//
+// 回归背景：parseLLMRecords 曾用 `_ = ev` 丢掉事件，导致 LLM 提炼出的记忆
+// 没有 from_id/from_name，之后问「这个人喜欢什么」时找不到主体。
+func TestLLMExtractorFillsSubjectFromEvent(t *testing.T) {
+	llm := &mockLLM{reply: `{"archive":true,"records":[
+		{"kind":"fact","title":"大二学生","summary":"我今年大二，学计算机","importance":0.7},
+		{"kind":"preference","title":"爱吃白饭","summary":"我最爱吃白饭","importance":0.6}
+	],"confidence":0.9}`}
+	e := newLLM(t, llm)
+
+	ev := llmEvent("我今年大二，学计算机专业，平时喜欢写代码，周末喜欢打游戏和钓鱼，偶尔也看看直播放松一下")
+	got, err := e.Extract(context.Background(), ev, ExtractOptions{})
+	if err != nil {
+		t.Fatalf("提取失败：%v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("应返回两条记录：%+v", got)
+	}
+	for i, c := range got {
+		if c.FromID != "2002" || c.FromName != "熟客乙" {
+			t.Errorf("第 %d 条主体不符：from_id=%q from_name=%q", i, c.FromID, c.FromName)
+		}
+	}
+}
+
+// TestLLMExtractorArchiveFalseRejectsAll M04/T06：archive=false 是明确拒绝。
+//
+// 回归背景：模型说「不值得记」时，旧实现返回空结果并**回落规则版**，
+// 于是规则命中的「我是…」照样被写进记忆库——模型的否决被无视了。
+func TestLLMExtractorArchiveFalseRejectsAll(t *testing.T) {
+	llm := &mockLLM{reply: `{"archive":false,"records":[],"confidence":0}`}
+	e := newLLM(t, llm)
+
+	// 这句话命中规则版「自我陈述」，但模型明确否决，必须一条都不写。
+	got, err := e.Extract(context.Background(), llmEvent("我是学生，今天也在上课，早上八点就有课，一直上到中午才下课，累死了"), ExtractOptions{})
+	if err != nil {
+		t.Fatalf("否决不应报错：%v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("archive=false 不应写入任何记录：%+v", got)
+	}
+	if llm.calls != 1 {
+		t.Errorf("应调用模型 1 次，实际 %d", llm.calls)
+	}
+}
+
+// TestLLMExtractorSubjectNotTakenFromModel M04：模型输出里的主体字段一律忽略。
+//
+// 提示词里没有 from_id，模型就算自己编一个也不该被采信。
+func TestLLMExtractorSubjectNotTakenFromModel(t *testing.T) {
+	llm := &mockLLM{reply: `{"archive":true,"records":[
+		{"kind":"fact","title":"自述","summary":"我养了只猫","importance":0.7,"from_id":"9999","from_name":"冒充者"}
+	],"confidence":0.9}`}
+	e := newLLM(t, llm)
+
+	ev := llmEvent("我养了一只三花猫，已经两岁了，每天下班回家都要陪它玩一会儿，特别黏人")
+	got, err := e.Extract(context.Background(), ev, ExtractOptions{})
+	if err != nil {
+		t.Fatalf("提取失败：%v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("应返回一条记录：%+v", got)
+	}
+	if got[0].FromID != "2002" || got[0].FromName != "熟客乙" {
+		t.Fatalf("主体只能来自事件：from_id=%q from_name=%q", got[0].FromID, got[0].FromName)
+	}
+}
+
+// TestLLMExtractorEmptySubjectStaysEmpty M04：事件没有主体时不编造。
+func TestLLMExtractorEmptySubjectStaysEmpty(t *testing.T) {
+	llm := &mockLLM{reply: `{"archive":true,"records":[{"kind":"fact","title":"无主体","summary":"内容","importance":0.6}],"confidence":0.8}`}
+	e := newLLM(t, llm)
+
+	ev := llmEvent("我今年大二，学计算机专业，平时喜欢写代码，周末喜欢打游戏和钓鱼，偶尔也看看直播放松一下")
+	ev.FromID, ev.FromName = "", ""
+	got, err := e.Extract(context.Background(), ev, ExtractOptions{})
+	if err != nil {
+		t.Fatalf("提取失败：%v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("应返回一条记录：%+v", got)
+	}
+	if got[0].FromID != "" || got[0].FromName != "" {
+		t.Errorf("事件没有主体时不应编造：%+v", got[0])
+	}
+}
