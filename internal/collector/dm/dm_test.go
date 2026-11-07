@@ -18,16 +18,16 @@ type fakeFetcher struct {
 	calls   int
 }
 
-func (f *fakeFetcher) Fetch(context.Context) ([]Message, error) {
+func (f *fakeFetcher) Fetch(context.Context) (Batch, error) {
 	i := f.calls
 	f.calls++
 	if i < len(f.errs) && f.errs[i] != nil {
-		return nil, f.errs[i]
+		return Batch{}, f.errs[i]
 	}
 	if i < len(f.batches) {
-		return f.batches[i], nil
+		return Batch{Messages: f.batches[i]}, nil
 	}
-	return nil, nil
+	return Batch{}, nil
 }
 
 // TestParseSessions 解析 mock 会话 JSON：字符串/数字 uid 都认，跳过自己发的。
@@ -165,5 +165,63 @@ func TestStartStopsOnAuthError(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("鉴权错误后未停止")
+	}
+}
+
+// commitFetcher 返回固定 Batch，用于断言提交时序。
+type commitFetcher struct {
+	batch Batch
+}
+
+func (f *commitFetcher) Fetch(context.Context) (Batch, error) { return f.batch, nil }
+
+// TestCollectorCommitsAfterEmission 消息全部入总线后才提交水位。
+func TestCollectorCommitsAfterEmission(t *testing.T) {
+	committed := 0
+	f := &commitFetcher{batch: Batch{
+		Messages: []Message{{ID: "1", PeerID: "2", Text: "hi", At: time.Now()}},
+		Commit:   func() error { committed++; return nil },
+	}}
+	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
+	events := make(chan event.Event, 1)
+	if err := c.poll(context.Background(), events); err != nil {
+		t.Fatal(err)
+	}
+	if committed != 1 {
+		t.Fatalf("入总线后应提交一次，实际 %d", committed)
+	}
+	if len(events) != 1 {
+		t.Fatalf("应产出一条事件，实际 %d", len(events))
+	}
+}
+
+// TestCollectorNoCommitWhenCancelled 取消后不提交，下一轮可重新拉取。
+func TestCollectorNoCommitWhenCancelled(t *testing.T) {
+	msg := Message{ID: "1", PeerID: "2", Text: "hi", At: time.Now()}
+	f := &fakeFetcher{batches: [][]Message{{msg}, {msg}}}
+	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
+	// 第一轮用已取消上下文 + 无缓冲通道：消息不会入总线，也不该记已见。
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.poll(ctx, make(chan event.Event)); err != nil {
+		t.Fatal(err)
+	}
+	// 第二轮正常发送：说明上轮没有提前 markSeen。
+	events := make(chan event.Event, 1)
+	if err := c.poll(context.Background(), events); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("取消未送出的消息应重试，实际事件 %d", len(events))
+	}
+}
+
+// TestCollectorCommitFailure 水位落盘失败按非鉴权错误上抛，调度继续。
+func TestCollectorCommitFailure(t *testing.T) {
+	f := &commitFetcher{batch: Batch{Commit: func() error { return errors.New("disk full") }}}
+	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
+	err := c.poll(context.Background(), make(chan event.Event, 1))
+	if err == nil || errors.Is(err, errAuth) {
+		t.Fatalf("应返回非鉴权错误，实际 %v", err)
 	}
 }

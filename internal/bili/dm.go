@@ -26,49 +26,90 @@ type DMSession struct {
 	Content string
 	// Timestamp 是平台秒级时间戳。
 	Timestamp int64
+	// MsgSeqno 是最近一条消息的序列号；平台未返回时为空。
+	MsgSeqno string
+	// MaxSeqno 是会话内最大序列号；平台未返回时为空。
+	MaxSeqno string
 }
 
-// DMSessions 拉会话列表；limit<=0 用 20。
-func (c *Client) DMSessions(ctx context.Context, limit int) ([]DMSession, error) {
+// DMSessionPage 是一页会话列表。
+type DMSessionPage struct {
+	Sessions []DMSession
+	HasMore  bool
+}
+
+// DMSessionsPage 拉一页会话；size<=0 用 20，最大 100。
+// endTS 是微秒级结束时间游标（0 表示从最新开始），用于向更早的会话翻页。
+func (c *Client) DMSessionsPage(ctx context.Context, size int, endTS int64) (DMSessionPage, error) {
 	if c == nil {
-		return nil, ErrNoCredential
+		return DMSessionPage{}, ErrNoCredential
 	}
-	if limit <= 0 || limit > 100 {
-		limit = 20
+	if size <= 0 || size > 100 {
+		size = 20
 	}
-	endpoint := c.vc + "/session_svr/v1/session_svr/get_sessions?session_type=1&group_id=0&end_point=" + url.QueryEscape("[]")
+	params := url.Values{}
+	params.Set("session_type", "1")
+	params.Set("group_id", "0")
+	params.Set("end_point", "[]")
+	params.Set("size", strconv.Itoa(size))
+	if endTS > 0 {
+		params.Set("end_ts", strconv.FormatInt(endTS, 10))
+	}
+	endpoint := c.vc + "/session_svr/v1/session_svr/get_sessions?" + params.Encode()
 	var data struct {
 		SessionList []struct {
 			TalkerID json.RawMessage `json:"talker_id"`
+			MaxSeqno json.RawMessage `json:"max_seqno"`
 			LastMsg  struct {
 				MsgKey    json.RawMessage `json:"msg_key"`
+				MsgSeqno  json.RawMessage `json:"msg_seqno"`
 				SenderUID json.RawMessage `json:"sender_uid"`
 				Content   string          `json:"content"`
 				Timestamp int64           `json:"timestamp"`
 			} `json:"last_msg"`
 		} `json:"session_list"`
+		HasMore json.RawMessage `json:"has_more"`
 	}
 	if err := c.do(ctx, "dm_sessions", http.MethodGet, endpoint, nil, &data); err != nil {
-		return nil, err
+		return DMSessionPage{}, err
 	}
 	out := make([]DMSession, 0, len(data.SessionList))
 	for _, s := range data.SessionList {
-		if len(out) >= limit {
-			break
-		}
 		item := DMSession{
 			TalkerID:  rawJSONID(s.TalkerID),
 			MsgKey:    rawJSONID(s.LastMsg.MsgKey),
 			SenderUID: rawJSONID(s.LastMsg.SenderUID),
 			Content:   strings.TrimSpace(s.LastMsg.Content),
 			Timestamp: s.LastMsg.Timestamp,
+			MsgSeqno:  rawJSONID(s.LastMsg.MsgSeqno),
+			MaxSeqno:  rawJSONID(s.MaxSeqno),
 		}
 		if item.TalkerID == "" || item.MsgKey == "" || item.Content == "" {
 			continue
 		}
 		out = append(out, item)
 	}
-	return out, nil
+	page := DMSessionPage{Sessions: out}
+	if len(data.HasMore) > 0 {
+		page.HasMore = looseTrue(data.HasMore)
+	} else {
+		// 旧版响应没有 has_more：按「取满一页」保守认为可能还有更早会话。
+		page.HasMore = len(data.SessionList) >= size
+	}
+	return page, nil
+}
+
+// DMSessions 拉会话列表首页；limit<=0 用 20。
+func (c *Client) DMSessions(ctx context.Context, limit int) ([]DMSession, error) {
+	size := limit
+	if size <= 0 || size > 100 {
+		size = 20
+	}
+	page, err := c.DMSessionsPage(ctx, size, 0)
+	if err != nil {
+		return nil, err
+	}
+	return page.Sessions, nil
 }
 
 // DMMessage 是会话详情里的一条消息。
@@ -77,42 +118,109 @@ type DMMessage struct {
 	SenderUID string
 	Content   string
 	Timestamp int64
+	// Seqno 是会话内消息序列号（msg_seqno）；平台未返回时为空。
+	Seqno string
 }
 
-// DMSessionMessages 拉某个会话的最近消息（get_session_msgs）；
-// limit<=0 用 50，最大 100。文本取 content 字段，非文本/空正文跳过。
-func (c *Client) DMSessionMessages(ctx context.Context, talkerID string, limit int) ([]DMMessage, error) {
+// DMMessagePage 是一页会话消息。
+type DMMessagePage struct {
+	Messages []DMMessage
+	HasMore  bool
+	MinSeqno string
+	MaxSeqno string
+	// Count 是平台返回的原始条数（含被跳过的非文本消息）。
+	Count int
+}
+
+// DMSessionMessagesPage 拉一页会话消息（get_session_msgs）。
+//
+// endSeqno 为空时从最新开始；非空时只取比它更早的消息（游标向历史翻页）。
+// size<=0 用 50，最大 200。文本取 content 字段，非文本/空正文跳过，
+// 但 MinSeqno/MaxSeqno 仍按原始消息计算，避免非文本消息挡住水位。
+func (c *Client) DMSessionMessagesPage(ctx context.Context, talkerID string, size int, endSeqno string) (DMMessagePage, error) {
 	if c == nil {
-		return nil, ErrNoCredential
+		return DMMessagePage{}, ErrNoCredential
 	}
 	if !isDigits(talkerID) {
-		return nil, errors.New("私信会话 talker_id 必须是纯数字")
+		return DMMessagePage{}, errors.New("私信会话 talker_id 必须是纯数字")
 	}
-	if limit <= 0 || limit > 100 {
-		limit = 50
+	endSeqno = strings.TrimSpace(endSeqno)
+	if endSeqno != "" && !isDigits(endSeqno) {
+		return DMMessagePage{}, errors.New("私信消息游标必须是纯数字")
 	}
-	endpoint := c.vc + "/session_svr/v1/session_svr/get_session_msgs?talker_id=" + url.QueryEscape(talkerID) +
-		"&session_type=1&size=" + strconv.Itoa(limit)
+	if size <= 0 || size > 200 {
+		size = 50
+	}
+	params := url.Values{}
+	params.Set("talker_id", talkerID)
+	params.Set("session_type", "1")
+	params.Set("size", strconv.Itoa(size))
+	if endSeqno != "" {
+		params.Set("end_seqno", endSeqno)
+	}
+	endpoint := c.vc + "/session_svr/v1/session_svr/get_session_msgs?" + params.Encode()
 	var data struct {
 		Messages []struct {
 			MsgKey    json.RawMessage `json:"msg_key"`
+			MsgSeqno  json.RawMessage `json:"msg_seqno"`
 			SenderUID json.RawMessage `json:"sender_uid"`
 			Content   string          `json:"content"`
 			Timestamp int64           `json:"timestamp"`
 		} `json:"messages"`
+		HasMore  json.RawMessage `json:"has_more"`
+		MinSeqno json.RawMessage `json:"min_seqno"`
+		MaxSeqno json.RawMessage `json:"max_seqno"`
 	}
 	if err := c.do(ctx, "dm_session_msgs", http.MethodGet, endpoint, nil, &data); err != nil {
-		return nil, err
+		return DMMessagePage{}, err
 	}
-	out := make([]DMMessage, 0, len(data.Messages))
+	page := DMMessagePage{Count: len(data.Messages)}
 	for _, m := range data.Messages {
+		seq := rawJSONID(m.MsgSeqno)
+		if seq != "" {
+			page.MinSeqno = minDecimalID(page.MinSeqno, seq)
+			page.MaxSeqno = maxDecimalID(page.MaxSeqno, seq)
+		}
 		key, sender, text := rawJSONID(m.MsgKey), rawJSONID(m.SenderUID), parseDMContent(m.Content)
 		if key == "" || sender == "" || text == "" {
 			continue
 		}
-		out = append(out, DMMessage{MsgKey: key, SenderUID: sender, Content: text, Timestamp: m.Timestamp})
+		page.Messages = append(page.Messages, DMMessage{
+			MsgKey:    key,
+			SenderUID: sender,
+			Content:   text,
+			Timestamp: m.Timestamp,
+			Seqno:     seq,
+		})
 	}
-	return out, nil
+	// 极值优先按本页实际消息计算：响应里的 min/max 若被平台定义成整会话范围，
+	// 直接采用会让游标过早停在新页上。仅在本页没有可用 seqno 时回退到响应字段。
+	if page.MinSeqno == "" {
+		page.MinSeqno = rawJSONID(data.MinSeqno)
+	}
+	if page.MaxSeqno == "" {
+		page.MaxSeqno = rawJSONID(data.MaxSeqno)
+	}
+	if len(data.HasMore) > 0 {
+		page.HasMore = looseTrue(data.HasMore)
+	} else {
+		// 旧版响应没有 has_more：按「取满一页」保守认为可能还有更早消息。
+		page.HasMore = page.Count >= size
+	}
+	return page, nil
+}
+
+// DMSessionMessages 拉某个会话的最近消息；limit<=0 用 50。
+func (c *Client) DMSessionMessages(ctx context.Context, talkerID string, limit int) ([]DMMessage, error) {
+	size := limit
+	if size <= 0 || size > 200 {
+		size = 50
+	}
+	page, err := c.DMSessionMessagesPage(ctx, talkerID, size, "")
+	if err != nil {
+		return nil, err
+	}
+	return page.Messages, nil
 }
 
 // parseDMContent 取文本消息正文；平台把正文包在 JSON 字符串里（{"content":"..."}）。
@@ -205,4 +313,56 @@ func rawJSONID(raw json.RawMessage) string {
 		return n.String()
 	}
 	return ""
+}
+
+// looseTrue 兼容 has_more 的 0/1、true/false 与字符串形态。
+func looseTrue(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	return s == "1" || s == "true" || s == `"1"` || s == `"true"`
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// compareDecimalID 比较两个非负十进制串；空串按 0 处理。
+func compareDecimalID(a, b string) int {
+	if a == "" {
+		a = "0"
+	}
+	if b == "" {
+		b = "0"
+	}
+	if len(a) != len(b) {
+		if len(a) < len(b) {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(a, b)
+}
+
+func minDecimalID(a, b string) string {
+	if a == "" || b == "" {
+		return firstNonEmpty(a, b)
+	}
+	if compareDecimalID(a, b) <= 0 {
+		return a
+	}
+	return b
+}
+
+func maxDecimalID(a, b string) string {
+	if a == "" || b == "" {
+		return firstNonEmpty(a, b)
+	}
+	if compareDecimalID(a, b) >= 0 {
+		return a
+	}
+	return b
 }

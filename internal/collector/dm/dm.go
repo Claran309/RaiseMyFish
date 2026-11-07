@@ -69,9 +69,18 @@ type Message struct {
 	At time.Time
 }
 
+// Batch 是一轮拉取结果。
+//
+// Commit 在本批消息全部成功送入总线后调用，用于持久化水位；
+// 中途取消则不提交，下一轮会重新拉取（事件 ID 幂等兜底可能重复）。
+type Batch struct {
+	Messages []Message
+	Commit   func() error
+}
+
 // Fetcher 拉取「未读/新」私信；真实实现走 HTTP，测试用假实现。
 type Fetcher interface {
-	Fetch(ctx context.Context) ([]Message, error)
+	Fetch(ctx context.Context) (Batch, error)
 }
 
 // Options 是采集参数。
@@ -163,7 +172,7 @@ var errAuth = errors.New("私信采集鉴权失效")
 
 // poll 拉一轮并产出事件。
 func (c *Collector) poll(ctx context.Context, events chan<- event.Event) error {
-	msgs, err := c.fetcher.Fetch(ctx)
+	batch, err := c.fetcher.Fetch(ctx)
 	if err != nil {
 		var kinded *Error
 		if errors.As(err, &kinded) && kinded.Kind == KindAuth {
@@ -173,40 +182,47 @@ func (c *Collector) poll(ctx context.Context, events chan<- event.Event) error {
 	}
 	now := c.opts.Now()
 	// 稳定顺序：按时间升序，保证下游看到的是会话顺序
-	sort.SliceStable(msgs, func(i, j int) bool {
-		if !msgs[i].At.Equal(msgs[j].At) {
-			return msgs[i].At.Before(msgs[j].At)
+	sort.SliceStable(batch.Messages, func(i, j int) bool {
+		if !batch.Messages[i].At.Equal(batch.Messages[j].At) {
+			return batch.Messages[i].At.Before(batch.Messages[j].At)
 		}
-		return msgs[i].ID < msgs[j].ID
+		return batch.Messages[i].ID < batch.Messages[j].ID
 	})
-	for _, m := range msgs {
-		ev, ok := c.toEvent(m, now)
+	for _, m := range batch.Messages {
+		ev, id, ok := c.toEvent(m, now)
 		if !ok {
 			continue
 		}
 		select {
 		case events <- ev:
+			// 只有事件真正进入总线后才记已见并允许推进水位。
+			c.markSeen(id)
 			c.recordEvent(now)
 		case <-ctx.Done():
 			return nil
 		}
 	}
+	if batch.Commit != nil {
+		if err := batch.Commit(); err != nil {
+			return fmt.Errorf("保存私信采集水位：%w", err)
+		}
+	}
 	return nil
 }
 
-// toEvent 校验并构造事件；重复消息返回 false。
-func (c *Collector) toEvent(m Message, now time.Time) (event.Event, bool) {
+// toEvent 校验并构造事件；返回原始消息 ID 供成功入总线后记已见。
+func (c *Collector) toEvent(m Message, now time.Time) (event.Event, string, bool) {
 	id := strings.TrimSpace(m.ID)
 	peer := strings.TrimSpace(m.PeerID)
 	text := strings.TrimSpace(m.Text)
 	if id == "" || peer == "" || text == "" {
-		return event.Event{}, false
+		return event.Event{}, "", false
 	}
 	if len([]rune(text)) > maxTextRunes {
 		text = string([]rune(text)[:maxTextRunes])
 	}
-	if c.markSeen(id) {
-		return event.Event{}, false
+	if c.saw(id) {
+		return event.Event{}, "", false
 	}
 	at := m.At
 	if at.IsZero() {
@@ -227,22 +243,25 @@ func (c *Collector) toEvent(m Message, now time.Time) (event.Event, bool) {
 		Text:     text,
 		At:       at,
 		Status:   event.StatusPending,
-	}, true
+	}, id, true
 }
 
-// markSeen 记录 msg_id；已见过返回 true。超过上限时丢最早的一半（简易有界集）。
-func (c *Collector) markSeen(id string) bool {
+func (c *Collector) saw(id string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	_, ok := c.seen[id]
+	return ok
+}
+
+// markSeen 记录 msg_id。超过上限时整体重建（简易有界集）。
+func (c *Collector) markSeen(id string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, ok := c.seen[id]; ok {
-		return true
-	}
 	if len(c.seen) >= maxSeen {
 		// map 无序，这里直接重建：宁可重看几条，也不无限增长
 		c.seen = make(map[string]struct{}, maxSeen/2)
 	}
 	c.seen[id] = struct{}{}
-	return false
 }
 
 func (c *Collector) record() {

@@ -219,3 +219,139 @@ func TestNewReadsCookieFile(t *testing.T) {
 		t.Errorf("缺失文件应返回 ErrNoCredential：%v", err)
 	}
 }
+
+// TestDMSessionsPageCursorAndSeqno 断言会话分页参数与 seqno 解析。
+func TestDMSessionsPageCursorAndSeqno(t *testing.T) {
+	var size, endTS string
+	c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
+		size = r.URL.Query().Get("size")
+		endTS = r.URL.Query().Get("end_ts")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"session_list":[
+			{"talker_id":"2002","max_seqno":12,"last_msg":{"msg_key":"9001","msg_seqno":12,"sender_uid":"2002","content":"在吗","timestamp":1700000000}}
+		],"has_more":1}}`))
+	})
+	page, err := c.DMSessionsPage(context.Background(), 25, 1700000000123456)
+	if err != nil {
+		t.Fatalf("拉会话失败：%v", err)
+	}
+	if size != "25" || endTS != "1700000000123456" {
+		t.Errorf("分页参数不符：size=%s end_ts=%s", size, endTS)
+	}
+	if !page.HasMore || len(page.Sessions) != 1 {
+		t.Fatalf("分页解析不符：%+v", page)
+	}
+	if got := page.Sessions[0]; got.MsgSeqno != "12" || got.MaxSeqno != "12" {
+		t.Errorf("seqno 未解析：%+v", got)
+	}
+}
+
+// TestDMSessionMessagesPageCursor 断言 end_seqno 参数、原始条数与 min/max seqno。
+func TestDMSessionMessagesPageCursor(t *testing.T) {
+	var talker, size, endSeqno string
+	c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
+		talker = r.URL.Query().Get("talker_id")
+		size = r.URL.Query().Get("size")
+		endSeqno = r.URL.Query().Get("end_seqno")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"messages":[
+			{"msg_key":"11","msg_seqno":11,"sender_uid":"2002","content":"{\"content\":\"最新\"}","timestamp":1700000011},
+			{"msg_key":"10","msg_seqno":10,"sender_uid":"2002","content":"{\"type\":1}","timestamp":1700000010},
+			{"msg_key":"9","msg_seqno":9,"sender_uid":"2002","content":"{\"content\":\"更早\"}","timestamp":1700000009}
+		],"has_more":1,"min_seqno":9,"max_seqno":11}}`))
+	})
+	page, err := c.DMSessionMessagesPage(context.Background(), "2002", 2, "12")
+	if err != nil {
+		t.Fatalf("拉详情失败：%v", err)
+	}
+	if talker != "2002" || size != "2" || endSeqno != "12" {
+		t.Errorf("分页参数不符：talker=%s size=%s end_seqno=%s", talker, size, endSeqno)
+	}
+	if page.Count != 3 {
+		t.Errorf("原始条数 = %d，期望 3", page.Count)
+	}
+	if len(page.Messages) != 2 {
+		t.Fatalf("非文本应跳过：%+v", page.Messages)
+	}
+	if page.MinSeqno != "9" || page.MaxSeqno != "11" {
+		t.Errorf("min/max 应覆盖非文本消息：%s/%s", page.MinSeqno, page.MaxSeqno)
+	}
+	if !page.HasMore {
+		t.Error("has_more=1 应解析为 true")
+	}
+	if page.Messages[0].Seqno != "11" || page.Messages[1].Seqno != "9" {
+		t.Errorf("消息 seqno 未解析：%+v", page.Messages)
+	}
+}
+
+// TestDMSessionMessagesPageLegacyHasMore 旧响应无 has_more 时按「取满一页」保守判断。
+func TestDMSessionMessagesPageLegacyHasMore(t *testing.T) {
+	c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"data":{"messages":[
+			{"msg_key":"1","msg_seqno":1,"sender_uid":"2002","content":"{\"content\":\"hi\"}","timestamp":1700000001}
+		]}}`))
+	})
+	full, err := c.DMSessionMessagesPage(context.Background(), "2002", 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !full.HasMore {
+		t.Error("取满一页且无 has_more 应保守认为还有更早消息")
+	}
+	part, err := c.DMSessionMessagesPage(context.Background(), "2002", 2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if part.HasMore {
+		t.Error("未取满一页应认为没有更早消息")
+	}
+}
+
+// TestDMSessionMessagesPageRejectsCursor 非法 end_seqno 本地拒绝，不发请求。
+func TestDMSessionMessagesPageRejectsCursor(t *testing.T) {
+	c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("非法游标不应发请求")
+	})
+	if _, err := c.DMSessionMessagesPage(context.Background(), "2002", 50, "abc"); err == nil {
+		t.Fatal("非数字游标应报错")
+	}
+}
+
+// TestDMSessionsPageLegacyHasMore 旧响应无 has_more 时按「取满一页」保守判断。
+func TestDMSessionsPageLegacyHasMore(t *testing.T) {
+	c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"data":{"session_list":[
+			{"talker_id":"2002","last_msg":{"msg_key":"1","sender_uid":"2002","content":"在吗","timestamp":1700000000}}
+		]}}`))
+	})
+	full, err := c.DMSessionsPage(context.Background(), 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !full.HasMore {
+		t.Error("取满一页且无 has_more 应保守认为还有更早会话")
+	}
+	part, err := c.DMSessionsPage(context.Background(), 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if part.HasMore {
+		t.Error("未取满一页应认为没有更早会话")
+	}
+}
+
+// TestDMSessionMessagesPagePrefersPageExtrema 响应 min/max 若是整会话范围，
+// 以本页实际消息的极值为准，避免游标过早停住。
+func TestDMSessionMessagesPagePrefersPageExtrema(t *testing.T) {
+	c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"data":{"messages":[
+			{"msg_key":"11","msg_seqno":11,"sender_uid":"2002","content":"{\"content\":\"新\"}","timestamp":1700000011},
+			{"msg_key":"9","msg_seqno":9,"sender_uid":"2002","content":"{\"content\":\"旧\"}","timestamp":1700000009}
+		],"has_more":0,"min_seqno":1,"max_seqno":999}}`))
+	})
+	page, err := c.DMSessionMessagesPage(context.Background(), "2002", 50, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.MinSeqno != "9" || page.MaxSeqno != "11" {
+		t.Fatalf("应以本页消息极值为准：min=%s max=%s", page.MinSeqno, page.MaxSeqno)
+	}
+}

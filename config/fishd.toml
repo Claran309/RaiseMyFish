@@ -322,6 +322,8 @@ rebuild_interval_seconds = 3600
 [collector.dm]
 enabled = true
 interval_seconds = 120   # 10-3600
+# 私信采集水位（账号+会话+消息游标，跨重启保留）；留空用 state/dm-cursors.json
+state_path = "state/dm-cursors.json"
 
 # 发送：all_followers=true（默认）所有发信人都可回，不再要求互关/白名单/每日一个收信人；
 # allowed_mids 仅作额外放行（并始终并入主人 mid），不构成限制。

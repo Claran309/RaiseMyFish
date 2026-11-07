@@ -8,6 +8,9 @@ import "errors"
 type DMCollector struct {
 	Enabled         bool `toml:"enabled"`
 	IntervalSeconds int  `toml:"interval_seconds"`
+	// StatePath 是私信采集水位文件（账号+会话+消息游标，跨重启保留），
+	// 空则用 state/dm-cursors.json。
+	StatePath string `toml:"state_path"`
 }
 
 func defaultDMCollector() DMCollector {

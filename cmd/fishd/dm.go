@@ -7,6 +7,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -59,7 +60,15 @@ func newDMCollectorWithClient(cfg config.Config, client *bili.Client, log *zap.L
 		Interval: time.Duration(cfg.Collector.DM.IntervalSeconds) * time.Second,
 		Log:      log,
 	}
-	return dmcollector.New(dmcollector.NewBiliFetcher(client, selfMID(cfg), 20), opts)
+	store, err := dmcollector.NewFileCursorStore(cfg.Collector.DM.StatePath)
+	if err != nil {
+		return nil, fmt.Errorf("初始化私信水位存储失败：%w", err)
+	}
+	fetcher := dmcollector.NewBiliFetcher(client, selfMID(cfg), 100)
+	fetcher.PageSize = 100
+	fetcher.Cursors = store
+	fetcher.Log = log
+	return dmcollector.New(fetcher, opts)
 }
 
 // buildDMSender 只在 [sender.dm] enabled 时装配；未装配返回 nil（不报错）。
