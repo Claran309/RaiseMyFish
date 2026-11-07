@@ -143,7 +143,7 @@ func TestLiveAPI(t *testing.T) {
 	srv := newTestServerWithRuntime(t, &fakeRepo{}, control, nil)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/live", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/live"))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"room_id":"30308220"`) {
 		t.Fatalf("直播状态不符：%d %s", rec.Code, rec.Body.String())
 	}
@@ -178,7 +178,7 @@ func TestMessageAPI(t *testing.T) {
 	srv := newTestServerWithRuntime(t, &fakeRepo{}, control, nil)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/message", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/message"))
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, `"videos":["12"]`) || !strings.Contains(body, `"allowed_mids":["42"]`) ||
 		!strings.Contains(body, `"auto_discover":true`) || !strings.Contains(body, `"all_followers":true`) {
@@ -214,7 +214,7 @@ func TestConfigAPI(t *testing.T) {
 	srv := newTestServerWithRuntime(t, &fakeRepo{}, control, nil)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/config"))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"interval_seconds":20`) {
 		t.Fatalf("配置快照不符：%d %s", rec.Code, rec.Body.String())
 	}
@@ -266,7 +266,7 @@ func TestWatchdogAPI(t *testing.T) {
 	}}
 	srv := newTestServerWithRuntime(t, &fakeRepo{}, control, nil)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/watchdog", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/watchdog"))
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, `"reason":"stale"`) || !strings.Contains(body, `"restart_command_configured":true`) {
 		t.Fatalf("看门狗状态不符：%d %s", rec.Code, body)
@@ -287,13 +287,13 @@ func TestChannelRecentAPI(t *testing.T) {
 		"/api/dm/recent":      `"channel":"dm"`,
 	} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Handler().ServeHTTP(rec, readReq(path))
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("%s 响应不符：%d %s", path, rec.Code, rec.Body.String())
 		}
 	}
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/comment/recent?dir=side", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/comment/recent?dir=side"))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("非法 dir 应 400，实际 %d", rec.Code)
 	}
@@ -317,7 +317,7 @@ func TestEventDetailAPI(t *testing.T) {
 	}}
 	srv := newTestServer(t, repo)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events/live:1:2", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/events/live:1:2"))
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d", rec.Code)
@@ -329,12 +329,12 @@ func TestEventDetailAPI(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events/missing", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/events/missing"))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("不存在应 404，实际 %d", rec.Code)
 	}
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events/", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/events/"))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("缺 id 应 400，实际 %d", rec.Code)
 	}
@@ -346,7 +346,7 @@ func TestGiftQuotaAPI(t *testing.T) {
 	}}}
 	srv := newTestServerWithRuntime(t, &fakeRepo{}, control, nil)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/gift/quota", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/gift/quota"))
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, `"used":3`) || !strings.Contains(body, `"daily_limit":5`) {
 		t.Fatalf("额度响应不符：%d %s", rec.Code, body)
@@ -366,7 +366,7 @@ func TestLogsAPI(t *testing.T) {
 		"/api/like/log":      "heartbeat_like",
 	} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Handler().ServeHTTP(rec, readReq(path))
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"msg":"ok"`) {
 			t.Errorf("%s 响应不符：%d %s", path, rec.Code, rec.Body.String())
 		}
@@ -384,7 +384,7 @@ func TestLogsAPI(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/logs/stream", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/logs/stream"))
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, "event: ready") || !strings.Contains(body, `"msg":"tail"`) {
 		t.Fatalf("SSE 输出不符：%d %s", rec.Code, body)
@@ -395,14 +395,14 @@ func TestRuntimeUnavailable(t *testing.T) {
 	srv := newTestServer(t, &fakeRepo{})
 	for _, path := range []string{"/api/live", "/api/message", "/api/config", "/api/watchdog", "/api/gift/quota"} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Handler().ServeHTTP(rec, readReq(path))
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s 应 503，实际 %d", path, rec.Code)
 		}
 	}
 	for _, path := range []string{"/api/logs/stream", "/api/gift/log", "/api/proactive/log", "/api/like/log"} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Handler().ServeHTTP(rec, readReq(path))
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s 应 503，实际 %d", path, rec.Code)
 		}
@@ -420,7 +420,7 @@ func TestNewPagesRender(t *testing.T) {
 	}
 	for path, keys := range want {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Handler().ServeHTTP(rec, readReq(path))
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s 状态码 = %d", path, rec.Code)
 			continue
@@ -443,7 +443,7 @@ func TestNewPagesRender(t *testing.T) {
 func TestActivityPageBlocks(t *testing.T) {
 	srv := newTestServerWithRuntime(t, &fakeRepo{}, &fakeControl{}, &fakeLogs{})
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/activity", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/activity"))
 	body := rec.Body.String()
 	for _, want := range []string{"/api/gift/log", "/api/gift/quota", "/api/proactive/log", "/api/like/log", "/api/events/"} {
 		if !strings.Contains(body, want) {

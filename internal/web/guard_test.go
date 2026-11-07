@@ -177,16 +177,50 @@ func TestWriteGuardHostMustMatchPanel(t *testing.T) {
 	}
 }
 
-// TestWriteGuardLeavesReadsAlone 读接口不要求 Origin/令牌（跨站读不到响应体）。
-func TestWriteGuardLeavesReadsAlone(t *testing.T) {
-	srv := newTestServerWithAccounts(t, &fakeRepo{memory: nil}, &fakeAccounts{})
+// TestReadGuardRejectsForeignHost T21 扩展：读路径也要校验 Host。
+//
+// 为什么要管读：页面 HTML 里带着写接口令牌，DNS rebinding 只要能读到 `/`
+// 就等于拿到了写权限。因此 GET 的 Host 同样必须是面板自身。
+func TestReadGuardRejectsForeignHost(t *testing.T) {
+	srv := newTestServerWithAccounts(t, &fakeRepo{}, &fakeAccounts{})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/memory", nil)
-	req.Host = "example.com" // 极端 Host 也不拦读
+	paths := []string{"/", "/accounts", "/api/memory", "/api/status", "/api/token"}
+	for _, path := range paths {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "evil.example.com:8090" // rebinding 域名
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s 恶意 Host 应 403，实际 %d", path, rec.Code)
+		}
+
+		req = httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "127.0.0.1:9999" // 同机不同端口
+		rec = httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s 端口不符应 403，实际 %d", path, rec.Code)
+		}
+
+		// 合法 Host：读请求不需要 Origin/令牌。
+		rec = httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, readReq(path))
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s 合法 Host 应 200，实际 %d", path, rec.Code)
+		}
+	}
+}
+
+// TestReadGuardAllowsLocalhost 浏览器用 localhost 访问页面也要能用（HEAD 由页面处理）。
+func TestReadGuardAllowsLocalhost(t *testing.T) {
+	srv := newTestServerWithAccounts(t, &fakeRepo{}, &fakeAccounts{})
+
+	req := httptest.NewRequest(http.MethodHead, "/", nil)
+	req.Host = "localhost:8090"
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("读接口不应被拦，实际 %d", rec.Code)
+		t.Fatalf("HEAD localhost 应 200，实际 %d", rec.Code)
 	}
 }
 
@@ -194,7 +228,7 @@ func TestWriteGuardLeavesReadsAlone(t *testing.T) {
 func TestPageInjectsToken(t *testing.T) {
 	srv := newTestServerWithAccounts(t, &fakeRepo{}, &fakeAccounts{})
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("首页应可访问，实际 %d", rec.Code)
 	}
@@ -208,12 +242,12 @@ func TestPageInjectsToken(t *testing.T) {
 
 	// 页面里的写请求必须真的带上令牌头，否则同源页面也会被 401。
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/accounts", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/accounts"))
 	if !strings.Contains(rec.Body.String(), "X-Panel-Token") {
 		t.Fatal("账号页的写请求未携带令牌头")
 	}
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/memory", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/memory"))
 	if !strings.Contains(rec.Body.String(), "X-Panel-Token") {
 		t.Fatal("记忆页的删除请求未携带令牌头")
 	}
@@ -223,7 +257,7 @@ func TestPageInjectsToken(t *testing.T) {
 func TestTokenEndpoint(t *testing.T) {
 	srv := newTestServerWithAccounts(t, &fakeRepo{}, &fakeAccounts{})
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/token", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/token"))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), srv.Token()) {
 		t.Fatalf("令牌端点不符：%d %s", rec.Code, rec.Body.String())
 	}

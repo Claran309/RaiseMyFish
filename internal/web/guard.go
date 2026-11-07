@@ -65,16 +65,20 @@ func isWriteMethod(method string) bool {
 	}
 }
 
-// guardWrite 包住写接口：Host → 来源（Origin 或令牌）→ Content-Type。
-func (s *Server) guardWrite(next http.HandlerFunc) http.HandlerFunc {
+// guard 是所有面板路由的统一入口：先校验 Host，再按方法决定是否还要过来源/Content-Type。
+//
+// O04+ ：读路径也校验 Host。原因是页面 HTML 里带着写接口令牌——
+// 如果 DNS rebinding 能让攻击者读到 `/`，他就能拿到令牌绕过写防护，
+// 所以「只拦写」等于没堵住 rebinding。读请求不再要求 Origin/令牌（同源策略本就拦读取）。
+func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isWriteMethod(r.Method) {
-			next(w, r)
-			return
-		}
-		// 1) Host：只接受面板自己的回环地址+端口。
+		// 1) Host：读写都要过（防 DNS rebinding）。
 		if !s.hostAllowed(r.Host) {
 			writeError(w, http.StatusForbidden, "请求 Host 不在允许范围（只接受本机回环地址）")
+			return
+		}
+		if !isWriteMethod(r.Method) {
+			next(w, r)
 			return
 		}
 		// 2) 来源：带 Origin 必须同源；不带 Origin 必须出示令牌。

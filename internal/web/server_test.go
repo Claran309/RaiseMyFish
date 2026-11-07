@@ -36,6 +36,16 @@ func writeReq(method, target, body string) *http.Request {
 	return req
 }
 
+// readReq 构造「面板自身地址」的读请求。
+//
+// O04+ 之后 GET 也要过 Host 校验（防 DNS rebinding 读页面里的写令牌），
+// httptest.NewRequest 默认 Host 是 example.com，必须显式改成面板地址。
+func readReq(target string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Host = "127.0.0.1:8090"
+	return req
+}
+
 type fakeRepo struct {
 	status        store.WebStatus
 	embedding     store.WebEmbeddingStatus
@@ -175,7 +185,7 @@ func TestStatusJSON(t *testing.T) {
 	}}
 	srv := newTestServer(t, repo)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/status"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d", rec.Code)
@@ -211,7 +221,7 @@ func TestEmbeddingStatusJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/embedding/status", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/embedding/status"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d", rec.Code)
 	}
@@ -270,7 +280,7 @@ func TestMemoryListTruncates(t *testing.T) {
 	}}}
 	srv := newTestServer(t, repo)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/memory?limit=10", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/memory?limit=10"))
 
 	var body struct {
 		Items []struct {
@@ -331,7 +341,7 @@ func TestEventsJSON(t *testing.T) {
 	srv := newTestServer(t, repo)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events?dir=in&limit=20", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/events?dir=in&limit=20"))
 	var body struct {
 		Items []map[string]any `json:"items"`
 		Count int              `json:"count"`
@@ -347,7 +357,7 @@ func TestEventsJSON(t *testing.T) {
 
 	// 非法 dir → 400
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events?dir=sideways", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/events?dir=sideways"))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("非法 dir 应 400，实际 %d", rec.Code)
 	}
@@ -358,7 +368,7 @@ func TestSendLogJSON(t *testing.T) {
 	repo := &fakeRepo{sends: []store.WebSend{{EventID: "e1", Channel: "live", OK: true, MsgID: "m", At: time.Now()}}}
 	srv := newTestServer(t, repo)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/send_log?limit=5", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/send_log?limit=5"))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "event_id") {
 		t.Fatalf("响应不符：%d %s", rec.Code, rec.Body.String())
 	}
@@ -369,7 +379,7 @@ func TestPagesRender(t *testing.T) {
 	srv := newTestServer(t, &fakeRepo{})
 	for _, path := range []string{"/", "/memory", "/knowledge", "/activity", "/accounts"} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Handler().ServeHTTP(rec, readReq(path))
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s 状态码 = %d", path, rec.Code)
 			continue
@@ -381,7 +391,7 @@ func TestPagesRender(t *testing.T) {
 	}
 	// 未知路径 404
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nope", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/nope"))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("未知路径应 404，实际 %d", rec.Code)
 	}
@@ -436,7 +446,7 @@ func TestErrorsJSON(t *testing.T) {
 	}}}
 	srv := newTestServer(t, repo)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/errors", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/errors"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d", rec.Code)
 	}
@@ -468,7 +478,7 @@ func TestMemoryImportanceTwoDecimals(t *testing.T) {
 	}}}
 	srv := newTestServer(t, repo)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/memory", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/memory"))
 
 	var body struct {
 		Items []struct {
@@ -491,7 +501,7 @@ func TestMemoryImportanceTwoDecimals(t *testing.T) {
 func TestOverviewPageBlocks(t *testing.T) {
 	srv := newTestServer(t, &fakeRepo{})
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/"))
 	body := rec.Body.String()
 	for _, want := range []string{"运行状态", "数据统计", "向量入库", "最近动态", "最近错误", "/api/errors", "最近事件"} {
 		if !strings.Contains(body, want) {
@@ -500,7 +510,7 @@ func TestOverviewPageBlocks(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/memory", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/memory"))
 	if !strings.Contains(rec.Body.String(), "toFixed(2)") {
 		t.Error("记忆页未做两位小数格式化")
 	}
@@ -516,7 +526,7 @@ func TestAccountsListMasksCookie(t *testing.T) {
 	}}}
 	srv := newTestServerWithAccounts(t, &fakeRepo{}, fake)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/accounts", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/accounts"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d", rec.Code)
 	}
@@ -613,7 +623,7 @@ func TestAccountsActivateAndDelete(t *testing.T) {
 		t.Fatalf("切换失败：%d %v", rec.Code, fake.activated)
 	}
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/accounts/"+id+"/activate?confirm=yes", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/accounts/"+id+"/activate?confirm=yes"))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("切换只允许 PUT，实际 %d", rec.Code)
 	}
@@ -650,7 +660,7 @@ func TestAccountsActivateAndDelete(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/accounts/"+id+"/bogus", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/api/accounts/"+id+"/bogus"))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("未知操作应 404，实际 %d", rec.Code)
 	}
@@ -698,7 +708,7 @@ func TestAccountsCheck(t *testing.T) {
 func TestAccountsUnavailable(t *testing.T) {
 	srv := newTestServer(t, &fakeRepo{})
 	for _, req := range []*http.Request{
-		httptest.NewRequest(http.MethodGet, "/api/accounts", nil),
+		readReq("/api/accounts"),
 		writeReq(http.MethodPost, "/api/accounts?confirm=yes", `{"cookie":"x"}`),
 	} {
 		rec := httptest.NewRecorder()
@@ -708,7 +718,7 @@ func TestAccountsUnavailable(t *testing.T) {
 		}
 	}
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/accounts", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/accounts"))
 	if rec.Code != http.StatusOK {
 		t.Errorf("账号页应可访问，实际 %d", rec.Code)
 	}
@@ -718,7 +728,7 @@ func TestAccountsUnavailable(t *testing.T) {
 func TestAccountsPageBlocks(t *testing.T) {
 	srv := newTestServer(t, &fakeRepo{})
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/accounts", nil))
+	srv.Handler().ServeHTTP(rec, readReq("/accounts"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d", rec.Code)
 	}
@@ -735,7 +745,7 @@ func TestEmbeddingPagesShowProgress(t *testing.T) {
 	srv := newTestServer(t, &fakeRepo{})
 	for _, path := range []string{"/", "/knowledge"} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Handler().ServeHTTP(rec, readReq(path))
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s 状态码 = %d", path, rec.Code)
 			continue

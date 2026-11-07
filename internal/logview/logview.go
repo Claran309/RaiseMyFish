@@ -51,6 +51,9 @@ type Source struct {
 	dir  string
 	now  func() time.Time
 	poll time.Duration
+	// readChunk 是「从 offset 起读 length 字节」的实现，测试可替换以统计读取量；
+	// 为零时用 readFrom（生产路径）。
+	readChunk func(path string, offset, length int64) ([]byte, error)
 }
 
 // NewSource 绑定日志目录；now 仅在测试里替换。
@@ -102,6 +105,15 @@ func (s *Source) Recent(q Query) ([]Entry, error) {
 
 // Tail 从当前日志末尾开始持续推送新行，返回时表示 ctx 取消或回调报错。
 //
+// 增量读取（O05）：每轮只 Stat 一次文件，再用 offset 读「新增的那段」。
+// 旧实现每轮 os.ReadFile 整个日志——即使没有新行也在全量分配，
+// 大日志（几十 MB）会让面板 SSE 请求持续吃内存。现在无新增时零读取。
+//
+// 轮转处理：
+//   - 跨天：换成新日期的文件，从头读；
+//   - 替换（inode 变了，如重命名+新建）：从头读；
+//   - 截断（同一文件变小）：从头读。
+//
 // 轮询而不是 fsnotify：不引新依赖，日志量小，1s 延迟足够面板使用。
 func (s *Source) Tail(ctx context.Context, fn func(Entry) error) error {
 	if s == nil || s.dir == "" {
@@ -117,8 +129,18 @@ func (s *Source) Tail(ctx context.Context, fn func(Entry) error) error {
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 
+	read := s.readChunk
+	if read == nil {
+		read = readFrom
+	}
+
 	path := s.pathFor(s.now())
-	offset := fileSize(path)
+	var lastInfo os.FileInfo
+	var offset int64
+	if info, err := os.Stat(path); err == nil {
+		// 从当前末尾开始：历史行不重放。
+		lastInfo, offset = info, info.Size()
+	}
 	var pending []byte
 	for {
 		select {
@@ -128,24 +150,37 @@ func (s *Source) Tail(ctx context.Context, fn func(Entry) error) error {
 			next := s.pathFor(s.now())
 			if next != path {
 				// 跨天轮转：新文件从头读。
-				path, offset, pending = next, 0, nil
+				path, offset, pending, lastInfo = next, 0, nil, nil
 			}
-			data, err := os.ReadFile(path)
+			info, err := os.Stat(path)
 			if err != nil {
 				if errors.Is(err, os.ErrNotExist) {
 					continue
 				}
 				return fmt.Errorf("读取日志失败：%w", err)
 			}
-			if int64(len(data)) < offset {
-				// 文件被截断或替换：从头再来。
+			// 文件被替换（重命名 + 新建同名文件）：inode 变化。
+			if lastInfo != nil && !os.SameFile(lastInfo, info) {
 				offset, pending = 0, nil
 			}
-			if int64(len(data)) == offset {
+			lastInfo = info
+			if info.Size() < offset {
+				// 文件被截断：从头再来。
+				offset, pending = 0, nil
+			}
+			if info.Size() == offset {
+				// 无新增：不读、不分配。
 				continue
 			}
-			pending = append(pending, data[offset:]...)
-			offset = int64(len(data))
+			chunk, err := read(path, offset, info.Size()-offset)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				return fmt.Errorf("读取日志失败：%w", err)
+			}
+			offset += int64(len(chunk))
+			pending = append(pending, chunk...)
 			for {
 				index := bytes.IndexByte(pending, '\n')
 				if index < 0 {
@@ -202,12 +237,25 @@ func (s *Source) pathFor(t time.Time) string {
 	return filepath.Join(s.dir, "fishd-"+t.Format("2006-01-02")+".log")
 }
 
-func fileSize(path string) int64 {
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0
+// readFrom 从 offset 起读 length 字节；文件在此期间变大/变小都按实际读到的返回。
+func readFrom(path string, offset, length int64) ([]byte, error) {
+	if length <= 0 {
+		return nil, nil
 	}
-	return info.Size()
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+	buf := make([]byte, length)
+	n, err := io.ReadFull(file, buf)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return buf[:n], nil
 }
 
 // readTail 读取文件末尾 max 字节；截断处若落在行中间，丢弃首行残片。

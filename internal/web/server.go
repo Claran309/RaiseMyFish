@@ -6,6 +6,7 @@ package web
 //   - 写操作（归档记忆、账号增删切换/测试）必须带 confirm=yes；
 //   - 账号接口只返回 cookie_masked，绝不回显 cookie/csrf 原值；
 //   - 只监听回环地址（127.0.0.1 / ::1 / localhost），拒绝 0.0.0.0；
+//   - 所有路由（含页面与 GET）都校验 Host，写请求另需同源 Origin 或本地令牌 + JSON 体；
 //   - 列表统一截断正文，响应里不出现任何凭据/完整 prompt。
 
 import (
@@ -150,32 +151,32 @@ func ValidateAddr(addr string) error {
 
 // Handler 返回挂好路由的 http.Handler（测试直接用它）。
 //
-// 所有 /api/* 都套 guardWrite：读请求直接放行，写请求必须过 Host/来源/Content-Type 校验。
+// 所有路由（含页面）都套 guard：读写都要过 Host 校验，写请求还要过来源/令牌/Content-Type。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/token", s.handleToken)
-	mux.HandleFunc("/api/status", s.guardWrite(s.handleStatus))
-	mux.HandleFunc("/api/embedding/status", s.guardWrite(s.handleEmbeddingStatus))
-	mux.HandleFunc("/api/memory", s.guardWrite(s.handleMemory))
-	mux.HandleFunc("/api/memory/", s.guardWrite(s.handleMemoryDelete))
-	mux.HandleFunc("/api/events", s.guardWrite(s.handleEvents))
-	mux.HandleFunc("/api/events/", s.guardWrite(s.handleEventDetail))
-	mux.HandleFunc("/api/comment/recent", s.guardWrite(s.handleCommentRecent))
-	mux.HandleFunc("/api/dm/recent", s.guardWrite(s.handleDMRecent))
-	mux.HandleFunc("/api/errors", s.guardWrite(s.handleErrors))
-	mux.HandleFunc("/api/send_log", s.guardWrite(s.handleSendLog))
-	mux.HandleFunc("/api/accounts", s.guardWrite(s.handleAccounts))
-	mux.HandleFunc("/api/accounts/", s.guardWrite(s.handleAccountAction))
-	mux.HandleFunc("/api/live", s.guardWrite(s.handleLive))
-	mux.HandleFunc("/api/message", s.guardWrite(s.handleMessage))
-	mux.HandleFunc("/api/config", s.guardWrite(s.handleConfig))
-	mux.HandleFunc("/api/watchdog", s.guardWrite(s.handleWatchdog))
-	mux.HandleFunc("/api/logs/stream", s.guardWrite(s.handleLogsStream))
-	mux.HandleFunc("/api/gift/log", s.guardWrite(s.handleGiftLog))
-	mux.HandleFunc("/api/gift/quota", s.guardWrite(s.handleGiftQuota))
-	mux.HandleFunc("/api/proactive/log", s.guardWrite(s.handleProactiveLog))
-	mux.HandleFunc("/api/like/log", s.guardWrite(s.handleLikeLog))
-	mux.HandleFunc("/", s.handlePage)
+	mux.HandleFunc("/api/token", s.guard(s.handleToken))
+	mux.HandleFunc("/api/status", s.guard(s.handleStatus))
+	mux.HandleFunc("/api/embedding/status", s.guard(s.handleEmbeddingStatus))
+	mux.HandleFunc("/api/memory", s.guard(s.handleMemory))
+	mux.HandleFunc("/api/memory/", s.guard(s.handleMemoryDelete))
+	mux.HandleFunc("/api/events", s.guard(s.handleEvents))
+	mux.HandleFunc("/api/events/", s.guard(s.handleEventDetail))
+	mux.HandleFunc("/api/comment/recent", s.guard(s.handleCommentRecent))
+	mux.HandleFunc("/api/dm/recent", s.guard(s.handleDMRecent))
+	mux.HandleFunc("/api/errors", s.guard(s.handleErrors))
+	mux.HandleFunc("/api/send_log", s.guard(s.handleSendLog))
+	mux.HandleFunc("/api/accounts", s.guard(s.handleAccounts))
+	mux.HandleFunc("/api/accounts/", s.guard(s.handleAccountAction))
+	mux.HandleFunc("/api/live", s.guard(s.handleLive))
+	mux.HandleFunc("/api/message", s.guard(s.handleMessage))
+	mux.HandleFunc("/api/config", s.guard(s.handleConfig))
+	mux.HandleFunc("/api/watchdog", s.guard(s.handleWatchdog))
+	mux.HandleFunc("/api/logs/stream", s.guard(s.handleLogsStream))
+	mux.HandleFunc("/api/gift/log", s.guard(s.handleGiftLog))
+	mux.HandleFunc("/api/gift/quota", s.guard(s.handleGiftQuota))
+	mux.HandleFunc("/api/proactive/log", s.guard(s.handleProactiveLog))
+	mux.HandleFunc("/api/like/log", s.guard(s.handleLikeLog))
+	mux.HandleFunc("/", s.guard(s.handlePage))
 	return mux
 }
 
