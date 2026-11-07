@@ -21,7 +21,11 @@ func (t BiliTransporter) SendDM(ctx context.Context, mid, text string) (string, 
 	if t.client == nil {
 		return "", &Error{Kind: KindAuth, Cause: bili.ErrNoCredential}
 	}
-	msgID, err := t.client.SendMessage(ctx, mid, text)
+	client, err := t.bound(ctx)
+	if err != nil {
+		return "", err
+	}
+	msgID, err := client.SendMessage(ctx, mid, text)
 	if err != nil {
 		if classified := classifyBiliError(err); classified != nil {
 			return "", classified
@@ -29,6 +33,19 @@ func (t BiliTransporter) SendDM(ctx context.Context, mid, text string) (string, 
 		return "", err
 	}
 	return msgID, nil
+}
+
+// bound 有账号快照时返回固定凭据的客户端，避免请求期切到新活跃账号。
+func (t BiliTransporter) bound(ctx context.Context) (*bili.Client, error) {
+	actor, ok := bili.ActorFrom(ctx)
+	if !ok {
+		return t.client, nil
+	}
+	client, err := t.client.Bind(actor)
+	if err != nil {
+		return nil, &Error{Kind: KindAuth, Cause: err}
+	}
+	return client, nil
 }
 
 // classifyBiliError 把 B站平台错误映射成受控类别；未知平台错误保持 uncertain。
@@ -58,10 +75,17 @@ type BiliRelation struct{ client *bili.Client }
 // NewBiliRelation 构造适配器。
 func NewBiliRelation(c *bili.Client) BiliRelation { return BiliRelation{client: c} }
 
-// Attribute 实现 Relation。
+// Attribute 实现 Relation；有账号快照时用同一份凭据查关注关系。
 func (r BiliRelation) Attribute(ctx context.Context, mid string) (int, error) {
 	if r.client == nil {
 		return 0, bili.ErrNoCredential
+	}
+	if actor, ok := bili.ActorFrom(ctx); ok {
+		client, err := r.client.Bind(actor)
+		if err != nil {
+			return 0, err
+		}
+		return client.RelationAttribute(ctx, mid)
 	}
 	return r.client.RelationAttribute(ctx, mid)
 }

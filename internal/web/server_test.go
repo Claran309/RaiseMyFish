@@ -599,6 +599,14 @@ func TestAccountsActivateAndDelete(t *testing.T) {
 		t.Fatalf("切换只允许 PUT，实际 %d", rec.Code)
 	}
 
+	// 切换屏障忙时返回 409，提示稍后重试。
+	busy := newTestServerWithAccounts(t, &fakeRepo{}, &fakeAccounts{activateErr: account.ErrSwitchInProgress})
+	busyRec := httptest.NewRecorder()
+	busy.Handler().ServeHTTP(busyRec, httptest.NewRequest(http.MethodPut, "/api/accounts/"+id+"/activate?confirm=yes", nil))
+	if busyRec.Code != http.StatusConflict {
+		t.Fatalf("切换进行中应 409，实际 %d", busyRec.Code)
+	}
+
 	rec = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/accounts/"+id, nil))
 	if rec.Code != http.StatusBadRequest || len(fake.deleted) != 0 {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"RaiseMyFish/internal/account"
 	"RaiseMyFish/internal/bili"
 	dmcollector "RaiseMyFish/internal/collector/dm"
 	"RaiseMyFish/internal/config"
@@ -35,7 +36,8 @@ func buildBiliClientForDM(cfg config.Config, log *zap.Logger) *bili.Client {
 }
 
 // buildDMCollector 只在 [collector.dm] enabled 时装配。
-func buildDMCollector(cfg config.Config, log *zap.Logger) (*dmcollector.Collector, error) {
+// accounts 提供每批固定账号快照与切换屏障；为 nil 时退回静态 Cookie 解析。
+func buildDMCollector(cfg config.Config, accounts *account.Service, log *zap.Logger) (*dmcollector.Collector, error) {
 	if !cfg.Collector.DM.Enabled {
 		return nil, nil
 	}
@@ -43,19 +45,19 @@ func buildDMCollector(cfg config.Config, log *zap.Logger) (*dmcollector.Collecto
 	if client == nil {
 		return nil, nil
 	}
-	return newDMCollectorWithClient(cfg, client, log)
+	return newDMCollectorWithClient(cfg, client, accounts, log)
 }
 
 // newDMCollector 忽略静态启用开关，供面板运行时启停；缺凭据明确报错。
-func newDMCollector(cfg config.Config, log *zap.Logger) (*dmcollector.Collector, error) {
+func newDMCollector(cfg config.Config, accounts *account.Service, log *zap.Logger) (*dmcollector.Collector, error) {
 	client := buildBiliClientForDM(cfg, log)
 	if client == nil {
 		return nil, errors.New("私信采集未装配：未配置可用凭据")
 	}
-	return newDMCollectorWithClient(cfg, client, log)
+	return newDMCollectorWithClient(cfg, client, accounts, log)
 }
 
-func newDMCollectorWithClient(cfg config.Config, client *bili.Client, log *zap.Logger) (*dmcollector.Collector, error) {
+func newDMCollectorWithClient(cfg config.Config, client *bili.Client, accounts *account.Service, log *zap.Logger) (*dmcollector.Collector, error) {
 	opts := dmcollector.Options{
 		Interval: time.Duration(cfg.Collector.DM.IntervalSeconds) * time.Second,
 		Log:      log,
@@ -68,6 +70,10 @@ func newDMCollectorWithClient(cfg config.Config, client *bili.Client, log *zap.L
 	fetcher.PageSize = 100
 	fetcher.Cursors = store
 	fetcher.Log = log
+	if accounts != nil {
+		fetcher.Actors = accounts
+		fetcher.Admission = accounts
+	}
 	return dmcollector.New(fetcher, opts)
 }
 

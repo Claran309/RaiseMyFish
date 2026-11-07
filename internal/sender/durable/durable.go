@@ -6,6 +6,7 @@
 package durable
 
 import (
+	"RaiseMyFish/internal/bili"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/sender"
@@ -20,6 +21,19 @@ import (
 
 const defaultSaveTimeout = 5 * time.Second
 
+// ActorSource 提供当前账号与按 MID 取旧账号的快照。
+//
+// Resume 只按计划原本的 MID 取账号，绝不回落到当前活跃账号。
+type ActorSource interface {
+	CurrentActor(ctx context.Context) (bili.Actor, error)
+	ActorByMID(ctx context.Context, mid string) (bili.Actor, error)
+}
+
+// Admission 是账号切换的准入闸门；一次 Send/Resume 全程持有。
+type Admission interface {
+	BeginOperation(ctx context.Context) (func(), error)
+}
+
 // Options 是包装通道的参数；Validate 必须返回实际会被平台发送的正文。
 type Options struct {
 	Channel     event.Channel
@@ -27,6 +41,9 @@ type Options struct {
 	Validate    func(event.Claim, sender.Reply) (sender.Reply, error)
 	MaxAttempts int
 	SaveTimeout time.Duration
+	// Actors/Admission 为空时退回固定 AccountID（兼容旧装配与单测）。
+	Actors    ActorSource
+	Admission Admission
 }
 
 // Sender 在真实通道前加投递计划与 attempt 记录。
@@ -38,6 +55,8 @@ type Sender struct {
 	validate    func(event.Claim, sender.Reply) (sender.Reply, error)
 	maxAttempts int
 	saveTimeout time.Duration
+	actors      ActorSource
+	admission   Admission
 	log         *zap.Logger
 }
 
@@ -64,13 +83,17 @@ func New(repo store.PlannedRepo, inner sender.Sender, o Options, log *zap.Logger
 	}
 	return &Sender{
 		inner: inner, repo: repo, channel: o.Channel, account: strings.TrimSpace(o.AccountID),
-		validate: o.Validate, maxAttempts: o.MaxAttempts, saveTimeout: o.SaveTimeout, log: log,
+		validate: o.Validate, maxAttempts: o.MaxAttempts, saveTimeout: o.SaveTimeout,
+		actors: o.Actors, admission: o.Admission, log: log,
 	}, nil
 }
 
 func (s *Sender) Name() string { return s.inner.Name() + "-planned" }
 
-// Send 先落计划，再按 arm → POST → 记录结果的顺序执行。
+// Send 先绑定账号快照，再按「落计划 → arm → POST → 记录结果」执行。
+//
+// 账号快照在准入窗口内取一次；若该事件已经有旧计划，则沿用计划原账号，
+// 不允许同一份计划改由新活跃账号发送。
 func (s *Sender) Send(ctx context.Context, c event.Claim, reply sender.Reply) (sender.Result, error) {
 	if ctx == nil {
 		return sender.Result{}, &sender.Error{Kind: sender.KindInput, Cause: errors.New("上下文不能为 nil")}
@@ -78,6 +101,11 @@ func (s *Sender) Send(ctx context.Context, c event.Claim, reply sender.Reply) (s
 	if err := s.checkClaim(c); err != nil {
 		return sender.Result{}, err
 	}
+	release, err := s.begin(ctx)
+	if err != nil {
+		return sender.Result{}, err
+	}
+	defer release()
 	normalized, err := s.validate(c, reply)
 	if err != nil {
 		var typed *sender.Error
@@ -90,7 +118,44 @@ func (s *Sender) Send(ctx context.Context, c event.Claim, reply sender.Reply) (s
 	if text == "" {
 		return sender.Result{}, &sender.Error{Kind: sender.KindInput, Cause: errors.New("回复正文不能为空")}
 	}
-	attempt, err := s.repo.PreparePlan(ctx, c, s.key(c), text)
+	planAccount := s.account
+	var current *bili.Actor
+	if s.actors != nil {
+		actor, actorErr := s.actors.CurrentActor(ctx)
+		if actorErr != nil {
+			s.log.Warn("读取当前发送账号失败，未发送",
+				zap.String("action", "planned_actor_unavailable"),
+				zap.String("event_id", c.Event.ID),
+				zap.String("ch", string(s.channel)),
+				zap.Error(actorErr),
+			)
+			return sender.Result{}, actorSendError(actorErr)
+		}
+		current = &actor
+		if mid := strings.TrimSpace(actor.MID); mid != "" {
+			planAccount = mid
+		}
+		existing, planErr := s.repo.PlanAccount(ctx, c.Event.ID)
+		switch {
+		case planErr == nil:
+			if mid := strings.TrimSpace(existing); mid != "" {
+				planAccount = mid
+			}
+		case errors.Is(planErr, store.ErrNotFound):
+		default:
+			s.log.Warn("读取投递计划账号失败，未发送",
+				zap.String("action", "planned_account_lookup_failed"),
+				zap.String("event_id", c.Event.ID),
+				zap.String("ch", string(s.channel)),
+				zap.Error(planErr),
+			)
+			return sender.Result{}, &sender.Error{Kind: sender.KindRetry, Cause: planErr}
+		}
+	}
+	if !sender.ValidActor(planAccount) {
+		return sender.Result{}, &sender.Error{Kind: sender.KindAuth, Cause: errors.New("投递计划缺少可归属的发送账号")}
+	}
+	attempt, err := s.repo.PreparePlan(ctx, c, s.keyFor(c, planAccount), text)
 	if err != nil {
 		s.log.Warn("投递计划保存失败，未发送",
 			zap.String("action", "planned_prepare_failed"),
@@ -104,10 +169,13 @@ func (s *Sender) Send(ctx context.Context, c event.Claim, reply sender.Reply) (s
 		// 计划未落库就没有产生过平台请求，交回重试是安全的。
 		return sender.Result{}, &sender.Error{Kind: sender.KindRetry, Cause: err}
 	}
-	return s.deliver(ctx, c, attempt, true)
+	return s.deliver(ctx, c, planAccount, attempt, true, s.actorFor(planAccount, current))
 }
 
 // Resume 只处理已有计划；armed/unknown 永不重新 POST。
+//
+// plan key 必须使用计划落库时的账号：当前活跃账号可能已经切走，
+// 用新号重建 key 会直接变成「旧任务用新号重发」。
 func (s *Sender) Resume(ctx context.Context, c event.Claim) (sender.Result, error) {
 	if ctx == nil {
 		return sender.Result{}, &sender.Error{Kind: sender.KindInput, Cause: errors.New("上下文不能为 nil")}
@@ -115,7 +183,32 @@ func (s *Sender) Resume(ctx context.Context, c event.Claim) (sender.Result, erro
 	if err := s.checkClaim(c); err != nil {
 		return sender.Result{}, err
 	}
-	attempt, err := s.repo.LoadPlan(ctx, c, s.key(c))
+	release, err := s.begin(ctx)
+	if err != nil {
+		return sender.Result{}, err
+	}
+	defer release()
+	planAccount := s.account
+	if s.actors != nil {
+		account, lookupErr := s.repo.PlanAccount(ctx, c.Event.ID)
+		if lookupErr != nil {
+			if errors.Is(lookupErr, store.ErrNotFound) {
+				return sender.Result{}, &sender.Error{Kind: sender.KindDead, Cause: errors.New("投递计划不存在，拒绝重发")}
+			}
+			s.log.Warn("读取投递计划账号失败",
+				zap.String("action", "planned_account_lookup_failed"),
+				zap.String("event_id", c.Event.ID),
+				zap.String("ch", string(s.channel)),
+				zap.Error(lookupErr),
+			)
+			return sender.Result{}, &sender.Error{Kind: sender.KindUncertain, Cause: lookupErr}
+		}
+		planAccount = strings.TrimSpace(account)
+	}
+	if !sender.ValidActor(planAccount) {
+		return sender.Result{}, &sender.Error{Kind: sender.KindDead, Cause: errors.New("投递计划缺少可归属账号，拒绝重发")}
+	}
+	attempt, err := s.repo.LoadPlan(ctx, c, s.keyFor(c, planAccount))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return sender.Result{}, &sender.Error{Kind: sender.KindDead, Cause: errors.New("投递计划不存在，拒绝重发")}
@@ -128,7 +221,51 @@ func (s *Sender) Resume(ctx context.Context, c event.Claim) (sender.Result, erro
 		)
 		return sender.Result{}, &sender.Error{Kind: sender.KindUncertain, Cause: err}
 	}
-	return s.deliver(ctx, c, attempt, c.Stage == event.StageDeliver)
+	return s.deliver(ctx, c, planAccount, attempt, c.Stage == event.StageDeliver, s.actorFor(planAccount, nil))
+}
+
+// begin 取得本次发送的账号切换准入，直到计划记录结束才释放。
+func (s *Sender) begin(ctx context.Context) (func(), error) {
+	if s.admission == nil {
+		return func() {}, nil
+	}
+	release, err := s.admission.BeginOperation(ctx)
+	if err != nil {
+		return nil, &sender.Error{Kind: sender.KindRetry, Cause: err}
+	}
+	if release == nil {
+		release = func() {}
+	}
+	return release, nil
+}
+
+// actorFor 返回本次投递的账号快照来源；只在真正需要 POST 时解析。
+// prefer 是 Send 开头捕获的当前快照，只有计划账号与它一致时才复用。
+func (s *Sender) actorFor(planAccount string, prefer *bili.Actor) func(context.Context) (bili.Actor, error) {
+	if s.actors == nil {
+		return nil
+	}
+	return func(ctx context.Context) (bili.Actor, error) {
+		if prefer != nil && strings.TrimSpace(prefer.MID) == planAccount && prefer.Valid() {
+			return *prefer, nil
+		}
+		actor, err := s.actors.ActorByMID(ctx, planAccount)
+		if err != nil {
+			return bili.Actor{}, err
+		}
+		if !actor.Identified() || strings.TrimSpace(actor.MID) != planAccount {
+			return bili.Actor{}, bili.ErrNoCredential
+		}
+		return actor, nil
+	}
+}
+
+// actorSendError 把账号解析失败映射成发送错误类别。
+func actorSendError(err error) error {
+	if errors.Is(err, bili.ErrNoCredential) {
+		return &sender.Error{Kind: sender.KindAuth, Cause: err}
+	}
+	return &sender.Error{Kind: sender.KindRetry, Cause: err}
 }
 
 func (s *Sender) checkClaim(c event.Claim) error {
@@ -140,11 +277,11 @@ func (s *Sender) checkClaim(c event.Claim) error {
 	return nil
 }
 
-func (s *Sender) key(c event.Claim) store.PlanKey {
-	return store.PlanKey{Channel: s.channel, AccountID: s.account, Destination: c.Event.Session}
+func (s *Sender) keyFor(c event.Claim, account string) store.PlanKey {
+	return store.PlanKey{Channel: s.channel, AccountID: strings.TrimSpace(account), Destination: c.Event.Session}
 }
 
-func (s *Sender) deliver(ctx context.Context, c event.Claim, a sender.Attempt, allowPost bool) (sender.Result, error) {
+func (s *Sender) deliver(ctx context.Context, c event.Claim, planAccount string, a sender.Attempt, allowPost bool, postActor func(context.Context) (bili.Actor, error)) (sender.Result, error) {
 	switch a.State {
 	case sender.StateAccepted:
 		// 平台已接受就是这条通道能拿到的最强证据；重复恢复只会再次返回同一事实。
@@ -173,7 +310,28 @@ func (s *Sender) deliver(ctx context.Context, c event.Claim, a sender.Attempt, a
 	if !allowPost {
 		return sender.Result{Error: "unknown_manual"}, &sender.Error{Kind: sender.KindUncertain, Cause: errors.New("非投递阶段禁止重发")}
 	}
-	armed, err := s.repo.ArmPlan(ctx, c, s.key(c), a.ID)
+	// 账号快照必须先于 arm 解析：拿不到旧账号凭据时仍保持 ready，
+	// 既不会产生平台请求，也不会把尝试卡在 armed 的未知状态。
+	var bound *bili.Actor
+	if postActor != nil {
+		actor, actorErr := postActor(ctx)
+		if actorErr != nil || strings.TrimSpace(actor.MID) != planAccount {
+			s.log.Warn("旧账号凭据不可用，拒绝改用其他账号发送",
+				zap.String("action", "planned_actor_unavailable"),
+				zap.String("event_id", c.Event.ID),
+				zap.String("ch", string(s.channel)),
+				zap.String("attempt_id", a.ID),
+				zap.String("plan_account", planAccount),
+				zap.Error(actorErr),
+			)
+			if actorErr == nil {
+				actorErr = bili.ErrNoCredential
+			}
+			return sender.Result{Error: "unknown_manual"}, &sender.Error{Kind: sender.KindUncertain, Cause: actorErr}
+		}
+		bound = &actor
+	}
+	armed, err := s.repo.ArmPlan(ctx, c, s.keyFor(c, planAccount), a.ID)
 	if err != nil {
 		s.log.Warn("投递许可未获得，拒绝发送",
 			zap.String("action", "planned_arm_failed"),
@@ -192,10 +350,13 @@ func (s *Sender) deliver(ctx context.Context, c event.Claim, a sender.Attempt, a
 		Text:  armed.Text,
 		Scope: memory.Scope{Channel: c.Event.Channel, Session: c.Event.Session, Private: c.Event.Private},
 	}
+	if bound != nil {
+		ctx = bili.WithActor(ctx, *bound)
+	}
 	result, sendErr := s.inner.Send(ctx, c, reply)
 	outcome := s.classify(sendErr, result)
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.saveTimeout)
-	_, recordErr := s.repo.RecordPlan(saveCtx, c, s.key(c), armed.ID, outcome)
+	_, recordErr := s.repo.RecordPlan(saveCtx, c, s.keyFor(c, planAccount), armed.ID, outcome)
 	cancel()
 	if recordErr != nil {
 		s.log.Error("投递结果未落盘",

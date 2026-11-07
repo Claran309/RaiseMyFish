@@ -526,6 +526,8 @@ func (s *Server) accountFailure(w http.ResponseWriter, message string, err error
 		writeError(w, http.StatusNotFound, "账号不存在")
 	case errors.Is(err, account.ErrActiveAccount):
 		writeError(w, http.StatusConflict, "不能删除当前活跃账号，请先切换")
+	case errors.Is(err, account.ErrSwitchInProgress):
+		writeError(w, http.StatusConflict, "账号切换正在进行，请稍后重试")
 	default:
 		s.fail(w, message, err)
 	}

@@ -49,6 +49,8 @@ func buildAccountService(cfg config.Config, db *gorm.DB, log *zap.Logger) (*acco
 		Verifier:      biliVerifier{timeout: accountVerifyTimeout},
 		EnvCookie:     cfg.Collector.Live.Cookie,
 		EnvCookieFile: cfg.Collector.Live.CookieFile,
+		// 环境凭据的 UID 来自静态配置，旧计划恢复时才能按 MID 找回它。
+		EnvMID: selfMID(cfg),
 	})
 	if err != nil {
 		return nil, err

@@ -116,10 +116,11 @@ func TestBiliFetcherPullsSessionDetails(t *testing.T) {
 	}
 	f := newFetcher(t, fixture)
 
-	got, err := f.Fetch(context.Background())
+	batch, err := f.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("拉取失败：%v", err)
 	}
+	got := batch.Messages
 	if len(got) != 3 {
 		t.Fatalf("应产出对方 3 条消息，实际 %d：%+v", len(got), got)
 	}
@@ -164,10 +165,11 @@ func TestBiliFetcherRetriesDetailAfterFailure(t *testing.T) {
 	}
 	f := newFetcher(t, fixture)
 
-	first, err := f.Fetch(context.Background())
+	firstBatch, err := f.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("详情失败不应让整轮失败：%v", err)
 	}
+	first := firstBatch.Messages
 	if len(first) != 1 || first[0].ID != "9002" {
 		t.Fatalf("应降级为 last_msg：%+v", first)
 	}
@@ -175,10 +177,11 @@ func TestBiliFetcherRetriesDetailAfterFailure(t *testing.T) {
 	fixture.mu.Lock()
 	fixture.bad["2002"] = false
 	fixture.mu.Unlock()
-	second, err := f.Fetch(context.Background())
+	secondBatch, err := f.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("第二轮失败：%v", err)
 	}
+	second := secondBatch.Messages
 	if len(second) != 2 || fixture.detailCalls("2002") != 2 {
 		t.Fatalf("第二轮应重试详情并补全消息：calls=%d got=%+v", fixture.detailCalls("2002"), second)
 	}
@@ -196,10 +199,11 @@ func TestBiliFetcherSelfLastSession(t *testing.T) {
 	}
 	f := newFetcher(t, fixture)
 
-	got, err := f.Fetch(context.Background())
+	batch, err := f.Fetch(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+	got := batch.Messages
 	if len(got) != 1 || got[0].ID != "9101" || got[0].Text != "在吗" {
 		t.Fatalf("应只产出对方消息：%+v", got)
 	}

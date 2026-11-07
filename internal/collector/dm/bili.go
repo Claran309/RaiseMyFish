@@ -16,6 +16,7 @@ package dm
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -50,11 +51,25 @@ func NewBiliFetcher(c *bili.Client, selfID string, limit int) *BiliFetcher {
 	}
 }
 
+// ActorSource 提供当前账号快照（account_id + self_id + 凭据）。
+type ActorSource interface {
+	CurrentActor(ctx context.Context) (bili.Actor, error)
+}
+
+// Admission 是账号切换的准入闸门；一轮采集持有到水位提交结束。
+type Admission interface {
+	BeginOperation(ctx context.Context) (func(), error)
+}
+
 // BiliFetcher 通过 bili 客户端拉会话列表，并对变化会话补拉详情。
 type BiliFetcher struct {
 	client *bili.Client
-	// SelfID 用于过滤「自己发的」消息，也是水位的账号键。
+	// SelfID 是账号快照缺失时的兜底过滤值；正常情况下用批次快照的 MID。
 	SelfID string
+	// Actors 在每轮 Fetch 开始时取一次账号快照；整批 list/detail 都用它。
+	Actors ActorSource
+	// Admission 在切换账号时挡住新批次，等当前批次提交完水位再切。
+	Admission Admission
 	// Limit 是会话单页条数（<=0 用 100，最大 100）。
 	Limit int
 	// PageSize 是消息单页条数（<=0 用 100，最大 200）。
@@ -68,49 +83,112 @@ type BiliFetcher struct {
 	Log *zap.Logger
 
 	mu sync.Mutex
-	// lastKeys 记录每个会话上次成功处理的 last_msg key；没有 seqno 时用它去重。
+	// lastKeys 记录每个会话上次成功处理的 last_msg key；按账号隔离。
 	lastKeys map[string]string
 	// cursors 是当前账号的水位快照，Commit 成功后替换。
 	cursors map[string]Cursor
+	// cursorsAccount/lastAccount 标记内存态属于哪个账号；切号后重新加载。
+	cursorsAccount string
+	lastAccount    string
 }
 
-// Fetch 实现 Fetcher；返回的 Batch.Commit 需要在消息成功入总线后调用。
+// Fetch 实现 Fetcher；返回的 Batch.Commit 需要在消息成功入总线后调用，
+// Batch.Close 在整批处理结束后调用（释放账号切换准入）。
+//
+// 账号快照只在开头取一次：之后即使活跃账号被切换，本批 list/detail 仍用
+// 同一个客户端与同一份凭据，不会出现「会话列表读新号、消息详情读旧号」。
 func (f *BiliFetcher) Fetch(ctx context.Context) (Batch, error) {
 	if f.client == nil {
 		return Batch{}, &Error{Kind: KindAuth, Cause: bili.ErrNoCredential}
 	}
-	current, err := f.snapshotCursors()
+	release, err := f.begin(ctx)
 	if err != nil {
+		return Batch{}, err
+	}
+	actor, err := f.snapshotActor(ctx)
+	if err != nil {
+		release()
+		return Batch{}, err
+	}
+	// 快照不可用时不能退回动态客户端：那会在切号瞬间读到另一个账号。
+	if !actor.Valid() {
+		release()
+		return Batch{}, &Error{Kind: KindAuth, Cause: bili.ErrNoCredential}
+	}
+	selfID := strings.TrimSpace(actor.MID)
+	if selfID == "" {
+		selfID = strings.TrimSpace(f.SelfID)
+	}
+	client, bindErr := f.client.Bind(actor)
+	if bindErr != nil {
+		release()
+		return Batch{}, &Error{Kind: KindAuth, Cause: bindErr}
+	}
+	current, err := f.snapshotCursors(selfID)
+	if err != nil {
+		release()
 		return Batch{}, &Error{Kind: KindNetwork, Cause: err}
 	}
-	sessions, err := f.listSessions(ctx)
+	sessions, err := f.listSessions(ctx, client)
 	if err != nil {
+		release()
 		return Batch{}, err
 	}
 	next := cloneCursors(current)
 	dirty := false
 	messages := make([]Message, 0, len(sessions))
 	for _, s := range sessions {
-		msgs, changed, fetchErr := f.fetchSession(ctx, s, current, next)
+		msgs, changed, fetchErr := f.fetchSession(ctx, client, selfID, s, current, next)
 		if fetchErr != nil {
+			release()
 			return Batch{}, fetchErr
 		}
 		messages = append(messages, msgs...)
 		dirty = dirty || changed
 	}
-	var commit func() error
+	batch := Batch{Messages: messages, Close: release, AccountID: actor.AccountID, SelfID: selfID}
 	if dirty {
-		account := f.account()
-		commit = func() error { return f.commit(account, next) }
+		account := selfID
+		batch.Commit = func() error { return f.commit(account, next) }
 	}
-	return Batch{Messages: messages, Commit: commit}, nil
+	return batch, nil
 }
 
-func (f *BiliFetcher) account() string {
-	if id := strings.TrimSpace(f.SelfID); id != "" {
-		return id
+// begin 取得本轮采集的账号切换准入。
+func (f *BiliFetcher) begin(ctx context.Context) (func(), error) {
+	if f.Admission == nil {
+		return func() {}, nil
 	}
-	return "unknown"
+	release, err := f.Admission.BeginOperation(ctx)
+	if err != nil {
+		return nil, &Error{Kind: KindNetwork, Cause: err}
+	}
+	if release == nil {
+		release = func() {}
+	}
+	return release, nil
+}
+
+// snapshotActor 取本轮账号快照；未注入 ActorSource 时退回客户端静态凭据。
+func (f *BiliFetcher) snapshotActor(ctx context.Context) (bili.Actor, error) {
+	if f.Actors != nil {
+		actor, err := f.Actors.CurrentActor(ctx)
+		if err != nil {
+			if errors.Is(err, bili.ErrNoCredential) {
+				return bili.Actor{}, &Error{Kind: KindAuth, Cause: err}
+			}
+			return bili.Actor{}, &Error{Kind: KindNetwork, Cause: err}
+		}
+		return actor, nil
+	}
+	actor, err := f.client.Snapshot(ctx)
+	if err != nil {
+		if errors.Is(err, bili.ErrNoCredential) {
+			return bili.Actor{}, &Error{Kind: KindAuth, Cause: err}
+		}
+		return bili.Actor{}, &Error{Kind: KindNetwork, Cause: err}
+	}
+	return actor, nil
 }
 
 func (f *BiliFetcher) logf() *zap.Logger {
@@ -120,14 +198,16 @@ func (f *BiliFetcher) logf() *zap.Logger {
 	return zap.NewNop()
 }
 
-func (f *BiliFetcher) snapshotCursors() (map[string]Cursor, error) {
+func (f *BiliFetcher) snapshotCursors(account string) (map[string]Cursor, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.cursors == nil {
+	// 切号后必须换用该账号自己的水位与 last_msg 去重表；
+	// 否则旧账号的水位会把新账号的历史误判成「已读」。
+	if f.cursorsAccount != account {
 		if f.Cursors == nil {
 			f.cursors = make(map[string]Cursor)
 		} else {
-			loaded, err := f.Cursors.Load(f.account())
+			loaded, err := f.Cursors.Load(account)
 			if err != nil {
 				return nil, err
 			}
@@ -136,6 +216,11 @@ func (f *BiliFetcher) snapshotCursors() (map[string]Cursor, error) {
 			}
 			f.cursors = loaded
 		}
+		f.cursorsAccount = account
+	}
+	if f.lastAccount != account {
+		f.lastKeys = make(map[string]string)
+		f.lastAccount = account
 	}
 	return cloneCursors(f.cursors), nil
 }
@@ -149,18 +234,20 @@ func (f *BiliFetcher) commit(account string, next map[string]Cursor) error {
 		}
 	}
 	f.cursors = cloneCursors(next)
+	f.cursorsAccount = account
+	f.lastAccount = account
 	return nil
 }
 
 // listSessions 从最新会话向更早翻页，按对端 uid 去重。
-func (f *BiliFetcher) listSessions(ctx context.Context) ([]bili.DMSession, error) {
+func (f *BiliFetcher) listSessions(ctx context.Context, client *bili.Client) ([]bili.DMSession, error) {
 	size := f.sessionPageSize()
 	maxPages := f.maxSessionPages()
 	seen := make(map[string]struct{})
 	out := make([]bili.DMSession, 0, size)
 	var endTS int64
 	for pageNo := 1; pageNo <= maxPages; pageNo++ {
-		page, err := f.client.DMSessionsPage(ctx, size, endTS)
+		page, err := client.DMSessionsPage(ctx, size, endTS)
 		if err != nil {
 			return nil, &Error{Kind: classify(err), Cause: err}
 		}
@@ -221,14 +308,14 @@ func (f *BiliFetcher) listSessions(ctx context.Context) ([]bili.DMSession, error
 }
 
 // fetchSession 返回该会话应产出的事件，以及水位是否变化。
-func (f *BiliFetcher) fetchSession(ctx context.Context, s bili.DMSession, current, next map[string]Cursor) ([]Message, bool, *Error) {
+func (f *BiliFetcher) fetchSession(ctx context.Context, client *bili.Client, selfID string, s bili.DMSession, current, next map[string]Cursor) ([]Message, bool, *Error) {
 	peer := strings.TrimSpace(s.TalkerID)
 	if peer == "" {
 		return nil, false, nil
 	}
 	sessionSeq := maxDecimal(s.MaxSeqno, s.MsgSeqno)
 	if sessionSeq == "" {
-		return f.fetchWithoutSeqno(ctx, s)
+		return f.fetchWithoutSeqno(ctx, client, selfID, s)
 	}
 
 	st := normalizeCursor(current[peer])
@@ -245,7 +332,7 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, s bili.DMSession, curren
 	var out []Message
 	emit := func(items []bili.DMMessage, floor string) {
 		for _, m := range items {
-			if f.SelfID != "" && m.SenderUID == f.SelfID {
+			if selfID != "" && m.SenderUID == selfID {
 				continue
 			}
 			if m.Seqno != "" && compareDecimal(m.Seqno, floor) <= 0 {
@@ -267,7 +354,7 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, s bili.DMSession, curren
 	changed := false
 	// 阶段 1：继续回填上次没追平的缺口。
 	if pending != "0" && budget > 0 {
-		oldest, reached, scanned, scanErr := f.scanOlder(ctx, peer, pending, watermark, &budget, func(items []bili.DMMessage) {
+		oldest, reached, scanned, scanErr := f.scanOlder(ctx, client, peer, pending, watermark, &budget, func(items []bili.DMMessage) {
 			emit(items, watermark)
 		})
 		if scanErr != nil {
@@ -286,7 +373,7 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, s bili.DMSession, curren
 
 	// 阶段 2：从最新页追新；必要时探出新的缺口上沿。
 	if budget > 0 && (first || pending != "0" || compareDecimal(sessionSeq, frontier) > 0) {
-		oldest, reached, pageMax, scanned, stoppedByError, scanErr := f.scanNewest(ctx, peer, watermark, &budget, func(items []bili.DMMessage) {
+		oldest, reached, pageMax, scanned, stoppedByError, scanErr := f.scanNewest(ctx, client, peer, watermark, &budget, func(items []bili.DMMessage) {
 			if first {
 				emit(items, "0")
 			} else {
@@ -298,7 +385,7 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, s bili.DMSession, curren
 		}
 		if !scanned {
 			// 最新页都没拿到：首次接入降级为 last_msg，不推进水位。
-			if first && len(out) == 0 && (f.SelfID == "" || s.SenderUID != f.SelfID) {
+			if first && len(out) == 0 && (selfID == "" || s.SenderUID != selfID) {
 				out = append(out, messageFromSession(s))
 			}
 			return out, false, nil
@@ -353,10 +440,10 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, s bili.DMSession, curren
 }
 
 // scanOlder 从 endSeqno 继续向历史翻页，直到追上 stopAt 或没有更多。
-func (f *BiliFetcher) scanOlder(ctx context.Context, peer, endSeqno, stopAt string, budget *int, emit func([]bili.DMMessage)) (oldest string, reached bool, scanned bool, err *Error) {
+func (f *BiliFetcher) scanOlder(ctx context.Context, client *bili.Client, peer, endSeqno, stopAt string, budget *int, emit func([]bili.DMMessage)) (oldest string, reached bool, scanned bool, err *Error) {
 	end := endSeqno
 	for *budget > 0 {
-		page, fetchErr := f.client.DMSessionMessagesPage(ctx, peer, f.messagePageSize(), end)
+		page, fetchErr := client.DMSessionMessagesPage(ctx, peer, f.messagePageSize(), end)
 		if fetchErr != nil {
 			if classify(fetchErr) == KindAuth {
 				return "", false, false, &Error{Kind: KindAuth, Cause: fetchErr}
@@ -396,10 +483,10 @@ func (f *BiliFetcher) scanOlder(ctx context.Context, peer, endSeqno, stopAt stri
 
 // scanNewest 从最新页向历史翻页，直到追上 watermark 或没有更多。
 // stoppedByError 表示翻页中途遇到非鉴权错误（已拿到较新的页）。
-func (f *BiliFetcher) scanNewest(ctx context.Context, peer, watermark string, budget *int, emit func([]bili.DMMessage)) (oldest string, reached bool, pageMax string, scanned bool, stoppedByError bool, err *Error) {
+func (f *BiliFetcher) scanNewest(ctx context.Context, client *bili.Client, peer, watermark string, budget *int, emit func([]bili.DMMessage)) (oldest string, reached bool, pageMax string, scanned bool, stoppedByError bool, err *Error) {
 	end := ""
 	for *budget > 0 {
-		page, fetchErr := f.client.DMSessionMessagesPage(ctx, peer, f.messagePageSize(), end)
+		page, fetchErr := client.DMSessionMessagesPage(ctx, peer, f.messagePageSize(), end)
 		if fetchErr != nil {
 			if classify(fetchErr) == KindAuth {
 				return "", false, "", false, false, &Error{Kind: KindAuth, Cause: fetchErr}
@@ -445,15 +532,15 @@ func (f *BiliFetcher) scanNewest(ctx context.Context, peer, watermark string, bu
 }
 
 // fetchWithoutSeqno 是平台没有返回 seqno 时的旧路径：last_msg 变了才拉详情。
-func (f *BiliFetcher) fetchWithoutSeqno(ctx context.Context, s bili.DMSession) ([]Message, bool, *Error) {
+func (f *BiliFetcher) fetchWithoutSeqno(ctx context.Context, client *bili.Client, selfID string, s bili.DMSession) ([]Message, bool, *Error) {
 	if !f.changed(s.TalkerID, s.MsgKey) {
 		// 会话没动：最后一条不是自己就照旧产出（重复由上层去重）
-		if f.SelfID == "" || s.SenderUID != f.SelfID {
+		if selfID == "" || s.SenderUID != selfID {
 			return []Message{messageFromSession(s)}, false, nil
 		}
 		return nil, false, nil
 	}
-	page, err := f.client.DMSessionMessagesPage(ctx, s.TalkerID, f.messagePageSize(), "")
+	page, err := client.DMSessionMessagesPage(ctx, s.TalkerID, f.messagePageSize(), "")
 	if err != nil {
 		if classify(err) == KindAuth {
 			return nil, false, &Error{Kind: KindAuth, Cause: err}
@@ -464,7 +551,7 @@ func (f *BiliFetcher) fetchWithoutSeqno(ctx context.Context, s bili.DMSession) (
 			zap.String("peer", s.TalkerID),
 			zap.Error(err),
 		)
-		if f.SelfID == "" || s.SenderUID != f.SelfID {
+		if selfID == "" || s.SenderUID != selfID {
 			return []Message{messageFromSession(s)}, false, nil
 		}
 		return nil, false, nil
@@ -472,7 +559,7 @@ func (f *BiliFetcher) fetchWithoutSeqno(ctx context.Context, s bili.DMSession) (
 	f.remember(s.TalkerID, s.MsgKey)
 	out := make([]Message, 0, len(page.Messages))
 	for _, m := range page.Messages {
-		if f.SelfID != "" && m.SenderUID == f.SelfID {
+		if selfID != "" && m.SenderUID == selfID {
 			continue
 		}
 		out = append(out, Message{

@@ -177,6 +177,18 @@ func (r *AccountRepo) SetActive(ctx context.Context, id string) error {
 	})
 }
 
+// ClearActive 清空全部活跃标记；切换验证失败且没有旧账号可回滚时使用。
+func (r *AccountRepo) ClearActive(ctx context.Context) error {
+	if ctx == nil {
+		return store.ErrInvalid
+	}
+	if err := r.db.WithContext(ctx).Exec(
+		"UPDATE accounts SET is_active = FALSE, updated_at = clock_timestamp() WHERE is_active").Error; err != nil {
+		return &safeError{"清空活跃账号失败", err}
+	}
+	return nil
+}
+
 // Delete 按 id 删除账号。
 func (r *AccountRepo) Delete(ctx context.Context, id string) error {
 	if ctx == nil {

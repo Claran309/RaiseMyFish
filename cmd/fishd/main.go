@@ -190,7 +190,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	chans := &channelSet{}
 	// live 采集房间的权威状态：状态注入与 watching 重置都读它。
 	liveRooms := &liveRoomState{}
-	consume, snd, dmWhitelist, err := buildConsume(cfg, resources, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, liveRooms, chans, giftGate.Load, logger)
+	consume, snd, dmWhitelist, err := buildConsume(cfg, resources, accountService, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, liveRooms, chans, giftGate.Load, logger)
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		return withScheduler(ctx, consume, logger, serveRuntime)
 	}
 	// 通道注册表只服务发送/核验；采集统一由运行时控制面驱动。
-	dmCollector, err := buildDMCollector(cfg, logger)
+	dmCollector, err := buildDMCollector(cfg, accountService, logger)
 	if err != nil {
 		return fmt.Errorf("装配私信采集失败：%w", err)
 	}
@@ -226,6 +226,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		Presence:    presenceTable,
 		Rooms:       liveRooms,
 		Timeout:     timeout,
+		Accounts:    accountService,
 		DMWhitelist: dmWhitelist,
 		GiftGate:    giftGate,
 		Now:         time.Now,

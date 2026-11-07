@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"RaiseMyFish/internal/account"
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
@@ -217,7 +218,8 @@ type dmWhitelistSetter interface {
 // live 走既有 Node 传输与投递账本；comment/dm 走不可变投递计划 + attempt，
 // 先落正文与许可再 POST，避免「平台已接受、本地未记录」窗口里恢复重发。
 // 都没有启用时明确报错，避免消费循环「能生成却不能发」。
-func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger) (sender.Sender, dmWhitelistSetter, error) {
+// accounts 为评论/私信发送提供每笔 attempt 的账号快照与切换屏障；nil 时沿用静态 self_id。
+func buildSender(cfg config.Config, resources *infra.Resources, accounts *account.Service, log *zap.Logger) (sender.Sender, dmWhitelistSetter, error) {
 	if cfg.Sender == nil {
 		return nil, nil, errors.New("未配置 [sender] 发送通道，无法装配发送器")
 	}
@@ -271,6 +273,7 @@ func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger)
 		}
 		plannedSender, err := durable.New(repo, commentSender, durable.Options{
 			Channel: event.ChComment, AccountID: account, Validate: sendercomment.Normalize, MaxAttempts: 3,
+			Actors: accounts, Admission: accounts,
 		}, log)
 		if err != nil {
 			return nil, nil, fmt.Errorf("装配评论投递计划失败：%w", err)
@@ -294,6 +297,7 @@ func buildSender(cfg config.Config, resources *infra.Resources, log *zap.Logger)
 		}
 		plannedSender, err := durable.New(repo, dmSender, durable.Options{
 			Channel: event.ChDM, AccountID: account, Validate: senderdm.Normalize, MaxAttempts: 3,
+			Actors: accounts, Admission: accounts,
 		}, log)
 		if err != nil {
 			return nil, nil, fmt.Errorf("装配私信投递计划失败：%w", err)
@@ -381,7 +385,7 @@ func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExe
 // buildConsume 装配消费循环；未启用（无 [scheduler] / 无 Brain 路由 / 通道关闭）时返回 nil。
 // 返回的发送器与消费循环共用同一实例，供通道注册表复用（同一限流与暂停状态）。
 // dmWhitelist 在未装配私信发送时为 nil；giftGate 为动态送礼开关（面板热更新）。
-func buildConsume(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, rooms *liveRoomState, channels *channelSet, giftGate func() bool, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, dmWhitelistSetter, error) {
+func buildConsume(cfg config.Config, resources *infra.Resources, accounts *account.Service, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, rooms *liveRoomState, channels *channelSet, giftGate func() bool, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, dmWhitelistSetter, error) {
 	if !consumeEnabled(cfg, routes) {
 		return nil, nil, nil, nil
 	}
@@ -423,7 +427,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, routes map[stri
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	snd, dmWhitelist, err := buildSender(cfg, resources, log)
+	snd, dmWhitelist, err := buildSender(cfg, resources, accounts, log)
 	if err != nil {
 		return nil, nil, nil, err
 	}

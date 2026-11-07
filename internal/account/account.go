@@ -84,6 +84,8 @@ type Store interface {
 	// Upsert 按 mid 幂等写入；当前没有活跃账号时自动把该账号设为活跃。
 	Upsert(ctx context.Context, a Account) (Account, error)
 	SetActive(ctx context.Context, id string) error
+	// ClearActive 清空活跃标记（切换验证失败且无旧账号可回滚时使用）。
+	ClearActive(ctx context.Context) error
 	Delete(ctx context.Context, id string) error
 	UpdateCheck(ctx context.Context, id, name, status string, at time.Time) error
 }
@@ -93,22 +95,26 @@ type Verifier interface {
 	Verify(ctx context.Context, cookie string) (Identity, error)
 }
 
-// Options 是 Service 依赖；EnvCookie/EnvCookieFile 是解析链兜底。
+// Options 是 Service 依赖；EnvCookie/EnvCookieFile/EnvMID 是解析链兜底。
 type Options struct {
 	Store         Store
 	Verifier      Verifier
 	EnvCookie     string
 	EnvCookieFile string
-	Now           func() time.Time
+	// EnvMID 是环境变量凭据对应的 B站 UID；为空时环境凭据不带平台身份。
+	EnvMID string
+	Now    func() time.Time
 }
 
-// Service 提供账号 CRUD、验证与凭据解析。
+// Service 提供账号 CRUD、验证、凭据解析与切换准入。
 type Service struct {
 	store         Store
 	verifier      Verifier
 	envCookie     string
 	envCookieFile string
+	envMID        string
 	now           func() time.Time
+	gate          *Gate
 }
 
 // NewService 装配账号服务；Store 与 Verifier 缺一不可。
@@ -125,7 +131,9 @@ func NewService(o Options) (*Service, error) {
 		verifier:      o.Verifier,
 		envCookie:     strings.TrimSpace(o.EnvCookie),
 		envCookieFile: strings.TrimSpace(o.EnvCookieFile),
+		envMID:        strings.TrimSpace(o.EnvMID),
 		now:           now,
+		gate:          &Gate{},
 	}, nil
 }
 
@@ -239,7 +247,11 @@ func (s *Service) Add(ctx context.Context, cookie, note string) (Account, error)
 	})
 }
 
-// Activate 切换活跃账号。
+// Activate 切换活跃账号：暂停准入 → 等待在途操作结清 → 更新活跃标记 →
+// 用 Nav 确认新账号的实际身份 → 恢复准入。
+//
+// 验证失败会回滚到原活跃账号（原本没有活跃账号则清空），避免把未经验证的
+// 账号留给后续采集/发送。切换一旦开始就不跟随 HTTP 请求取消，防止半途而废。
 func (s *Service) Activate(ctx context.Context, id string) error {
 	if s == nil {
 		return errors.New("账号服务不能为空")
@@ -248,7 +260,153 @@ func (s *Service) Activate(ctx context.Context, id string) error {
 	if id == "" {
 		return ErrNotFound
 	}
-	return s.store.SetActive(ctx, id)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	switchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	return s.gate.Switch(switchCtx, func(switchCtx context.Context) error {
+		target, err := s.store.Get(switchCtx, id)
+		if err != nil {
+			return err
+		}
+		cookie, err := bili.LoadCookie(target.Cookie, "")
+		if err != nil {
+			return fmt.Errorf("%w：%v", ErrInvalidCookie, err)
+		}
+		previous, hadActive, err := s.Active(switchCtx)
+		if err != nil {
+			return err
+		}
+		if err := s.store.SetActive(switchCtx, target.ID); err != nil {
+			return err
+		}
+		now := s.now().UTC()
+		identity, verifyErr := s.verifier.Verify(switchCtx, cookie)
+		if verifyErr == nil {
+			identity.MID = strings.TrimSpace(identity.MID)
+			identity.Name = strings.TrimSpace(identity.Name)
+			if !digitsOnly(identity.MID) || identity.MID != target.MID {
+				verifyErr = fmt.Errorf("%w：B站返回的UID与账号不一致", ErrVerify)
+			}
+		}
+		if verifyErr != nil {
+			rollbackErr := s.rollbackActive(switchCtx, previous, hadActive)
+			status := target.Status
+			if bili.IsAuthError(verifyErr) {
+				status = StatusInvalid
+			}
+			checkErr := s.store.UpdateCheck(switchCtx, target.ID, target.Name, status, now)
+			wrapped := fmt.Errorf("%w：%w", ErrVerify, verifyErr)
+			if rollbackErr != nil {
+				wrapped = errors.Join(wrapped, fmt.Errorf("回滚活跃账号失败：%w", rollbackErr))
+			}
+			if checkErr != nil {
+				wrapped = errors.Join(wrapped, fmt.Errorf("记录账号验证状态失败：%w", checkErr))
+			}
+			return wrapped
+		}
+		if identity.Name == "" {
+			identity.Name = target.Name
+		}
+		if err := s.store.UpdateCheck(switchCtx, target.ID, identity.Name, StatusActive, now); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+// rollbackActive 恢复切换前的活跃账号；原来没有活跃账号时清空标记。
+func (s *Service) rollbackActive(ctx context.Context, previous Account, hadActive bool) error {
+	if hadActive {
+		return s.store.SetActive(ctx, previous.ID)
+	}
+	return s.store.ClearActive(ctx)
+}
+
+// BeginOperation 取得一次采集/发送操作的准入；切换期间会阻塞。
+func (s *Service) BeginOperation(ctx context.Context) (func(), error) {
+	if s == nil {
+		return func() {}, nil
+	}
+	return s.gate.BeginOperation(ctx)
+}
+
+// CurrentActor 返回当前活跃账号的快照（account_id + self_id + 凭据）。
+func (s *Service) CurrentActor(ctx context.Context) (bili.Actor, error) {
+	if s == nil {
+		return bili.Actor{}, ErrNoCredential
+	}
+	cred, err := s.Resolve(ctx)
+	if errors.Is(err, ErrNoCredential) {
+		return bili.Actor{}, bili.ErrNoCredential
+	}
+	if err != nil {
+		return bili.Actor{}, err
+	}
+	return actorFromCredential(cred), nil
+}
+
+// ActorByMID 返回指定 MID 的账号快照，供旧投递尝试继续使用原账号。
+//
+// 只按平台 UID 匹配，绝不回落到当前活跃账号：旧任务换号重发比不发送更危险。
+// 已停用的账号不提供凭据。
+func (s *Service) ActorByMID(ctx context.Context, mid string) (bili.Actor, error) {
+	if s == nil {
+		return bili.Actor{}, ErrNoCredential
+	}
+	mid = strings.TrimSpace(mid)
+	if !digitsOnly(mid) {
+		return bili.Actor{}, ErrNoCredential
+	}
+	accounts, err := s.store.List(ctx)
+	if err != nil {
+		return bili.Actor{}, fmt.Errorf("读取账号列表失败：%w", err)
+	}
+	for _, stored := range accounts {
+		if strings.TrimSpace(stored.MID) != mid {
+			continue
+		}
+		if stored.Status == StatusDisabled {
+			return bili.Actor{}, ErrNoCredential
+		}
+		cookie, cookieErr := bili.LoadCookie(stored.Cookie, "")
+		if cookieErr != nil {
+			return bili.Actor{}, ErrNoCredential
+		}
+		csrf := stored.CSRF
+		if csrf == "" {
+			csrf = bili.CSRFToken(cookie)
+		}
+		return bili.Actor{
+			AccountID: stored.ID, MID: mid, Cookie: cookie, CSRF: csrf, Source: SourceDB,
+		}, nil
+	}
+	if s.envMID == mid {
+		cookie, envErr := bili.LoadCookie(s.envCookie, s.envCookieFile)
+		if envErr != nil {
+			return bili.Actor{}, ErrNoCredential
+		}
+		return bili.Actor{
+			AccountID: "env-" + mid, MID: mid, Cookie: cookie,
+			CSRF: bili.CSRFToken(cookie), Source: SourceEnv,
+		}, nil
+	}
+	return bili.Actor{}, ErrNoCredential
+}
+
+func actorFromCredential(cred Credential) bili.Actor {
+	accountID := cred.AccountID
+	if accountID == "" && cred.MID != "" {
+		accountID = "env-" + cred.MID
+	}
+	return bili.Actor{
+		AccountID: accountID,
+		MID:       cred.MID,
+		Cookie:    cred.Cookie,
+		CSRF:      cred.CSRF,
+		Source:    cred.Source,
+	}
 }
 
 // Delete 删除非活跃账号；活跃账号必须先切换，避免误删当前凭据。
@@ -335,7 +493,7 @@ func (s *Service) Resolve(ctx context.Context) (Credential, error) {
 	if err != nil {
 		return Credential{}, fmt.Errorf("环境变量B站凭据不可用：%w", ErrInvalidCookie)
 	}
-	return Credential{Cookie: cookie, CSRF: bili.CSRFToken(cookie), Source: SourceEnv}, nil
+	return Credential{Cookie: cookie, CSRF: bili.CSRFToken(cookie), MID: s.envMID, Source: SourceEnv}, nil
 }
 
 // BiliCredential 适配 bili.Options.Resolver；无凭据时返回 bili.ErrNoCredential。

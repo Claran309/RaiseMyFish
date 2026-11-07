@@ -115,14 +115,28 @@ func (s *Service) Send(ctx context.Context, c event.Claim, p sender.Reply) (send
 	if err != nil {
 		return sender.Result{}, err
 	}
-	// 凭据每轮重读，支持运行期轮换文件。
-	cookie, err := bili.LoadCookie(s.options.Cookie, s.options.CookieFile)
-	if err != nil {
-		return sender.Result{}, &sender.Error{Kind: sender.KindAuth, Cause: err}
-	}
-	csrf := bili.CSRFToken(cookie)
-	if csrf == "" {
-		return sender.Result{}, &sender.Error{Kind: sender.KindAuth, Cause: errors.New("B站凭据缺少bili_jct")}
+	// 有账号快照时必须用快照：旧尝试不能因为活跃账号已切换而改用新号发送。
+	cookie, csrf := "", ""
+	if actor, ok := bili.ActorFrom(ctx); ok {
+		cookie = strings.TrimSpace(actor.Cookie)
+		csrf = strings.TrimSpace(actor.CSRF)
+		if csrf == "" {
+			csrf = bili.CSRFToken(cookie)
+		}
+		if cookie == "" || csrf == "" {
+			return sender.Result{}, &sender.Error{Kind: sender.KindAuth, Cause: bili.ErrNoCredential}
+		}
+	} else {
+		// 未注入快照时保持旧行为：凭据每轮重读，支持运行期轮换文件。
+		loaded, loadErr := bili.LoadCookie(s.options.Cookie, s.options.CookieFile)
+		if loadErr != nil {
+			return sender.Result{}, &sender.Error{Kind: sender.KindAuth, Cause: loadErr}
+		}
+		cookie = loaded
+		csrf = bili.CSRFToken(cookie)
+		if csrf == "" {
+			return sender.Result{}, &sender.Error{Kind: sender.KindAuth, Cause: errors.New("B站凭据缺少bili_jct")}
+		}
 	}
 	if ctx.Err() != nil {
 		return sender.Result{}, &sender.Error{Kind: sender.KindRetry, Cause: ctx.Err()}

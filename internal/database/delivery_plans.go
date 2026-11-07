@@ -254,6 +254,28 @@ func (r *PlannedRepo) PreparePlan(ctx context.Context, c event.Claim, key store.
 	return out, queueFailure("保存投递计划失败", err)
 }
 
+// PlanAccount 返回计划绑定的账号（B站 MID）。
+//
+// 恢复旧尝试必须先读它：当前活跃账号可能已经切走，key 一旦用新号重建，
+// 就会变成「用新账号重发旧任务」。
+func (r *PlannedRepo) PlanAccount(ctx context.Context, eventID string) (string, error) {
+	if ctx == nil || strings.TrimSpace(eventID) == "" {
+		return "", store.ErrInvalid
+	}
+	var row struct {
+		AccountID string `gorm:"column:account_id"`
+	}
+	err := r.db.WithContext(ctx).Table("delivery_plans").Select("account_id").
+		Where("event_id=?", eventID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", store.ErrNotFound
+	}
+	if err != nil {
+		return "", &safeError{"读取投递计划账号失败", err}
+	}
+	return row.AccountID, nil
+}
+
 // LoadPlan 只读取已有计划；deliver 阶段的可信未投递会创建下一尝试。
 func (r *PlannedRepo) LoadPlan(ctx context.Context, c event.Claim, key store.PlanKey) (sender.Attempt, error) {
 	if ctx == nil || !validClaim(c) || !validPlanKey(key) {

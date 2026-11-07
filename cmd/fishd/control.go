@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"RaiseMyFish/internal/account"
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/collector"
 	"RaiseMyFish/internal/config"
@@ -45,6 +46,7 @@ type runtimeDeps struct {
 	Presence    *presence.Table
 	Rooms       *liveRoomState
 	Timeout     time.Duration
+	Accounts    *account.Service
 	DMWhitelist dmWhitelistSetter
 	GiftGate    *atomic.Bool
 	Now         func() time.Time
@@ -125,7 +127,7 @@ func newRuntimeControl(ctx context.Context, cfg config.Config, deps runtimeDeps,
 			return newCommentCollector(cfg, videos, log)
 		})
 	c.dm = newCollectorController("dm", ctx, deps.Bus, deps.Timeout, log, now, deps.DM,
-		func() (collector.Collector, error) { return newDMCollector(cfg, log) })
+		func() (collector.Collector, error) { return newDMCollector(cfg, deps.Accounts, log) })
 	c.watch = &watchController{ctx: ctx, base: cfg, log: log, now: now, available: watchAvailable(cfg)}
 	c.proactive = &proactiveController{
 		ctx:       ctx,

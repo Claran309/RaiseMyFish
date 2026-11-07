@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"RaiseMyFish/internal/bili"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/sender"
@@ -51,27 +52,50 @@ func normalize(c event.Claim, p sender.Reply) (sender.Reply, error) {
 
 // fakeRepo 模拟 PlannedRepo：记录调用顺序与落库结果。
 type fakeRepo struct {
-	attempt      sender.Attempt
-	prepareState string
-	prepareErr   error
-	loadErr      error
-	armErr       error
-	recordErr    error
+	attempt        sender.Attempt
+	prepareState   string
+	prepareErr     error
+	loadErr        error
+	armErr         error
+	recordErr      error
+	planAccount    string
+	planAccountErr error
+	onPrepare      func()
 
 	preparedText string
 	armed        bool
 	recorded     *store.PlanOutcome
 	recordedID   string
+	prepareKey   store.PlanKey
+	loadKey      store.PlanKey
+	armKey       store.PlanKey
+	recordKey    store.PlanKey
 	prepareCalls int
 	loadCalls    int
 	armCalls     int
 	recordCalls  int
+	planCalls    int
+}
+
+func (f *fakeRepo) PlanAccount(_ context.Context, _ string) (string, error) {
+	f.planCalls++
+	if f.planAccountErr != nil {
+		return "", f.planAccountErr
+	}
+	if f.planAccount == "" {
+		return "", store.ErrNotFound
+	}
+	return f.planAccount, nil
 }
 
 func (f *fakeRepo) PreparePlan(_ context.Context, c event.Claim, key store.PlanKey, text string) (sender.Attempt, error) {
 	f.prepareCalls++
+	f.prepareKey = key
 	if f.prepareErr != nil {
 		return sender.Attempt{}, f.prepareErr
+	}
+	if f.onPrepare != nil {
+		f.onPrepare()
 	}
 	if f.attempt.ID == "" {
 		f.attempt = sender.Attempt{
@@ -88,6 +112,7 @@ func (f *fakeRepo) PreparePlan(_ context.Context, c event.Claim, key store.PlanK
 
 func (f *fakeRepo) LoadPlan(_ context.Context, c event.Claim, key store.PlanKey) (sender.Attempt, error) {
 	f.loadCalls++
+	f.loadKey = key
 	if f.loadErr != nil {
 		return sender.Attempt{}, f.loadErr
 	}
@@ -97,8 +122,9 @@ func (f *fakeRepo) LoadPlan(_ context.Context, c event.Claim, key store.PlanKey)
 	return f.attempt, nil
 }
 
-func (f *fakeRepo) ArmPlan(_ context.Context, _ event.Claim, _ store.PlanKey, id string) (sender.Attempt, error) {
+func (f *fakeRepo) ArmPlan(_ context.Context, _ event.Claim, key store.PlanKey, id string) (sender.Attempt, error) {
 	f.armCalls++
+	f.armKey = key
 	if f.armErr != nil {
 		return sender.Attempt{}, f.armErr
 	}
@@ -110,8 +136,9 @@ func (f *fakeRepo) ArmPlan(_ context.Context, _ event.Claim, _ store.PlanKey, id
 	return f.attempt, nil
 }
 
-func (f *fakeRepo) RecordPlan(_ context.Context, _ event.Claim, _ store.PlanKey, id string, o store.PlanOutcome) (sender.Attempt, error) {
+func (f *fakeRepo) RecordPlan(_ context.Context, _ event.Claim, key store.PlanKey, id string, o store.PlanOutcome) (sender.Attempt, error) {
 	f.recordCalls++
+	f.recordKey = key
 	if f.recordErr != nil {
 		return sender.Attempt{}, f.recordErr
 	}
@@ -128,6 +155,7 @@ func (f *fakeRepo) RecordPlan(_ context.Context, _ event.Claim, _ store.PlanKey,
 type fakeSender struct {
 	sends  int
 	text   string
+	actor  *bili.Actor
 	sendAt func()
 	result sender.Result
 	err    error
@@ -135,9 +163,12 @@ type fakeSender struct {
 
 func (f *fakeSender) Name() string { return "fake" }
 
-func (f *fakeSender) Send(_ context.Context, _ event.Claim, r sender.Reply) (sender.Result, error) {
+func (f *fakeSender) Send(ctx context.Context, _ event.Claim, r sender.Reply) (sender.Result, error) {
 	f.sends++
 	f.text = r.Text
+	if bound, ok := bili.ActorFrom(ctx); ok {
+		f.actor = &bound
+	}
 	if f.sendAt != nil {
 		f.sendAt()
 	}

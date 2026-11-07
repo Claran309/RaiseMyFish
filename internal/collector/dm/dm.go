@@ -73,9 +73,14 @@ type Message struct {
 //
 // Commit 在本批消息全部成功送入总线后调用，用于持久化水位；
 // 中途取消则不提交，下一轮会重新拉取（事件 ID 幂等兜底可能重复）。
+// Close 释放账号切换准入：整批处理结束（成功/失败/取消）都必须调用一次。
+// AccountID/SelfID 是本次批次绑定的账号快照，整批 list/detail 只使用它。
 type Batch struct {
-	Messages []Message
-	Commit   func() error
+	Messages  []Message
+	Commit    func() error
+	Close     func()
+	AccountID string
+	SelfID    string
 }
 
 // Fetcher 拉取「未读/新」私信；真实实现走 HTTP，测试用假实现。
@@ -179,6 +184,11 @@ func (c *Collector) poll(ctx context.Context, events chan<- event.Event) error {
 			return fmt.Errorf("%w: %v", errAuth, err)
 		}
 		return err
+	}
+	// 整批处理（含水位提交）结束前一直持有账号切换准入；
+	// 中途取消也释放，避免切号被一个已放弃的批次长期挡住。
+	if batch.Close != nil {
+		defer batch.Close()
 	}
 	now := c.opts.Now()
 	// 稳定顺序：按时间升序，保证下游看到的是会话顺序

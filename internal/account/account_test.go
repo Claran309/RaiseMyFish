@@ -115,6 +115,14 @@ func (f *fakeStore) SetActive(_ context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeStore) ClearActive(_ context.Context) error {
+	for key, item := range f.accounts {
+		item.IsActive = false
+		f.accounts[key] = item
+	}
+	return nil
+}
+
 func (f *fakeStore) Delete(_ context.Context, id string) error {
 	if _, ok := f.accounts[id]; !ok {
 		return ErrNotFound
@@ -283,7 +291,8 @@ func TestActivateAndDelete(t *testing.T) {
 	first := Account{ID: "account-1", MID: "1", Name: "一号", Cookie: dbCookie, Status: StatusActive, IsActive: true}
 	second := Account{ID: "account-2", MID: "2", Name: "二号", Cookie: dbCookie, Status: StatusActive}
 	store := newFakeStore(first, second)
-	svc := newTestService(t, store, &fakeVerifier{}, "")
+	// 切换必须用 Nav 身份确认目标账号：验证器需返回目标 MID。
+	svc := newTestService(t, store, &fakeVerifier{info: Identity{MID: "2", Name: "二号"}}, "")
 
 	if err := svc.Activate(context.Background(), "account-2"); err != nil {
 		t.Fatalf("切换失败：%v", err)
@@ -303,6 +312,251 @@ func TestActivateAndDelete(t *testing.T) {
 	}
 	if err := svc.Activate(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("切换不存在账号应 ErrNotFound：%v", err)
+	}
+}
+
+// blockingVerifier 在 Verify 内阻塞，用于观察切换屏障的时序。
+type blockingVerifier struct {
+	info    Identity
+	err     error
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingVerifier) Verify(ctx context.Context, _ string) (Identity, error) {
+	select {
+	case b.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-b.release:
+		return b.info, b.err
+	case <-ctx.Done():
+		return Identity{}, ctx.Err()
+	}
+}
+
+func newBlockingVerifier(info Identity) *blockingVerifier {
+	return &blockingVerifier{info: info, started: make(chan struct{}, 1), release: make(chan struct{})}
+}
+
+func waitSwitching(t *testing.T, gate *Gate) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		gate.mu.Lock()
+		switching := gate.switching
+		gate.mu.Unlock()
+		if switching {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("账号切换未进入独占窗口")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestActivateWaitsForInflightAndBlocksAdmission 切换先等在途操作结清，期间新准入被阻塞。
+func TestActivateWaitsForInflightAndBlocksAdmission(t *testing.T) {
+	first := Account{ID: "account-1", MID: "1", Name: "一号", Cookie: dbCookie, Status: StatusActive, IsActive: true}
+	second := Account{ID: "account-2", MID: "2", Name: "二号", Cookie: dbCookie, Status: StatusActive}
+	store := newFakeStore(first, second)
+	verify := newBlockingVerifier(Identity{MID: "2", Name: "二号"})
+	svc := newTestService(t, store, verify, "")
+
+	releaseFirst, err := svc.BeginOperation(context.Background())
+	if err != nil {
+		t.Fatalf("旧操作未取得准入：%v", err)
+	}
+
+	activateDone := make(chan error, 1)
+	go func() { activateDone <- svc.Activate(context.Background(), "account-2") }()
+	waitSwitching(t, svc.gate)
+
+	blocked := make(chan error, 1)
+	go func() {
+		release, err := svc.BeginOperation(context.Background())
+		if release != nil {
+			release()
+		}
+		blocked <- err
+	}()
+	select {
+	case <-blocked:
+		t.Fatal("旧操作未结清时新准入被放行")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	releaseFirst()
+	select {
+	case <-verify.started:
+	case <-time.After(time.Second):
+		t.Fatal("切换未进入身份验证阶段")
+	}
+	select {
+	case <-blocked:
+		t.Fatal("验证未结束就放行了新准入")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(verify.release)
+	if err := <-activateDone; err != nil {
+		t.Fatalf("切换失败：%v", err)
+	}
+	select {
+	case err := <-blocked:
+		if err != nil {
+			t.Fatalf("切换结束后准入仍失败：%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("切换结束后新准入未被唤醒")
+	}
+	active, ok, err := svc.Active(context.Background())
+	if err != nil || !ok || active.ID != "account-2" {
+		t.Fatalf("活跃账号不符：%+v %v %v", active, ok, err)
+	}
+}
+
+// TestActivateRejectsConcurrentSwitch 同一时刻只允许一次切换。
+func TestActivateRejectsConcurrentSwitch(t *testing.T) {
+	first := Account{ID: "account-1", MID: "1", Name: "一号", Cookie: dbCookie, Status: StatusActive, IsActive: true}
+	second := Account{ID: "account-2", MID: "2", Name: "二号", Cookie: dbCookie, Status: StatusActive}
+	store := newFakeStore(first, second)
+	verify := newBlockingVerifier(Identity{MID: "2", Name: "二号"})
+	svc := newTestService(t, store, verify, "")
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- svc.Activate(context.Background(), "account-2") }()
+	select {
+	case <-verify.started:
+	case <-time.After(time.Second):
+		t.Fatal("首次切换未开始验证")
+	}
+	if err := svc.Activate(context.Background(), "account-1"); !errors.Is(err, ErrSwitchInProgress) {
+		t.Fatalf("并发切换应返回 ErrSwitchInProgress：%v", err)
+	}
+	close(verify.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("首次切换失败：%v", err)
+	}
+}
+
+// TestActivateVerifyFailureRollsBack 身份不一致/验证失败时回滚旧活跃账号。
+func TestActivateVerifyFailureRollsBack(t *testing.T) {
+	t.Run("mismatch", func(t *testing.T) {
+		first := Account{ID: "account-1", MID: "1", Name: "一号", Cookie: dbCookie, Status: StatusActive, IsActive: true}
+		second := Account{ID: "account-2", MID: "2", Name: "二号", Cookie: dbCookie, Status: StatusActive}
+		store := newFakeStore(first, second)
+		svc := newTestService(t, store, &fakeVerifier{info: Identity{MID: "99", Name: "别人"}}, "")
+
+		if err := svc.Activate(context.Background(), "account-2"); !errors.Is(err, ErrVerify) {
+			t.Fatalf("UID 不一致应 ErrVerify：%v", err)
+		}
+		active, ok, err := svc.Active(context.Background())
+		if err != nil || !ok || active.ID != "account-1" {
+			t.Fatalf("应回滚到原活跃账号：%+v %v %v", active, ok, err)
+		}
+		if store.accounts["account-2"].Status != StatusActive {
+			t.Errorf("非认证错误不应标记 invalid：%+v", store.accounts["account-2"])
+		}
+		release, err := svc.BeginOperation(context.Background())
+		if err != nil {
+			t.Fatalf("切换失败后准入未恢复：%v", err)
+		}
+		release()
+	})
+	t.Run("auth_failure", func(t *testing.T) {
+		first := Account{ID: "account-1", MID: "1", Name: "一号", Cookie: dbCookie, Status: StatusActive, IsActive: true}
+		second := Account{ID: "account-2", MID: "2", Name: "二号", Cookie: dbCookie, Status: StatusActive}
+		store := newFakeStore(first, second)
+		svc := newTestService(t, store, &fakeVerifier{err: bili.ErrNotLoggedIn}, "")
+
+		if err := svc.Activate(context.Background(), "account-2"); !errors.Is(err, ErrVerify) {
+			t.Fatalf("认证失败应 ErrVerify：%v", err)
+		}
+		active, ok, _ := svc.Active(context.Background())
+		if !ok || active.ID != "account-1" {
+			t.Fatalf("应回滚到原活跃账号：%+v %v", active, ok)
+		}
+		if store.accounts["account-2"].Status != StatusInvalid {
+			t.Errorf("认证失败应标记 invalid：%+v", store.accounts["account-2"])
+		}
+	})
+	t.Run("no_previous_clears_active", func(t *testing.T) {
+		target := Account{ID: "account-2", MID: "2", Name: "二号", Cookie: dbCookie, Status: StatusActive}
+		store := newFakeStore(target)
+		svc := newTestService(t, store, &fakeVerifier{err: bili.ErrNotLoggedIn}, "")
+
+		if err := svc.Activate(context.Background(), "account-2"); !errors.Is(err, ErrVerify) {
+			t.Fatalf("认证失败应 ErrVerify：%v", err)
+		}
+		active, ok, err := svc.Active(context.Background())
+		if err != nil || ok || active.ID != "" {
+			t.Fatalf("原本没有活跃账号时应清空：%+v %v %v", active, ok, err)
+		}
+	})
+}
+
+// TestActorByMIDStaysOnOldAccount 旧尝试按平台 UID 取凭据，绝不回落到当前活跃账号。
+func TestActorByMIDStaysOnOldAccount(t *testing.T) {
+	old := Account{ID: "account-1", MID: "1", Name: "一号", Cookie: dbCookie, CSRF: "csrf-db", Status: StatusActive}
+	active := Account{ID: "account-2", MID: "2", Name: "二号", Cookie: dbCookie, Status: StatusActive, IsActive: true}
+	disabled := Account{ID: "account-3", MID: "3", Name: "三号", Cookie: dbCookie, Status: StatusDisabled}
+	store := newFakeStore(old, active, disabled)
+	svc := newTestService(t, store, &fakeVerifier{}, "")
+
+	actor, err := svc.ActorByMID(context.Background(), "1")
+	if err != nil {
+		t.Fatalf("旧账号快照失败：%v", err)
+	}
+	if actor.AccountID != "account-1" || actor.MID != "1" || actor.Cookie != dbCookie || actor.CSRF != "csrf-db" || actor.Source != SourceDB {
+		t.Fatalf("旧账号快照不符：%+v", actor)
+	}
+	if _, err := svc.ActorByMID(context.Background(), "999"); !errors.Is(err, ErrNoCredential) {
+		t.Fatalf("未知 MID 不应回落当前活跃账号：%v", err)
+	}
+	if _, err := svc.ActorByMID(context.Background(), "3"); !errors.Is(err, ErrNoCredential) {
+		t.Fatalf("停用账号不应提供凭据：%v", err)
+	}
+	current, err := svc.CurrentActor(context.Background())
+	if err != nil || current.AccountID != "account-2" || current.MID != "2" {
+		t.Fatalf("当前账号快照不符：%+v %v", current, err)
+	}
+}
+
+// TestActorByMIDEnvFallback 环境变量凭据按配置的 EnvMID 可被旧尝试找回。
+func TestActorByMIDEnvFallback(t *testing.T) {
+	svc, err := NewService(Options{
+		Store:     newFakeStore(),
+		Verifier:  &fakeVerifier{},
+		EnvCookie: envCookie,
+		EnvMID:    "77",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor, err := svc.ActorByMID(context.Background(), "77")
+	if err != nil {
+		t.Fatalf("环境凭据未命中：%v", err)
+	}
+	if actor.AccountID != "env-77" || actor.MID != "77" || actor.Cookie != envCookie || actor.Source != SourceEnv {
+		t.Fatalf("环境账号快照不符：%+v", actor)
+	}
+	if _, err := svc.ActorByMID(context.Background(), "88"); !errors.Is(err, ErrNoCredential) {
+		t.Fatalf("未配置的 MID 不应命中：%v", err)
+	}
+	current, err := svc.CurrentActor(context.Background())
+	if err != nil || current.MID != "77" || current.Source != SourceEnv {
+		t.Fatalf("环境当前账号快照不符：%+v %v", current, err)
+	}
+
+	empty, err := NewService(Options{Store: newFakeStore(), Verifier: &fakeVerifier{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := empty.CurrentActor(context.Background()); !errors.Is(err, bili.ErrNoCredential) {
+		t.Fatalf("无凭据应映射 bili.ErrNoCredential：%v", err)
 	}
 }
 

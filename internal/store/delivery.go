@@ -39,4 +39,7 @@ type PlannedRepo interface {
 	LoadPlan(context.Context, event.Claim, PlanKey) (sender.Attempt, error)
 	ArmPlan(context.Context, event.Claim, PlanKey, string) (sender.Attempt, error)
 	RecordPlan(context.Context, event.Claim, PlanKey, string, PlanOutcome) (sender.Attempt, error)
+	// PlanAccount 返回已落库计划绑定的账号（B站 MID）；没有计划时返回 ErrNotFound。
+	// 恢复旧尝试必须先读它，避免用当前活跃账号重建 plan key。
+	PlanAccount(ctx context.Context, eventID string) (string, error)
 }
