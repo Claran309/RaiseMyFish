@@ -342,16 +342,14 @@ func buildGiftQuota(cfg config.Config, log *zap.Logger) reasoning.QuotaSource {
 
 // sideEffectDeps 把配置投影成副作用工具的护栏参数（与 fishd 同口径）。
 func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExecutors, room string, giftGate func() bool, log *zap.Logger) reasoning.SideEffectDeps {
-	giftEnabled := cfg.Gift.Enabled
-	if giftGate != nil {
-		giftEnabled = giftGate()
-	}
 	return reasoning.SideEffectDeps{
-		Enabled:          cfg.Reasoning.AllowSideEffectTools,
-		Gift:             exec.Gift,
-		Social:           exec.Social,
-		QuotaView:        quota,
-		GiftEnabled:      giftEnabled,
+		Enabled:   cfg.Reasoning.AllowSideEffectTools,
+		Gift:      exec.Gift,
+		Social:    exec.Social,
+		QuotaView: quota,
+		// 静态值只作缺省；有动态开关时必须传回调本身，每次执行读最新值。
+		GiftEnabled:      cfg.Gift.Enabled,
+		GiftEnabledFunc:  giftGate,
 		GiftReal:         cfg.Gift.Real,
 		GiftID:           cfg.Gift.GiftID,
 		MaxNum:           cfg.Gift.MaxNum,

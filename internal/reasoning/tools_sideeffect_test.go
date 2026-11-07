@@ -6,10 +6,12 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type fakeGift struct {
@@ -228,27 +230,116 @@ func TestGiftRealSendsAndReserves(t *testing.T) {
 	}
 }
 
-// TestGiftDynamicSwitch 面板热切换：运行中改 Func 立即生效，且无需重建工具。
+// TestGiftDynamicSwitch 面板热切换：同一个工具箱按开→关→开跟随门控，无需重建。
 func TestGiftDynamicSwitch(t *testing.T) {
 	d, g, _, q := sideDeps()
-	enabled := false
-	d.GiftEnabledFunc = func() bool { return enabled }
+	var enabled atomic.Bool
+	enabled.Store(true)
+	d.GiftEnabledFunc = enabled.Load
 	box, _ := BuildSideEffectTools(d)
 
-	got, err := box.Run(context.Background(), ToolGift, `{"gift_id":"31036","num":1}`)
-	if err != nil || !strings.Contains(got, "dry-run") {
-		t.Fatalf("关闭时应 dry-run：%q err=%v", got, err)
-	}
-	if g.calls != 0 || q.used != 0 {
-		t.Fatalf("关闭时不应送礼/占额度：calls=%d used=%d", g.calls, q.used)
-	}
-
-	enabled = true
+	// 开：真实送礼
 	if _, err := box.Run(context.Background(), ToolGift, `{"gift_id":"31036","num":1}`); err != nil {
-		t.Fatalf("打开后送礼失败：%v", err)
+		t.Fatalf("开启时送礼失败：%v", err)
 	}
 	if g.calls != 1 || q.used != 1 {
-		t.Errorf("打开后应真实送礼：calls=%d used=%d", g.calls, q.used)
+		t.Fatalf("开启时应真实送礼：calls=%d used=%d", g.calls, q.used)
+	}
+
+	// 关：立即拒绝，不碰执行器、不占/不退额度
+	enabled.Store(false)
+	if _, err := box.Run(context.Background(), ToolGift, `{"gift_id":"31036","num":1}`); err == nil || !strings.Contains(err.Error(), "关闭") {
+		t.Fatalf("关闭后应立即拒绝，实际 err=%v", err)
+	}
+	if g.calls != 1 || q.used != 1 || q.released != 0 {
+		t.Fatalf("关闭后不应执行/动额度：calls=%d used=%d released=%d", g.calls, q.used, q.released)
+	}
+
+	// 再开：同一个工具箱恢复执行
+	enabled.Store(true)
+	if _, err := box.Run(context.Background(), ToolGift, `{"gift_id":"31036","num":1}`); err != nil {
+		t.Fatalf("重新开启后送礼失败：%v", err)
+	}
+	if g.calls != 2 || q.used != 2 {
+		t.Errorf("重新开启后应再送礼：calls=%d used=%d", g.calls, q.used)
+	}
+}
+
+// blockingGift 在 SendGift 内阻塞，用于制造「已进入执行器」的在途窗口。
+type blockingGift struct {
+	entered chan struct{}
+	release chan struct{}
+	calls   int
+	last    GiftRequest
+}
+
+func (b *blockingGift) SendGift(_ context.Context, req GiftRequest) (string, error) {
+	b.calls++
+	b.last = req
+	close(b.entered)
+	<-b.release
+	return "礼物已送出", nil
+}
+
+// TestGiftInFlightKeepsAccountingWhenGateCloses 在途请求不撤回：
+// 进入执行器后关开关，请求仍完成并按成功记账；后续调用才被门控拒绝。
+func TestGiftInFlightKeepsAccountingWhenGateCloses(t *testing.T) {
+	d, _, _, q := sideDeps()
+	var enabled atomic.Bool
+	enabled.Store(true)
+	d.GiftEnabledFunc = enabled.Load
+	core, logs := observer.New(zap.InfoLevel)
+	d.Log = zap.New(core)
+	g := &blockingGift{entered: make(chan struct{}), release: make(chan struct{})}
+	d.Gift = g
+	box, err := BuildSideEffectTools(d)
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+
+	type result struct {
+		out string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := box.Run(context.Background(), ToolGift, `{"gift_id":"31036","num":1}`)
+		done <- result{out: out, err: err}
+	}()
+
+	select {
+	case <-g.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("送礼未进入执行器")
+	}
+	// 已进入执行器：关开关不撤回在途请求。
+	enabled.Store(false)
+	close(g.release)
+	got := <-done
+
+	if got.err != nil {
+		t.Fatalf("在途送礼不应报错：%v", got.err)
+	}
+	if !strings.Contains(got.out, "已送出") {
+		t.Errorf("在途送礼应完成：%q", got.out)
+	}
+	if g.calls != 1 || q.used != 1 || q.released != 0 {
+		t.Errorf("在途送礼应记账且不退款：calls=%d used=%d released=%d", g.calls, q.used, q.released)
+	}
+	entries := logs.FilterMessage("副作用工具调用").All()
+	if len(entries) != 1 {
+		t.Fatalf("应有一条副作用日志，实际 %d", len(entries))
+	}
+	if got := entries[0].ContextMap()["result"]; got != "ok" {
+		t.Errorf("日志 result = %v，期望 ok", got)
+	}
+
+	// 关闭后的下一次调用被门控拦下，已记账额度保持不变。
+	if _, err := box.Run(context.Background(), ToolGift, `{"gift_id":"31036","num":1}`); err == nil {
+		t.Error("关闭后下一次调用应被拒绝")
+	}
+	if g.calls != 1 || q.used != 1 || q.released != 0 {
+		t.Errorf("拒绝不应再执行/退额度：calls=%d used=%d released=%d", g.calls, q.used, q.released)
 	}
 }
 

@@ -167,6 +167,13 @@ func (s *sideEffects) gift(ctx context.Context, args string) (string, error) {
 	if err := s.authorized(); err != nil {
 		return "", err
 	}
+	// 每次执行都读当前开关：面板关闭后，尚未投递的调用立即拒绝。
+	// 已进入执行器的在途请求不受影响，仍按成功/失败核验记账。
+	if !s.giftEnabled() {
+		day := d.Now().Format("2006-01-02")
+		s.log("gift", "gate=off", "disabled", s.quotaLeft(day))
+		return "", fmt.Errorf("送礼开关已关闭，工具拒绝执行")
+	}
 	if d.Gift == nil {
 		return "未配置送礼执行器", nil
 	}
@@ -187,13 +194,12 @@ func (s *sideEffects) gift(ctx context.Context, args string) (string, error) {
 			return "", fmt.Errorf("额度不足：%w", err)
 		}
 	}
-	// 未开启/非真实：只说明不执行，并退还刚占的额度
-	enabled := s.giftEnabled()
-	if !enabled || !d.GiftReal {
+	// 非真实：只说明不执行，并退还刚占的额度
+	if !d.GiftReal {
 		if d.Quota != nil && d.DailyLimit > 0 {
 			d.Quota.Release(day, req.Num)
 		}
-		out := fmt.Sprintf("dry-run：未真实送礼（enabled=%v real=%v），本轮不消耗额度", enabled, d.GiftReal)
+		out := fmt.Sprintf("dry-run：未真实送礼（real=%v），本轮不消耗额度", d.GiftReal)
 		s.log("gift", fmt.Sprintf("room=%s num=%d", req.Room, req.Num), "dry_run", s.quotaLeft(day))
 		return out, nil
 	}

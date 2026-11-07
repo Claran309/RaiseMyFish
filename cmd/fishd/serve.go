@@ -359,16 +359,14 @@ func buildGiftQuota(cfg config.Config, log *zap.Logger) reasoning.QuotaSource {
 // 注意：平台执行器（送礼/关注/点赞/私信/动态）本批尚未接入，置 nil 时工具会明确回「未配置」，
 // 但护栏（开关/白名单/额度/限频/不取关主人）全部生效并有单测覆盖。
 func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExecutors, room string, giftGate func() bool, log *zap.Logger) reasoning.SideEffectDeps {
-	giftEnabled := cfg.Gift.Enabled
-	if giftGate != nil {
-		giftEnabled = giftGate()
-	}
 	return reasoning.SideEffectDeps{
-		Enabled:          cfg.Reasoning.AllowSideEffectTools,
-		Gift:             exec.Gift,
-		Social:           exec.Social,
-		QuotaView:        quota,
-		GiftEnabled:      giftEnabled,
+		Enabled:   cfg.Reasoning.AllowSideEffectTools,
+		Gift:      exec.Gift,
+		Social:    exec.Social,
+		QuotaView: quota,
+		// 静态值只作缺省；必须把回调本身传给工具箱，否则建立后读的是快照，面板关礼物不生效。
+		GiftEnabled:      cfg.Gift.Enabled,
+		GiftEnabledFunc:  giftGate,
 		GiftReal:         cfg.Gift.Real,
 		GiftID:           cfg.Gift.GiftID,
 		MaxNum:           cfg.Gift.MaxNum,
