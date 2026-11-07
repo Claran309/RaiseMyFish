@@ -75,11 +75,12 @@ func (c *Client) DMSessionsPage(ctx context.Context, size int, endTS int64) (DMS
 	}
 	out := make([]DMSession, 0, len(data.SessionList))
 	for _, s := range data.SessionList {
+		// 与详情路径共用解包逻辑，详情失败降级时正文才不会带 JSON 包装。
 		item := DMSession{
 			TalkerID:  rawJSONID(s.TalkerID),
 			MsgKey:    rawJSONID(s.LastMsg.MsgKey),
 			SenderUID: rawJSONID(s.LastMsg.SenderUID),
-			Content:   strings.TrimSpace(s.LastMsg.Content),
+			Content:   parseDMContent(s.LastMsg.Content),
 			Timestamp: s.LastMsg.Timestamp,
 			MsgSeqno:  rawJSONID(s.LastMsg.MsgSeqno),
 			MaxSeqno:  rawJSONID(s.MaxSeqno),

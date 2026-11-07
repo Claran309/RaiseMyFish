@@ -5,6 +5,7 @@ package dm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -84,9 +85,10 @@ func newFetcher(t *testing.T, fixture *dmFixture) *BiliFetcher {
 
 // sessionBody 构造单会话的 get_sessions 响应。
 func sessionBody(talker, msgKey, sender, content string, ts int64) string {
+	quoted, _ := json.Marshal(content)
 	return `{"code":0,"data":{"session_list":[{"talker_id":"` + talker +
 		`","last_msg":{"msg_key":"` + msgKey + `","sender_uid":"` + sender +
-		`","content":"` + content + `","timestamp":` + strconv.FormatInt(ts, 10) + `}}]}}`
+		`","content":` + string(quoted) + `,"timestamp":` + strconv.FormatInt(ts, 10) + `}}]}}`
 }
 
 // detailBody 构造 get_session_msgs 响应；content 是平台内层 JSON。
@@ -184,6 +186,44 @@ func TestBiliFetcherRetriesDetailAfterFailure(t *testing.T) {
 	second := secondBatch.Messages
 	if len(second) != 2 || fixture.detailCalls("2002") != 2 {
 		t.Fatalf("第二轮应重试详情并补全消息：calls=%d got=%+v", fixture.detailCalls("2002"), second)
+	}
+}
+
+// TestBiliFetcherFallbackTextMatchesDetail 详情失败降级的正文与正常详情一致（都解包 JSON）。
+func TestBiliFetcherFallbackTextMatchesDetail(t *testing.T) {
+	fixture := &dmFixture{
+		body:  sessionBody("2002", "9002", "2002", "{\"content\":\"第二条\"}", 1700000002),
+		msgs:  map[string]string{"2002": detailBody([3]string{"9002", "2002", "第二条"})},
+		bad:   map[string]bool{"2002": true},
+		calls: map[string]int{},
+	}
+	f := newFetcher(t, fixture)
+
+	fallbackBatch, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("详情失败不应让整轮失败：%v", err)
+	}
+	fallback := fallbackBatch.Messages
+	if len(fallback) != 1 || fallback[0].ID != "9002" {
+		t.Fatalf("详情失败应降级为 last_msg：%+v", fallback)
+	}
+	if fallback[0].Text != "第二条" {
+		t.Fatalf("降级正文未解包：%q", fallback[0].Text)
+	}
+
+	fixture.mu.Lock()
+	fixture.bad["2002"] = false
+	fixture.mu.Unlock()
+	normalBatch, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("第二轮失败：%v", err)
+	}
+	normal := normalBatch.Messages
+	if len(normal) != 1 || normal[0].ID != "9002" {
+		t.Fatalf("第二轮应产出详情消息：%+v", normal)
+	}
+	if normal[0].Text != fallback[0].Text {
+		t.Fatalf("正常/降级正文不一致：normal=%q fallback=%q", normal[0].Text, fallback[0].Text)
 	}
 }
 

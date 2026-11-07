@@ -61,6 +61,42 @@ func TestDMSessionsParses(t *testing.T) {
 	}
 }
 
+// TestDMSessionsUnwrapsContent 会话 last_msg 与详情走同一套正文解包，降级时正文一致。
+func TestDMSessionsUnwrapsContent(t *testing.T) {
+	c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session_svr/v1/session_svr/get_sessions":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"session_list":[
+				{"talker_id":"2002","last_msg":{"msg_key":"9001","sender_uid":"2002","content":"{\"content\":\"在吗\"}","timestamp":1700000000}}
+			]}}`))
+		case "/session_svr/v1/session_svr/get_session_msgs":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"messages":[
+				{"msg_key":"9001","sender_uid":"2002","content":"{\"content\":\"在吗\"}","timestamp":1700000000}
+			]}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	sessions, err := c.DMSessions(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("拉会话失败：%v", err)
+	}
+	if len(sessions) != 1 || sessions[0].Content != "在吗" {
+		t.Fatalf("会话正文未解包：%+v", sessions)
+	}
+	messages, err := c.DMSessionMessages(context.Background(), "2002", 50)
+	if err != nil {
+		t.Fatalf("拉详情失败：%v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("详情解析不符：%+v", messages)
+	}
+	if messages[0].Content != sessions[0].Content {
+		t.Fatalf("正常/降级正文不一致：detail=%q session=%q", messages[0].Content, sessions[0].Content)
+	}
+}
+
 // TestDMSessionMessagesParses 断言会话详情路径/参数与内层 JSON 正文解析。
 func TestDMSessionMessagesParses(t *testing.T) {
 	var path, talker, sessionType, size string
