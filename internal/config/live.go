@@ -48,13 +48,22 @@ func (l *LiveCollector) resolveEnvironment(lookup func(string) (string, bool), e
 
 var positiveLiveID = regexp.MustCompile(`^[0-9]{1,128}$`)
 
-// Validate只检查静态配置，不读文件、不运行Node或访问账号。
+// Validate 完整检查静态配置与凭据；不读文件、不运行Node或访问账号。
 func (l LiveCollector) Validate(enabled bool) error {
+	if err := l.ValidateStructure(enabled); err != nil {
+		return err
+	}
+	return l.ValidateCredential(enabled)
+}
+
+// ValidateStructure 只检查房间/运行时等结构项。
+// self_id 与 cookie 可能来自 DB 活跃账号，必须留到凭据阶段再校验。
+func (l LiveCollector) ValidateStructure(enabled bool) error {
 	if !enabled {
 		return nil
 	}
-	if !positiveLiveID.MatchString(l.RoomID) || strings.Trim(l.RoomID, "0") == "" || !positiveLiveID.MatchString(l.SelfID) || strings.Trim(l.SelfID, "0") == "" || strings.TrimSpace(l.NodePath) == "" || strings.TrimSpace(l.ScriptPath) == "" || (l.Cookie == "" && l.CookieFile == "") || strings.ContainsAny(l.Cookie+l.CookieFile, "\r\n\x00") {
-		return errors.New("直播采集房间/自身身份/运行时或凭据配置无效")
+	if !positiveLiveID.MatchString(l.RoomID) || strings.Trim(l.RoomID, "0") == "" || strings.TrimSpace(l.NodePath) == "" || strings.TrimSpace(l.ScriptPath) == "" {
+		return errors.New("直播采集房间或运行时配置无效")
 	}
 	for _, v := range []int{l.HTTPTimeoutMS, l.ConnectTimeoutMS, l.HeartbeatMS, l.IdleMS, l.StartupMS, l.BackoffMinMS, l.BackoffMaxMS, l.StableAfterMS} {
 		if v < 1000 || v > 600000 {
@@ -63,6 +72,17 @@ func (l LiveCollector) Validate(enabled bool) error {
 	}
 	if l.IdleMS <= l.HeartbeatMS || l.StartupMS < 3*l.HTTPTimeoutMS+l.ConnectTimeoutMS || l.BackoffMinMS > l.BackoffMaxMS || l.BackoffMaxMS > 60000 || l.MaxFailures < 1 || l.MaxFailures > 32 {
 		return errors.New("直播采集存活/启动时限或重连参数无效")
+	}
+	return nil
+}
+
+// ValidateCredential 检查启动采集实际需要的B站凭据与本账号身份。
+func (l LiveCollector) ValidateCredential(enabled bool) error {
+	if !enabled {
+		return nil
+	}
+	if !positiveLiveID.MatchString(l.SelfID) || strings.Trim(l.SelfID, "0") == "" || (l.Cookie == "" && l.CookieFile == "") || strings.ContainsAny(l.Cookie+l.CookieFile, "\r\n\x00") {
+		return errors.New("直播采集启用需要有效的B站凭据与自身身份")
 	}
 	return nil
 }

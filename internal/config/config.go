@@ -85,19 +85,50 @@ func (e *safeError) Error() string { return e.message }
 func (e *safeError) Unwrap() error { return e.cause }
 
 // Load 按进程环境 > dotenv > TOML > 默认值加载；空路径表示不读该文件。
-// fishd 使用完整校验，collector.live 缺房间/凭据时拒绝启动。
+// 完成结构校验与B站凭据校验，适用于不使用 DB 活跃账号的进程。
 func Load(path, envPath string) (Config, error) {
-	return load(path, envPath, true)
+	cfg, err := LoadForDaemon(path, envPath)
+	if err != nil {
+		return cfg, err
+	}
+	if err := cfg.ValidateCredentials(); err != nil {
+		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
+	}
+	return cfg, nil
+}
+
+// LoadForDaemon 供 fishd 启动加载：先只做结构与非B站凭据校验。
+// DB 就绪并选出活跃账号、回填静态配置后，再调用 ValidateCredentials；
+// 这样「只有 DB 账号、环境没有 cookie」的部署不会被启动期强校验挡住。
+func LoadForDaemon(path, envPath string) (Config, error) {
+	cfg, err := load(path, envPath)
+	if err != nil {
+		return cfg, err
+	}
+	if err := cfg.validateStructure(true); err != nil {
+		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
+	}
+	return cfg, nil
 }
 
 // LoadForCLI 供 fishctl 的运维命令加载配置：跳过 collector.live 的运行校验。
 // CLI 不采集直播，不应因为 live 房间/自身身份/凭据缺失而不可用；
 // 数据库、日志、LLM 等其余配置仍按 fishd 同一口径校验。
 func LoadForCLI(path, envPath string) (Config, error) {
-	return load(path, envPath, false)
+	cfg, err := load(path, envPath)
+	if err != nil {
+		return cfg, err
+	}
+	if err := cfg.validateStructure(false); err != nil {
+		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
+	}
+	if err := cfg.validateCredentials(false); err != nil {
+		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
+	}
+	return cfg, nil
 }
 
-func load(path, envPath string, strictLive bool) (Config, error) {
+func load(path, envPath string) (Config, error) {
 	cfg := Config{
 		Database:  Database{DSNEnv: "FISH_DB_DSN", TimeoutSeconds: 5},
 		Log:       Log{Level: "info", Dir: "logs"},
@@ -166,16 +197,23 @@ func load(path, envPath string, strictLive bool) (Config, error) {
 	// 主动弹幕复用看直播的截帧与视觉模型，因此也需要解析同一份凭据。
 	cfg.Watch.resolveEnvironment(lookup, cfg.Watch.Enabled || cfg.Proactive.Enabled)
 	cfg.Gift.resolveEnvironment(lookup, cfg.Gift.Enabled)
-	if err := cfg.validate(strictLive); err != nil {
-		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
-	}
 	return cfg, nil
 }
 
 // Validate 只验证已装配能力；LLM/B站密钥留到对应模块启用时检查。
-func (c Config) Validate() error { return c.validate(true) }
+func (c Config) Validate() error {
+	if err := c.validateStructure(true); err != nil {
+		return err
+	}
+	return c.validateCredentials(true)
+}
 
-func (c Config) validate(strictLive bool) error {
+// ValidateCredentials 校验各实际启用能力所需的B站凭据与账号身份。
+// fishd 在 DB 活跃账号回填静态配置后调用；环境变量凭据在加载阶段已解析。
+func (c Config) ValidateCredentials() error { return c.validateCredentials(true) }
+
+// validateStructure 只校验非B站凭据部分：DB 活跃账号可能在本阶段之后才回填 cookie/self_id。
+func (c Config) validateStructure(strictLive bool) error {
 	if strings.TrimSpace(c.Database.DSNEnv) == "" || strings.TrimSpace(c.Database.DSN) == "" {
 		return errors.New("数据库环境变量未配置")
 	}
@@ -201,48 +239,21 @@ func (c Config) validate(strictLive bool) error {
 	if err := c.Collector.Comment.Validate(); err != nil {
 		return err
 	}
-	if c.Collector.Comment.Enabled {
-		if !c.Channels.Comment.Enabled {
-			return errors.New("评论采集启用需要先开启[channels.comment]")
-		}
-		if c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
-			return errors.New("评论采集启用需要B站凭据")
-		}
-		// 没有本账号 UID 就无法跳过自己发出的回复，会形成自回复循环。
-		if id := c.accountSelfID(); id == "" || !positiveSenderID.MatchString(id) || strings.Trim(id, "0") == "" {
-			return errors.New("评论采集启用需要本账号 self_id（避免回复自己的评论）")
-		}
+	if c.Collector.Comment.Enabled && !c.Channels.Comment.Enabled {
+		return errors.New("评论采集启用需要先开启[channels.comment]")
 	}
-	if c.Collector.DM.Enabled {
-		if !c.Channels.DM.Enabled {
-			return errors.New("私信采集启用需要先开启[channels.dm]")
-		}
-		if c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
-			return errors.New("私信采集启用需要B站凭据")
-		}
-		if id := c.accountSelfID(); id == "" || !positiveSenderID.MatchString(id) || strings.Trim(id, "0") == "" {
-			return errors.New("私信采集启用需要本账号 self_id（避免回复自己的私信）")
-		}
+	if c.Collector.DM.Enabled && !c.Channels.DM.Enabled {
+		return errors.New("私信采集启用需要先开启[channels.dm]")
 	}
-	if c.Sender != nil && c.Sender.DM.Enabled {
-		if !c.Channels.DM.Enabled {
-			return errors.New("私信发送启用需要先开启[channels.dm]")
-		}
-		if c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
-			return errors.New("私信发送启用需要B站凭据")
-		}
+	if c.Sender != nil && c.Sender.DM.Enabled && !c.Channels.DM.Enabled {
+		return errors.New("私信发送启用需要先开启[channels.dm]")
 	}
-	if c.Sender != nil && c.Sender.Comment != nil && c.Sender.Comment.Enabled {
-		if !c.Channels.Comment.Enabled {
-			return errors.New("评论发送启用需要先开启[channels.comment]")
-		}
-		if c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
-			return errors.New("评论发送启用需要B站凭据")
-		}
+	if c.Sender != nil && c.Sender.Comment != nil && c.Sender.Comment.Enabled && !c.Channels.Comment.Enabled {
+		return errors.New("评论发送启用需要先开启[channels.comment]")
 	}
 	// CLI 只读命令不需要直播采集运行时；跳过这一项，但保留其余严格校验。
 	if strictLive {
-		if err := c.Collector.Live.Validate(c.Channels.Live.Enabled); err != nil {
+		if err := c.Collector.Live.ValidateStructure(c.Channels.Live.Enabled); err != nil {
 			return err
 		}
 	}
@@ -273,13 +284,13 @@ func (c Config) validate(strictLive bool) error {
 	if err := c.Sender.Validate(); err != nil {
 		return err
 	}
-	if err := c.Watch.Validate(); err != nil {
+	if err := c.Watch.validateStructure(); err != nil {
 		return err
 	}
 	if err := c.Proactive.Validate(); err != nil {
 		return err
 	}
-	if err := c.Gift.Validate(); err != nil {
+	if err := c.Gift.validateStructure(); err != nil {
 		return err
 	}
 	if err := c.Memory.Validate(); err != nil {
@@ -319,9 +330,53 @@ func (c Config) validate(strictLive bool) error {
 			return errors.New("主动弹幕启用需要配置[sender]")
 		}
 		// 截帧与看直播复用同一套流地址/清晰度/ffmpeg/凭据配置。
-		if err := c.Watch.validateStream(); err != nil {
+		if err := c.Watch.validateStreamStructure(); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateCredentials 只校验B站凭据与账号身份，且只针对实际启用能力。
+// 结构问题已在 validateStructure 拒绝；这里允许 DB 活跃账号在加载后才回填。
+func (c Config) validateCredentials(strictLive bool) error {
+	// CLI 只读命令不采集直播，跳过 live 凭据；其余已启用能力仍要能实际工作。
+	if strictLive {
+		if err := c.Collector.Live.ValidateCredential(c.Channels.Live.Enabled); err != nil {
+			return err
+		}
+	}
+	if c.Collector.Comment.Enabled {
+		if c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
+			return errors.New("评论采集启用需要B站凭据")
+		}
+		// 没有本账号 UID 就无法跳过自己发出的回复，会形成自回复循环。
+		if id := c.accountSelfID(); id == "" || !positiveSenderID.MatchString(id) || strings.Trim(id, "0") == "" {
+			return errors.New("评论采集启用需要本账号 self_id（避免回复自己的评论）")
+		}
+	}
+	if c.Collector.DM.Enabled {
+		if c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
+			return errors.New("私信采集启用需要B站凭据")
+		}
+		if id := c.accountSelfID(); id == "" || !positiveSenderID.MatchString(id) || strings.Trim(id, "0") == "" {
+			return errors.New("私信采集启用需要本账号 self_id（避免回复自己的私信）")
+		}
+	}
+	if c.Sender != nil && c.Sender.DM.Enabled && c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
+		return errors.New("私信发送启用需要B站凭据")
+	}
+	if c.Sender != nil && c.Sender.Comment != nil && c.Sender.Comment.Enabled && c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
+		return errors.New("评论发送启用需要B站凭据")
+	}
+	// 看直播与主动弹幕共用截帧凭据；主动弹幕开启时即使 [watch] 关闭也要校验。
+	if c.Watch.Enabled || c.Proactive.Enabled {
+		if err := c.Watch.validateStreamCredential(); err != nil {
+			return err
+		}
+	}
+	if err := c.Gift.validateCredential(); err != nil {
+		return err
 	}
 	return nil
 }

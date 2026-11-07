@@ -72,7 +72,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if migrate {
 		cfg, err = config.LoadForCLI(*path, *envPath)
 	} else {
-		cfg, err = config.Load(*path, *envPath)
+		// 先只做结构校验：B站凭据可能只存在于 DB 活跃账号，要等数据库就绪后才能核验。
+		cfg, err = config.LoadForDaemon(*path, *envPath)
 	}
 	if err != nil {
 		return err
@@ -115,6 +116,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		return fmt.Errorf("装配B站账号服务失败：%w", err)
 	}
 	applyActiveAccount(ctx, &cfg, accountService, logger)
+	// 账号链完成后才核验B站凭据：DB 活跃账号可以补上环境变量里没有的 cookie/self_id。
+	if err := cfg.ValidateCredentials(); err != nil {
+		logger.Error("B站凭据校验失败", zap.String("action", "account_credential"), zap.Error(err))
+		return fmt.Errorf("校验基础设施配置：%w", err)
+	}
 	usage, err := database.NewUsageRepo(resources.DB)
 	if err != nil {
 		return err

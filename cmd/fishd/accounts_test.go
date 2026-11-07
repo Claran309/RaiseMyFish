@@ -129,6 +129,27 @@ func TestApplyActiveAccountStoreErrorKeepsEnv(t *testing.T) {
 	}
 }
 
+// TestApplyActiveAccountMakesCredentialsValid 启动顺序：回填前凭据校验失败，回填后通过。
+func TestApplyActiveAccountMakesCredentialsValid(t *testing.T) {
+	cfg := config.Config{
+		Channels:  config.Channels{Live: config.Channel{Enabled: true}},
+		Collector: config.Collectors{Live: config.LiveCollector{RoomID: "1"}},
+	}
+	if err := cfg.ValidateCredentials(); err == nil {
+		t.Fatal("没有 DB 账号回填时不应通过凭据校验")
+	}
+	resolver := &fakeCredentialResolver{cred: account.Credential{
+		Cookie: testDBCookie, CSRF: "db-csrf", MID: "42", AccountID: "account-x", Source: account.SourceDB,
+	}}
+	applyActiveAccount(context.Background(), &cfg, resolver, zap.NewNop())
+	if err := cfg.ValidateCredentials(); err != nil {
+		t.Fatalf("DB 活跃账号回填后应通过：%v", err)
+	}
+	if cfg.Collector.Live.Cookie != testDBCookie || cfg.Collector.Live.SelfID != "42" {
+		t.Fatalf("回填结果不符：cookie=%q self=%q", cfg.Collector.Live.Cookie, cfg.Collector.Live.SelfID)
+	}
+}
+
 // TestAccountResolverPassesThroughError 非「无凭据」错误原样透传，便于主链路观察。
 func TestAccountResolverPassesThroughError(t *testing.T) {
 	sentinel := errors.New("存储异常")

@@ -54,8 +54,16 @@ func (g *Gift) resolveEnvironment(lookup func(string) (string, bool), enabled bo
 	}
 }
 
-// Validate 只做静态校验，不读取凭据文件、执行Node或访问平台。
+// Validate 完整检查静态项与真实送礼凭据。
 func (g Gift) Validate() error {
+	if err := g.validateStructure(); err != nil {
+		return err
+	}
+	return g.validateCredential()
+}
+
+// validateStructure 只做非凭据静态校验；真实送礼的 cookie 可能来自 DB 活跃账号。
+func (g Gift) validateStructure() error {
 	if !g.Enabled {
 		return nil
 	}
@@ -94,13 +102,19 @@ func (g Gift) Validate() error {
 			return errors.New("送礼房间白名单超出安全整数范围")
 		}
 	}
-	if g.Real {
-		if g.Num > g.DailyLimit {
-			return errors.New("送礼数量不能超过每日限额")
-		}
-		if (g.Cookie == "" && g.CookieFile == "") || strings.ContainsAny(g.Cookie+g.CookieFile, "\r\n\x00") {
-			return errors.New("真实送礼需要环境变量中的B站凭据")
-		}
+	if g.Real && g.Num > g.DailyLimit {
+		return errors.New("送礼数量不能超过每日限额")
+	}
+	return nil
+}
+
+// validateCredential 只在真实送礼时要求B站凭据；dry-run 不读取也不要求。
+func (g Gift) validateCredential() error {
+	if !g.Enabled || !g.Real {
+		return nil
+	}
+	if (g.Cookie == "" && g.CookieFile == "") || strings.ContainsAny(g.Cookie+g.CookieFile, "\r\n\x00") {
+		return errors.New("真实送礼需要环境变量中的B站凭据")
 	}
 	return nil
 }

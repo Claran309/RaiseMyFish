@@ -64,8 +64,8 @@ func (w Watch) validateIdentity() error {
 	return nil
 }
 
-// validateStream 校验截帧/录制共用的直播流来源；看直播与主动弹幕都依赖它。
-func (w Watch) validateStream() error {
+// validateStreamStructure 校验截帧/录制共用的直播流来源等非凭据项。
+func (w Watch) validateStreamStructure() error {
 	if w.Source == "screen" {
 		return errors.New("看直播 screen 模式尚未实现，请使用 stream")
 	}
@@ -80,9 +80,6 @@ func (w Watch) validateStream() error {
 	if !watchEnvName.MatchString(w.CookieEnv) {
 		return errors.New("看直播 cookie_env 必须是合法环境变量名")
 	}
-	if strings.TrimSpace(w.Cookie) == "" || strings.ContainsAny(w.Cookie, "\r\n\x00") {
-		return errors.New("看直播启用需要环境变量中的B站凭据")
-	}
 	if strings.TrimSpace(w.FFmpegPath) == "" || strings.TrimSpace(w.FFprobePath) == "" ||
 		strings.ContainsAny(w.FFmpegPath+w.FFprobePath, "\r\n\x00") ||
 		strings.ContainsAny(w.TempDir, "\r\n\x00") {
@@ -91,15 +88,23 @@ func (w Watch) validateStream() error {
 	return nil
 }
 
-// Validate 只做静态校验；不访问网络、不执行 ffmpeg、不读取凭据文件。
-func (w Watch) Validate() error {
+// validateStreamCredential 校验截帧实际需要的B站凭据；DB 活跃账号可能在加载后才回填。
+func (w Watch) validateStreamCredential() error {
+	if strings.TrimSpace(w.Cookie) == "" || strings.ContainsAny(w.Cookie, "\r\n\x00") {
+		return errors.New("看直播启用需要环境变量中的B站凭据")
+	}
+	return nil
+}
+
+// validateStructure 只校验非B站凭据部分；看直播关闭时仍校验会进入 prompt 的身份字段。
+func (w Watch) validateStructure() error {
 	if err := w.validateIdentity(); err != nil {
 		return err
 	}
 	if !w.Enabled {
 		return nil
 	}
-	if err := w.validateStream(); err != nil {
+	if err := w.validateStreamStructure(); err != nil {
 		return err
 	}
 	if w.IntervalSeconds < 10 || w.IntervalSeconds > 86400 {
@@ -118,4 +123,15 @@ func (w Watch) Validate() error {
 		return errors.New("看直播 llm_route 不能为空")
 	}
 	return nil
+}
+
+// Validate 只做静态校验；不访问网络、不执行 ffmpeg、不读取凭据文件。
+func (w Watch) Validate() error {
+	if err := w.validateStructure(); err != nil {
+		return err
+	}
+	if !w.Enabled {
+		return nil
+	}
+	return w.validateStreamCredential()
 }

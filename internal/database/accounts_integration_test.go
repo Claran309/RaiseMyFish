@@ -31,7 +31,7 @@ func TestAccountRepoRealPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("写入首个账号失败：%v", err)
 	}
-	if !got.IsActive || got.ID != first.ID || got.Cookie != first.Cookie || got.CSRF != "csrf-1" {
+	if !got.IsActive || got.ID != first.ID || got.MID != "1001" || got.Cookie != first.Cookie || got.CSRF != "csrf-1" {
 		t.Fatalf("首个账号未自动激活或字段丢失：%+v", got)
 	}
 	if !got.LastCheck.Equal(now) || got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
@@ -72,7 +72,7 @@ func TestAccountRepoRealPostgres(t *testing.T) {
 	}
 
 	active, err := repo.Active(ctx)
-	if err != nil || active.ID != first.ID {
+	if err != nil || active.ID != first.ID || active.MID != "1001" {
 		t.Fatalf("活跃账号不符：%+v %v", active, err)
 	}
 
@@ -80,7 +80,7 @@ func TestAccountRepoRealPostgres(t *testing.T) {
 		t.Fatalf("切换失败：%v", err)
 	}
 	active, err = repo.Active(ctx)
-	if err != nil || active.ID != second.ID {
+	if err != nil || active.ID != second.ID || active.MID != "2002" {
 		t.Fatalf("切换后活跃不符：%+v %v", active, err)
 	}
 	list, _ = repo.List(ctx)

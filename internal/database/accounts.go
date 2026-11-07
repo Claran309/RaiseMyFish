@@ -23,8 +23,9 @@ func NewAccountRepo(db *gorm.DB) (*AccountRepo, error) {
 }
 
 type accountRow struct {
-	ID        string
-	MID       string
+	ID string
+	// GORM 默认把 MID 映射成 m_id，必须显式绑定 mid 列，否则解析出的账号没有平台 UID。
+	MID       string `gorm:"column:mid"`
 	Name      string
 	Cookie    string
 	CSRF      string
