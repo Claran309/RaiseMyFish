@@ -51,11 +51,12 @@ type Options struct {
 	UnhealthyThreshold int
 	// Cooldown 是重启后的冷却时间（默认 300s）。
 	Cooldown time.Duration
-	// RestartCommand 是重启命令（如 systemctl restart fishd）。
+	// RestartCommand 是重启命令（如 systemctl restart fishd，或直接启动常驻 fishd）。
 	RestartCommand string
 	// HistoryPath 是重启历史 JSONL 文件；空表示不落盘。
 	HistoryPath string
-	// RestartTimeout 是重启命令的执行上限（默认 60s），防止命令挂死拖住看门狗。
+	// RestartTimeout 是重启动作的观察上限（默认 60s）。
+	// 短命管理命令在此之内返回；常驻进程超过后按启动成功脱离，不再等待或终止。
 	RestartTimeout time.Duration
 	// Now 可注入时钟。
 	Now func() time.Time
@@ -122,7 +123,9 @@ func New(o Options) (*Watchdog, error) {
 		o.Kill = killPID
 	}
 	if o.Restart == nil {
-		o.Restart = runCommand
+		o.Restart = func(ctx context.Context, command string) error {
+			return runCommand(ctx, command, o.Log)
+		}
 	}
 	return &Watchdog{opts: o}, nil
 }

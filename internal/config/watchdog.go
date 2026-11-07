@@ -16,7 +16,7 @@ type Watchdog struct {
 	UnhealthyThreshold int `toml:"unhealthy_threshold"`
 	// CooldownSeconds 是重启后的冷却（默认 300）。
 	CooldownSeconds int `toml:"cooldown_seconds"`
-	// RestartCommand 是重启命令（如 systemctl restart fishd）。
+	// RestartCommand 是重启命令（如 systemctl restart fishd，或直接启动常驻 fishd）。
 	RestartCommand string `toml:"restart_command"`
 	// HeartbeatPath 是心跳文件路径（默认 state/fishd.heartbeat）。
 	HeartbeatPath string `toml:"heartbeat_path"`
