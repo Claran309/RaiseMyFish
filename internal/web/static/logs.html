@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="panel-token" content="__PANEL_TOKEN__">
 <title>日志 · 大肥鱼面板</title>
 <style>
 :root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
@@ -64,6 +65,11 @@ button.on{color:var(--accent);border-color:#1d3a5c;background:#0f1622}
   <div id="logbox"></div>
 </main>
 <script>
+// 写接口要带面板令牌（O04）：页面 HTML 由服务端注入，跨站页面读不到它。
+function panelToken() {
+  var m = document.querySelector('meta[name="panel-token"]');
+  return m ? m.content : '';
+}
 var box = document.getElementById('logbox');
 var pauseBtn = document.getElementById('pause');
 var paused = false;

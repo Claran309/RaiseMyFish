@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="panel-token" content="__PANEL_TOKEN__">
 <title>消息 · 大肥鱼面板</title>
 <style>
 :root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
@@ -95,6 +96,11 @@ th{color:var(--muted);font-weight:500}
   <div class="msg" id="msg"></div>
 </main>
 <script>
+// 写接口要带面板令牌（O04）：页面 HTML 由服务端注入，跨站页面读不到它。
+function panelToken() {
+  var m = document.querySelector('meta[name="panel-token"]');
+  return m ? m.content : '';
+}
 var state = null;
 // 自动刷新不能覆盖用户正在编辑的列表；保存成功后再恢复同步。
 var dirtyVideos = false;
@@ -165,7 +171,7 @@ async function loadRecent(path, target) {
 async function post(payload) {
   var r = await fetch('/api/message?confirm=yes', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Panel-Token': panelToken() },
     body: JSON.stringify(payload)
   });
   var d = await r.json().catch(function () { return {}; });

@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="panel-token" content="__PANEL_TOKEN__">
 <title>记忆 · 大肥鱼面板</title>
 <style>
 :root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--bad:#ff6b6b}
@@ -48,6 +49,11 @@ button.danger{color:var(--bad);border-color:#3a2a2a}
   </table>
 </main>
 <script>
+// 写接口要带面板令牌（O04）：页面 HTML 由服务端注入，跨站页面读不到它。
+function panelToken() {
+  var m = document.querySelector('meta[name="panel-token"]');
+  return m ? m.content : '';
+}
 function esc(s) {
   return (s || '').replace(/[&<>"]/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
@@ -68,7 +74,7 @@ async function load() {
 }
 async function del(id) {
   if (!confirm('确认删除这条记忆？')) return;
-  var r = await fetch('/api/memory/' + encodeURIComponent(id) + '?confirm=yes', { method: 'DELETE' });
+  var r = await fetch('/api/memory/' + encodeURIComponent(id) + '?confirm=yes', { method: 'DELETE', headers: { 'X-Panel-Token': panelToken() } });
   if (!r.ok) { var e = await r.json(); alert(e.error || '删除失败'); return; }
   load();
 }

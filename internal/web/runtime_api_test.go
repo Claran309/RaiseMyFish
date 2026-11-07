@@ -129,7 +129,8 @@ func newTestServerWithRuntime(t *testing.T, repo store.WebRepo, control RuntimeC
 func postJSON(t *testing.T, srv *Server, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, target, strings.NewReader(body)))
+	// 走同源写请求 helper：O04 之后必须带 Origin + Host + JSON Content-Type。
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPost, target, body))
 	return rec
 }
 

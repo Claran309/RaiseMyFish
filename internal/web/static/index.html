@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="panel-token" content="__PANEL_TOKEN__">
 <title>概览 · 大肥鱼面板</title>
 <style>
 :root{
@@ -86,6 +87,11 @@ button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-ra
   </div>
 </main>
 <script>
+// 写接口要带面板令牌（O04）：页面 HTML 由服务端注入，跨站页面读不到它。
+function panelToken() {
+  var m = document.querySelector('meta[name="panel-token"]');
+  return m ? m.content : '';
+}
 function esc(s) {
   return (s || '').replace(/[&<>"]/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];

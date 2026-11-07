@@ -68,6 +68,8 @@ type Options struct {
 	Control RuntimeController
 	// Logs 可选：日志读取口；nil 时日志接口返回 503。
 	Logs LogSource
+	// Token 可选：写接口的本地令牌；为空时每次启动随机生成。
+	Token string
 }
 
 // Server 是面板本体。
@@ -80,6 +82,10 @@ type Server struct {
 	accounts      AccountService
 	control       RuntimeController
 	logs          LogSource
+	// token 是本地写接口令牌（O04）：页面从 HTML 读、CLI 从 /api/token 取。
+	token string
+	// port 是面板端口，Host/Origin 校验必须与它一致。
+	port string
 }
 
 // New 校验地址与依赖；非回环地址直接拒绝。
@@ -97,11 +103,26 @@ func New(o Options) (*Server, error) {
 	if err := ValidateAddr(addr); err != nil {
 		return nil, err
 	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, errors.New("面板地址必须形如 127.0.0.1:8090")
+	}
+	token := strings.TrimSpace(o.Token)
+	if token == "" {
+		token, err = newPanelToken()
+		if err != nil {
+			return nil, err
+		}
+	}
 	now := o.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &Server{addr: addr, repo: o.Repo, log: o.Log, now: now, knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts, control: o.Control, logs: o.Logs}, nil
+	return &Server{
+		addr: addr, repo: o.Repo, log: o.Log, now: now,
+		knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts, control: o.Control, logs: o.Logs,
+		token: token, port: port,
+	}, nil
 }
 
 // ValidateAddr 只允许回环监听，避免把运维面板暴露到公网。
@@ -128,31 +149,46 @@ func ValidateAddr(addr string) error {
 }
 
 // Handler 返回挂好路由的 http.Handler（测试直接用它）。
+//
+// 所有 /api/* 都套 guardWrite：读请求直接放行，写请求必须过 Host/来源/Content-Type 校验。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/status", s.handleStatus)
-	mux.HandleFunc("/api/embedding/status", s.handleEmbeddingStatus)
-	mux.HandleFunc("/api/memory", s.handleMemory)
-	mux.HandleFunc("/api/memory/", s.handleMemoryDelete)
-	mux.HandleFunc("/api/events", s.handleEvents)
-	mux.HandleFunc("/api/events/", s.handleEventDetail)
-	mux.HandleFunc("/api/comment/recent", s.handleCommentRecent)
-	mux.HandleFunc("/api/dm/recent", s.handleDMRecent)
-	mux.HandleFunc("/api/errors", s.handleErrors)
-	mux.HandleFunc("/api/send_log", s.handleSendLog)
-	mux.HandleFunc("/api/accounts", s.handleAccounts)
-	mux.HandleFunc("/api/accounts/", s.handleAccountAction)
-	mux.HandleFunc("/api/live", s.handleLive)
-	mux.HandleFunc("/api/message", s.handleMessage)
-	mux.HandleFunc("/api/config", s.handleConfig)
-	mux.HandleFunc("/api/watchdog", s.handleWatchdog)
-	mux.HandleFunc("/api/logs/stream", s.handleLogsStream)
-	mux.HandleFunc("/api/gift/log", s.handleGiftLog)
-	mux.HandleFunc("/api/gift/quota", s.handleGiftQuota)
-	mux.HandleFunc("/api/proactive/log", s.handleProactiveLog)
-	mux.HandleFunc("/api/like/log", s.handleLikeLog)
+	mux.HandleFunc("/api/token", s.handleToken)
+	mux.HandleFunc("/api/status", s.guardWrite(s.handleStatus))
+	mux.HandleFunc("/api/embedding/status", s.guardWrite(s.handleEmbeddingStatus))
+	mux.HandleFunc("/api/memory", s.guardWrite(s.handleMemory))
+	mux.HandleFunc("/api/memory/", s.guardWrite(s.handleMemoryDelete))
+	mux.HandleFunc("/api/events", s.guardWrite(s.handleEvents))
+	mux.HandleFunc("/api/events/", s.guardWrite(s.handleEventDetail))
+	mux.HandleFunc("/api/comment/recent", s.guardWrite(s.handleCommentRecent))
+	mux.HandleFunc("/api/dm/recent", s.guardWrite(s.handleDMRecent))
+	mux.HandleFunc("/api/errors", s.guardWrite(s.handleErrors))
+	mux.HandleFunc("/api/send_log", s.guardWrite(s.handleSendLog))
+	mux.HandleFunc("/api/accounts", s.guardWrite(s.handleAccounts))
+	mux.HandleFunc("/api/accounts/", s.guardWrite(s.handleAccountAction))
+	mux.HandleFunc("/api/live", s.guardWrite(s.handleLive))
+	mux.HandleFunc("/api/message", s.guardWrite(s.handleMessage))
+	mux.HandleFunc("/api/config", s.guardWrite(s.handleConfig))
+	mux.HandleFunc("/api/watchdog", s.guardWrite(s.handleWatchdog))
+	mux.HandleFunc("/api/logs/stream", s.guardWrite(s.handleLogsStream))
+	mux.HandleFunc("/api/gift/log", s.guardWrite(s.handleGiftLog))
+	mux.HandleFunc("/api/gift/quota", s.guardWrite(s.handleGiftQuota))
+	mux.HandleFunc("/api/proactive/log", s.guardWrite(s.handleProactiveLog))
+	mux.HandleFunc("/api/like/log", s.guardWrite(s.handleLikeLog))
 	mux.HandleFunc("/", s.handlePage)
 	return mux
+}
+
+// handleToken 返回面板令牌，供本地 CLI 取用（GET /api/token）。
+//
+// 跨站页面拿不到响应体：这里不返回 CORS 头，浏览器的同源策略会拦住读取。
+// 因此「任何网页都能请求到」不等于「任何网页都能读到令牌」。
+func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "只支持 GET")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"token": s.token})
 }
 
 // Run 启动服务并在 ctx 取消时优雅关闭。
@@ -217,9 +253,11 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "页面缺失", http.StatusInternalServerError)
 		return
 	}
+	// 把令牌注入页面：页面里的写操作要带 X-Panel-Token，跨站页面读不到这份 HTML。
+	body := strings.ReplaceAll(string(data), pageTokenPlaceholder, s.token)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = w.Write(data)
+	_, _ = w.Write([]byte(body))
 }
 
 // handleStatus 返回概览数字。

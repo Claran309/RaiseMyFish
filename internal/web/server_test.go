@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +17,24 @@ import (
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
 )
+
+// writeReq 构造「同源面板页面」发出的写请求。
+//
+// O04 之后写接口要求：Host 是面板自身、带 Origin（或令牌）、有体时 Content-Type 为 JSON。
+// 测试统一走这个 helper，避免每处手写三个头。
+func writeReq(method, target, body string) *http.Request {
+	var reader io.Reader = http.NoBody
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, target, reader)
+	req.Host = "127.0.0.1:8090"
+	req.Header.Set("Origin", "http://127.0.0.1:8090")
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req
+}
 
 type fakeRepo struct {
 	status        store.WebStatus
@@ -236,7 +255,7 @@ func TestEmbeddingStatusJSON(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/embedding/status", nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPost, "/api/embedding/status", ""))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("非 GET 应 405，实际 %d", rec.Code)
 	}
@@ -277,7 +296,7 @@ func TestMemoryDeleteRequiresConfirm(t *testing.T) {
 	srv := newTestServer(t, repo)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/memory/m1", nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodDelete, "/api/memory/m1", ""))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("缺 confirm 应 400，实际 %d", rec.Code)
 	}
@@ -286,7 +305,7 @@ func TestMemoryDeleteRequiresConfirm(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/memory/m1?confirm=yes", nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodDelete, "/api/memory/m1?confirm=yes", ""))
 	if rec.Code != http.StatusOK || len(repo.archived) != 1 || repo.archived[0] != "m1" {
 		t.Fatalf("带 confirm 应删除：code=%d archived=%v", rec.Code, repo.archived)
 	}
@@ -297,7 +316,7 @@ func TestMemoryDeleteNotFound(t *testing.T) {
 	repo := &fakeRepo{archiveErr: store.ErrWebNotFound}
 	srv := newTestServer(t, repo)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/memory/nope?confirm=yes", nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodDelete, "/api/memory/nope?confirm=yes", ""))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("应 404，实际 %d", rec.Code)
 	}
@@ -402,7 +421,7 @@ func TestAddrMustBeLoopback(t *testing.T) {
 func TestMethodNotAllowed(t *testing.T) {
 	srv := newTestServer(t, &fakeRepo{})
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/status", nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPost, "/api/status", ""))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("应 405，实际 %d", rec.Code)
 	}
@@ -526,24 +545,24 @@ func TestAccountsAddRequiresConfirm(t *testing.T) {
 	payload := `{"cookie":"` + raw + `","note":"主号"}`
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts", strings.NewReader(payload)))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPost, "/api/accounts", payload))
 	if rec.Code != http.StatusBadRequest || fake.addCalls != 0 {
 		t.Fatalf("缺 confirm 应 400 且不落库：%d calls=%d", rec.Code, fake.addCalls)
 	}
 
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts?confirm=yes", strings.NewReader("not json")))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPost, "/api/accounts?confirm=yes", "not json"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("非法 JSON 应 400，实际 %d", rec.Code)
 	}
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts?confirm=yes", strings.NewReader(`{"cookie":"  "}`)))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPost, "/api/accounts?confirm=yes", `{"cookie":"  "}`))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("空 cookie 应 400，实际 %d", rec.Code)
 	}
 
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts?confirm=yes", strings.NewReader(payload)))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPost, "/api/accounts?confirm=yes", payload))
 	if rec.Code != http.StatusCreated || fake.addCalls != 1 || fake.addCookie != raw || fake.addNote != "主号" {
 		t.Fatalf("添加失败：%d calls=%d cookie=%q note=%q", rec.Code, fake.addCalls, fake.addCookie, fake.addNote)
 	}
@@ -569,7 +588,7 @@ func TestAccountAddErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := newTestServerWithAccounts(t, &fakeRepo{}, &fakeAccounts{addErr: tc.err})
 			rec := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts?confirm=yes", strings.NewReader(payload)))
+			srv.Handler().ServeHTTP(rec, writeReq(http.MethodPost, "/api/accounts?confirm=yes", payload))
 			if rec.Code != tc.want {
 				t.Fatalf("状态码 = %d，期望 %d", rec.Code, tc.want)
 			}
@@ -584,12 +603,12 @@ func TestAccountsActivateAndDelete(t *testing.T) {
 	id := "account-1"
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/accounts/"+id+"/activate", nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPut, "/api/accounts/"+id+"/activate", ""))
 	if rec.Code != http.StatusBadRequest || len(fake.activated) != 0 {
 		t.Fatalf("缺 confirm 应拒绝切换：%d %v", rec.Code, fake.activated)
 	}
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/accounts/"+id+"/activate?confirm=yes", nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPut, "/api/accounts/"+id+"/activate?confirm=yes", ""))
 	if rec.Code != http.StatusOK || len(fake.activated) != 1 || fake.activated[0] != id {
 		t.Fatalf("切换失败：%d %v", rec.Code, fake.activated)
 	}
@@ -602,18 +621,18 @@ func TestAccountsActivateAndDelete(t *testing.T) {
 	// 切换屏障忙时返回 409，提示稍后重试。
 	busy := newTestServerWithAccounts(t, &fakeRepo{}, &fakeAccounts{activateErr: account.ErrSwitchInProgress})
 	busyRec := httptest.NewRecorder()
-	busy.Handler().ServeHTTP(busyRec, httptest.NewRequest(http.MethodPut, "/api/accounts/"+id+"/activate?confirm=yes", nil))
+	busy.Handler().ServeHTTP(busyRec, writeReq(http.MethodPut, "/api/accounts/"+id+"/activate?confirm=yes", ""))
 	if busyRec.Code != http.StatusConflict {
 		t.Fatalf("切换进行中应 409，实际 %d", busyRec.Code)
 	}
 
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/accounts/"+id, nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodDelete, "/api/accounts/"+id, ""))
 	if rec.Code != http.StatusBadRequest || len(fake.deleted) != 0 {
 		t.Fatalf("缺 confirm 应拒绝删除：%d %v", rec.Code, fake.deleted)
 	}
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/accounts/"+id+"?confirm=yes", nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodDelete, "/api/accounts/"+id+"?confirm=yes", ""))
 	if rec.Code != http.StatusOK || len(fake.deleted) != 1 || fake.deleted[0] != id {
 		t.Fatalf("删除失败：%d %v", rec.Code, fake.deleted)
 	}
@@ -624,7 +643,7 @@ func TestAccountsActivateAndDelete(t *testing.T) {
 	}{{account.ErrActiveAccount, http.StatusConflict}, {account.ErrNotFound, http.StatusNotFound}} {
 		srv = newTestServerWithAccounts(t, &fakeRepo{}, &fakeAccounts{deleteErr: tc.err})
 		rec = httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/accounts/"+id+"?confirm=yes", nil))
+		srv.Handler().ServeHTTP(rec, writeReq(http.MethodDelete, "/api/accounts/"+id+"?confirm=yes", ""))
 		if rec.Code != tc.want {
 			t.Errorf("删除错误 %v 应 %d，实际 %d", tc.err, tc.want, rec.Code)
 		}
@@ -646,13 +665,13 @@ func TestAccountsCheck(t *testing.T) {
 	srv := newTestServerWithAccounts(t, &fakeRepo{}, fake)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts/account-1/check", nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPost, "/api/accounts/account-1/check", ""))
 	if rec.Code != http.StatusBadRequest || len(fake.checked) != 0 {
 		t.Fatalf("缺 confirm 应拒绝测试：%d %v", rec.Code, fake.checked)
 	}
 
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts/account-1/check?confirm=yes", nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPost, "/api/accounts/account-1/check?confirm=yes", ""))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"verified":true`) {
 		t.Fatalf("测试成功响应不符：%d %s", rec.Code, rec.Body.String())
 	}
@@ -660,7 +679,7 @@ func TestAccountsCheck(t *testing.T) {
 	fake.checkErr = account.ErrVerify
 	fake.checkResult.Status = account.StatusInvalid
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts/account-1/check?confirm=yes", nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPost, "/api/accounts/account-1/check?confirm=yes", ""))
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, `"verified":false`) ||
 		!strings.Contains(body, `"status":"invalid"`) || strings.Contains(body, "canary") {
@@ -669,7 +688,7 @@ func TestAccountsCheck(t *testing.T) {
 
 	fake.checkErr = account.ErrNotFound
 	rec = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/accounts/missing/check?confirm=yes", nil))
+	srv.Handler().ServeHTTP(rec, writeReq(http.MethodPost, "/api/accounts/missing/check?confirm=yes", ""))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("不存在应 404，实际 %d", rec.Code)
 	}
@@ -680,7 +699,7 @@ func TestAccountsUnavailable(t *testing.T) {
 	srv := newTestServer(t, &fakeRepo{})
 	for _, req := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/api/accounts", nil),
-		httptest.NewRequest(http.MethodPost, "/api/accounts?confirm=yes", strings.NewReader(`{"cookie":"x"}`)),
+		writeReq(http.MethodPost, "/api/accounts?confirm=yes", `{"cookie":"x"}`),
 	} {
 		rec := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rec, req)

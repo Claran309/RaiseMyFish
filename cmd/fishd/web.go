@@ -41,6 +41,12 @@ func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Reso
 		log.Warn("面板未启动：参数不合法", zap.String("action", "web_setup"), zap.Error(err))
 		return func() {}
 	}
+	// 令牌本身不落日志（日志会轮转/外发）；只提示获取方式。
+	log.Info("面板已启动",
+		zap.String("action", "web_start"),
+		zap.String("addr", cfg.Web.Addr),
+		zap.String("token_hint", "写接口需同源页面或 X-Panel-Token；CLI 用 GET /api/token 取"),
+	)
 	runCtx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	wg.Add(1)
