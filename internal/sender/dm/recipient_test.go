@@ -5,6 +5,7 @@ package dm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,12 +99,14 @@ func TestRecipientCrossDayAllowed(t *testing.T) {
 	}
 }
 
-// TestRecipientNotWrittenOnFailure 发送失败不占用当天名额。
+// TestRecipientNotWrittenOnFailure 明确未发送的拒绝（鉴权）释放当天名额。
+//
+// 结果未知的失败必须保留预占，见 TestRecipientUnknownKeepsReservation。
 func TestRecipientNotWrittenOnFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dm-recipient.json")
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 	s, tr := newPersistSender(t, path, &now)
-	tr.err = context.DeadlineExceeded
+	tr.err = errors.New("403 forbidden")
 
 	if _, err := s.Send(context.Background(), claimFor("313591854"), sender.Reply{Text: "会失败"}); err == nil {
 		t.Fatal("传输失败应报错")
