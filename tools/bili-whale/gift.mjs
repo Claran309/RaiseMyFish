@@ -19,6 +19,10 @@ const DEFAULT_MAX_PRICE = 100 // price 100 = 1 电池；默认安全上限
 const DEFAULT_MAX_NUM = 100
 const HARD_MAX_PRICE = 10000
 const HARD_MAX_NUM = 100
+// 只有平台在受理前就能判定的拒绝码才可作为「确定未消费」证据，供 Go 侧退还额度。
+// -101/-111/-400/-403：未登录/CSRF/参数错误/无权限；10024：发送过快；10030/100031：余额不足；
+// 200200：价格不符。-500 服务器错误与未知/坏格式 code 都可能对应已受理请求，必须按 unknown 保守处理。
+const NOT_CONSUMED_CODES = new Set([-101, -111, -400, -403, 10024, 10030, 100031, 200200])
 // giftConfig 的实际响应可达 1.6MiB（2026-11-02 实测），1MiB 会把正常面板误判为超限。
 const MAX_RESPONSE = 4 * 1024 * 1024
 const HTTP_TIMEOUT_MS = 10000
@@ -246,9 +250,13 @@ export async function sendGift(options, deps = {}) {
     method: 'POST', form: form.toString(), cookie, referer: `https://live.bilibili.com/${shortID}`, deps, posted: true,
   })
   if (response?.code === 0) return sentFrame(options)
-  // POST 之后任何非零都不再标记 retryable：避免对可能已扣费的请求自动重试。
-  const code = Number.isSafeInteger(response?.code) ? response.code : 'unknown'
-  throw fatal(`礼物发送被拒绝（code=${code}）`)
+  // POST 之后不能再用「非零 code」一概证明未消费：缺失、null、字符串、未知数值
+  // 以及服务器错误等 code 都可能对应已受理请求，一律按结果未知保留额度。
+  if (!Number.isSafeInteger(response?.code) || !NOT_CONSUMED_CODES.has(response.code)) {
+    throw fatal('礼物发送结果未知，需人工核对', true)
+  }
+  // 可信拒绝发生在扣费前，可以安全退还本地额度。
+  throw fatal(`礼物发送被拒绝（code=${response.code}）`)
 }
 
 export async function runGift(argv, deps = {}) {

@@ -212,27 +212,57 @@ test('预检失败分类：网络/5xx可重试，鉴权与登录态必须fatal',
   }
 })
 
-test('POST之后任何失败都不得标记retryable，也不泄露平台报文', async () => {
-  const cases = [
-    { name: '网络异常', fetch: async () => { throw Error('credential-private-canary') }, uncertain: true },
-    { name: '平台拒绝 code=-500', fetch: async () => response({ code: -500, message: 'private-canary' }), uncertain: false },
-    { name: '平台拒绝 code=10024', fetch: async () => response({ code: 10024, message: 'private-canary' }), uncertain: false },
-    { name: 'HTTP 500', fetch: async () => response({}, 500), uncertain: true },
-    { name: '响应非JSON', fetch: async () => response('not-json'), uncertain: true },
+test('POST结果分类：只有可信拒绝可退款，缺/坏/未知code一律unknown', async () => {
+  const uncertainCases = [
+    { name: '缺code', post: {} },
+    { name: 'code=null', post: { code: null } },
+    { name: 'code字符串0', post: { code: '0' } },
+    { name: 'code字符串10024', post: { code: '10024' } },
+    { name: '未知整数code', post: { code: 999999 } },
+    { name: '服务器错误code=-500', post: { code: -500 } },
+    { name: '网络异常', fetch: async () => { throw Error('credential-private-canary') } },
+    { name: 'HTTP 500', fetch: async () => response({}, 500) },
+    { name: '响应非JSON', fetch: async () => response('not-json') },
   ]
-  for (const item of cases) {
+  for (const item of uncertainCases) {
     const baseDeps = preparation()
+    const postFetch = item.fetch ?? (async () => response({ ...item.post, message: 'private-canary' }))
     const frame = await runGift([...base, '--go'], {
       ...baseDeps,
-      fetch: async (url, init) => (url.includes('/sendGoldMultiUser') ? item.fetch(url, init) : baseDeps.fetch(url, init)),
+      fetch: async (url, init) => (url.includes('/sendGoldMultiUser') ? postFetch(url, init) : baseDeps.fetch(url, init)),
     })
     assert.equal(frame.type, 'error', item.name)
     assert.equal(frame.kind, 'fatal', item.name)
-    // 只有「可能已送出但结果未知」才带 uncertain；平台明确拒绝属于确定失败，交给 Go 退还额度。
-    assert.equal(frame.uncertain, item.uncertain || undefined, item.name)
+    // 可能已扣费但结果未知：必须带 uncertain 让 Go 保留额度并标记待核对。
+    assert.equal(frame.uncertain, true, item.name)
     assert.ok(!JSON.stringify(frame).includes('canary'), item.name)
     assert.ok(!JSON.stringify(frame).includes('fixture'), item.name)
+    assert.ok(!frame.message.includes('999999'), item.name)
   }
+
+  const rejectedCases = [
+    { name: '未登录', code: -101 },
+    { name: 'CSRF失败', code: -111 },
+    { name: '参数错误', code: -400 },
+    { name: '无权限/风控', code: -403 },
+    { name: '发送过快', code: 10024 },
+    { name: '余额不足', code: 10030 },
+    { name: '余额不足2', code: 100031 },
+    { name: '价格不符', code: 200200 },
+  ]
+  for (const item of rejectedCases) {
+    const deps = preparation({ post: { code: item.code, message: 'private-canary' } })
+    const frame = await runGift([...base, '--go'], deps)
+    assert.equal(frame.type, 'error', item.name)
+    assert.equal(frame.kind, 'fatal', item.name)
+    // 受理前拒绝是可信的「未消费」证据：不带 uncertain，交给 Go 退还额度。
+    assert.equal(frame.uncertain, undefined, item.name)
+    assert.ok(frame.message.includes(`code=${item.code}`), item.name)
+    assert.ok(!JSON.stringify(frame).includes('canary'), item.name)
+  }
+
+  const success = preparation({ post: { code: 0 } })
+  assert.deepEqual(await runGift([...base, '--go'], success), { protocol: 1, type: 'sent', gift_id: giftID, num: 1 })
 })
 
 test('预检失败与成功帧不带uncertain', async () => {

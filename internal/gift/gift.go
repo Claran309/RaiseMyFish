@@ -18,12 +18,14 @@ import (
 	"unicode/utf8"
 )
 
-// Kind 是送礼失败的可重试性；语义与 sender 通道保持一致。
+// Kind 是送礼失败的分类：retryable 可安全重试，fatal 为确定失败，uncertain 为结果未知。
 type Kind string
 
 const (
 	KindRetryable Kind = "retryable"
 	KindFatal     Kind = "fatal"
+	// KindUncertain 表示请求可能已到达平台但结果未知；额度必须保留且不得自动重试。
+	KindUncertain Kind = "uncertain"
 )
 
 // Error 只携带固定中文消息；底层原因仅用于 errors.Is/日志，不对外拼接。
@@ -254,7 +256,7 @@ func (s *NodeSender) Send(ctx context.Context, room string, giftID string, num i
 		uncertain := started
 		var typed *Error
 		if errors.As(err, &typed) {
-			uncertain = typed.Uncertain
+			uncertain = typed.Uncertain || typed.Kind == KindUncertain
 		}
 		if reserved {
 			if uncertain {
@@ -286,7 +288,7 @@ const maxOutput = 64 * 1024
 
 // protocolError 都是「已启动子进程但拿不到可信结果」，一律视为结果未知。
 func protocolError(cause error) error {
-	return &Error{Kind: KindFatal, Message: "送礼脚本输出无效", Uncertain: true, Cause: cause}
+	return &Error{Kind: KindUncertain, Message: "送礼脚本输出无效", Uncertain: true, Cause: cause}
 }
 
 // execute 启动一次性子进程并严格解析单行 JSONL；started 用于判断能否安全释放额度。
@@ -304,11 +306,11 @@ func (s *NodeSender) execute(parent context.Context, room, giftID string, num in
 	data, readErr := io.ReadAll(io.LimitReader(stdout, maxOutput+1))
 	waitErr := cmd.Wait()
 	if ctx.Err() != nil {
-		// 真实模式下超时/取消发生在POST之后时结果未知，按fatal处理且不自动重试。
-		return frame{}, true, &Error{Kind: KindFatal, Message: "送礼子进程超时或取消，结果可能未知", Uncertain: true, Cause: errors.Join(ctx.Err(), readErr, waitErr)}
+		// 真实模式下超时/取消可能发生在POST之后，结果未知且不得自动重试。
+		return frame{}, true, &Error{Kind: KindUncertain, Message: "送礼子进程超时或取消，结果可能未知", Uncertain: true, Cause: errors.Join(ctx.Err(), readErr, waitErr)}
 	}
 	if readErr != nil || len(data) > maxOutput {
-		return frame{}, true, &Error{Kind: KindFatal, Message: "送礼子进程输出失败", Uncertain: true, Cause: errors.Join(readErr, waitErr)}
+		return frame{}, true, &Error{Kind: KindUncertain, Message: "送礼子进程输出失败", Uncertain: true, Cause: errors.Join(readErr, waitErr)}
 	}
 	line := strings.TrimSuffix(string(data), "\n")
 	if line == "" || strings.ContainsAny(line, "\r\n") {
@@ -334,7 +336,12 @@ func (s *NodeSender) execute(parent context.Context, room, giftID string, num in
 		if (f.Kind != string(KindRetryable) && f.Kind != string(KindFatal)) || f.GiftID != "" || f.Num != 0 || !safeFrameMessage(f.Message) {
 			return frame{}, true, protocolError(nil)
 		}
-		return frame{}, true, &Error{Kind: Kind(f.Kind), Message: f.Message, Uncertain: f.Uncertain}
+		kind := Kind(f.Kind)
+		if f.Uncertain {
+			// 线上帧仍是 fatal+uncertain（兼容既有协议），内部统一收敛为 KindUncertain。
+			kind = KindUncertain
+		}
+		return frame{}, true, &Error{Kind: kind, Message: f.Message, Uncertain: f.Uncertain}
 	default:
 		return frame{}, true, protocolError(nil)
 	}

@@ -278,7 +278,11 @@ func TestSendRealSuccessAndDailyLimit(t *testing.T) {
 // TestDefiniteFailuresReleaseSlot 确定没送出去的失败（可重试错误/平台明确拒绝）必须退还额度。
 func TestDefiniteFailuresReleaseSlot(t *testing.T) {
 	var spawns int32
-	for _, mode := range []string{"retryable", "fatal"} {
+	for _, item := range []struct {
+		mode string
+		want Kind
+	}{{"retryable", KindRetryable}, {"fatal", KindFatal}} {
+		mode, want := item.mode, item.want
 		t.Run(mode, func(t *testing.T) {
 			s := newSender(t, realOptions())
 			s.command = helperCommand(mode, &spawns)
@@ -287,7 +291,7 @@ func TestDefiniteFailuresReleaseSlot(t *testing.T) {
 				t.Fatalf("%s 未返回错误", mode)
 			}
 			var typed *Error
-			if !errors.As(err, &typed) || typed.Uncertain {
+			if !errors.As(err, &typed) || typed.Uncertain || typed.Kind != want {
 				t.Fatalf("%s 应判定为确定失败：%+v %v", mode, result, err)
 			}
 			if result.PendingReview {
@@ -317,8 +321,8 @@ func TestUncertainFailureKeepsReservationAndMarksPending(t *testing.T) {
 	s.command = helperCommand("uncertain", &spawns)
 	result, err := s.Send(context.Background(), helperRoom, helperGift, 1)
 	var typed *Error
-	if !errors.As(err, &typed) || typed.Kind != KindFatal || !typed.Uncertain {
-		t.Fatalf("结果未知应标记 uncertain：%+v %v", result, err)
+	if !errors.As(err, &typed) || typed.Kind != KindUncertain || !typed.Uncertain {
+		t.Fatalf("结果未知应标记 KindUncertain：%+v %v", result, err)
 	}
 	if !result.PendingReview || result.Error == "" {
 		t.Fatalf("结果未知应标记 pending_review：%+v", result)
@@ -332,6 +336,85 @@ func TestUncertainFailureKeepsReservationAndMarksPending(t *testing.T) {
 	if atomic.LoadInt32(&spawns) != 1 {
 		t.Fatalf("不确定结果不得自动重试，spawns=%d", spawns)
 	}
+}
+
+// TestT26FileQuotaOutcomeMatrix 组合验证：unknown保留并跨sender重建生效、可信拒绝退款、成功计数。
+func TestT26FileQuotaOutcomeMatrix(t *testing.T) {
+	fixed := time.Date(2026, 11, 7, 12, 0, 0, 0, time.Local)
+	day := fixed.Format("2006-01-02")
+	newQuotaSender := func(t *testing.T, path string) (*NodeSender, *FileQuota) {
+		t.Helper()
+		quota, err := NewFileQuota(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		o := realOptions()
+		o.DailyLimit = 1
+		o.Quota = quota
+		o.Now = func() time.Time { return fixed }
+		return newSender(t, o), quota
+	}
+
+	t.Run("unknown保留额度并跨重建生效", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "gift-ledger.json")
+		s, quota := newQuotaSender(t, path)
+		s.command = helperCommand("uncertain", nil)
+		result, err := s.Send(context.Background(), helperRoom, helperGift, 1)
+		var typed *Error
+		if !errors.As(err, &typed) || typed.Kind != KindUncertain || !typed.Uncertain || !result.PendingReview {
+			t.Fatalf("unknown 未标记待核对：%+v %v", result, err)
+		}
+		if used, readErr := quota.Used(day); readErr != nil || used != 1 {
+			t.Fatalf("unknown 必须保留额度：used=%d %v", used, readErr)
+		}
+
+		rebuilt, _ := newQuotaSender(t, path)
+		var spawns int32
+		rebuilt.command = helperCommand("sent", &spawns)
+		result, err = rebuilt.Send(context.Background(), helperRoom, helperGift, 1)
+		if err == nil || !strings.Contains(result.Error, "每日限额") || atomic.LoadInt32(&spawns) != 0 {
+			t.Fatalf("重建sender后额度未生效：%+v %v spawns=%d", result, err, spawns)
+		}
+		if used, readErr := quota.Used(day); readErr != nil || used != 1 {
+			t.Fatalf("重建sender不得改变账本：used=%d %v", used, readErr)
+		}
+	})
+
+	t.Run("可信拒绝退款", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "gift-ledger.json")
+		s, quota := newQuotaSender(t, path)
+		s.command = helperCommand("fatal", nil)
+		result, err := s.Send(context.Background(), helperRoom, helperGift, 1)
+		var typed *Error
+		if !errors.As(err, &typed) || typed.Kind != KindFatal || typed.Uncertain || result.PendingReview {
+			t.Fatalf("可信拒绝应确定失败：%+v %v", result, err)
+		}
+		if used, readErr := quota.Used(day); readErr != nil || used != 0 {
+			t.Fatalf("可信拒绝应退款：used=%d %v", used, readErr)
+		}
+
+		var spawns int32
+		s.command = helperCommand("sent", &spawns)
+		if result, err := s.Send(context.Background(), helperRoom, helperGift, 1); err != nil || !result.Sent {
+			t.Fatalf("退款后应可重试：%+v %v", result, err)
+		}
+		if used, readErr := quota.Used(day); readErr != nil || used != 1 {
+			t.Fatalf("重试成功后应计数：used=%d %v", used, readErr)
+		}
+	})
+
+	t.Run("正常成功计数", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "gift-ledger.json")
+		s, quota := newQuotaSender(t, path)
+		s.command = helperCommand("sent", nil)
+		result, err := s.Send(context.Background(), helperRoom, helperGift, 1)
+		if err != nil || !result.Sent || result.PendingReview {
+			t.Fatalf("成功结果错误：%+v %v", result, err)
+		}
+		if used, readErr := quota.Used(day); readErr != nil || used != 1 {
+			t.Fatalf("成功应计数：used=%d %v", used, readErr)
+		}
+	})
 }
 
 func TestProtocolFailuresKeepReservationAndDoNotLeak(t *testing.T) {
@@ -354,8 +437,8 @@ func TestProtocolFailuresKeepReservationAndDoNotLeak(t *testing.T) {
 				return
 			}
 			var typed *Error
-			if !errors.As(err, &typed) || typed.Kind != KindFatal {
-				t.Fatalf("协议异常应fatal：%+v %v", result, err)
+			if !errors.As(err, &typed) || typed.Kind != KindUncertain {
+				t.Fatalf("协议异常应KindUncertain：%+v %v", result, err)
 			}
 			if !typed.Uncertain || !result.PendingReview {
 				t.Fatalf("协议异常应视为结果未知并标记待核对：%+v %v", result, err)
@@ -457,6 +540,10 @@ func TestTimeoutAndCancelKeepReservation(t *testing.T) {
 	result, err := s.Send(context.Background(), helperRoom, helperGift, 1)
 	if err == nil || !strings.Contains(result.Error, "超时或取消") {
 		t.Fatalf("超时未按未知结果处理：%+v %v", result, err)
+	}
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Kind != KindUncertain || !typed.Uncertain {
+		t.Fatalf("超时应标记 KindUncertain：%+v %v", result, err)
 	}
 	if time.Since(started) > 5*time.Second {
 		t.Fatal("超时未生效")
