@@ -52,6 +52,19 @@ func TestDMCollectorRequiresChannelCredentialAndSelfID(t *testing.T) {
 	}
 }
 
+// TestDMCollectorStatePath 读取水位文件路径，供装配层跨重启保留游标。
+func TestDMCollectorStatePath(t *testing.T) {
+	t.Setenv("FISH_BILI_COOKIE", "SESSDATA=x; bili_jct=token")
+	body := "[collector.live]\nself_id='8'\n[channels.dm]\nenabled=true\n[collector.dm]\nenabled=true\nstate_path='state/test-dm-cursors.json'\n"
+	cfg, err := loadWithScheduler(t, body)
+	if err != nil {
+		t.Fatalf("加载失败：%v", err)
+	}
+	if cfg.Collector.DM.StatePath != "state/test-dm-cursors.json" {
+		t.Fatalf("state_path 未生效：%q", cfg.Collector.DM.StatePath)
+	}
+}
+
 func TestDMSenderRequiresChannel(t *testing.T) {
 	t.Setenv("FISH_BILI_COOKIE", "SESSDATA=x; bili_jct=token")
 	if _, err := loadWithScheduler(t, "[sender.dm]\nenabled=true\n"); err == nil || !strings.Contains(err.Error(), "channels.dm") {
