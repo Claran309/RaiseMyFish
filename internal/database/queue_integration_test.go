@@ -176,6 +176,51 @@ func TestQueueConcurrentClaimSkipLockedAndOrder(t *testing.T) {
 	}
 }
 
+func TestQueueClaimChannelFairness(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	bus := makeBus(t, db)
+	at := time.Now().Add(-2 * time.Hour)
+	const liveCount = 20
+	for i := range liveCount {
+		ev := testEvent(fmt.Sprintf("live:room:%02d", i), event.ChLive, "room", false, at.Add(time.Duration(i)*time.Second))
+		if _, err := bus.Publish(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dm := testEvent("dm:user:fair", event.ChDM, "user", true, at.Add(time.Hour))
+	if _, err := bus.Publish(ctx, dm); err != nil {
+		t.Fatal(err)
+	}
+
+	// live 有大量更早积压时，DM 仍必须进入每个小批量，而不是等 live 清空。
+	first, err := bus.ClaimPending(ctx, 2)
+	if err != nil || len(first) != 2 {
+		t.Fatalf("首个小批量领取失败：%d %v", len(first), err)
+	}
+	seen := map[string]bool{}
+	for _, c := range first {
+		seen[c.Event.ID] = true
+	}
+	if !seen[dm.ID] {
+		t.Fatalf("live 积压把 DM 挤出小批量：%+v", first)
+	}
+
+	rest, err := bus.ClaimPending(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest) != liveCount-1 {
+		t.Fatalf("剩余 live 数量不符：%d", len(rest))
+	}
+	// 通道内仍按 At、ID 升序，公平策略只改变跨通道交错。
+	for i, c := range rest {
+		want := fmt.Sprintf("live:room:%02d", i+1)
+		if c.Event.ID != want {
+			t.Fatalf("同通道顺序被破坏：第 %d 个是 %s，期望 %s", i, c.Event.ID, want)
+		}
+	}
+}
+
 func TestQueueTaskAtomicAndRecoveryStages(t *testing.T) {
 	db, ctx := repositoryDB(t)
 	a := makeBus(t, db)

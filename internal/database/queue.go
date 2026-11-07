@@ -76,11 +76,20 @@ func (r *EventRepo) Claim(ctx context.Context, owner string, ttl time.Duration, 
 		return nil, store.ErrInvalid
 	}
 	var rows []queueRow
-	err := r.db.WithContext(ctx).Raw(`WITH picked AS (
- SELECT id FROM events WHERE dir='in'
+	// 先按通道各自排队，再按轮次交错领取：单通道积压不会把其他通道挤出小批量。
+	// 通道内仍严格按 At、ID 升序，保持既有的同通道顺序语义。
+	// 锁必须落在基表别名 e 上；锁物化 CTE 不会真正锁住 events 行，SKIP LOCKED 会失效。
+	err := r.db.WithContext(ctx).Raw(`WITH ranked AS (
+ SELECT id,row_number() OVER (PARTITION BY channel ORDER BY at,id) AS rn
+ FROM events WHERE dir='in'
  AND (status='queued' OR (status IN ('pending','retry') AND (retry_at IS NULL OR retry_at<=clock_timestamp())))
  AND (lease_owner IS NULL OR lease_until<=clock_timestamp())
- ORDER BY at,id LIMIT ? FOR UPDATE SKIP LOCKED
+ ), picked AS (
+ SELECT e.id FROM events e JOIN ranked r ON r.id=e.id
+ WHERE e.dir='in'
+ AND (e.status='queued' OR (e.status IN ('pending','retry') AND (e.retry_at IS NULL OR e.retry_at<=clock_timestamp())))
+ AND (e.lease_owner IS NULL OR e.lease_until<=clock_timestamp())
+ ORDER BY r.rn,e.at,e.id LIMIT ? FOR UPDATE OF e SKIP LOCKED
  ) UPDATE events e SET status='queued',
  status_changed_at=CASE WHEN e.status='queued' THEN e.status_changed_at ELSE clock_timestamp() END,
  retry_at=NULL,lease_owner=?,lease_version=e.lease_version+1,

@@ -8,8 +8,10 @@ import (
 type queued struct {
 	claim    event.Claim
 	priority int
-	index    int
-	renewAt  time.Time
+	// fair 是通道内的投递轮次；跨通道按轮次交错，单通道积压不会饿死其他通道。
+	fair    int64
+	index   int
+	renewAt time.Time
 }
 type priorityQueue []*queued
 
@@ -18,6 +20,9 @@ func (q priorityQueue) Less(i, j int) bool {
 	a, b := q[i], q[j]
 	if a.priority != b.priority {
 		return a.priority < b.priority
+	}
+	if a.fair != b.fair {
+		return a.fair < b.fair
 	}
 	if !a.claim.Event.At.Equal(b.claim.Event.At) {
 		return a.claim.Event.At.Before(b.claim.Event.At)

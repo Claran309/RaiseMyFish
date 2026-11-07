@@ -47,6 +47,7 @@ type Scheduler struct {
 	log       *zap.Logger
 	policies  map[event.Channel]*policyState
 	pending   priorityQueue
+	fairSeq   map[event.Channel]int64
 	waiting   map[string]*queued
 	active    map[string]*running
 	sessions  map[sessionKey]string
@@ -98,7 +99,7 @@ func New(bus event.Bus, repo store.SchedulerRepo, o Options, workers Workers, lo
 		policies[ch] = &policyState{ChannelPolicy: p, limiter: rate.NewLimiter(rate.Limit(p.RatePerMinute/60), p.Burst)}
 	}
 	o.Channels = nil
-	return &Scheduler{bus: bus, repo: repo, options: o, workers: workers, clock: o.Clock, log: log, policies: policies, waiting: map[string]*queued{}, active: map[string]*running{}, sessions: map[sessionKey]string{}, cooldowns: map[sessionKey]cooldown{}, repeats: map[repeatKey]time.Time{}, wake: make(chan struct{}, 1), done: make(chan completion, o.MaxConcurrent)}, nil
+	return &Scheduler{bus: bus, repo: repo, options: o, workers: workers, clock: o.Clock, log: log, policies: policies, fairSeq: map[event.Channel]int64{}, waiting: map[string]*queued{}, active: map[string]*running{}, sessions: map[sessionKey]string{}, cooldowns: map[sessionKey]cooldown{}, repeats: map[repeatKey]time.Time{}, wake: make(chan struct{}, 1), done: make(chan completion, o.MaxConcurrent)}, nil
 }
 func (s *Scheduler) signal() {
 	select {
@@ -185,6 +186,8 @@ func (s *Scheduler) add(ctx context.Context, c event.Claim) error {
 		}
 		item.priority = t.Priority
 	}
+	item.fair = s.fairSeq[c.Event.Channel]
+	s.fairSeq[c.Event.Channel]++
 	heap.Push(&s.pending, item)
 	s.waiting[c.Event.ID] = item
 	return nil

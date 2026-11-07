@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -291,6 +292,53 @@ func TestPriorityHeapStable(t *testing.T) {
 	}
 }
 
+func TestSchedulerChannelFairnessUnderLiveBacklog(t *testing.T) {
+	s, b, _, clock := fixture(t)
+	s.options.MaxConcurrent = 1
+	s.options.MaxPending = 200
+	s.policies[event.ChLive].limiter = rate.NewLimiter(rate.Limit(1000), 1000)
+	s.policies[event.ChDM] = &policyState{
+		ChannelPolicy: ChannelPolicy{Private: true, Brain: "openai", RatePerMinute: 600, Burst: 10, DailyQuota: 100, MinRunes: 2},
+		limiter:       rate.NewLimiter(rate.Limit(10), 10),
+	}
+	start := clock.Now().Add(-time.Hour)
+	var claims []event.Claim
+	for i := range 50 {
+		claims = append(claims, claimFor(fmt.Sprintf("live:room:%02d", i), fmt.Sprintf("room%02d", i), "你好鱼鱼", start.Add(time.Duration(i)*time.Second)))
+	}
+	dm := claimFor("dm:user:fair", "user", "私信内容", start.Add(30*time.Minute))
+	dm.Event.Channel = event.ChDM
+	dm.Event.Private = true
+	claims = append(claims, dm)
+	b.seed(claims...)
+	for _, c := range claims {
+		if err := s.add(context.Background(), c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var order []string
+	s.workers.Generate = func(ctx context.Context, w Work) (Result, error) {
+		order = append(order, w.Claim.Event.ID)
+		return Result{}, b.Mark(ctx, w.Claim, nil, event.StatusDone)
+	}
+	for range claims {
+		if err := s.cycle(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		drainDone(t, s)
+	}
+	for i, id := range order {
+		if id == dm.Event.ID {
+			if i > 1 {
+				t.Fatalf("DM 被 live 积压饿死：第 %d 个才处理（%v）", i, order)
+			}
+			return
+		}
+	}
+	t.Fatal("DM 始终未被处理")
+}
+
 func TestCalendarQuotaWindowHandlesDST(t *testing.T) {
 	location, err := time.LoadLocation("America/Los_Angeles")
 	if err != nil {
@@ -325,6 +373,16 @@ func (b *fakeBus) add(claims ...event.Claim) {
 	defer b.mu.Unlock()
 	for _, c := range claims {
 		b.claims = append(b.claims, c)
+		b.states[c.Event.ID] = c.Event
+		b.stages[c.Event.ID] = c.Stage
+		b.leases[c.Event.ID] = c.Lease
+		b.lost[c.Event.ID] = false
+	}
+}
+func (b *fakeBus) seed(claims ...event.Claim) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, c := range claims {
 		b.states[c.Event.ID] = c.Event
 		b.stages[c.Event.ID] = c.Stage
 		b.leases[c.Event.ID] = c.Lease

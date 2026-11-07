@@ -5,6 +5,7 @@ package database
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -153,6 +154,94 @@ func TestSchedulerAdmissionRollbackAndExistingTask(t *testing.T) {
 	}
 	if _, err := NewSchedulerRepo(nil); !errors.Is(err, store.ErrInvalid) {
 		t.Fatal("接受nil连接")
+	}
+}
+
+func TestSchedulerRunFairWhenLiveBacklog(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	bus := makeBus(t, db)
+	repo, _ := NewSchedulerRepo(db)
+	now := time.Now().Add(-time.Hour)
+	for i := range 20 {
+		ev := testEvent(fmt.Sprintf("live:room:%02d", i), event.ChLive, fmt.Sprintf("room%02d", i), false, now.Add(time.Duration(i)*time.Second))
+		if _, err := bus.Publish(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dm := testEvent("dm:user:fair", event.ChDM, "user", true, now.Add(30*time.Minute))
+	if _, err := bus.Publish(ctx, dm); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := scheduler.DefaultOptions()
+	opts.MaxConcurrent = 1
+	opts.MaxPending = 8
+	opts.ClaimBatch = 4
+	opts.PollInterval = 5 * time.Millisecond
+	opts.RetryDelay = 5 * time.Millisecond
+	opts.OperationTimeout = 2 * time.Second
+	live := opts.Channels[event.ChLive]
+	live.RatePerMinute = 6000
+	live.Burst = 10
+	live.Cooldown = 0
+	opts.Channels[event.ChLive] = live
+	opts.Channels[event.ChDM] = scheduler.ChannelPolicy{Private: true, Brain: "openai", RatePerMinute: 6000, Burst: 10, DailyQuota: 100, MinRunes: 2}
+
+	generated := make(chan string, 32)
+	worker := func(c context.Context, w scheduler.Work) (scheduler.Result, error) {
+		if w.Task == nil || w.Claim.Stage != event.StageGenerate {
+			return scheduler.Result{}, errors.New("生成分支缺任务")
+		}
+		for _, edge := range []struct{ from, to event.Status }{{event.StatusQueued, event.StatusReplying}, {event.StatusReplying, event.StatusSent}, {event.StatusSent, event.StatusDone}} {
+			if err := bus.Mark(c, w.Claim, []event.Status{edge.from}, edge.to); err != nil {
+				return scheduler.Result{}, err
+			}
+		}
+		generated <- w.Claim.Event.ID
+		return scheduler.Result{Replied: true}, nil
+	}
+	verify := func(c context.Context, w scheduler.Work) (scheduler.Result, error) {
+		return scheduler.Result{}, bus.Mark(c, w.Claim, []event.Status{event.StatusQueued}, event.StatusDone)
+	}
+	runner, err := scheduler.New(bus, repo, opts, scheduler.Workers{Generate: worker, Verify: verify}, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() { finished <- runner.Run(runCtx) }()
+
+	dmPos := -1
+	var seen []string
+	for i := 0; i < 3 && dmPos < 0; i++ {
+		select {
+		case id := <-generated:
+			seen = append(seen, id)
+			if id == dm.ID {
+				dmPos = i
+			}
+		case err := <-finished:
+			t.Fatal("调度器提前退出", err)
+		case <-runCtx.Done():
+			t.Fatal("等待 DM 超时")
+		}
+	}
+	cancel()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("调度器未退出")
+	}
+	if dmPos < 0 {
+		t.Fatalf("live 积压时 DM 未进入前 3 个调度：%v", seen)
+	}
+	state, err := repo.Snapshot(ctx, dm.ID)
+	if err != nil || state.Event.Status != event.StatusDone || state.Lease.Owner != "" {
+		t.Fatal("DM 未结清", err)
 	}
 }
 
