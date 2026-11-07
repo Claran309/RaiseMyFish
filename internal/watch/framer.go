@@ -45,7 +45,10 @@ func NewFFmpegFramer(opts FFmpegFramerOptions) (*FFmpegFramer, error) {
 }
 
 // Frames 返回 count 个真实生成的帧路径；输出目录由 Pipeline 清理。
-func (f *FFmpegFramer) Frames(ctx context.Context, videoPath string, count int) ([]string, error) {
+//
+// 失败清理归创建者（O06）：一旦返回 error，调用方拿不到目录路径，
+// 就永远没机会删掉已生成的帧。所以在所有权移交前失败时，这里自己 RemoveAll。
+func (f *FFmpegFramer) Frames(ctx context.Context, videoPath string, count int) (paths []string, err error) {
 	if count < 1 || count > MaxFramesPerClip {
 		return nil, fmt.Errorf("抽帧数必须在1至%d之间", MaxFramesPerClip)
 	}
@@ -60,7 +63,15 @@ func (f *FFmpegFramer) Frames(ctx context.Context, videoPath string, count int) 
 	if err != nil {
 		return nil, fmt.Errorf("创建抽帧临时目录失败：%w", err)
 	}
-	paths := make([]string, 0, count)
+	// 所有权还没移交：任何一条返回路径上的失败都要自己回收目录，
+	// 否则「第二帧失败」会在临时目录里留下一帧 JPG + 一个空目录。
+	handedOver := false
+	defer func() {
+		if !handedOver {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	paths = make([]string, 0, count)
 	for i := 0; i < count; i++ {
 		timestamp := duration * (float64(i) + 0.5) / float64(count)
 		out := filepath.Join(dir, fmt.Sprintf("frame-%02d.jpg", i))
@@ -85,6 +96,8 @@ func (f *FFmpegFramer) Frames(ctx context.Context, videoPath string, count int) 
 		}
 		paths = append(paths, out)
 	}
+	// 全部成功才把目录所有权交给调用方（由 Pipeline.cleanup 负责删除）。
+	handedOver = true
 	return paths, nil
 }
 
