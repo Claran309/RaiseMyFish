@@ -94,6 +94,10 @@ func (b *Toolbox) Run(ctx context.Context, name, args string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// 结构化信封按来源/条目取舍后再进 prompt；其他输出保持原有裁剪行为。
+	if rendered, ok := renderToolResult(out, maxObservationRunes); ok {
+		return rendered, nil
+	}
 	return clip(out, maxObservationRunes), nil
 }
 
@@ -185,7 +189,7 @@ func BuildTools(d ToolDeps) (*Toolbox, error) {
 				if err != nil {
 					return "", err
 				}
-				return formatMemory(got), nil
+				return formatMemory(got, ToolMemorySearch, memoryQueryKey(queryText), toolScopeFromMemory(scope), now()), nil
 			},
 		})
 	}
@@ -204,7 +208,7 @@ func BuildTools(d ToolDeps) (*Toolbox, error) {
 				if err != nil {
 					return "", err
 				}
-				return formatKnowledge(got), nil
+				return formatKnowledge(got, ToolKnowledgeSearch, query.Text, toolScopeFromMemory(scope), now()), nil
 			},
 		})
 	}
@@ -234,7 +238,7 @@ func BuildTools(d ToolDeps) (*Toolbox, error) {
 				if err != nil {
 					return "", err
 				}
-				return formatHistory(rows), nil
+				return formatHistory(rows, ToolHistory, fmt.Sprintf("limit=%d", limit), toolScopeFromMemory(scope), now()), nil
 			},
 		})
 	}
@@ -245,43 +249,125 @@ func BuildTools(d ToolDeps) (*Toolbox, error) {
 	return NewToolbox(tools...)
 }
 
-// formatMemory 把记忆召回结果压成一行行文本。
-func formatMemory(c memory.Context) string {
-	var parts []string
-	for _, m := range c.Recent {
-		parts = append(parts, m.FromName+": "+m.Text)
+// formatMemory 把记忆召回结果转成结构化信封：近期、跨通道、摘要分组保留角色与时间。
+func formatMemory(c memory.Context, tool, args string, scope *toolResultScope, now time.Time) string {
+	res := newToolResult(tool, args, scope, now)
+	res.addGroup("近期", messageItems(c.Recent))
+	res.addGroup("跨通道", messageItems(c.CrossChannel))
+	res.addGroup("摘要", recordItems(c.Records))
+	if res.Status == toolResultStatusEmpty {
+		res.Note = "没有相关记忆"
 	}
-	for _, r := range c.Records {
-		parts = append(parts, "摘要: "+r.Summary)
-	}
-	if len(parts) == 0 {
-		return "没有相关记忆"
-	}
-	return strings.Join(parts, " / ")
+	return res.encode()
 }
 
-// formatKnowledge 把知识命中压成「ID: 正文」。
-func formatKnowledge(c knowledge.Context) string {
-	var parts []string
+// messageItems 把消息投影成结果条目；证据用事件 ID，回复链只有事件里才有。
+func messageItems(messages []memory.Message) []toolResultItem {
+	items := make([]toolResultItem, 0, len(messages))
+	for _, m := range messages {
+		items = append(items, toolResultItem{
+			Role:     dirRole(m.Dir),
+			Name:     m.FromName,
+			UID:      m.FromID,
+			Channel:  string(m.Channel),
+			Private:  m.Private,
+			At:       shortTime(m.At),
+			Text:     m.Text,
+			Evidence: m.EventID,
+		})
+	}
+	return items
+}
+
+// recordItems 保留摘要的生效时间、来源事件与评分，供模型判断可信度。
+func recordItems(records []memory.Record) []toolResultItem {
+	items := make([]toolResultItem, 0, len(records))
+	for _, r := range records {
+		items = append(items, toolResultItem{
+			Role:     "摘要",
+			Channel:  string(r.Channel),
+			Private:  r.Private,
+			At:       shortTime(r.ValidFrom),
+			Text:     r.Summary,
+			Evidence: strings.Join(r.EventIDs, ","),
+			Meta:     fmt.Sprintf("重要%.2f 置信%.2f", r.Importance, r.Confidence),
+		})
+	}
+	return items
+}
+
+// formatKnowledge 把知识命中转成结构化信封：ID 作名字，来源作证据。
+func formatKnowledge(c knowledge.Context, tool, args string, scope *toolResultScope, now time.Time) string {
+	res := newToolResult(tool, args, scope, now)
+	items := make([]toolResultItem, 0, len(c.Items))
 	for _, item := range c.Items {
-		parts = append(parts, item.ID+": "+item.Text)
+		entry := toolResultItem{
+			Role:     "资料",
+			Name:     item.ID,
+			Text:     item.Text,
+			Private:  item.Private,
+			Evidence: item.Source,
+			Meta:     knowledgeMeta(item),
+		}
+		if item.Origin != nil {
+			entry.Channel = string(item.Origin.Channel)
+		}
+		items = append(items, entry)
 	}
-	if len(parts) == 0 {
-		return "没有命中知识"
+	res.addGroup("知识", items)
+	if res.Status == toolResultStatusEmpty {
+		res.Note = "没有命中知识"
 	}
-	return strings.Join(parts, " / ")
+	return res.encode()
 }
 
-// formatHistory 把最近事件压成「昵称: 正文」。
-func formatHistory(rows []event.Event) string {
+// knowledgeMeta 只放场景与优先级这类短字段。
+func knowledgeMeta(item knowledge.Item) string {
 	var parts []string
+	if len(item.Scenes) > 0 {
+		parts = append(parts, "场景="+strings.Join(item.Scenes, ","))
+	}
+	if item.Priority != 0 {
+		parts = append(parts, fmt.Sprintf("优先级=%d", item.Priority))
+	}
+	return strings.Join(parts, " ")
+}
+
+// formatHistory 把最近事件转成结构化信封：保留角色、时间、回复链和事件 ID。
+func formatHistory(rows []event.Event, tool, args string, scope *toolResultScope, now time.Time) string {
+	res := newToolResult(tool, args, scope, now)
+	items := make([]toolResultItem, 0, len(rows))
 	for _, e := range rows {
-		parts = append(parts, e.FromName+": "+e.Text)
+		items = append(items, toolResultItem{
+			Role:     dirRole(e.Dir),
+			Name:     e.FromName,
+			UID:      e.FromID,
+			Channel:  string(e.Channel),
+			Private:  e.Private,
+			At:       shortTime(e.At),
+			ReplyTo:  e.ReplyTo,
+			Text:     e.Text,
+			Evidence: e.ID,
+		})
 	}
-	if len(parts) == 0 {
-		return "最近没有弹幕"
+	res.addGroup("弹幕", items)
+	if res.Status == toolResultStatusEmpty {
+		res.Note = "最近没有弹幕"
 	}
-	return strings.Join(parts, " / ")
+	return res.encode()
+}
+
+// toolScopeFromMemory 把记忆范围投影成结果范围。
+func toolScopeFromMemory(scope memory.Scope) *toolResultScope {
+	return &toolResultScope{Channel: string(scope.Channel), Session: scope.Session, Private: scope.Private}
+}
+
+// memoryQueryKey 用实际查询词生成稳定标识；空参数表示「最近记录」。
+func memoryQueryKey(query string) string {
+	if strings.TrimSpace(query) == "" {
+		return "recent"
+	}
+	return query
 }
 
 // parseLimit 解析条数参数，非法时回落到默认值。

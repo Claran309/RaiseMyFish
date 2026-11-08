@@ -5,6 +5,7 @@ package reasoning
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -199,15 +200,166 @@ func TestMemoryToolReturnsRawMessages(t *testing.T) {
 	}
 }
 
-// TestMemoryToolEmpty 没召回到内容时给明确文案，不是空串。
+// TestMemoryToolEmpty 没召回到内容时给明确文案，并标记状态 empty。
 func TestMemoryToolEmpty(t *testing.T) {
 	box, _ := BuildTools(ToolDeps{Memory: &fakeMem{}, Scope: testScope()})
 	got, err := box.Run(context.Background(), ToolMemorySearch, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "没有相关记忆" {
+	if !strings.Contains(got, "状态=empty") || !strings.Contains(got, "没有相关记忆") {
 		t.Errorf("空结果文案 = %q", got)
+	}
+}
+
+// TestMemoryToolStructuredKeepsRoleTimeCrossChannel（C07）多源结果不丢角色/时间，
+// 跨通道消息单独成组出现，不再只拼正文后被尾部统一裁掉。
+func TestMemoryToolStructuredKeepsRoleTimeCrossChannel(t *testing.T) {
+	mem := &fakeMem{ctx: memory.Context{
+		Scope: testScope(),
+		Recent: []memory.Message{{
+			EventID: "e1", Channel: event.ChLive, Session: "30308220", Dir: event.DirIn,
+			FromID: "10086", FromName: "路人", Text: "早", At: time.Date(2026, 11, 3, 9, 5, 0, 0, time.UTC),
+		}, {
+			EventID: "e2", Channel: event.ChLive, Session: "30308220", Dir: event.DirOut,
+			FromName: "大肥鱼", Text: "早呀", At: time.Date(2026, 11, 3, 9, 6, 0, 0, time.UTC),
+		}},
+		CrossChannel: []memory.Message{{
+			EventID: "c9", Channel: event.ChComment, Session: "post-1", Dir: event.DirIn,
+			FromID: "2002", FromName: "白饭哥", Text: "今天也要白饭",
+			At: time.Date(2026, 11, 2, 20, 30, 0, 0, time.UTC),
+		}},
+		Records: []memory.Record{{
+			ID: "m1", Channel: event.ChLive, Session: "30308220", Summary: "喜欢钓鱼",
+			Importance: 0.6, Confidence: 0.8, EventIDs: []string{"e1"},
+			ValidFrom: time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC),
+		}},
+	}}
+	box, err := BuildTools(ToolDeps{Memory: mem, Scope: testScope(), Now: func() time.Time {
+		return time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := box.Run(context.Background(), ToolMemorySearch, "最近")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	for _, want := range []string{
+		"状态=ok", "查询=memory_search:", "范围=live/30308220/公开", "as_of=2026-11-03 12:00:00",
+		"[近期]", "观众 路人: 早", "11-03 09:05", "live#e1",
+		"本鱼 大肥鱼: 早呀", "11-03 09:06",
+		"[跨通道]", "观众 白饭哥: 今天也要白饭", "11-02 20:30", "comment#c9",
+		"[摘要]", "摘要: 喜欢钓鱼", "11-01 08:00", "重要0.60 置信0.80",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("结构化结果缺少 %q：%q", want, got)
+		}
+	}
+	if n := len([]rune(got)); n > maxObservationRunes {
+		t.Errorf("结果超出 400 字预算：%d", n)
+	}
+}
+
+// TestMemoryToolBudgetKeepsCrossChannel（C07）长列表下按组轮转，
+// 跨通道结果不能被近期消息挤掉，超出预算要注明剩余条数。
+func TestMemoryToolBudgetKeepsCrossChannel(t *testing.T) {
+	var recent []memory.Message
+	for i := 0; i < 8; i++ {
+		recent = append(recent, memory.Message{
+			EventID: fmt.Sprintf("e%d", i), Channel: event.ChLive, Session: "30308220", Dir: event.DirIn,
+			FromName: "话痨", Text: strings.Repeat("鱼", 80),
+			At: time.Date(2026, 11, 3, 10, i, 0, 0, time.UTC),
+		})
+	}
+	mem := &fakeMem{ctx: memory.Context{
+		Scope:  testScope(),
+		Recent: recent,
+		CrossChannel: []memory.Message{{
+			EventID: "c9", Channel: event.ChComment, Session: "post-1", Dir: event.DirIn,
+			FromName: "关键人物", Text: "我在评论区说过关键线索",
+			At: time.Date(2026, 11, 2, 20, 30, 0, 0, time.UTC),
+		}},
+		Records: []memory.Record{{
+			ID: "m1", Summary: "重要摘要", Importance: 0.9, Confidence: 0.9,
+			ValidFrom: time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC),
+		}},
+	}}
+	box, err := BuildTools(ToolDeps{Memory: mem, Scope: testScope(), Now: func() time.Time {
+		return time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := box.Run(context.Background(), ToolMemorySearch, "鱼")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if !strings.Contains(got, "[跨通道]") || !strings.Contains(got, "关键人物") {
+		t.Errorf("跨通道结果被挤出预算：%q", got)
+	}
+	if !strings.Contains(got, "另有") || !strings.Contains(got, "未展示") {
+		t.Errorf("超预算应注明剩余条数：%q", got)
+	}
+	if n := len([]rune(got)); n > maxObservationRunes {
+		t.Errorf("结果超出 400 字预算：%d", n)
+	}
+}
+
+// TestHistoryKeepsReplyChainAndTime（C07）history 保留角色、时间、事件 ID 与回复链。
+func TestHistoryKeepsReplyChainAndTime(t *testing.T) {
+	hist := &fakeHist{rows: []event.Event{{
+		ID: "e5", Channel: event.ChLive, Session: "30308220", Dir: event.DirIn,
+		FromID: "10086", FromName: "甲", Text: "刚才那条呢", ReplyTo: "e4",
+		At: time.Date(2026, 11, 3, 11, 20, 0, 0, time.UTC),
+	}}}
+	box, err := BuildTools(ToolDeps{History: hist, Scope: testScope(), Now: func() time.Time {
+		return time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := box.Run(context.Background(), ToolHistory, "5")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	for _, want := range []string{
+		"状态=ok", "查询=history:", "范围=live/30308220/公开",
+		"[弹幕]", "观众 甲: 刚才那条呢", "11-03 11:20", "live#e5", "↩e4",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("history 缺少 %q：%q", want, got)
+		}
+	}
+}
+
+// TestToolQueryIDStableAndDistinct 查询标识确定且随参数变化，便于模型引用同一次查询。
+func TestToolQueryIDStableAndDistinct(t *testing.T) {
+	hist := &fakeHist{rows: []event.Event{{FromName: "甲", Text: "一"}}}
+	box, err := BuildTools(ToolDeps{History: hist, Scope: testScope(), Now: func() time.Time {
+		return time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	first, err := box.Run(ctx, ToolHistory, "5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := box.Run(ctx, ToolHistory, "5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := box.Run(ctx, ToolHistory, "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Errorf("同参数查询标识不稳定：%q vs %q", first, second)
+	}
+	if first == other {
+		t.Errorf("不同参数查询标识相同：%q", first)
 	}
 }
 

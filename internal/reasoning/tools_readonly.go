@@ -29,7 +29,8 @@ const (
 	ToolWebSearch    = "web_search"
 )
 
-// maxReadOnlyRunes 是只读工具结果的统一截断长度。
+// maxReadOnlyRunes 是非结构化只读工具（档案/直播/画面/搜索）的统一截断长度；
+// 观众史与回复史改为结构化信封后，由 Toolbox.Run 按 400 字预算分段渲染。
 const maxReadOnlyRunes = 500
 
 // ViewerSearcher 按观众 ID 查历史消息。
@@ -121,14 +122,26 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 			if err != nil {
 				return "", err
 			}
-			if len(rows) == 0 {
-				return "这个观众最近没说过话", nil
-			}
-			var parts []string
+			res := newToolResult(ToolViewerMemory, fmt.Sprintf("from_id=%s limit=%d", fromID, limit), &toolResultScope{}, now())
+			items := make([]toolResultItem, 0, len(rows))
 			for _, e := range rows {
-				parts = append(parts, e.Text)
+				items = append(items, toolResultItem{
+					Role:     "观众",
+					Name:     e.FromName,
+					UID:      e.FromID,
+					Channel:  string(e.Channel),
+					Private:  e.Private,
+					At:       shortTime(e.At),
+					ReplyTo:  e.ReplyTo,
+					Text:     e.Text,
+					Evidence: e.ID,
+				})
 			}
-			return clip(strings.Join(parts, " / "), maxReadOnlyRunes), nil
+			res.addGroup("该观众发言", items)
+			if res.Status == toolResultStatusEmpty {
+				res.Note = "这个观众最近没说过话"
+			}
+			return res.encode(), nil
 		},
 	})
 
@@ -173,14 +186,27 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 			if err != nil {
 				return "", err
 			}
-			if len(rows) == 0 {
-				return "最近没回过什么", nil
-			}
-			var parts []string
+			res := newToolResult(ToolReplyHistory, fmt.Sprintf("limit=%d", limit),
+				&toolResultScope{Channel: string(event.ChLive), Session: room}, now())
+			items := make([]toolResultItem, 0, len(rows))
 			for _, e := range rows {
-				parts = append(parts, e.Text)
+				items = append(items, toolResultItem{
+					Role:     "本鱼",
+					Name:     e.FromName,
+					UID:      e.FromID,
+					Channel:  string(e.Channel),
+					Private:  e.Private,
+					At:       shortTime(e.At),
+					ReplyTo:  e.ReplyTo,
+					Text:     e.Text,
+					Evidence: e.ID,
+				})
 			}
-			return clip(strings.Join(parts, " / "), maxReadOnlyRunes), nil
+			res.addGroup("本鱼回复", items)
+			if res.Status == toolResultStatusEmpty {
+				res.Note = "最近没回过什么"
+			}
+			return res.encode(), nil
 		},
 	})
 

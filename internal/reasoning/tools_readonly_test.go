@@ -161,6 +161,59 @@ func TestViewerMemoryArgsAndTruncation(t *testing.T) {
 	}
 }
 
+// TestViewerMemoryKeepsRoleTimeEvidence（C07）观众史保留角色、时间与事件证据，
+// 不再只返回一串没有出处和说话人的正文。
+func TestViewerMemoryKeepsRoleTimeEvidence(t *testing.T) {
+	d := readonlyDeps()
+	d.Viewer = &fakeViewer{rows: []event.Event{{
+		ID: "e7", Channel: event.ChLive, Session: "30308220", Dir: event.DirIn,
+		FromID: "2002", FromName: "白饭哥", Text: "今天也要白饭",
+		At: time.Date(2026, 11, 3, 10, 30, 0, 0, time.UTC),
+	}}}
+	box, err := BuildReadOnlyTools(d)
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	got, err := box.Run(context.Background(), ToolViewerMemory, `{"from_id":"2002","limit":5}`)
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	for _, want := range []string{
+		"状态=ok", "查询=viewer_memory:", "范围=跨通道", "as_of=2026-11-03 12:00:00",
+		"[该观众发言]", "观众 白饭哥: 今天也要白饭", "11-03 10:30", "live#e7",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("观众史缺少 %q：%q", want, got)
+		}
+	}
+}
+
+// TestReplyHistoryKeepsReplyChain（C07）回复史保留角色、时间、事件 ID 与回复链。
+func TestReplyHistoryKeepsReplyChain(t *testing.T) {
+	d := readonlyDeps()
+	d.Replies = &fakeReplies{rows: []event.Event{{
+		ID: "r1", Channel: event.ChLive, Session: "30308220", Dir: event.DirOut,
+		FromName: "大肥鱼", Text: "吃了", ReplyTo: "e9",
+		At: time.Date(2026, 11, 3, 11, 0, 0, 0, time.UTC),
+	}}}
+	box, err := BuildReadOnlyTools(d)
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	got, err := box.Run(context.Background(), ToolReplyHistory, `{"limit":3}`)
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	for _, want := range []string{
+		"状态=ok", "查询=reply_history:", "范围=live/30308220/公开",
+		"[本鱼回复]", "本鱼 大肥鱼: 吃了", "11-03 11:00", "live#r1", "↩e9",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("回复史缺少 %q：%q", want, got)
+		}
+	}
+}
+
 // TestViewerMemoryRejectsBadArgs 非数字 from_id、越界 limit 都要拒绝。
 func TestViewerMemoryRejectsBadArgs(t *testing.T) {
 	box, _ := BuildReadOnlyTools(readonlyDeps())
