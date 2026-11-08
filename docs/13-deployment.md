@@ -1,20 +1,40 @@
 # 13 · 运行与部署
 
-> 开发期本机直跑，交付期 Docker Compose。
-> 目标机器：主人个人电脑（16GB 内存），边用边跑。
+> 同一份代码支持三种运行方式；人格、知识与行为语义完全一致。
+> PostgreSQL **必须 17+ 且带 pgvector**，fishd 不内置数据库。
 
-## 1. 开发期（推荐，低开销）
+## 1. 支持矩阵与依赖
+
+| 运行方式 | 状态 | 入口 |
+|---|---|---|
+| Windows 本机 | **现有，保持不变** | `scripts/dev.ps1` + 根目录 `.env` |
+| Linux 本机 | **新增** | 静态二进制 + systemd + 外部 PostgreSQL |
+| Linux / Docker Compose | **新增** | `deployment/docker-compose.yml`（fishd + pgvector PG17） |
+
+| 依赖 | 用途 | 说明 |
+|---|---|---|
+| Go 1.25+ | 仅构建 | 运行阶段不需要 Go 工具链 |
+| PostgreSQL 17+ | 事件、记忆、账号、向量 | 必须能 `CREATE EXTENSION vector`（迁移 0006） |
+| pgvector | 语义召回 | 官方 `postgres:17` 不含 pgvector，用 `pgvector/pgvector:pg17` 或自行安装扩展 |
+| Node.js 24 | `tools/bili-whale` 的直播/发送/礼物脚本 | 脚本使用全局 `WebSocket`/`fetch`，建议 24（勿低于 22） |
+| ffmpeg / ffprobe | `[watch]` 看直播、`[proactive]` 主动弹幕 | 不启用这两个能力时可不装 |
+| ASR 服务 | 看直播音频转写 | 外部 HTTP 服务，默认 `http://127.0.0.1:8077/v1/audio/transcriptions` |
+| LLM / Embedding API | Brain、提炼、向量 | 外部 HTTPS 服务，只从环境变量读密钥 |
+| B站 Cookie + 本账号 UID | 采集与发送 | 可放 DB 活跃账号，环境变量兜底（见 §5） |
+
+容器镜像已内置 Node、ffmpeg/ffprobe、CA 证书与时区；**不包含 PostgreSQL**。
+
+## 2. Windows 本机（现有方式）
 
 ```
 Windows 本机：
-  ├─ Go 服务：go run ./cmd/fishd（或 air 热重载）
+  ├─ Go 服务：scripts/dev.ps1 start（或 go run ./cmd/fishd）
   ├─ PostgreSQL：本机安装，注册为服务自启
-  └─ QQ 协议端：NapCat / LLBot（保持登录）
-  └─ B站：bili-cli（Python venv，按需）
+  ├─ Node.js：跑 tools/bili-whale 脚本
+  └─ B站：Cookie 放根目录 .env
 ```
 
-**不推荐开发期开 Docker Desktop**：WSL2 VM 常驻 1.5~2.5GB，
-在只剩 4GB 空闲的机器上是负担。Docker 留给「交付给用户」。
+**开发期不建议常开 Docker Desktop**：WSL2 常驻 1.5~2.5GB，在内存紧张的机器上是负担；Docker 留给 Linux/服务器交付。
 
 ### 资源预算
 
@@ -22,135 +42,225 @@ Windows 本机：
 |---|---|
 | fishd（Go） | 50~150MB |
 | PostgreSQL | 200~400MB |
-| QQ 协议端 | 150~300MB |
-| **合计** | **< 1GB** |
+| QQ 协议端（未装配） | 150~300MB |
+| **合计（不含 Docker）** | **< 1GB** |
 
 ### 一键启停（`scripts/dev.ps1`）
 
 ```powershell
-# 启动：检查 PG → 启动协议端 → 启动 fishd
-# 停止：优雅关闭 fishd → 可选停协议端
-# 状态：各组件健康
+.\scripts\dev.ps1 status   # PG / 日志目录 / fishd 进程
+.\scripts\dev.ps1 build    # 编译 bin\fishd.exe
+.\scripts\dev.ps1 start    # 前台运行，Ctrl+C 优雅退出
+.\scripts\dev.ps1 stop     # 跨终端停止（超时强杀进程树）
 ```
 
-### Makefile 命令
+## 3. Linux 本机（新增）
+
+### 3.1 安装依赖与建库
 
 ```bash
-make dev-status   # 各组件状态
-make docker-up    # 构建并启动全部服务（交付/全栈）
-make docker-down  # 停止
-make docker-logs  # 跟随日志
+# 示例为 Debian/Ubuntu 口径：
+#   - PostgreSQL 17 + pgvector 来自 PGDG 仓库或发行版仓库；
+#   - Node.js 24 用 NodeSource / nvm 安装（脚本需要 ≥22，发行版自带 nodejs 往往过旧）；
+#   - ffmpeg 仅在启用 [watch]/[proactive] 时需要。
+sudo apt install -y postgresql-17 postgresql-17-pgvector ffmpeg
+# 另装 Node.js 24：NodeSource setup_24.x 或 nvm install 24
+
+sudo -u postgres psql -c "CREATE USER fish PASSWORD 'CHANGE_ME';"
+sudo -u postgres createdb -O fish raisemyfish
 ```
 
-## 2. 交付期（Docker Compose）
+确认扩展可用（迁移会自动执行）：
 
-```yaml
-# deployment/docker-compose.yml（实现期编写）
-services:
-  postgres:   # 17+，数据卷挂载
-  fishd:      # 构建自本仓库
-  # 协议端按需（用户自备 cookie/账号）
+```bash
+sudo -u postgres psql -d raisemyfish -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
 
-- 数据卷：`./data/pg`、`./data/logs`
-- 环境变量文件：`.env`（不入仓）
-- 端口：PG 5432、fishd 8080、协议端按需
-- 不把凭据写进 compose，用 env_file
+### 3.2 构建、配置、迁移、启动
 
-## 3. 配置
+```bash
+make build                 # 或 go build -trimpath -o bin/fishd ./cmd/fishd
+cp .env.example .env       # 填 FISH_DB_DSN / FISH_LLM_KEY / B站凭据
+$EDITOR config/fishd.toml  # 房间、self_id、通道开关
 
-当前0.6实际支持的配置以仓库 `config/fishd.toml` 为准：db、log、runtime、全部关闭的channels开关，以及默认禁用的llm/Provider/routing。下面仍包含后续server/通道目标，不能整段直接使用；当前不监听8080。fishctl status检查PG与心跳，fishd check-brain只验证Brain装配，不调用模型。
-
-```toml
-# config/fishd.toml（示例）
-[server]
-addr = "127.0.0.1:8080"
-
-[db]
-dsn_env = "FISH_DB_DSN"
-
-[llm.providers.deepseek]
-type        = "openai"
-base_url    = "https://api.deepseek.com/v1"
-api_key_env = "FISH_LLM_KEY"
-models      = ["deepseek-chat"]
-
-[llm.routing]
-default = "deepseek:deepseek-chat"
-live    = "deepseek:deepseek-chat"
-dm      = "deepseek:deepseek-chat"
-
-[channels.live]
-enabled = true
-room = "1992099976"
-
-[channels.comment]
-enabled = true
-
-[channels.dm]
-enabled = true
-
-[channels.qq]
-enabled = false
+# 必须在仓库根目录执行：配置里的 logs/、data/、state/、personas/ 都是相对路径
+./bin/fishd --config config/fishd.toml --env-file .env migrate up
+./bin/fishd --config config/fishd.toml --env-file .env
 ```
 
-- 配置优先级：环境变量 > 配置文件 > 默认值
-- 敏感项只写 `*_env`，从环境变量取
-- 配置校验失败直接退出并打印原因
+运行期口径：`config/fishd.toml` 的 `[db].dsn_env` 默认指向 `FISH_DB_DSN`；凭据只从环境变量或 DB 活跃账号读取。
 
-## 4. 进程守护
+### 3.3 systemd（可选）
+
+```ini
+[Unit]
+Description=RaiseMyFish fishd
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=raisemyfish
+WorkingDirectory=/opt/raisemyfish
+# .env 由 fishd 自己读取；确保该文件仅服务用户可读
+ExecStartPre=/opt/raisemyfish/bin/fishd --config config/fishd.toml --env-file .env migrate up
+ExecStart=/opt/raisemyfish/bin/fishd --config config/fishd.toml --env-file .env
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+```
+
+- `logs/`、`data/`、`state/`、`personas/` 必须归 `raisemyfish` 用户可写（梗白学习与灵魂记忆会回写 persona）。
+- systemd 与 `fishwatchdog` 二选一，不要同时托管同一个 fishd。用 systemd 时保持 `[watchdog].restart_command` 不指向自身。
+- CLI 运维：`./bin/fishctl --config config/fishd.toml --env-file .env status`。
+
+## 4. Docker Compose（新增）
+
+交付物：
+
+- `deployment/Dockerfile`：多阶段构建 `fishd`/`fishctl`，运行阶段基于 `node:24-bookworm-slim` 并安装 ffmpeg；**PostgreSQL 依赖外部**。
+- `deployment/docker-compose.yml`：`fishd` + 一次性 `migrate` + `pgvector/pgvector:pg17`。
+- 镜像**不烤入** `config/fishd.toml` 与 `.env`；配置只读挂载，凭据从 `deployment/.env` 注入。
+
+### 4.1 首次部署
+
+```bash
+cp .env.example deployment/.env
+$EDITOR deployment/.env
+```
+
+`deployment/.env` 至少设置：
+
+```dotenv
+POSTGRES_PASSWORD=CHANGE_ME
+# 容器内数据库主机名是 postgres；密码与上一行一致
+FISH_DB_DSN=postgres://fish:CHANGE_ME@postgres:5432/raisemyfish?sslmode=disable
+FISH_LLM_KEY=sk-...
+FISH_BILI_COOKIE=...
+FISH_EMBEDDING_KEY=...
+```
+
+再按需改 `config/fishd.toml`（直播房间、`self_id`、通道与礼物开关）。容器内路径仍是 `logs/`、`data/`、`state/`、`personas/`，无需改相对路径。
+
+> 安全提醒：仓库里的 `config/fishd.toml` 是当前本机运行配置，可能已开启真实送礼/主动弹幕并绑定特定房间。首次部署务必按目标账号核对，尤其 `[gift].real`、`[proactive].enabled` 与各通道开关。
+
+```bash
+# 仓库根目录执行：构建镜像 → 起 PG → 跑迁移 → 起 fishd
+make docker-up
+# 等价：
+docker compose -f deployment/docker-compose.yml up -d --build
+```
+
+构建默认走 `goproxy.cn`；海外网络可在 `deployment/.env` 设置 `GOPROXY=https://proxy.golang.org,direct`。
+
+迁移服务使用同一份配置，但 `migrate` 只校验数据库连接、日志级别与目录、状态文件路径：B站 Cookie、LLM/Embedding 密钥等运行期凭据不参与迁移。首次部署可以先建表、再补凭据；`fishd` 启动并在 DB 活跃账号回填之后才会核验各启用能力的凭据。
+
+### 4.2 查看与运维
+
+```bash
+make docker-logs
+docker compose -f deployment/docker-compose.yml ps
+docker compose -f deployment/docker-compose.yml exec fishd ./fishctl --config config/fishd.toml status
+# 面板只监听容器回环，不映射到宿主机；在容器内读取：
+docker compose -f deployment/docker-compose.yml exec fishd curl -s http://127.0.0.1:8090/api/status
+```
+
+面板按安全约束只允许回环监听，因此 Compose 默认**不发布 8090**。需要浏览器面板时，优先在宿主机上跑 Windows/Linux 本机方式；不要为了映射端口把面板改成监听全部网卡。
+
+### 4.3 数据卷
+
+| 卷/挂载 | 容器路径 | 内容 |
+|---|---|---|
+| `pgdata` | `/var/lib/postgresql/data` | PostgreSQL 数据 |
+| `fishd-logs` | `/app/logs` | 应用日志、日报 |
+| `fishd-data` | `/app/data` | 状态文件、心跳、提炼水位 |
+| `fishd-state` | `/app/state` | 私信游标、冻结标记、watchdog 心跳 |
+| `../personas`（bind） | `/app/personas` | 人格、知识、梗白学习与灵魂记忆（**需可写**） |
+| `../config/fishd.toml`（bind，只读） | `/app/config/fishd.toml` | 运行配置 |
+
+- 容器以 uid 1000（`node`）运行。Linux 宿主机需保证 `personas/` 对该 uid 可写：`sudo chown -R 1000:1000 personas`。
+- ASR/本机搜索服务跑在宿主机时，容器内把地址改成 `host.docker.internal`（compose 已加 `host-gateway` 映射）。
+- 宿主机 5432 已被本机 PostgreSQL 占用时，改 `postgres.ports` 左侧端口即可；容器内 `FISH_DB_DSN` 仍用 `postgres:5432`。
+
+### 4.4 使用外部 PostgreSQL
+
+Dockerfile 本身不包含数据库。若已有外部 PG 17 + pgvector：
+
+```bash
+docker build -f deployment/Dockerfile -t raisemyfish/fishd:local .
+
+docker run --rm --env-file deployment/.env \
+  -v "$PWD/config/fishd.toml:/app/config/fishd.toml:ro" \
+  raisemyfish/fishd:local --config config/fishd.toml migrate up
+
+docker run -d --name fishd --restart unless-stopped --env-file deployment/.env \
+  -v "$PWD/config/fishd.toml:/app/config/fishd.toml:ro" \
+  -v "$PWD/personas:/app/personas" \
+  -v fishd-logs:/app/logs -v fishd-data:/app/data -v fishd-state:/app/state \
+  raisemyfish/fishd:local --config config/fishd.toml
+```
+
+或在 `deployment/docker-compose.yml` 中删除 `postgres` 服务与 `fishd.depends_on.postgres`，把 `FISH_DB_DSN` 指向外部实例。
+
+## 5. 配置与凭据
+
+- 配置优先级：进程环境 > dotenv > TOML > 默认值。
+- 敏感项只写 `*_env`（如 `api_key_env`、`dsn_env`），真实值放 `.env` 或 `deployment/.env`，均不入仓。
+- 账号解析：**DB 活跃账号优先，环境变量兜底**。只把 Cookie 存 DB 也可以启动（不再要求环境里同时有 Cookie）。
+- 窗口支持：Windows 本地读根目录 `.env`；Compose 读 `deployment/.env`；两者互不影响。
+- 当前面板固定回环地址；`[web].addr` 填非回环会被配置校验拒绝。
+
+## 6. 进程守护
 
 | 环境 | 方式 |
 |---|---|
-| Windows 开发 | `nssm` 注册为服务，或 watchdog 脚本 |
-| Linux 交付 | systemd unit |
-| 容器 | restart: unless-stopped |
+| Windows 开发 | `nssm` 注册服务，或 `fishwatchdog` |
+| Linux 交付 | systemd `Restart=on-failure`，或 `fishwatchdog` |
+| 容器 | `restart: unless-stopped` |
 
-崩溃自动拉起；连续失败 N 次停止并告警（防止无限重启风暴）。
+不要叠加多个守护者。`fishwatchdog` 依赖 `state/fishd.heartbeat` 与 `[watchdog].restart_command`，与 systemd/Compose 二选一。
 
-## 5. 日志与数据
+## 7. 日志与备份
 
-| 数据 | 位置 | 保留 |
-|---|---|---|
-| 应用日志 | `logs/fishd-YYYY-MM-DD.log` | 7 天 |
-| 日报 | `logs/daily-YYYY-MM-DD.md` | 90 天 |
-| PG 数据 | `data/pg`（或系统 PG 目录） | 按表策略 |
-| 备份 | 每日 pg_dump → `data/backup/` | 7 天 |
+| 数据 | 位置（本机） | 位置（Compose） | 保留 |
+|---|---|---|---|
+| 应用日志 | `logs/fishd-YYYY-MM-DD.log` | `fishd-logs` 卷 | 7 天 |
+| 日报 | `logs/daily-YYYY-MM-DD.md` | `fishd-logs` 卷 | 90 天 |
+| PG 数据 | 系统 PG 目录 | `pgdata` 卷 | 按表策略 |
+| 备份 | `data/backup/` | 宿主机目录 | 7 天 |
 
-## 6. 环境变量清单
-
+```bash
+# Compose 备份 / 恢复
+docker compose -f deployment/docker-compose.yml exec -T postgres \
+  pg_dump -U fish raisemyfish > backup.sql
+cat backup.sql | docker compose -f deployment/docker-compose.yml exec -T postgres \
+  psql -U fish -d raisemyfish
 ```
-FISH_DB_DSN=postgres://user:pass@127.0.0.1:5432/raisemyfish?sslmode=disable
-FISH_LLM_KEY=sk-...
-FISH_BILI_COOKIE=...        # 或 FISH_BILI_COOKIE_FILE=路径
-FISH_QQ_TOKEN=...
-FISH_LOG_LEVEL=info
-```
-
-**全部不入仓**；提供 `.env.example`（占位符，不含真实值）。
-
-## 7. 端口规划
-
-以下fishd端口为后续能力规划；0.1只需PG端口，DSN可配置非5432地址。
-
-| 服务 | 端口 |
-|---|---|
-| PostgreSQL | 5432 |
-| fishd | 8080 |
-| NapCat/LLBot WebUI | 6099 / 3001 |
-| 避免与 DSH（64958 等）冲突 | — |
 
 ## 8. 升级与回滚
 
-- 迁移前自动 pg_dump
-- 二进制替换 + 重启
-- 版本号写入 `fishctl status`
-- 回滚：回滚二进制 + 回滚迁移（或恢复备份）
+- 本机：`pg_dump` → 替换二进制 → `fishd migrate up` → 重启；回滚二进制并按需恢复备份。
+- Compose：`pg_dump` → `git pull` → `make docker-up`（自动重建并重跑幂等迁移）。
+- 迁移只前进，不支持 `migrate down`；回滚数据库请用备份。
 
-## 9. 验收
+## 9. 端口
 
-- [ ] 空机器按 README 能起
-- [ ] 崩溃后自动拉起
-- [ ] 日志/日报可读
-- [ ] 备份可恢复
-- [ ] 内存占用 < 1GB（不含协议端与 Docker）
+| 服务 | 端口 | 暴露方式 |
+|---|---|---|
+| PostgreSQL | 5432 | Compose 只绑 `127.0.0.1:5432` |
+| fishd 面板 | 8090 | 仅回环；Compose 不发布到宿主机 |
+| ASR（外部） | 8077 | 按需，默认只在本机 |
+| QQ 协议端 | 6099 / 3001 | 未装配，不启动 |
+
+## 10. 验收
+
+- [ ] 空机器按 README（本机或 Docker）能起
+- [ ] `fishd migrate up` 可重复执行
+- [ ] 崩溃后由 systemd / Compose 自动拉起
+- [ ] 日志、日报可读，凭据不出现在日志
+- [ ] PG 备份可恢复
+- [ ] 内存占用 < 1GB（不含协议端与 Docker 开销）

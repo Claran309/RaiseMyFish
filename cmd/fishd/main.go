@@ -65,12 +65,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if len(action) > 0 && !migrate && !checkBrain && !checkAll {
 		return errors.New("用法：fishd [--config 路径] [--env-file 路径] [migrate up|check|check-brain]；不支持破坏性回滚")
 	}
-	// migrate 只操作数据库，不该被直播采集/送礼等运行时配置拦住：
-	// 用 LoadForCLI（跳过 live 校验）让迁移能在任何配置状态下执行。
+	// migrate 只操作数据库，不该被通道开关/B站/LLM 凭据拦住：
+	// 用 LoadForMigrate 只校验数据库与日志，保证首次部署能先建表。
 	var err error
 	var cfg config.Config
 	if migrate {
-		cfg, err = config.LoadForCLI(*path, *envPath)
+		cfg, err = config.LoadForMigrate(*path, *envPath)
 	} else {
 		// 先只做结构校验：B站凭据可能只存在于 DB 活跃账号，要等数据库就绪后才能核验。
 		cfg, err = config.LoadForDaemon(*path, *envPath)

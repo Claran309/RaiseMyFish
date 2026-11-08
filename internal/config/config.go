@@ -128,6 +128,20 @@ func LoadForCLI(path, envPath string) (Config, error) {
 	return cfg, nil
 }
 
+// LoadForMigrate 供 fishd migrate 使用：迁移只建表，不需要运行期凭据。
+// 只校验数据库、日志与状态文件路径；B站/LLM 等配置留到启动阶段再校验，
+// 保证「只有 DB 活跃账号、环境没有 cookie」的首次部署也能先完成建表。
+func LoadForMigrate(path, envPath string) (Config, error) {
+	cfg, err := load(path, envPath)
+	if err != nil {
+		return cfg, err
+	}
+	if err := cfg.validateMigration(); err != nil {
+		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
+	}
+	return cfg, nil
+}
+
 func load(path, envPath string) (Config, error) {
 	cfg := Config{
 		Database:  Database{DSNEnv: "FISH_DB_DSN", TimeoutSeconds: 5},
@@ -335,6 +349,25 @@ func (c Config) validateStructure(strictLive bool) error {
 		if err := c.Watch.validateStreamStructure(); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateMigration 是 migrate 子命令的最小校验：能连库、能写日志即可。
+// 通道开关、LLM、B站凭据都可能有 DB 账号在运行期回填，不能挡住建表。
+func (c Config) validateMigration() error {
+	if strings.TrimSpace(c.Database.DSNEnv) == "" || strings.TrimSpace(c.Database.DSN) == "" {
+		return errors.New("数据库环境变量未配置")
+	}
+	if c.Database.TimeoutSeconds < 1 || c.Database.TimeoutSeconds > 60 {
+		return errors.New("数据库超时必须为1至60秒")
+	}
+	var level zapcore.Level
+	if err := level.UnmarshalText([]byte(c.Log.Level)); err != nil {
+		return &safeError{"日志级别无效", err}
+	}
+	if strings.TrimSpace(c.Log.Dir) == "" || strings.TrimSpace(c.Runtime.StateFile) == "" {
+		return errors.New("日志目录和状态文件不能为空")
 	}
 	return nil
 }

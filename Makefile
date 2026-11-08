@@ -5,8 +5,9 @@ SHELL := /bin/bash
 BINARY := fishd
 CTL := fishctl
 GOFLAGS := -trimpath
+COMPOSE := docker compose -f deployment/docker-compose.yml
 
-.PHONY: help build run test test-race lint fmt vet migrate-up migrate-down dev-status clean docker-up docker-down docker-logs
+.PHONY: help build run test test-race lint fmt vet migrate-up migrate-down dev-status clean docker-up docker-down docker-logs docker-migrate
 
 help: ## 显示所有命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -44,14 +45,17 @@ dev-status: ## 查看各组件状态
 	./bin/$(CTL) status
 
 # ── Docker（交付 / 全栈）────────────────────────────────────
-docker-up: ## 构建并启动全部服务
-	docker compose up -d --build
+docker-up: ## 构建并启动全部服务（首次会自动跑迁移）
+	$(COMPOSE) up -d --build
 
-docker-down: ## 停止全部服务
-	docker compose down
+docker-down: ## 停止全部服务（保留数据卷）
+	$(COMPOSE) down
 
 docker-logs: ## 跟随 fishd 日志
-	docker compose logs -f fishd
+	$(COMPOSE) logs -f fishd
+
+docker-migrate: ## 手动应用数据库迁移
+	$(COMPOSE) run --rm migrate
 
 clean: ## 清理构建产物
 	rm -rf bin/

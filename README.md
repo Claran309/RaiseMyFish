@@ -77,12 +77,19 @@
 ## 快速启动
 
 ```bash
-# 1. 依赖：PostgreSQL 17（pgvector）、Node、Go 1.27
+# 1. 依赖：PostgreSQL 17（pgvector）、Node 24、Go 1.25+（仅构建）
 # 2. 配置：config/fishd.toml + .env（cookie/LLM key/embedding key）
 # 3. 迁移：bash scripts/migrate.sh
 # 4. 启动：bash scripts/test-run.sh（或 go run ./cmd/fishd --env-file .env）
 # 5. 面板：http://127.0.0.1:8090
+
+# Docker（Linux/服务器）：
+cp .env.example deployment/.env   # 填凭据；DSN 主机用 postgres
+# 首次启动前核对 config/fishd.toml 的房间/账号/礼物开关
+make docker-up                     # fishd + pgvector/pgvector:pg17，自动迁移
 ```
+
+部署方式与依赖细节见 `docs/13-deployment.md`。
 
 ---
 

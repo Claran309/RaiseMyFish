@@ -1,0 +1,89 @@
+# RaiseMyFish · Docker Compose（Linux/服务器交付）
+#
+# 用法（仓库根目录）：
+#   cp .env.example deployment/.env   # 填 POSTGRES_PASSWORD / FISH_DB_DSN / 凭据
+#   make docker-up                    # 等价于 docker compose -f deployment/docker-compose.yml up -d --build
+#
+# 说明：
+#   - 配置文件从仓库 ../config/fishd.toml 只读挂载，改开关/房间不需要重建镜像。
+#   - PostgreSQL 使用带 pgvector 的 17 镜像；迁移 0006 的 CREATE EXTENSION vector 依赖它。
+#   - env_file 与变量插值都读取 deployment/.env；与 Windows 本地的根目录 .env 隔离。
+#   - 面板只监听回环，不映射到宿主机；容器内用 curl/ fishctl 查看（见 docs/13-deployment.md）。
+
+name: raisemyfish
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-fishd-common: &fishd-common
+  image: raisemyfish/fishd:local
+  build:
+    context: ..
+    dockerfile: deployment/Dockerfile
+    args:
+      # 海外构建可在 deployment/.env 里改为 https://proxy.golang.org,direct
+      GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+  env_file: .env
+  logging: *default-logging
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: fish
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 deployment/.env 设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: raisemyfish
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # 只绑回环，避免把数据库暴露到公网；外部 PG 可删掉本服务与 fishd 的 depends_on。
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fish -d raisemyfish"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+
+  # 每次 up 都跑一遍迁移（migrate up 幂等）；失败会阻止 fishd 启动。
+  migrate:
+    <<: *fishd-common
+    command: ["migrate", "up"]
+    volumes:
+      - ../config/fishd.toml:/app/config/fishd.toml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  fishd:
+    <<: *fishd-common
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ../config/fishd.toml:/app/config/fishd.toml:ro
+      # persona 目录需要可写：梗白学习/灵魂记忆会回写 knowledge 与 soul-memories.md。
+      - ../personas:/app/personas
+      - fishd-logs:/app/logs
+      - fishd-data:/app/data
+      - fishd-state:/app/state
+    # 让容器内可访问宿主机上的本机 ASR/搜索服务（[watch].asr_url 默认指向 127.0.0.1）。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+volumes:
+  pgdata:
+  fishd-logs:
+  fishd-data:
+  fishd-state:
