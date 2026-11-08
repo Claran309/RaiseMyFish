@@ -159,7 +159,8 @@ protocol = "generic"
 # 例：allowed_domains = ["bilibili.com", "zhihu.com"]
 allowed_domains = []
 search_key = ""
-# 推荐用环境变量（优先于 search_key 字面值）：search_key_env = "FISH_SEARCH_KEY"
+# 推荐用环境变量（优先于 search_key 字面值；来源与主加载器一致：进程环境 > 本地 .env）：
+# search_key_env = "FISH_SEARCH_KEY"
 search_key_env = ""
 
 # MCP 工具服务器（stdio JSON-RPC 2.0）：默认关闭，供外部 agent（Codex/Claude）调用 ReAct 工具。

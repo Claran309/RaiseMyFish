@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"net"
-	"os"
 	"strings"
 )
 
@@ -23,6 +22,14 @@ type Web struct {
 	Protocol string `toml:"protocol"`
 	// AllowedDomains 是结果 URL 域名白名单；空表示不限。
 	AllowedDomains []string `toml:"allowed_domains"`
+
+	// resolvedKey/keyResolved 是 Load 阶段按「进程环境 > dotenv > 字面值」定下的 key（O07）。
+	//
+	// 不能在 ResolveKey 里现读 os.Getenv：那条路只看进程环境，
+	// dotenv 里的同名 key 永远不生效，配置就分裂成两套来源。
+	// 未导出字段不参与 TOML 解码，也不出现在 JSON 输出里。
+	resolvedKey string
+	keyResolved bool
 }
 
 func defaultWeb() Web { return Web{Addr: "127.0.0.1:8090", Protocol: "generic"} }
@@ -47,12 +54,29 @@ func normalizeDomain(raw string) (string, bool) {
 	return value, true
 }
 
-// ResolveKey 返回实际使用的 key：环境变量优先，其次字面值（兼容旧配置）。
-func (w Web) ResolveKey() string {
+// resolveEnvironment 用主加载器的 lookup 解析密钥（进程环境 > 本地 dotenv）。
+//
+// 语义与 Embedding.resolveEnvironment 一致：环境变量**存在即覆盖**，
+// 即使值为空（显式关闭）也不回退字面值；不存在才用 search_key 兼容旧配置。
+func (w *Web) resolveEnvironment(lookup func(string) (string, bool)) {
 	if name := strings.TrimSpace(w.SearchKeyEnv); name != "" {
-		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-			return v
+		if value, ok := lookup(name); ok {
+			w.resolvedKey = strings.TrimSpace(value)
+			w.keyResolved = true
+			return
 		}
+	}
+	w.resolvedKey = strings.TrimSpace(w.SearchKey)
+	w.keyResolved = true
+}
+
+// ResolveKey 返回实际使用的 key：Load 阶段已按统一来源解析好。
+//
+// 未经 Load 的临时对象（测试、手工构造）只认字面值——不再现读进程环境，
+// 那正是「dotenv 里的 key 不生效」的根因。
+func (w Web) ResolveKey() string {
+	if w.keyResolved {
+		return w.resolvedKey
 	}
 	return strings.TrimSpace(w.SearchKey)
 }

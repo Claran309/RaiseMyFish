@@ -123,3 +123,121 @@ func TestLoadWebRejectsUnknownFieldAndBadURL(t *testing.T) {
 		}
 	}
 }
+
+// unsetForTest 确保进程环境里没有该变量（t.Setenv 负责测试后恢复原值）。
+func unsetForTest(t *testing.T, key string) {
+	t.Helper()
+	t.Setenv(key, "")
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestWebResolveKeyFromDotenv O07 核心回归：dotenv 里的同名 key 必须生效。
+//
+// 旧实现里 ResolveKey 直接 os.Getenv，只看进程环境，
+// 结果 .env 配了 search_key_env 也不生效——配置分裂成两套来源。
+func TestWebResolveKeyFromDotenv(t *testing.T) {
+	const key = "FISH_TEST_WEB_KEY_DOTENV"
+	unsetForTest(t, key)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fishd.toml")
+	envPath := filepath.Join(dir, ".env")
+	if err := os.WriteFile(path, []byte("[web]\nsearch_key_env='"+key+"'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	env := key + "=from-dotenv\nFISH_DB_DSN=postgres://fish:pw@localhost/fish\n"
+	if err := os.WriteFile(envPath, []byte(env), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path, envPath)
+	if err != nil {
+		t.Fatalf("加载失败：%v", err)
+	}
+	if got := cfg.Web.ResolveKey(); got != "from-dotenv" {
+		t.Fatalf("dotenv 中的 key 未生效：%q", got)
+	}
+	// 只读解析：不能把 dotenv 的值塞进进程环境。
+	if os.Getenv(key) != "" {
+		t.Fatal("加载不应改进程环境")
+	}
+}
+
+// TestWebResolveKeyProcessEnvWins 进程环境优先于 dotenv（与主加载器一致）。
+func TestWebResolveKeyProcessEnvWins(t *testing.T) {
+	const key = "FISH_TEST_WEB_KEY_ENV"
+	t.Setenv(key, "from-process")
+	t.Setenv("FISH_DB_DSN", "postgres://fish:pw@localhost/fish")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fishd.toml")
+	envPath := filepath.Join(dir, ".env")
+	if err := os.WriteFile(path, []byte("[web]\nsearch_key_env='"+key+"'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envPath, []byte(key+"=from-dotenv\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path, envPath)
+	if err != nil {
+		t.Fatalf("加载失败：%v", err)
+	}
+	if got := cfg.Web.ResolveKey(); got != "from-process" {
+		t.Fatalf("进程环境应优先：%q", got)
+	}
+}
+
+// TestWebResolveKeyLiteralFallback 环境里没有该变量时，退回字面值（兼容旧配置）。
+func TestWebResolveKeyLiteralFallback(t *testing.T) {
+	const key = "FISH_TEST_WEB_KEY_ABSENT"
+	unsetForTest(t, key)
+	t.Setenv("FISH_DB_DSN", "postgres://fish:pw@localhost/fish")
+
+	p := filepath.Join(t.TempDir(), "fishd.toml")
+	body := "[web]\nsearch_key='literal-key'\nsearch_key_env='" + key + "'\n"
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(p, "")
+	if err != nil {
+		t.Fatalf("加载失败：%v", err)
+	}
+	if got := cfg.Web.ResolveKey(); got != "literal-key" {
+		t.Fatalf("无环境变量时应退回字面值：%q", got)
+	}
+}
+
+// TestWebResolveKeyExplicitEmptyEnvWins 显式空环境覆盖字面值（与 Embedding/LLM 同一语义）。
+func TestWebResolveKeyExplicitEmptyEnvWins(t *testing.T) {
+	const key = "FISH_TEST_WEB_KEY_EMPTY"
+	t.Setenv(key, "")
+	t.Setenv("FISH_DB_DSN", "postgres://fish:pw@localhost/fish")
+
+	p := filepath.Join(t.TempDir(), "fishd.toml")
+	body := "[web]\nsearch_key='literal-key'\nsearch_key_env='" + key + "'\n"
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(p, "")
+	if err != nil {
+		t.Fatalf("加载失败：%v", err)
+	}
+	if got := cfg.Web.ResolveKey(); got != "" {
+		t.Fatalf("显式空环境应关闭 key，实际 %q", got)
+	}
+}
+
+// TestWebResolveKeyWithoutLoad 未经 Load 的对象只认字面值，不再偷偷读进程环境。
+func TestWebResolveKeyWithoutLoad(t *testing.T) {
+	const key = "FISH_TEST_WEB_KEY_MANUAL"
+	t.Setenv(key, "from-process")
+	manual := Web{SearchKey: "literal", SearchKeyEnv: key}
+	if got := manual.ResolveKey(); got != "literal" {
+		t.Fatalf("未 Load 的对象应只认字面值：%q", got)
+	}
+}
