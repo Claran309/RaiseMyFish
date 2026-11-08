@@ -27,6 +27,18 @@ type UsageRepo interface {
 	RecordUsage(context.Context, Usage) error
 }
 
+// Cost 按「输入/输出每百万 token 单价」算一次调用的费用。
+//
+// 缺 token 或缺报价就是 nil（unknown），绝不编造 0 —— 与 Brain 的口径一致。
+// 结果四舍五入到 1e-6（llm_usage.cost_usd 是 NUMERIC(10,6)）。
+func Cost(in, out *int, inUSD, outUSD *float64) *float64 {
+	if in == nil || out == nil || inUSD == nil || outUSD == nil {
+		return nil
+	}
+	v := math.Round((float64(*in)**inUSD + float64(*out)**outUSD)) / 1e6
+	return &v
+}
+
 // Validate 在SQL之前检查数字范围，不把未知数据改成0。
 func (u Usage) Validate() error {
 	if u.At.IsZero() || !u.Channel.Valid() || strings.TrimSpace(u.Model) == "" || u.Milliseconds < 0 {

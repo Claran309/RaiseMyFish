@@ -19,6 +19,7 @@ import (
 	"RaiseMyFish/internal/gift"
 	"RaiseMyFish/internal/proactive"
 	"RaiseMyFish/internal/reasoning"
+	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/watch"
 	"RaiseMyFish/internal/webtools"
 	"go.uber.org/zap"
@@ -35,7 +36,9 @@ type toolExecutors struct {
 }
 
 // buildToolExecutors 按环境装配执行器；任何一项装配失败只降级该项。
-func buildToolExecutors(cfg config.Config, log *zap.Logger) toolExecutors {
+//
+// usage 可为 nil：为 nil 时视觉调用不计账（工具照常可用）。
+func buildToolExecutors(cfg config.Config, usage store.UsageRepo, log *zap.Logger) toolExecutors {
 	var execs toolExecutors
 	// 搜索不依赖B站凭据：先装配，保证无 cookie 时也能联网查证。
 	if cfg.Web.SearchURL != "" {
@@ -110,7 +113,8 @@ func buildToolExecutors(cfg config.Config, log *zap.Logger) toolExecutors {
 		execs.Frame = recorder
 		if cfg.LLM.Enabled {
 			if _, provider, model, err := cfg.LLM.Resolve(cfg.Watch.LLMRoute); err == nil {
-				if describer, err := watch.NewOpenAIDescriber(provider.BaseURL, provider.APIKey, model, nil, 0); err == nil {
+				sink := visionSink(usage, model, provider, log)
+				if describer, err := watch.NewOpenAIDescriber(provider.BaseURL, provider.APIKey, model, nil, 0, sink); err == nil {
 					execs.FrameRead = frameReader{inner: describer}
 				}
 			}

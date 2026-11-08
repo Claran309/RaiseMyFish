@@ -25,12 +25,14 @@ import (
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/collector"
 	"RaiseMyFish/internal/config"
+	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/infra"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/reasoning"
+	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/watchdog"
 	"RaiseMyFish/internal/web"
 	"go.uber.org/zap"
@@ -128,7 +130,17 @@ func newRuntimeControl(ctx context.Context, cfg config.Config, deps runtimeDeps,
 		})
 	c.dm = newCollectorController("dm", ctx, deps.Bus, deps.Timeout, log, now, deps.DM,
 		func() (collector.Collector, error) { return newDMCollector(cfg, deps.Accounts, log) })
-	c.watch = &watchController{ctx: ctx, base: cfg, log: log, now: now, available: watchAvailable(cfg)}
+	// 视觉调用要记账（O08）：账本装配失败只降级为不计账，不影响看直播。
+	var watchUsage store.UsageRepo
+	if deps.Resources != nil && deps.Resources.DB != nil {
+		repo, usageErr := database.NewUsageRepo(deps.Resources.DB)
+		if usageErr != nil {
+			log.Warn("看直播视觉记账装配失败，改为不计账", zap.String("action", "vision_usage"), zap.Error(usageErr))
+		} else {
+			watchUsage = repo
+		}
+	}
+	c.watch = &watchController{ctx: ctx, base: cfg, log: log, now: now, available: watchAvailable(cfg), usage: watchUsage}
 	c.proactive = &proactiveController{
 		ctx:       ctx,
 		base:      cfg,
@@ -657,6 +669,8 @@ type watchController struct {
 	log       *zap.Logger
 	now       func() time.Time
 	available bool
+	// usage 是视觉调用的账本（O08）；nil 表示不计账。
+	usage store.UsageRepo
 
 	lifeMu sync.Mutex
 	mu     sync.Mutex
@@ -692,7 +706,7 @@ func (w *watchController) set(enabled bool, roomID string) error {
 	}
 	local := w.base
 	local.Collector.Live.RoomID = room
-	pipeline, err := buildWatchPipeline(local, w.log)
+	pipeline, err := buildWatchPipeline(local, w.usage, w.log)
 	if err != nil {
 		w.setError(err)
 		return err

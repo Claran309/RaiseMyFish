@@ -197,6 +197,8 @@ func load(path, envPath string) (Config, error) {
 	// 主动弹幕复用看直播的截帧与视觉模型，因此也需要解析同一份凭据。
 	cfg.Watch.resolveEnvironment(lookup, cfg.Watch.Enabled || cfg.Proactive.Enabled)
 	cfg.Gift.resolveEnvironment(lookup, cfg.Gift.Enabled)
+	// 联网搜索密钥走同一个 lookup（O07）：否则 dotenv 里的同名 key 不生效。
+	cfg.Web.resolveEnvironment(lookup)
 	return cfg, nil
 }
 

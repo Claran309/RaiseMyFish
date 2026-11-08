@@ -150,7 +150,7 @@ async function loadStatus() {
   document.getElementById('data-cards').innerHTML = [
     card('info', '🧠', '记忆条数', d.memory_total || 0),
     card('info', '🏷️', '记忆分类', kinds, '', true),
-    card('warn', '💸', '累计费用($)', (d.cost_usd || 0).toFixed(4))
+    card('warn', '💸', '累计费用($)', d.cost_usd == null ? '未知' : Number(d.cost_usd).toFixed(4))
   ].join('');
 
   var health = document.getElementById('health');

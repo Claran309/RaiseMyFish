@@ -198,7 +198,7 @@ func TestRunWatchStopsOnCancel(t *testing.T) {
 // TestStartWatchDisabledDoesNothing 关闭时既不装配也不写日志。
 func TestStartWatchDisabledDoesNothing(t *testing.T) {
 	core, logs := observer.New(zapcore.InfoLevel)
-	stop := startWatch(context.Background(), config.Config{}, zap.New(core))
+	stop := startWatch(context.Background(), config.Config{}, nil, zap.New(core))
 	stop()
 	if logs.Len() != 0 {
 		t.Fatalf("关闭时不应启动：%v", logs.All())
@@ -210,7 +210,7 @@ func TestStartWatchDegradesOnBuildError(t *testing.T) {
 	core, logs := observer.New(zapcore.InfoLevel)
 	stop := startWatch(context.Background(), config.Config{
 		Watch: config.Watch{Enabled: true, IntervalSeconds: 600},
-	}, zap.New(core))
+	}, nil, zap.New(core))
 	stop()
 	if logs.FilterMessage("看直播装配失败，降级运行").Len() == 1 {
 		return
@@ -246,7 +246,7 @@ func watchTestConfig() config.Config {
 
 // TestBuildWatchPipeline 配置能构造出完整流水线（不联网、不执行 ffmpeg）。
 func TestBuildWatchPipeline(t *testing.T) {
-	pipeline, err := buildWatchPipeline(watchTestConfig(), zap.NewNop())
+	pipeline, err := buildWatchPipeline(watchTestConfig(), nil, zap.NewNop())
 	if err != nil || pipeline == nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -255,7 +255,7 @@ func TestBuildWatchPipeline(t *testing.T) {
 // TestStartWatchStartsAndStops 启用配置能启动定时器，stop 后退出。
 func TestStartWatchStartsAndStops(t *testing.T) {
 	core, logs := observer.New(zapcore.InfoLevel)
-	stop := startWatch(context.Background(), watchTestConfig(), zap.New(core))
+	stop := startWatch(context.Background(), watchTestConfig(), nil, zap.New(core))
 	if logs.FilterMessage("看直播已启动").Len() != 1 {
 		t.Fatalf("缺少启动日志：%v", logs.All())
 	}

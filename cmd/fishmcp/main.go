@@ -32,6 +32,7 @@ import (
 	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/proactive"
 	"RaiseMyFish/internal/reasoning"
+	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/viewer"
 	"RaiseMyFish/internal/watch"
 	"RaiseMyFish/internal/webtools"
@@ -164,7 +165,12 @@ func buildToolbox(ctx context.Context, cfg config.Config, db *gorm.DB, log *zap.
 	}
 
 	quota := buildGiftQuota(cfg, log)
-	execs := buildToolExecutors(cfg, log)
+	// 视觉记账与 fishd 同一口径（O08）；账本装配失败只降级为不计账。
+	usageRepo, usageErr := database.NewUsageRepo(db)
+	if usageErr != nil {
+		log.Warn("视觉记账装配失败，改为不计账", zap.String("action", "vision_usage"), zap.Error(usageErr))
+	}
+	execs := buildToolExecutors(cfg, usageRepo, log)
 
 	recall, err := reasoning.BuildTools(reasoning.ToolDeps{
 		Memory:    memReader,
@@ -217,7 +223,7 @@ type toolExecutors struct {
 }
 
 // buildToolExecutors 按环境装配执行器；任何一项失败只降级该项。
-func buildToolExecutors(cfg config.Config, log *zap.Logger) toolExecutors {
+func buildToolExecutors(cfg config.Config, usage store.UsageRepo, log *zap.Logger) toolExecutors {
 	var execs toolExecutors
 	if cfg.Web.SearchURL != "" {
 		searcher, err := webtools.NewHTTP(webtools.Options{
@@ -290,7 +296,10 @@ func buildToolExecutors(cfg config.Config, log *zap.Logger) toolExecutors {
 		execs.Frame = recorder
 		if cfg.LLM.Enabled {
 			if _, prov, model, err := cfg.LLM.Resolve(cfg.Watch.LLMRoute); err == nil {
-				if describer, err := watch.NewOpenAIDescriber(prov.BaseURL, prov.APIKey, model, nil, 0); err == nil {
+				// 视觉调用同样记账（O08）：MCP 与面板/主动弹幕共用一份口径。
+				price := prov.Prices[model]
+				sink := watch.UsageSinkFor(usage, model, price.InputUSDPerMillion, price.OutputUSDPerMillion, log)
+				if describer, err := watch.NewOpenAIDescriber(prov.BaseURL, prov.APIKey, model, nil, 0, sink); err == nil {
 					execs.FrameRead = frameReader{inner: describer}
 				}
 			}

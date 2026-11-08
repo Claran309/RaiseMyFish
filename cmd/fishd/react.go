@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"math"
 	"net/http"
 	"sort"
 	"time"
@@ -301,11 +300,7 @@ func (p *providerLLM) record(ctx context.Context, at time.Time, resp provider.Re
 
 // cost 与 Brain 同一口径：缺 token 或缺报价就是 nil，不编造 0。
 func (p *providerLLM) cost(u provider.Usage) *float64 {
-	if u.InputTokens == nil || u.OutputTokens == nil || p.blueprint.inUSD == nil || p.blueprint.outUSD == nil {
-		return nil
-	}
-	v := math.Round((float64(*u.InputTokens)**p.blueprint.inUSD + float64(*u.OutputTokens)**p.blueprint.outUSD)) / 1e6
-	return &v
+	return store.Cost(u.InputTokens, u.OutputTokens, p.blueprint.inUSD, p.blueprint.outUSD)
 }
 
 // validTokens 把负数/越界 token 当作未知（nil），不让脏数据进账本。

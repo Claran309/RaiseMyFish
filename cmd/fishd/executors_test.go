@@ -32,7 +32,7 @@ func execConfig(cookie string) config.Config {
 // TestBuildToolExecutorsWithoutCookie 无凭据：全部 nil，只记日志，不报错。
 func TestBuildToolExecutorsWithoutCookie(t *testing.T) {
 	core, logs := observer.New(zap.InfoLevel)
-	execs := buildToolExecutors(execConfig(""), zap.New(core))
+	execs := buildToolExecutors(execConfig(""), nil, zap.New(core))
 
 	if execs.Live != nil || execs.Social != nil || execs.Frame != nil || execs.FrameRead != nil || execs.Search != nil {
 		t.Errorf("无凭据时不应装配任何执行器：%+v", execs)
@@ -50,7 +50,7 @@ func TestBuildToolExecutorsWithoutCookie(t *testing.T) {
 func TestBuildToolExecutorsWithCookie(t *testing.T) {
 	core, logs := observer.New(zap.InfoLevel)
 	cookie := "SESSDATA=secret-sess; bili_jct=csrf-token-123"
-	execs := buildToolExecutors(execConfig(cookie), zap.New(core))
+	execs := buildToolExecutors(execConfig(cookie), nil, zap.New(core))
 
 	if execs.Live == nil {
 		t.Error("有 cookie 应装配直播间状态执行器")
@@ -70,7 +70,7 @@ func TestBuildToolExecutorsWithCookie(t *testing.T) {
 // TestBuildToolExecutorsWithoutCSRF 只有 SESSDATA：只读可用，写操作不装配。
 func TestBuildToolExecutorsWithoutCSRF(t *testing.T) {
 	core, logs := observer.New(zap.WarnLevel)
-	execs := buildToolExecutors(execConfig("SESSDATA=only"), zap.New(core))
+	execs := buildToolExecutors(execConfig("SESSDATA=only"), nil, zap.New(core))
 
 	if execs.Live == nil {
 		t.Error("只读执行器应装配")
@@ -89,7 +89,7 @@ func TestBuildToolExecutorsSearchWithoutCookie(t *testing.T) {
 	cfg := execConfig("")
 	cfg.Web.SearchURL = "https://search.example.com/api"
 	cfg.Web.SearchKey = "search-secret"
-	execs := buildToolExecutors(cfg, zap.New(core))
+	execs := buildToolExecutors(cfg, nil, zap.New(core))
 
 	if execs.Search == nil {
 		t.Fatal("配置了 search_url 时应装配搜索执行器")
@@ -118,7 +118,7 @@ func TestBuildToolExecutorsBadSearchURL(t *testing.T) {
 	core, logs := observer.New(zap.WarnLevel)
 	cfg := execConfig("SESSDATA=only")
 	cfg.Web.SearchURL = "ftp://search.example.com/api"
-	execs := buildToolExecutors(cfg, zap.New(core))
+	execs := buildToolExecutors(cfg, nil, zap.New(core))
 
 	if execs.Search != nil {
 		t.Error("坏地址不应装配搜索执行器")

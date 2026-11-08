@@ -57,8 +57,15 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 	if err != nil {
 		return nil, err
 	}
-	// 视觉客户端沿用 watch 的实现，只把提示词换成固定的「详细识图」
-	describer, err := watch.NewOpenAIDescriber(provider.BaseURL, provider.APIKey, model, nil, 0)
+	// 视觉客户端沿用 watch 的实现，只把提示词换成固定的「详细识图」。
+	// 用量与 Watch 同一账本口径（O08）：装配失败只降级为不计账。
+	usageRepo, err := database.NewUsageRepo(resources.DB)
+	if err != nil {
+		logger.Warn("主动弹幕视觉记账装配失败，改为不计账", zap.String("action", "vision_usage"), zap.Error(err))
+		usageRepo = nil
+	}
+	describer, err := watch.NewOpenAIDescriber(provider.BaseURL, provider.APIKey, model, nil, 0,
+		visionSink(usageRepo, model, provider, logger))
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +112,7 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 		if err != nil {
 			return nil, fmt.Errorf("装配主动弹幕用量账本失败：%w", err)
 		}
-		factory, err := buildReasonerFactory(cfg, memReader, know, pres, events, nil, buildGiftQuota(cfg, logger), buildToolExecutors(cfg, logger), usageRepo, giftGate, logger)
+		factory, err := buildReasonerFactory(cfg, memReader, know, pres, events, nil, buildGiftQuota(cfg, logger), buildToolExecutors(cfg, usageRepo, logger), usageRepo, giftGate, logger)
 		if err != nil {
 			return nil, err
 		}

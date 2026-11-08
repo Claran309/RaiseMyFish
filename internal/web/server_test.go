@@ -397,6 +397,22 @@ func TestPagesRender(t *testing.T) {
 	}
 }
 
+// TestIndexCostShowsUnknown O08：费用未知（API 给 null）时页面显示「未知」，不能显示成 0。
+//
+// 视觉调用的 usage 记 unknown 时 CostUSD 是 nil；如果页面用 (x||0) 降级，
+// 「不知道花了多少」就会被误读成「一分没花」。
+func TestIndexCostShowsUnknown(t *testing.T) {
+	srv := newTestServer(t, &fakeRepo{})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, readReq("/"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("首页状态码 = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "d.cost_usd == null ? '未知'") {
+		t.Fatal("首页费用卡片未区分「未知」与 0")
+	}
+}
+
 // TestAddrMustBeLoopback 非回环地址在构造期被拒绝。
 func TestAddrMustBeLoopback(t *testing.T) {
 	cases := []struct {

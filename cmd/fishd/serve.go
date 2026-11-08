@@ -468,7 +468,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 		}
 	}
 	quota := buildGiftQuota(cfg, log)
-	execs := buildToolExecutors(cfg, log)
+	execs := buildToolExecutors(cfg, usageRepo, log)
 	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, viewerSearch, quota, execs, usageRepo, giftGate, log)
 	if err != nil {
 		return nil, nil, nil, err

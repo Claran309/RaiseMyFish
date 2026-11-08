@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOpenAIDescriberSendsBase64Frames(t *testing.T) {
@@ -53,7 +54,7 @@ func TestOpenAIDescriberSendsBase64Frames(t *testing.T) {
 	}))
 	defer server.Close()
 
-	describer, err := NewOpenAIDescriber(server.URL, "test-key", "deepseek-chat", server.Client(), 0)
+	describer, err := NewOpenAIDescriber(server.URL, "test-key", "deepseek-chat", server.Client(), 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +101,7 @@ func TestOpenAIDescriberErrorsAreExplicit(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			status, body = tc.status, tc.body
-			describer, err := NewOpenAIDescriber(server.URL, "", "deepseek-chat", server.Client(), 0)
+			describer, err := NewOpenAIDescriber(server.URL, "", "deepseek-chat", server.Client(), 0, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,7 +121,7 @@ func TestOpenAIDescriberInputValidation(t *testing.T) {
 		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}]}`)
 	}))
 	defer server.Close()
-	describer, err := NewOpenAIDescriber(server.URL, "", "deepseek-chat", server.Client(), 0)
+	describer, err := NewOpenAIDescriber(server.URL, "", "deepseek-chat", server.Client(), 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,10 +136,120 @@ func TestOpenAIDescriberInputValidation(t *testing.T) {
 	if _, err := describer.Describe(context.Background(), []string{gif}, DefaultPrompt); err == nil {
 		t.Fatal("接受不支持的帧格式")
 	}
-	if _, err := NewOpenAIDescriber("http://example.com/v1", "", "m", nil, 0); err == nil {
+	if _, err := NewOpenAIDescriber("http://example.com/v1", "", "m", nil, 0, nil); err == nil {
 		t.Fatal("允许非本机HTTP端点")
 	}
-	if _, err := NewOpenAIDescriber(server.URL, "", "", nil, 0); err == nil {
+	if _, err := NewOpenAIDescriber(server.URL, "", "", nil, 0, nil); err == nil {
 		t.Fatal("接受空模型")
+	}
+}
+
+// TestDescribeRecordsUsage O08：视觉响应里的 usage 要交给 sink（成功路径）。
+func TestDescribeRecordsUsage(t *testing.T) {
+	frame := tempPath(t, "frame-00.jpg")
+	writeTestFile(t, frame, []byte("jpeg-bytes"))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"画面正常"}}],"usage":{"prompt_tokens":120,"completion_tokens":30}}`)
+	}))
+	defer server.Close()
+
+	var got VisionUsage
+	var gotOK bool
+	called := 0
+	sink := func(_ context.Context, u VisionUsage, ok bool, _ time.Duration) {
+		called++
+		got, gotOK = u, ok
+	}
+	describer, err := NewOpenAIDescriber(server.URL, "", "vision-model", server.Client(), 0, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := describer.Describe(context.Background(), []string{frame}, DefaultPrompt); err != nil {
+		t.Fatal(err)
+	}
+	if called != 1 || !gotOK {
+		t.Fatalf("sink 未按成功记账：calls=%d ok=%v", called, gotOK)
+	}
+	if got.InputTokens == nil || *got.InputTokens != 120 {
+		t.Fatalf("输入 token 不符：%v", got.InputTokens)
+	}
+	if got.OutputTokens == nil || *got.OutputTokens != 30 {
+		t.Fatalf("输出 token 不符：%v", got.OutputTokens)
+	}
+}
+
+// TestDescribeRecordsUnknownUsage 服务端没给 usage 时记 unknown（nil），绝不写成 0。
+func TestDescribeRecordsUnknownUsage(t *testing.T) {
+	frame := tempPath(t, "frame-00.jpg")
+	writeTestFile(t, frame, []byte("jpeg-bytes"))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"画面正常"}}]}`)
+	}))
+	defer server.Close()
+
+	var got VisionUsage
+	describer, err := NewOpenAIDescriber(server.URL, "", "vision-model", server.Client(), 0,
+		func(_ context.Context, u VisionUsage, _ bool, _ time.Duration) { got = u })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := describer.Describe(context.Background(), []string{frame}, DefaultPrompt); err != nil {
+		t.Fatal(err)
+	}
+	if got.InputTokens != nil || got.OutputTokens != nil {
+		t.Fatalf("缺失 usage 应为未知（nil）：%+v", got)
+	}
+}
+
+// TestDescribeRecordsFailure 调用失败也要记一行（OK=false），否则模型一直挂看不见。
+func TestDescribeRecordsFailure(t *testing.T) {
+	frame := tempPath(t, "frame-00.jpg")
+	writeTestFile(t, frame, []byte("jpeg-bytes"))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	called, gotOK := 0, true
+	describer, err := NewOpenAIDescriber(server.URL, "", "vision-model", server.Client(), 0,
+		func(_ context.Context, _ VisionUsage, ok bool, _ time.Duration) {
+			called++
+			gotOK = ok
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := describer.Describe(context.Background(), []string{frame}, DefaultPrompt); err == nil {
+		t.Fatal("500 应报错")
+	}
+	if called != 1 || gotOK {
+		t.Fatalf("失败也应记账且 ok=false：calls=%d ok=%v", called, gotOK)
+	}
+}
+
+// TestDescribeSanitizesBadTokens 负数/越界 token 记 unknown，不让脏数据进账本。
+func TestDescribeSanitizesBadTokens(t *testing.T) {
+	frame := tempPath(t, "frame-00.jpg")
+	writeTestFile(t, frame, []byte("jpeg-bytes"))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"画面正常"}}],"usage":{"prompt_tokens":-5,"completion_tokens":99999999999}}`)
+	}))
+	defer server.Close()
+
+	var got VisionUsage
+	describer, err := NewOpenAIDescriber(server.URL, "", "vision-model", server.Client(), 0,
+		func(_ context.Context, u VisionUsage, _ bool, _ time.Duration) { got = u })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := describer.Describe(context.Background(), []string{frame}, DefaultPrompt); err != nil {
+		t.Fatal(err)
+	}
+	if got.InputTokens != nil || got.OutputTokens != nil {
+		t.Fatalf("非法 token 应为 unknown：%+v", got)
 	}
 }

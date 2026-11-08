@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"RaiseMyFish/internal/config"
+	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/watch"
 	"go.uber.org/zap"
 )
@@ -17,7 +18,9 @@ type watchRunner interface {
 }
 
 // buildWatchPipeline 只用已校验的配置构造流水线；构造期不联网、不执行 ffmpeg。
-func buildWatchPipeline(cfg config.Config, logger *zap.Logger) (*watch.Pipeline, error) {
+//
+// usage 可为 nil（未装配账本）：此时视觉调用不计账，其它行为不变。
+func buildWatchPipeline(cfg config.Config, usage store.UsageRepo, logger *zap.Logger) (*watch.Pipeline, error) {
 	_, provider, model, err := cfg.LLM.Resolve(cfg.Watch.LLMRoute)
 	if err != nil {
 		return nil, err
@@ -48,7 +51,8 @@ func buildWatchPipeline(cfg config.Config, logger *zap.Logger) (*watch.Pipeline,
 	if err != nil {
 		return nil, err
 	}
-	describer, err := watch.NewOpenAIDescriber(provider.BaseURL, provider.APIKey, model, nil, 0)
+	describer, err := watch.NewOpenAIDescriber(provider.BaseURL, provider.APIKey, model, nil, 0,
+		visionSink(usage, model, provider, logger))
 	if err != nil {
 		return nil, err
 	}
@@ -106,12 +110,12 @@ func runWatch(ctx context.Context, runner watchRunner, ticks <-chan time.Time, n
 
 // startWatch 仅在 [watch] enabled=true 时装配并启动；初始化失败只降级，不阻塞主链路。
 // 返回的 stop 会取消并等待定时循环退出。
-func startWatch(ctx context.Context, cfg config.Config, logger *zap.Logger) func() {
+func startWatch(ctx context.Context, cfg config.Config, usage store.UsageRepo, logger *zap.Logger) func() {
 	noop := func() {}
 	if !cfg.Watch.Enabled {
 		return noop
 	}
-	pipeline, err := buildWatchPipeline(cfg, logger)
+	pipeline, err := buildWatchPipeline(cfg, usage, logger)
 	if err != nil {
 		logger.Error("看直播装配失败，降级运行", zap.String("action", "watch"), zap.Error(err))
 		return noop
