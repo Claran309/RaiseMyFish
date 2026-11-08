@@ -451,3 +451,47 @@ func TestActivityPageBlocks(t *testing.T) {
 		}
 	}
 }
+
+// TestLiveAPIExposesWatchHealth O09：面板要能区分「循环在跑」与「业务健康」。
+func TestLiveAPIExposesWatchHealth(t *testing.T) {
+	control := &fakeControl{status: RuntimeStatus{
+		Watch: WatchState{
+			Available:           true,
+			Enabled:             true,
+			Running:             true,
+			Healthy:             false,
+			ConsecutiveFailures: 3,
+			LastFailureStage:    "record",
+			LastAttemptAt:       "2026-11-08T10:00:00Z",
+		},
+	}}
+	srv := newTestServerWithRuntime(t, &fakeRepo{}, control, nil)
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, readReq("/api/live"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"running":true`, `"healthy":false`, `"consecutive_failures":3`, `"last_failure_stage":"record"`, `"last_attempt_at":"2026-11-08T10:00:00Z"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("缺少字段 %s：%s", want, body)
+		}
+	}
+}
+
+// TestLivePageShowsWatchHealth 页面要显示健康与连续失败（纯前端无编译期保护）。
+func TestLivePageShowsWatchHealth(t *testing.T) {
+	srv := newTestServerWithRuntime(t, &fakeRepo{}, &fakeControl{}, nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, readReq("/live"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"watch-failures", "watch-success", "运行中（业务失败）"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("页面缺少 %q", want)
+		}
+	}
+}

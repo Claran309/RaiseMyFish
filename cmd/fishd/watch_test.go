@@ -104,7 +104,7 @@ func TestRunWatchFakeClockTriggersPerTick(t *testing.T) {
 	ticks := make(chan time.Time)
 	go func() {
 		defer close(done)
-		runWatch(ctx, runner, ticks, clock.Now, zap.New(core))
+		runWatch(ctx, runner, ticks, clock.Now, zap.New(core), nil)
 	}()
 
 	ticks <- clock.Now()
@@ -152,7 +152,7 @@ func TestRunWatchFailureDoesNotStopLoop(t *testing.T) {
 	ticks := make(chan time.Time)
 	go func() {
 		defer close(done)
-		runWatch(ctx, runner, ticks, clock.Now, zap.New(core))
+		runWatch(ctx, runner, ticks, clock.Now, zap.New(core), nil)
 	}()
 
 	ticks <- clock.Now()
@@ -183,7 +183,7 @@ func TestRunWatchStopsOnCancel(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runWatch(ctx, runner, make(chan time.Time), clock.Now, zap.NewNop())
+		runWatch(ctx, runner, make(chan time.Time), clock.Now, zap.NewNop(), nil)
 	}()
 	select {
 	case <-done:

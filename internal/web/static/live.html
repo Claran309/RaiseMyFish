@@ -62,6 +62,8 @@ button.danger{border-color:#3a1d1d;color:var(--bad)}
       <div>状态：<b id="watch-pill">—</b></div>
       <div>房间：<b id="watch-room">—</b></div>
       <div>启动时间：<b id="watch-started">—</b></div>
+      <div>最近成功：<b id="watch-success">—</b></div>
+      <div>连续失败：<b id="watch-failures">—</b></div>
       <div>最近错误：<b id="watch-error">—</b></div>
     </div>
     <div class="muted" style="margin-top:8px">支持纯数字 room_id 或 live.bilibili.com 直播间链接；房间号留空时沿用上次。</div>
@@ -114,9 +116,27 @@ function render() {
 
   var running = watch.running;
   var watchAvailable = watch.available !== false;
-  document.getElementById('watch-pill').textContent = !watchAvailable ? '未装配' : (running ? '运行中' : (watch.enabled ? '已启用未运行' : '已停止'));
+  // O09：running 只说明循环在，healthy 才说明最近一轮业务成功。
+  var healthy = watch.healthy === true;
+  var pill = document.getElementById('watch-pill');
+  if (!watchAvailable) {
+    pill.textContent = '未装配'; pill.className = 'pill';
+  } else if (running && healthy) {
+    pill.textContent = '运行中'; pill.className = 'pill ok';
+  } else if (running) {
+    pill.textContent = '运行中（业务失败）'; pill.className = 'pill bad';
+  } else if (watch.enabled) {
+    pill.textContent = '已启用未运行'; pill.className = 'pill warn';
+  } else {
+    pill.textContent = '已停止'; pill.className = 'pill';
+  }
   document.getElementById('watch-room').textContent = watch.room_id || '—';
   document.getElementById('watch-started').textContent = when(watch.started_at);
+  document.getElementById('watch-success').textContent = when(watch.last_success_at);
+  var failures = watch.consecutive_failures || 0;
+  document.getElementById('watch-failures').textContent =
+    failures > 0 ? (failures + ' 次' + (watch.last_failure_stage ? '（' + watch.last_failure_stage + '）' : ''))
+                 : (running ? '0' : '—');
   document.getElementById('watch-error').textContent = watch.last_error || (!watchAvailable ? '看直播未装配（需启用 [llm]）' : '—');
   document.getElementById('room').disabled = !watchAvailable;
   document.getElementById('watch-start').disabled = !watchAvailable;

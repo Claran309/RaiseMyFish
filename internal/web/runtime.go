@@ -48,6 +48,10 @@ type CollectorState struct {
 }
 
 // WatchState 是看直播（analysis pipeline）的运行状态。
+//
+// O09：把「循环存在」与「业务健康」分开表达。
+// running=true 只说明定时器还在跑；healthy 才说明最近一轮真的成功了。
+// 录制失败/抽帧失败这类持续业务失败过去完全不体现，面板一直显示「运行中」。
 type WatchState struct {
 	Available bool   `json:"available"`
 	Enabled   bool   `json:"enabled"`
@@ -55,6 +59,16 @@ type WatchState struct {
 	RoomID    string `json:"room_id,omitempty"`
 	StartedAt string `json:"started_at,omitempty"`
 	LastError string `json:"last_error,omitempty"`
+	// Healthy 表示循环在跑且最近一轮业务成功（无整轮错误、无降级环节）。
+	Healthy bool `json:"healthy"`
+	// LastAttemptAt 是最近一次尝试的时间（无论成败）。
+	LastAttemptAt string `json:"last_attempt_at,omitempty"`
+	// LastSuccessAt 是最近一次业务成功的时间。
+	LastSuccessAt string `json:"last_success_at,omitempty"`
+	// ConsecutiveFailures 是连续失败轮数；成功一轮即归零。
+	ConsecutiveFailures int `json:"consecutive_failures"`
+	// LastFailureStage 是最近失败发生在哪一环（record/frames/describe/...）。
+	LastFailureStage string `json:"last_failure_stage,omitempty"`
 }
 
 // FeatureState 是定时/后台能力的通用状态。

@@ -681,6 +681,13 @@ type watchController struct {
 	startedAt time.Time
 	lastError string
 	stop      func()
+
+	// 业务健康（O09）：running 只说明循环还在，healthy 才说明最近一轮真的成功。
+	lastAttemptAt time.Time
+	lastSuccessAt time.Time
+	// failures 是连续失败轮数；成功一轮即归零。
+	failures  int
+	lastStage string
 }
 
 func (w *watchController) set(enabled bool, roomID string) error {
@@ -692,6 +699,9 @@ func (w *watchController) set(enabled bool, roomID string) error {
 		stop := w.stop
 		w.stop = nil
 		w.running = false
+		// 停了就不再谈健康：残留的失败次数会让人以为「还在失败」。
+		w.failures = 0
+		w.lastStage = ""
 		w.mu.Unlock()
 		if stop != nil {
 			stop()
@@ -728,7 +738,7 @@ func (w *watchController) set(enabled bool, roomID string) error {
 		stop()
 	}
 	interval := time.Duration(local.Watch.IntervalSeconds) * time.Second
-	stop = startWatchLoop(w.ctx, pipeline, interval, w.log)
+	stop = startWatchLoop(w.ctx, pipeline, interval, w.log, w.recordAttempt)
 	w.mu.Lock()
 	w.enabled = true
 	w.running = true
@@ -736,6 +746,11 @@ func (w *watchController) set(enabled bool, roomID string) error {
 	w.startedAt = w.now()
 	w.lastError = ""
 	w.stop = stop
+	// 新循环的健康统计从零开始，避免上一轮失败次数挂在「刚启动」上。
+	w.lastAttemptAt = time.Time{}
+	w.lastSuccessAt = time.Time{}
+	w.failures = 0
+	w.lastStage = ""
 	w.mu.Unlock()
 	w.log.Info("看直播已启动",
 		zap.String("action", "watch"),
@@ -769,16 +784,46 @@ func (w *watchController) status() web.WatchState {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	state := web.WatchState{
-		Available: w.available,
-		Enabled:   w.enabled,
-		Running:   w.running,
-		RoomID:    w.room,
-		LastError: w.lastError,
+		Available:           w.available,
+		Enabled:             w.enabled,
+		Running:             w.running,
+		RoomID:              w.room,
+		LastError:           w.lastError,
+		ConsecutiveFailures: w.failures,
+		LastFailureStage:    w.lastStage,
 	}
 	if w.running && !w.startedAt.IsZero() {
 		state.StartedAt = formatTime(w.startedAt)
 	}
+	// healthy 需要三个条件同时成立：循环在跑、至少成功过一轮、当前没有连续失败。
+	// 只启动还没跑过第一轮时 healthy=false 是诚实的（还不知道它行不行）。
+	state.Healthy = w.running && w.failures == 0 && !w.lastSuccessAt.IsZero()
+	if !w.lastAttemptAt.IsZero() {
+		state.LastAttemptAt = formatTime(w.lastAttemptAt)
+	}
+	if !w.lastSuccessAt.IsZero() {
+		state.LastSuccessAt = formatTime(w.lastSuccessAt)
+	}
 	return state
+}
+
+// recordAttempt 接收每轮看直播的结果，维护「最后尝试/最后成功/连续失败」。
+//
+// 由看直播循环在独立 goroutine 里调用，与 status() 共用 w.mu。
+func (w *watchController) recordAttempt(a watchAttempt) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.lastAttemptAt = a.At
+	if a.OK() {
+		w.lastSuccessAt = a.At
+		w.failures = 0
+		w.lastStage = ""
+		return
+	}
+	w.failures++
+	if stage := a.firstStage(); stage != "" {
+		w.lastStage = stage
+	}
 }
 
 // ---------------------------------------------------------------------------

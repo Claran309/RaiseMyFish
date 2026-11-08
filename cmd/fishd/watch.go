@@ -68,9 +68,36 @@ func buildWatchPipeline(cfg config.Config, usage store.UsageRepo, logger *zap.Lo
 	})
 }
 
+// watchAttempt 是一轮看直播的结果摘要，用于面板状态（不含任何正文）。
+type watchAttempt struct {
+	At       time.Time
+	Elapsed  time.Duration
+	Err      error
+	Degraded bool
+	// Stages 是这一轮失败的环节（record/frames/brightness/describe/audio/transcribe）。
+	Stages []string
+}
+
+// OK 表示业务成功：没有整轮错误，也没有任何降级环节。
+func (a watchAttempt) OK() bool { return a.Err == nil && len(a.Stages) == 0 }
+
+// firstStage 返回第一个失败环节；整轮错误归到 "run"。
+func (a watchAttempt) firstStage() string {
+	if a.Err != nil {
+		return "run"
+	}
+	if len(a.Stages) > 0 {
+		return a.Stages[0]
+	}
+	return ""
+}
+
 // runWatch 按 ticks 逐次触发；单次失败只记日志，不退出循环。
 // ticks 由调用方提供，测试可注入 fake clock 的通道而不依赖真实计时。
-func runWatch(ctx context.Context, runner watchRunner, ticks <-chan time.Time, now func() time.Time, logger *zap.Logger) {
+//
+// O09：每轮结束都通过 report 上报结果（成功/失败/失败环节），
+// 面板才能区分「循环还在跑」与「业务一直失败」。
+func runWatch(ctx context.Context, runner watchRunner, ticks <-chan time.Time, now func() time.Time, logger *zap.Logger, report func(watchAttempt)) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -81,6 +108,13 @@ func runWatch(ctx context.Context, runner watchRunner, ticks <-chan time.Time, n
 			elapsed := now().Sub(started)
 			if ctx.Err() != nil {
 				return
+			}
+			attempt := watchAttempt{At: started, Elapsed: elapsed, Err: err, Degraded: result.Degraded()}
+			for _, failure := range result.Failures {
+				attempt.Stages = append(attempt.Stages, failure.Stage)
+			}
+			if report != nil {
+				report(attempt)
 			}
 			if err != nil {
 				logger.Error("看直播失败，等待下一轮",
@@ -121,7 +155,7 @@ func startWatch(ctx context.Context, cfg config.Config, usage store.UsageRepo, l
 		return noop
 	}
 	interval := time.Duration(cfg.Watch.IntervalSeconds) * time.Second
-	stop := startWatchLoop(ctx, pipeline, interval, logger)
+	stop := startWatchLoop(ctx, pipeline, interval, logger, nil)
 	logger.Info("看直播已启动",
 		zap.String("action", "watch"),
 		zap.Int("interval_seconds", cfg.Watch.IntervalSeconds),
@@ -132,7 +166,8 @@ func startWatch(ctx context.Context, cfg config.Config, usage store.UsageRepo, l
 }
 
 // startWatchLoop 起定时循环；interval 非正时按 10 分钟兜底。
-func startWatchLoop(ctx context.Context, runner watchRunner, interval time.Duration, logger *zap.Logger) func() {
+// report 可为 nil（不需要对外暴露状态时）。
+func startWatchLoop(ctx context.Context, runner watchRunner, interval time.Duration, logger *zap.Logger, report func(watchAttempt)) func() {
 	if interval <= 0 {
 		interval = 10 * time.Minute
 	}
@@ -142,7 +177,7 @@ func startWatchLoop(ctx context.Context, runner watchRunner, interval time.Durat
 	go func() {
 		defer close(done)
 		defer ticker.Stop()
-		runWatch(runCtx, runner, ticker.C, time.Now, logger)
+		runWatch(runCtx, runner, ticker.C, time.Now, logger, report)
 	}()
 	return func() {
 		cancel()
