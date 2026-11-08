@@ -14,7 +14,29 @@ import (
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
+
+// retryDelayFromDBClock 以数据库时钟为基准派生重试延迟：
+// 量一次 clock_timestamp() 的往返与漂移，再留出余量。
+// 由于 deferClaim 用 Go 时钟加 RetryDelay，而库层用数据库时钟校验未来，
+// 只有把往返与正向漂移都计入延迟，Docker/远程 PG 下才不会判成过去时间。
+func retryDelayFromDBClock(t *testing.T, db *gorm.DB) time.Duration {
+	t.Helper()
+	start := time.Now()
+	var row struct {
+		Now time.Time `gorm:"column:db_now"`
+	}
+	if err := db.Raw("SELECT clock_timestamp() AS db_now").Scan(&row).Error; err != nil {
+		t.Fatalf("读取数据库时钟失败：%v", err)
+	}
+	rtt := time.Since(start)
+	delay := 2*rtt + 500*time.Millisecond
+	if skew := row.Now.Sub(start.Add(rtt / 2)); skew > 0 {
+		delay += skew
+	}
+	return delay
+}
 
 func TestSchedulerAdmissionQuotaAtomicAndRestart(t *testing.T) {
 	db, ctx := repositoryDB(t)
@@ -266,7 +288,7 @@ func TestSchedulerRunRealPostgresWithoutModel(t *testing.T) {
 	opts := scheduler.DefaultOptions()
 	opts.MaxConcurrent = 2
 	opts.PollInterval = 5 * time.Millisecond
-	opts.RetryDelay = 5 * time.Millisecond
+	opts.RetryDelay = retryDelayFromDBClock(t, db)
 	opts.OperationTimeout = 2 * time.Second
 	p := opts.Channels[event.ChLive]
 	p.OwnerIDs = []string{"owner"}

@@ -76,7 +76,8 @@ func knowledgeCheckTestDSN(t *testing.T) string {
 func TestKnowledgeCheckWithRealPostgresNoModelOrUsage(t *testing.T) {
 	dsn := knowledgeCheckTestDSN(t)
 	t.Setenv("FISH_DB_DSN", dsn)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// 满载并行时知识库解析（含 memes/batch-007.md）可能超过 20s，预算放宽到 60s。
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	dir := t.TempDir()
 	state := filepath.Join(dir, "status.json")
