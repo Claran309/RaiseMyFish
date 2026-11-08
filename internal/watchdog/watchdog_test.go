@@ -23,6 +23,10 @@ type harness struct {
 	kills       int
 	restartErr  error
 	alive       bool
+	// procStart 是「系统视角」的进程创建时间；procKnown=false 表示读不到（权限/平台）。
+	// 默认与心跳的 started_at 对齐 = 同一个实例。
+	procStart time.Time
+	procKnown bool
 }
 
 func newHarness(t *testing.T) *harness {
@@ -34,15 +38,18 @@ func newHarness(t *testing.T) *harness {
 		historyPath: filepath.Join(dir, "watchdog-history.jsonl"),
 		clock:       time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC),
 		alive:       true,
+		procKnown:   true,
 	}
 }
 
 // write 写心跳并把 mtime 调到指定时间。
 func (h *harness) write(t *testing.T, at time.Time, pid int) {
 	t.Helper()
-	if err := WriteHeartbeat(h.path, pid, at); err != nil {
+	if err := WriteHeartbeat(h.path, pid, at, at); err != nil {
 		t.Fatal(err)
 	}
+	// 默认让「系统视角的创建时间」与心跳里的 started_at 一致 = 同一个实例。
+	h.procStart = at
 	if err := os.Chtimes(h.path, at, at); err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +67,12 @@ func (h *harness) newDog(t *testing.T, threshold int, cooldown time.Duration) *W
 		RestartCommand:     "restart-fishd",
 		Now:                func() time.Time { return h.clock },
 		PIDAlive:           func(int) bool { return h.alive },
+		ProcessStart: func(int) (time.Time, bool) {
+			if !h.procKnown {
+				return time.Time{}, false
+			}
+			return h.procStart, true
+		},
 		Kill: func(int) error {
 			h.kills++
 			return nil
@@ -255,7 +268,7 @@ func TestInvalidHeartbeatDoesNotKill(t *testing.T) {
 func TestWriteHeartbeatRoundTrip(t *testing.T) {
 	h := newHarness(t)
 	at := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
-	if err := WriteHeartbeat(h.path, 99, at); err != nil {
+	if err := WriteHeartbeat(h.path, 99, at, at); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(h.path)
@@ -344,5 +357,98 @@ func TestReadHistoryMissingAndBadLines(t *testing.T) {
 	records, err = ReadHistory(path, 5)
 	if err != nil || len(records) != 1 || records[0].PID != 7 {
 		t.Fatalf("坏行应跳过：%v %+v", err, records)
+	}
+}
+
+// TestFrozenSkipsKillOnReusedPID O11 核心：同一个 PID 但已经是别的进程 → 不杀，只重启。
+//
+// 场景：fishd 崩溃后未写新心跳，系统把该 PID 分配给无关进程。
+// 只看「pid 活着」就 Kill 会误杀；必须核对进程创建时间。
+func TestFrozenSkipsKillOnReusedPID(t *testing.T) {
+	h := newHarness(t)
+	stale := h.clock.Add(-5 * time.Minute)
+	h.write(t, stale, 4321)
+	// 系统里这个 pid 的创建时间远晚于心跳记录的启动时刻 = PID 被复用。
+	h.procStart = h.clock.Add(-time.Minute)
+
+	dog := h.newDog(t, 1, time.Minute)
+	res := dog.Check(context.Background())
+	if !res.Restarted {
+		t.Fatalf("心跳过期仍应重启：%+v", res)
+	}
+	if h.kills != 0 {
+		t.Fatalf("PID 复用时不应杀进程，实际 %d 次", h.kills)
+	}
+}
+
+// TestFrozenKillsSameInstance 创建时间对得上（容差内）才允许杀。
+func TestFrozenKillsSameInstance(t *testing.T) {
+	h := newHarness(t)
+	stale := h.clock.Add(-5 * time.Minute)
+	h.write(t, stale, 4321)
+	// fishd 记录的是进程内 time.Now()，系统给的可能晚几秒，容差内视为同一实例。
+	h.procStart = stale.Add(2 * time.Second)
+
+	dog := h.newDog(t, 1, time.Minute)
+	dog.Check(context.Background())
+	if h.kills != 1 {
+		t.Fatalf("同一实例应被终止，实际 %d 次", h.kills)
+	}
+}
+
+// TestFrozenLegacyHeartbeatSkipsKill 旧心跳没有 started_at，无法核对 → 不杀。
+func TestFrozenLegacyHeartbeatSkipsKill(t *testing.T) {
+	h := newHarness(t)
+	stale := h.clock.Add(-5 * time.Minute)
+	// 手工写旧格式（没有 started_at 字段）。
+	body := []byte(`{"at":"` + stale.Format(time.RFC3339) + `","pid":4321}`)
+	if err := os.WriteFile(h.path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(h.path, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	dog := h.newDog(t, 1, time.Minute)
+	res := dog.Check(context.Background())
+	if !res.Restarted {
+		t.Fatalf("仍应重启：%+v", res)
+	}
+	if h.kills != 0 {
+		t.Fatalf("无启动时间时不应杀进程，实际 %d 次", h.kills)
+	}
+}
+
+// TestFrozenSkipsKillWhenStartUnknown 读不到进程创建时间（权限/平台不支持）→ 不杀。
+func TestFrozenSkipsKillWhenStartUnknown(t *testing.T) {
+	h := newHarness(t)
+	h.write(t, h.clock.Add(-5*time.Minute), 4321)
+	h.procKnown = false
+
+	dog := h.newDog(t, 1, time.Minute)
+	res := dog.Check(context.Background())
+	if !res.Restarted {
+		t.Fatalf("仍应重启：%+v", res)
+	}
+	if h.kills != 0 {
+		t.Fatalf("创建时间未知时不应杀进程，实际 %d 次", h.kills)
+	}
+}
+
+// TestProcessStartTimeSelf 用当前进程验证平台实现确实能拿到创建时间。
+//
+// 拿不到就 Skip（容器里可能没有 ps / 无权限），但拿到时必须合理：
+// 不晚于现在、且与进程内记录的启动时刻落在容差内 —— 这正是 sameInstance 的前提。
+func TestProcessStartTimeSelf(t *testing.T) {
+	started, ok := ProcessStartTime(os.Getpid())
+	if !ok {
+		t.Skip("当前平台/环境拿不到进程创建时间")
+	}
+	if started.IsZero() {
+		t.Fatal("拿到了零值时间")
+	}
+	age := time.Since(started)
+	if age < -procStartTolerance || age > 24*time.Hour {
+		t.Fatalf("进程创建时间不合理：%v（age=%v）", started, age)
 	}
 }

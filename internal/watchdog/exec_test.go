@@ -145,7 +145,7 @@ func TestWatchdogRestartKeepsResidentAlivePastTimeout(t *testing.T) {
 	dir := t.TempDir()
 	heartbeatPath := filepath.Join(dir, "fishd.heartbeat")
 	old := time.Now().Add(-5 * time.Minute)
-	if err := WriteHeartbeat(heartbeatPath, 1, old); err != nil {
+	if err := WriteHeartbeat(heartbeatPath, 1, old, old); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(heartbeatPath, old, old); err != nil {

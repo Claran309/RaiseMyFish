@@ -37,6 +37,12 @@ const (
 type Heartbeat struct {
 	At  time.Time `json:"at"`
 	PID int       `json:"pid"`
+	// StartedAt 是写入方进程的启动时刻（O11）。
+	//
+	// 看门狗用它核对「这个 pid 现在还是不是原来那个 fishd」：
+	// 进程崩溃后 PID 会被系统复用，只判断存活就去 Kill 会误杀无关进程。
+	// 旧版本写的心跳没有该字段 → 无法核对 → 不杀（只重启）。
+	StartedAt time.Time `json:"started_at,omitempty"`
 }
 
 // Options 是看门狗参数。
@@ -64,6 +70,9 @@ type Options struct {
 	PIDAlive func(pid int) bool
 	// Kill 可注入杀进程（默认真实发送终止信号）。
 	Kill func(pid int) error
+	// ProcessStart 可注入「读取进程创建时间」（默认走系统实现）。
+	// 返回 false 表示拿不到 —— 此时一律不杀。
+	ProcessStart func(pid int) (time.Time, bool)
 	// Restart 可注入重启动作（默认执行 RestartCommand）。
 	Restart func(ctx context.Context, command string) error
 	// Log 必填。
@@ -122,6 +131,9 @@ func New(o Options) (*Watchdog, error) {
 	if o.Kill == nil {
 		o.Kill = killPID
 	}
+	if o.ProcessStart == nil {
+		o.ProcessStart = ProcessStartTime
+	}
 	if o.Restart == nil {
 		o.Restart = func(ctx context.Context, command string) error {
 			return runCommand(ctx, command, o.Log)
@@ -132,7 +144,7 @@ func New(o Options) (*Watchdog, error) {
 
 // Check 做一次检查；必要时先杀旧进程再重启。
 func (w *Watchdog) Check(ctx context.Context) CheckResult {
-	verdict, pid, reason := w.inspect()
+	verdict, pid, startedAt, reason := w.inspect()
 	if verdict == VerdictHealthy {
 		w.consecutive = 0
 		w.opts.Log.Info("看门狗检查健康",
@@ -178,8 +190,17 @@ func (w *Watchdog) Check(ctx context.Context) CheckResult {
 	}
 
 	// 冻结但进程还在：先终止旧进程，避免重启命令与旧实例抢端口/文件锁。
+	//
+	// O11：只判断「pid 活着」就杀会误杀——崩溃后 PID 会被系统复用。
+	// 必须先确认它还是心跳里那个实例（启动时间对得上）；对不上或无法核对一律不杀。
 	if verdict == VerdictFrozen && pid > 0 && w.opts.PIDAlive(pid) {
-		if err := w.opts.Kill(pid); err != nil {
+		if reason, ok := w.sameInstance(pid, startedAt); !ok {
+			w.opts.Log.Warn("看门狗跳过终止：进程身份无法确认（可能是 PID 复用）",
+				zap.String("action", "watchdog_kill_skipped"),
+				zap.Int("pid", pid),
+				zap.String("reason", reason),
+			)
+		} else if err := w.opts.Kill(pid); err != nil {
 			w.opts.Log.Warn("看门狗终止旧进程失败，继续尝试重启",
 				zap.String("action", "watchdog_kill_failed"),
 				zap.Int("pid", pid),
@@ -226,11 +247,41 @@ func (w *Watchdog) Check(ctx context.Context) CheckResult {
 	return res
 }
 
+// procStartTolerance 是「同一进程」的启动时间容差。
+//
+// fishd 记录的启动时刻来自进程内 time.Now()，操作系统记的创建时间可能差几十毫秒；
+// 5 秒足够吸收这点误差，又远小于 PID 被复用所需的完整进程生命周期。
+const procStartTolerance = 5 * time.Second
+
+// sameInstance 判断 pid 现在还是不是心跳里那个进程。
+//
+// 三个条件全满足才算「同一个」；任何一条不满足都返回 false —— **不确定就不杀**：
+//   - 心跳里带 started_at（旧心跳没有，没法核对）；
+//   - 能拿到系统视角的进程创建时间（权限/平台不支持时拿不到）；
+//   - 两者相差不超过容差。
+func (w *Watchdog) sameInstance(pid int, startedAt time.Time) (string, bool) {
+	if startedAt.IsZero() {
+		return "心跳缺少 started_at，无法核对进程身份", false
+	}
+	actual, ok := w.opts.ProcessStart(pid)
+	if !ok || actual.IsZero() {
+		return "读取进程创建时间失败", false
+	}
+	diff := actual.Sub(startedAt)
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > procStartTolerance {
+		return fmt.Sprintf("进程创建时间相差 %s（疑为 PID 复用）", diff.Truncate(time.Second)), false
+	}
+	return "", true
+}
+
 // inspect 读心跳并给出结论；pid 用于日志与杀旧进程，拿不到时为 0。
-func (w *Watchdog) inspect() (Verdict, int, string) {
+func (w *Watchdog) inspect() (Verdict, int, time.Time, string) {
 	info, err := os.Stat(w.opts.HeartbeatPath)
 	if err != nil {
-		return VerdictFrozen, 0, "心跳文件不存在"
+		return VerdictFrozen, 0, time.Time{}, "心跳文件不存在"
 	}
 	age := w.opts.Now().Sub(info.ModTime())
 
@@ -247,21 +298,21 @@ func (w *Watchdog) inspect() (Verdict, int, string) {
 	}
 
 	if age > w.opts.StaleAfter {
-		return VerdictFrozen, pid, fmt.Sprintf("心跳已过期 %s", age.Truncate(time.Second))
+		return VerdictFrozen, pid, hb.StartedAt, fmt.Sprintf("心跳已过期 %s", age.Truncate(time.Second))
 	}
 	if readErr != nil {
-		return VerdictFrozen, 0, "心跳文件不可读"
+		return VerdictFrozen, 0, time.Time{}, "心跳文件不可读"
 	}
 	if parseErr != nil {
-		return VerdictFrozen, 0, "心跳文件不是合法JSON"
+		return VerdictFrozen, 0, time.Time{}, "心跳文件不是合法JSON"
 	}
 	if hb.PID <= 0 {
-		return VerdictFrozen, 0, "心跳缺少 pid"
+		return VerdictFrozen, 0, time.Time{}, "心跳缺少 pid"
 	}
 	if !w.opts.PIDAlive(hb.PID) {
-		return VerdictDead, hb.PID, fmt.Sprintf("pid %d 不存在", hb.PID)
+		return VerdictDead, hb.PID, hb.StartedAt, fmt.Sprintf("pid %d 不存在", hb.PID)
 	}
-	return VerdictHealthy, hb.PID, "心跳正常"
+	return VerdictHealthy, hb.PID, hb.StartedAt, "心跳正常"
 }
 
 // Run 按间隔循环，直到 ctx 取消。
@@ -392,12 +443,15 @@ func ReadHistory(path string, limit int) ([]RestartRecord, error) {
 }
 
 // WriteHeartbeat 原子写心跳（临时文件 + rename）。
-func WriteHeartbeat(path string, pid int, now time.Time) error {
+//
+// startedAt 是写入方进程的启动时刻，看门狗用它识别 PID 复用；
+// 零值表示「不提供」，此时看门狗不会杀任何进程（只重启）。
+func WriteHeartbeat(path string, pid int, startedAt, now time.Time) error {
 	dir := dirOf(path)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("创建心跳目录：%w", err)
 	}
-	payload, err := json.Marshal(Heartbeat{At: now.UTC(), PID: pid})
+	payload, err := json.Marshal(Heartbeat{At: now.UTC(), PID: pid, StartedAt: startedAt.UTC()})
 	if err != nil {
 		return errors.New("编码心跳失败")
 	}

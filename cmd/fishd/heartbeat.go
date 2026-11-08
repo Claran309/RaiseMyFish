@@ -16,6 +16,12 @@ import (
 // heartbeatInterval 是心跳写入间隔（派发单固定 30s）。
 const heartbeatInterval = 30 * time.Second
 
+// processStartedAt 是本进程的启动时刻（包初始化时记录）。
+//
+// O11：心跳里带上它，看门狗才能识别「PID 被复用」——
+// 崩溃后系统可能把同一个 PID 分给无关进程，只判断存活就去杀会误杀。
+var processStartedAt = time.Now()
+
 // startHeartbeat 启动心跳写入；返回 stop 会等待 goroutine 退出。
 func startHeartbeat(ctx context.Context, path string, log *zap.Logger) func() {
 	return startHeartbeatEvery(ctx, path, heartbeatInterval, log)
@@ -28,7 +34,7 @@ func startHeartbeatEvery(ctx context.Context, path string, interval time.Duratio
 	}
 	pid := os.Getpid()
 	write := func() {
-		if err := watchdog.WriteHeartbeat(path, pid, time.Now()); err != nil {
+		if err := watchdog.WriteHeartbeat(path, pid, processStartedAt, time.Now()); err != nil {
 			log.Warn("心跳写入失败", zap.String("action", "heartbeat_write"), zap.Error(err))
 		}
 	}
