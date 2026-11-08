@@ -103,15 +103,49 @@ type SideEffectDeps struct {
 	DMInterval     time.Duration
 	PostInterval   time.Duration
 
+	// Limiter 是跨事件共享的限频状态；nil 时每次装配独立（仅对单个工具箱生效）。
+	Limiter *SideEffectLimiter
+
 	Now func() time.Time
 	Log *zap.Logger
 }
 
-// sideEffects 是副作用工具的执行状态（限频表）。
-type sideEffects struct {
-	deps SideEffectDeps
+// SideEffectLimiter 是跨工具箱共享的限频状态（进程内）。
+//
+// 键为 actor+动作：同一账号的同一动作在窗口内只放行一次。
+// 由装配方创建一个实例注入每个事件的工具箱，避免每个事件各自清零限频。
+type SideEffectLimiter struct {
 	mu   sync.Mutex
 	last map[string]time.Time
+}
+
+// NewSideEffectLimiter 创建空限频表。
+func NewSideEffectLimiter() *SideEffectLimiter {
+	return &SideEffectLimiter{last: make(map[string]time.Time)}
+}
+
+// allow 以 actor+action 为键记录放行时间；interval<=0 表示不限频。
+func (l *SideEffectLimiter) allow(actor, action string, now time.Time, interval time.Duration) bool {
+	if interval <= 0 {
+		return true
+	}
+	key := strings.TrimSpace(actor) + "\x00" + action
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.last == nil {
+		l.last = make(map[string]time.Time)
+	}
+	if last, ok := l.last[key]; ok && now.Sub(last) < interval {
+		return false
+	}
+	l.last[key] = now
+	return true
+}
+
+// sideEffects 是副作用工具的执行状态；限频表由多个工具箱共享。
+type sideEffects struct {
+	deps    SideEffectDeps
+	limiter *SideEffectLimiter
 }
 
 // BuildSideEffectTools 装配 5 个副作用工具；全部已带护栏。
@@ -129,7 +163,11 @@ func BuildSideEffectTools(d SideEffectDeps) (*Toolbox, error) {
 	if strings.TrimSpace(d.Room) == "" {
 		d.Room = ""
 	}
-	s := &sideEffects{deps: d, last: make(map[string]time.Time)}
+	limiter := d.Limiter
+	if limiter == nil {
+		limiter = NewSideEffectLimiter()
+	}
+	s := &sideEffects{deps: d, limiter: limiter}
 
 	tools := []Tool{
 		{
@@ -355,19 +393,9 @@ func (s *sideEffects) giftEnabled() bool {
 	return s.deps.GiftEnabled
 }
 
-// allow 是限频：同一工具两次调用之间至少隔 interval。
-func (s *sideEffects) allow(key string, interval time.Duration) bool {
-	if interval <= 0 {
-		return true
-	}
-	now := s.deps.Now()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if last, ok := s.last[key]; ok && now.Sub(last) < interval {
-		return false
-	}
-	s.last[key] = now
-	return true
+// allow 是限频：同一 actor 的同一动作两次调用之间至少隔 interval。
+func (s *sideEffects) allow(action string, interval time.Duration) bool {
+	return s.limiter.allow(s.deps.SelfMID, action, s.deps.Now(), interval)
 }
 
 // log 统一副作用日志（不含正文全文）。

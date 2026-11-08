@@ -57,7 +57,7 @@ func TestSideEffectDepsGiftGateHotToggle(t *testing.T) {
 	g := &gateGiftExecutor{}
 	q := &gateQuota{}
 	box, err := reasoning.BuildSideEffectTools(
-		sideEffectDeps(cfg, q, toolExecutors{Gift: g}, "30308220", gate.Load, zap.NewNop()),
+		sideEffectDeps(cfg, q, toolExecutors{Gift: g}, "30308220", gate.Load, nil, zap.NewNop()),
 	)
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
@@ -104,7 +104,7 @@ func TestSideEffectDepsNilGateUsesConfig(t *testing.T) {
 	g := &gateGiftExecutor{}
 	q := &gateQuota{}
 	box, err := reasoning.BuildSideEffectTools(
-		sideEffectDeps(cfg, q, toolExecutors{Gift: g}, "30308220", nil, zap.NewNop()),
+		sideEffectDeps(cfg, q, toolExecutors{Gift: g}, "30308220", nil, nil, zap.NewNop()),
 	)
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)

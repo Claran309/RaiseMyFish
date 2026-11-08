@@ -35,7 +35,8 @@ type proactiveRunner interface {
 
 // buildProactiveRunner 只装配依赖，构造期不联网、不执行 ffmpeg。
 // giftGate 为 nil 时回落到配置里的送礼开关；面板热更新会传入动态门控。
-func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, know knowledge.Reader, pres *presence.Table, rooms *liveRoomState, giftGate func() bool, logger *zap.Logger) (*proactive.Runner, error) {
+// sideLimiter 与消费循环共用，保证主动弹幕与被动弹幕受同一 actor+动作限频。
+func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes map[string]brain.Brain, pack persona.Pack, know knowledge.Reader, pres *presence.Table, rooms *liveRoomState, giftGate func() bool, sideLimiter *reasoning.SideEffectLimiter, logger *zap.Logger) (*proactive.Runner, error) {
 	if resources == nil || resources.DB == nil {
 		return nil, errors.New("主动弹幕缺少数据库资源")
 	}
@@ -112,7 +113,7 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 		if err != nil {
 			return nil, fmt.Errorf("装配主动弹幕用量账本失败：%w", err)
 		}
-		factory, err := buildReasonerFactory(cfg, memReader, know, pres, events, nil, buildGiftQuota(cfg, logger), buildToolExecutors(cfg, usageRepo, logger), usageRepo, giftGate, logger)
+		factory, err := buildReasonerFactory(cfg, memReader, know, pres, events, nil, buildGiftQuota(cfg, logger), buildToolExecutors(cfg, usageRepo, logger), usageRepo, giftGate, sideLimiter, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -193,7 +194,7 @@ func startProactive(ctx context.Context, cfg config.Config, resources *infra.Res
 	if !cfg.Proactive.Enabled {
 		return noop
 	}
-	runner, err := buildProactiveRunner(cfg, resources, routes, pack, know, pres, nil, nil, logger)
+	runner, err := buildProactiveRunner(cfg, resources, routes, pack, know, pres, nil, nil, reasoning.NewSideEffectLimiter(), logger)
 	if err != nil {
 		logger.Error("主动弹幕装配失败，降级运行", zap.String("action", "proactive"), zap.Error(err))
 		return noop

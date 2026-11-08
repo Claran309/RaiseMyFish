@@ -358,7 +358,7 @@ func buildGiftQuota(cfg config.Config, log *zap.Logger) reasoning.QuotaSource {
 //
 // 注意：平台执行器（送礼/关注/点赞/私信/动态）本批尚未接入，置 nil 时工具会明确回「未配置」，
 // 但护栏（开关/白名单/额度/限频/不取关主人）全部生效并有单测覆盖。
-func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExecutors, room string, giftGate func() bool, log *zap.Logger) reasoning.SideEffectDeps {
+func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExecutors, room string, giftGate func() bool, limiter *reasoning.SideEffectLimiter, log *zap.Logger) reasoning.SideEffectDeps {
 	return reasoning.SideEffectDeps{
 		Enabled:   cfg.Reasoning.AllowSideEffectTools,
 		Gift:      exec.Gift,
@@ -376,6 +376,7 @@ func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExe
 		OwnerMID:         ownerMID(cfg),
 		SelfMID:          selfMID(cfg),
 		Room:             room,
+		Limiter:          limiter,
 		Log:              log,
 	}
 }
@@ -383,7 +384,7 @@ func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExe
 // buildConsume 装配消费循环；未启用（无 [scheduler] / 无 Brain 路由 / 通道关闭）时返回 nil。
 // 返回的发送器与消费循环共用同一实例，供通道注册表复用（同一限流与暂停状态）。
 // dmWhitelist 在未装配私信发送时为 nil；giftGate 为动态送礼开关（面板热更新）。
-func buildConsume(cfg config.Config, resources *infra.Resources, accounts *account.Service, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, rooms *liveRoomState, channels *channelSet, giftGate func() bool, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, dmWhitelistSetter, error) {
+func buildConsume(cfg config.Config, resources *infra.Resources, accounts *account.Service, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, rooms *liveRoomState, channels *channelSet, giftGate func() bool, sideLimiter *reasoning.SideEffectLimiter, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, dmWhitelistSetter, error) {
 	if !consumeEnabled(cfg, routes) {
 		return nil, nil, nil, nil
 	}
@@ -469,7 +470,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	}
 	quota := buildGiftQuota(cfg, log)
 	execs := buildToolExecutors(cfg, usageRepo, log)
-	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, viewerSearch, quota, execs, usageRepo, giftGate, log)
+	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, viewerSearch, quota, execs, usageRepo, giftGate, sideLimiter, log)
 	if err != nil {
 		return nil, nil, nil, err
 	}

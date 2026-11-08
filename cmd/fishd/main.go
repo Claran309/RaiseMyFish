@@ -25,6 +25,7 @@ import (
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/memory/extractworker"
 	"RaiseMyFish/internal/presence"
+	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -191,12 +192,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	// 送礼开关由控制面热更新，ReAct 副作用每次调用都读最新值。
 	giftGate := &atomic.Bool{}
 	giftGate.Store(cfg.Gift.Enabled)
+	// 副作用限频是进程级的：消费循环与主动弹幕的每个工具箱共用这一份，
+	// 否则每个事件新建工具箱会各自清零，follow/like/dm 可被跨事件绕过。
+	sideLimiter := reasoning.NewSideEffectLimiter()
 
 	// 发送通道表：buildConsume 先用空壳，注册表建好后再绑定（Send/Resume 之前完成）
 	chans := &channelSet{}
 	// live 采集房间的权威状态：状态注入与 watching 重置都读它。
 	liveRooms := &liveRoomState{}
-	consume, snd, dmWhitelist, err := buildConsume(cfg, resources, accountService, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, liveRooms, chans, giftGate.Load, logger)
+	consume, snd, dmWhitelist, err := buildConsume(cfg, resources, accountService, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, liveRooms, chans, giftGate.Load, sideLimiter, logger)
 	if err != nil {
 		return err
 	}
@@ -236,6 +240,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		DMWhitelist: dmWhitelist,
 		GiftGate:    giftGate,
 		Now:         time.Now,
+
+		SideEffectLimiter: sideLimiter,
 	}
 	// 避免 typed-nil 指针装进接口后变成「非 nil 采集器」。
 	if liveCollector != nil {

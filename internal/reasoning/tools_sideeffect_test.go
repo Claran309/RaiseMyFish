@@ -451,6 +451,118 @@ func TestPostDynamicDefaultOffAndRate(t *testing.T) {
 	}
 }
 
+// TestSideEffectLimiterSharedAcrossToolboxes O15：两个事件各建工具箱但共用一个限频表，
+// 第二事件同动作在窗口内被拒；跨过窗口后按原窗口长度重新放行。
+func TestSideEffectLimiterSharedAcrossToolboxes(t *testing.T) {
+	limiter := NewSideEffectLimiter()
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+
+	// 两个「事件」各取一份依赖，但注入同一个 limiter/时钟/执行器。
+	d1, _, social, _ := sideDeps()
+	d1.Limiter = limiter
+	d1.Now = clock
+	box1, err := BuildSideEffectTools(d1)
+	if err != nil {
+		t.Fatalf("第一事件装配失败：%v", err)
+	}
+	d2, _, _, _ := sideDeps()
+	d2.Social = social
+	d2.Limiter = limiter
+	d2.Now = clock
+	box2, err := BuildSideEffectTools(d2)
+	if err != nil {
+		t.Fatalf("第二事件装配失败：%v", err)
+	}
+
+	for _, tc := range []struct{ name, args string }{
+		{ToolFollow, `{"mid":"123","action":"follow"}`},
+		{ToolLike, `{"count":1}`},
+		{ToolDM, `{"mid":"777","text":"你好"}`},
+	} {
+		if _, err := box1.Run(context.Background(), tc.name, tc.args); err != nil {
+			t.Fatalf("第一事件 %s 应放行：%v", tc.name, err)
+		}
+	}
+
+	// 第二事件同一窗口内被限：必须不触碰执行器。
+	for _, tc := range []struct{ name, args string }{
+		{ToolFollow, `{"mid":"456","action":"follow"}`},
+		{ToolLike, `{"count":1}`},
+		{ToolDM, `{"mid":"777","text":"再来"}`},
+	} {
+		if _, err := box2.Run(context.Background(), tc.name, tc.args); err == nil || !strings.Contains(err.Error(), "频繁") {
+			t.Errorf("第二事件 %s 应被跨事件限频，实际 err=%v", tc.name, err)
+		}
+	}
+	if social.follows != 1 || social.likes != 1 || social.dms != 1 {
+		t.Errorf("执行器只应各执行一次：follows=%d likes=%d dms=%d", social.follows, social.likes, social.dms)
+	}
+
+	// 窗口不变：1 分钟后重新放行。
+	now = now.Add(61 * time.Second)
+	if _, err := box2.Run(context.Background(), ToolFollow, `{"mid":"456","action":"follow"}`); err != nil {
+		t.Fatalf("跨过窗口后应放行：%v", err)
+	}
+	if social.follows != 2 {
+		t.Errorf("窗口过后应再执行一次：follows=%d", social.follows)
+	}
+}
+
+// TestSideEffectLimiterScopeByActorAndAction 限频键是 actor+动作：
+// 不同 SelfMID 与不同动作互不占用窗口。
+func TestSideEffectLimiterScopeByActorAndAction(t *testing.T) {
+	limiter := NewSideEffectLimiter()
+	clock := func() time.Time { return time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC) }
+
+	d1, _, social, _ := sideDeps()
+	d1.SelfMID = "111"
+	d1.Limiter = limiter
+	d1.Now = clock
+	box1, _ := BuildSideEffectTools(d1)
+	d2, _, _, _ := sideDeps()
+	d2.SelfMID = "222"
+	d2.Social = social
+	d2.Limiter = limiter
+	d2.Now = clock
+	box2, _ := BuildSideEffectTools(d2)
+
+	// 同动作、不同 actor：各自放行。
+	if _, err := box1.Run(context.Background(), ToolFollow, `{"mid":"123","action":"follow"}`); err != nil {
+		t.Fatalf("actor1 关注失败：%v", err)
+	}
+	if _, err := box2.Run(context.Background(), ToolFollow, `{"mid":"456","action":"follow"}`); err != nil {
+		t.Fatalf("不同 actor 不应共用窗口：%v", err)
+	}
+	if social.follows != 2 {
+		t.Errorf("两个 actor 各应执行一次：follows=%d", social.follows)
+	}
+
+	// 同 actor、不同动作：follow 的窗口不影响 dm。
+	if _, err := box1.Run(context.Background(), ToolDM, `{"mid":"777","text":"你好"}`); err != nil {
+		t.Fatalf("不同动作不应共用窗口：%v", err)
+	}
+}
+
+// TestSideEffectNilLimiterKeepsToolboxesIndependent 未注入共享 limiter 时每次装配独立，
+// 保持 fishmcp 单箱与既有调用方的行为。
+func TestSideEffectNilLimiterKeepsToolboxesIndependent(t *testing.T) {
+	d1, _, s1, _ := sideDeps()
+	box1, _ := BuildSideEffectTools(d1)
+	d2, _, s2, _ := sideDeps()
+	box2, _ := BuildSideEffectTools(d2)
+
+	if _, err := box1.Run(context.Background(), ToolFollow, `{"mid":"123","action":"follow"}`); err != nil {
+		t.Fatalf("第一箱应放行：%v", err)
+	}
+	if _, err := box2.Run(context.Background(), ToolFollow, `{"mid":"456","action":"follow"}`); err != nil {
+		t.Fatalf("未注入共享 limiter 时两箱应互不影响：%v", err)
+	}
+	if s1.follows != 1 || s2.follows != 1 {
+		t.Errorf("两箱应各执行一次：s1=%d s2=%d", s1.follows, s2.follows)
+	}
+}
+
 // TestSideEffectNotConfiguredExecutors 执行器缺失时明确说「未配置」，不假装成功。
 func TestSideEffectNotConfiguredExecutors(t *testing.T) {
 	d, _, _, _ := sideDeps()

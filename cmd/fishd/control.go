@@ -52,9 +52,11 @@ type runtimeDeps struct {
 	DMWhitelist dmWhitelistSetter
 	GiftGate    *atomic.Bool
 	Now         func() time.Time
-	Live        collector.Collector
-	Comment     collector.Collector
-	DM          collector.Collector
+	// SideEffectLimiter 与消费循环共用，多个工具箱之间共享 actor+动作限频。
+	SideEffectLimiter *reasoning.SideEffectLimiter
+	Live              collector.Collector
+	Comment           collector.Collector
+	DM                collector.Collector
 }
 
 // runtimeControl 实现 web.RuntimeController。
@@ -882,7 +884,7 @@ func (p *proactiveController) set(enabled bool, intervalSeconds int) error {
 	runner := p.runner
 	p.mu.Unlock()
 	if runner == nil {
-		built, err := buildProactiveRunner(p.base, p.deps.Resources, p.deps.Routes, p.deps.Pack, p.deps.Knowledge.Reader, p.deps.Presence, p.deps.Rooms, p.deps.GiftGate.Load, p.log)
+		built, err := buildProactiveRunner(p.base, p.deps.Resources, p.deps.Routes, p.deps.Pack, p.deps.Knowledge.Reader, p.deps.Presence, p.deps.Rooms, p.deps.GiftGate.Load, p.deps.SideEffectLimiter, p.log)
 		if err != nil {
 			p.setError(err)
 			return err
