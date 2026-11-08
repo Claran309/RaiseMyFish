@@ -123,9 +123,14 @@ func (f *fakeStore) ClearActive(_ context.Context) error {
 	return nil
 }
 
+// Delete 与生产实现同语义（O10）：条件删除，活跃账号拒绝并返回 ErrActiveAccount。
 func (f *fakeStore) Delete(_ context.Context, id string) error {
-	if _, ok := f.accounts[id]; !ok {
+	stored, ok := f.accounts[id]
+	if !ok {
 		return ErrNotFound
+	}
+	if stored.IsActive {
+		return ErrActiveAccount
 	}
 	delete(f.accounts, id)
 	return nil
