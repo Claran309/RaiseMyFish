@@ -5,6 +5,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"RaiseMyFish/internal/account"
@@ -153,7 +154,16 @@ func (r *AccountRepo) Upsert(ctx context.Context, a account.Account) (account.Ac
 	return result, nil
 }
 
+// errActiveNotUnique 表示切换后活跃账号不是「恰好目标那一个」，需要回滚。
+var errActiveNotUnique = errors.New("切换后活跃账号不唯一")
+
 // SetActive 在事务内先清空旧活跃再设置目标，避免唯一索引冲突。
+//
+// O10 的两处加固：
+//   - 目标 UPDATE 必须检查 RowsAffected：目标可能在存在性检查之后被并发删除，
+//     此时更新 0 行却返回 nil，会留下「没有活跃账号」的静默故障；
+//   - 收尾校验恰好一个活跃账号且就是目标。任何一步不满足都返回错误，
+//     由事务回滚把旧活跃账号恢复回来。
 func (r *AccountRepo) SetActive(ctx context.Context, id string) error {
 	if ctx == nil {
 		return store.ErrInvalid
@@ -170,9 +180,23 @@ func (r *AccountRepo) SetActive(ctx context.Context, id string) error {
 			"UPDATE accounts SET is_active = FALSE, updated_at = clock_timestamp() WHERE is_active AND id <> ?", id).Error; err != nil {
 			return &safeError{"清理旧活跃账号失败", err}
 		}
-		if err := tx.Exec(
-			"UPDATE accounts SET is_active = TRUE, updated_at = clock_timestamp() WHERE id = ?", id).Error; err != nil {
-			return &safeError{"切换活跃账号失败", err}
+		result := tx.Exec(
+			"UPDATE accounts SET is_active = TRUE, updated_at = clock_timestamp() WHERE id = ?", id)
+		if result.Error != nil {
+			return &safeError{"切换活跃账号失败", result.Error}
+		}
+		if result.RowsAffected == 0 {
+			// 目标在 COUNT 之后被删掉：返回 NotFound，事务回滚恢复旧活跃账号。
+			return account.ErrNotFound
+		}
+		var active []struct {
+			ID string `gorm:"column:id"`
+		}
+		if err := tx.Raw("SELECT id FROM accounts WHERE is_active").Scan(&active).Error; err != nil {
+			return &safeError{"确认活跃账号失败", err}
+		}
+		if len(active) != 1 || active[0].ID != id {
+			return errActiveNotUnique
 		}
 		return nil
 	})
@@ -190,19 +214,36 @@ func (r *AccountRepo) ClearActive(ctx context.Context) error {
 	return nil
 }
 
-// Delete 按 id 删除账号。
+// Delete 只删除非活跃账号；活跃账号返回 account.ErrActiveAccount。
+//
+// 判定必须和删除在同一条 SQL 里：调用方「先查 IsActive 再删」的写法在并发下
+// 会被 Activate 插队——检查通过后目标刚被设为活跃，无条件 DELETE 就把当前凭据删了。
 func (r *AccountRepo) Delete(ctx context.Context, id string) error {
 	if ctx == nil {
 		return store.ErrInvalid
 	}
-	result := r.db.WithContext(ctx).Exec("DELETE FROM accounts WHERE id = ?", id)
+	result := r.db.WithContext(ctx).Exec("DELETE FROM accounts WHERE id = ? AND NOT is_active", id)
 	if result.Error != nil {
 		return &safeError{"删除账号失败", result.Error}
 	}
-	if result.RowsAffected == 0 {
+	if result.RowsAffected > 0 {
+		return nil
+	}
+	// 0 行只有两种可能：账号不存在，或它此刻是活跃账号（被并发激活）。
+	var rows []struct {
+		IsActive bool `gorm:"column:is_active"`
+	}
+	if err := r.db.WithContext(ctx).Raw("SELECT is_active FROM accounts WHERE id = ?", id).Scan(&rows).Error; err != nil {
+		return &safeError{"确认账号状态失败", err}
+	}
+	if len(rows) == 0 {
 		return account.ErrNotFound
 	}
-	return nil
+	if rows[0].IsActive {
+		return account.ErrActiveAccount
+	}
+	// 极窄窗口内状态又变了（刚被别的操作删除），按不存在处理。
+	return account.ErrNotFound
 }
 
 // UpdateCheck 更新验证结果与时间。

@@ -86,6 +86,8 @@ type Store interface {
 	SetActive(ctx context.Context, id string) error
 	// ClearActive 清空活跃标记（切换验证失败且无旧账号可回滚时使用）。
 	ClearActive(ctx context.Context) error
+	// Delete 只删非活跃账号；目标仍活跃时返回 ErrActiveAccount。
+	// 判定与删除必须在同一条件更新里完成，不能靠调用方先查后删。
 	Delete(ctx context.Context, id string) error
 	UpdateCheck(ctx context.Context, id, name, status string, at time.Time) error
 }
@@ -410,18 +412,22 @@ func actorFromCredential(cred Credential) bili.Actor {
 }
 
 // Delete 删除非活跃账号；活跃账号必须先切换，避免误删当前凭据。
+//
+// O10：不再「先 Get 判断 IsActive 再删」——两次操作之间 Activate 可以把它设为活跃，
+// 于是删除检查通过、活跃账号被删。判定交给 Store.Delete 的条件更新（WHERE NOT is_active）。
 func (s *Service) Delete(ctx context.Context, id string) error {
 	if s == nil {
 		return errors.New("账号服务不能为空")
 	}
-	stored, err := s.store.Get(ctx, strings.TrimSpace(id))
-	if err != nil {
-		return err
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ErrNotFound
 	}
-	if stored.IsActive {
+	err := s.store.Delete(ctx, id)
+	if errors.Is(err, ErrActiveAccount) {
 		return ErrActiveAccount
 	}
-	return s.store.Delete(ctx, stored.ID)
+	return err
 }
 
 // Check 重新验证账号：成功更新昵称与状态，认证失败标记 invalid。
