@@ -440,3 +440,128 @@ func TestNewHTTPRejectsBadURL(t *testing.T) {
 		}
 	}
 }
+
+// TestSearchRejectsCrossHostRedirect O12 核心：跨 host 重定向必须被拒，密钥不能跟着走。
+//
+// Go 默认只在跨域时剥离 Authorization/Cookie，自定义头（X-API-KEY 等）会原样保留；
+// 所以搜索服务返回 302 到别的域名时，第二端原本能收到完整密钥。
+func TestSearchRejectsCrossHostRedirect(t *testing.T) {
+	const key = "secret-serper-key"
+
+	// 第二端：只记录「有没有被访问、有没有收到 key」。
+	var hits int
+	var leakedKey string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		leakedKey = r.Header.Get("X-API-KEY")
+		_, _ = io.WriteString(w, `{"organic":[]}`)
+	}))
+	defer target.Close()
+
+	// 第一端：收到带 key 的请求后，试图把客户端重定向到第二端。
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/steal", http.StatusFound)
+	}))
+	defer source.Close()
+
+	searcher, err := NewHTTP(Options{
+		URL: source.URL, Key: key, Protocol: "serper", Client: source.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := searcher.Search(context.Background(), "测试查询")
+	if err == nil {
+		t.Fatalf("跨域重定向应失败，实际返回：%q", out)
+	}
+	if !strings.Contains(err.Error(), "不安全重定向") {
+		t.Fatalf("错误文案应说明跨域重定向：%v", err)
+	}
+	// 错误里绝不能回显密钥。
+	if strings.Contains(err.Error(), key) {
+		t.Fatalf("错误泄露密钥：%v", err)
+	}
+	if hits != 0 {
+		t.Fatalf("第二端不应收到请求，实际 %d 次", hits)
+	}
+	if leakedKey != "" {
+		t.Fatalf("密钥被带到别的 host：%q", leakedKey)
+	}
+}
+
+// TestSearchAllowsSameHostRedirect 同 host 的重定向照常跟随（服务端常见 301/302）。
+func TestSearchAllowsSameHostRedirect(t *testing.T) {
+	var srv *httptest.Server
+	var redirected int
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			redirected++
+			http.Redirect(w, r, srv.URL+"/search", http.StatusFound)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[{"title":"标题","snippet":"摘要","url":"https://example.com/a"}]}`)
+	}))
+	defer srv.Close()
+
+	searcher, err := NewHTTP(Options{URL: srv.URL + "/redirect", Key: "k", Client: srv.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := searcher.Search(context.Background(), "查询")
+	if err != nil {
+		t.Fatalf("同 host 重定向应成功：%v", err)
+	}
+	if redirected != 1 || !strings.Contains(out, "标题") {
+		t.Fatalf("同 host 重定向未被跟随：redirected=%d out=%q", redirected, out)
+	}
+}
+
+// TestSearchRejectsRedirectLoop 同 host 也不能无限跳。
+func TestSearchRejectsRedirectLoop(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL+"/loop", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	searcher, err := NewHTTP(Options{URL: srv.URL + "/loop", Client: srv.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := searcher.Search(context.Background(), "查询"); err == nil {
+		t.Fatal("重定向环应报错")
+	}
+}
+
+// TestSameHostRedirectPolicy 单元验证策略本身：host 含端口才算同源。
+func TestSameHostRedirectPolicy(t *testing.T) {
+	base := func(rawURL string) *http.Request {
+		req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return req
+	}
+	origin := base("https://api.example.com/v1/search")
+	cases := []struct {
+		name    string
+		target  string
+		wantErr bool
+	}{
+		{"同 host 同端口", "https://api.example.com/next", false},
+		{"不同 host", "https://evil.example.net/next", true},
+		{"不同端口", "https://api.example.com:8443/next", true},
+		{"降级到 http 同 host", "http://api.example.com/next", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := sameHostRedirect(base(tc.target), []*http.Request{origin})
+			if tc.wantErr && err == nil {
+				t.Fatalf("应拒绝：%s", tc.target)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("应允许：%s（%v）", tc.target, err)
+			}
+		})
+	}
+}

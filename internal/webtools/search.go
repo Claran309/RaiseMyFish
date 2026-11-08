@@ -34,7 +34,18 @@ const (
 	maxAttempts = 2
 	// bingResultCount 是 Bing 单次返回条数（平台上限 50）。
 	bingResultCount = 10
+	// maxRedirects 是允许的同 host 重定向次数；超过说明服务端在打转。
+	maxRedirects = 5
 )
+
+// errCrossHostRedirect 表示搜索服务想把请求带到别的 host（含端口）去。
+//
+// O12：Go 的默认重定向只剥离 Authorization/Cookie 等，**不剥离自定义头**——
+// serper 的 X-API-KEY、bing 的 Ocp-Apim-Subscription-Key 会跟着 302 跑到第三方。
+var errCrossHostRedirect = errors.New("拒绝跨域重定向")
+
+// errInsecureRedirect 表示从 HTTPS 降级到 HTTP：同 host 也不允许，密钥会明文上路。
+var errInsecureRedirect = errors.New("拒绝降级到非HTTPS")
 
 // Searcher 把查询词变成一段可直接喂给模型的文本。
 type Searcher interface {
@@ -101,7 +112,36 @@ func NewHTTP(opts Options) (*HTTP, error) {
 	if client == nil {
 		client = &http.Client{Timeout: timeout}
 	}
-	return &HTTP{url: raw, key: strings.TrimSpace(opts.Key), protocol: protocol, allowed: allowed, client: client}, nil
+	// 复制一份再改：不污染调用方传进来的 client（共享同一个 Transport 没问题）。
+	copied := *client
+	copied.CheckRedirect = sameHostRedirect
+	return &HTTP{url: raw, key: strings.TrimSpace(opts.Key), protocol: protocol, allowed: allowed, client: &copied}, nil
+}
+
+// sameHostRedirect 只允许跳到同一个 host:port，其他一律拒绝。
+//
+// 为什么不能用默认策略：net/http 只在跨域时剥离 Authorization/Cookie，
+// 自定义鉴权头（X-API-KEY / Ocp-Apim-Subscription-Key）原样保留。
+// 搜索服务一旦返回 302 到别的域名，密钥就跟着走了。
+//
+// 边界：这里的 URL 来自配置而不是用户输入，所以不构成「用户可控 SSRF」；
+// 风险是「服务端被劫持/配置错误时把密钥放出去」，因此宁可让这次搜索失败。
+func sameHostRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("重定向次数超过%d次", maxRedirects)
+	}
+	origin := via[0].URL
+	if !strings.EqualFold(req.URL.Host, origin.Host) {
+		return fmt.Errorf("%w：%s → %s", errCrossHostRedirect, origin.Host, req.URL.Host)
+	}
+	// 同 host 也不许从 HTTPS 降到 HTTP：密钥虽然不出域，但会明文传输。
+	if origin.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("%w：%s → %s", errInsecureRedirect, origin.Scheme, req.URL.Scheme)
+	}
+	return nil
 }
 
 type searchRequest struct {
@@ -157,6 +197,10 @@ func (h *HTTP) attempt(ctx context.Context, query string) (searchResponse, bool,
 	}
 	resp, err := h.client.Do(req)
 	if err != nil {
+		// 跨域重定向是确定性失败，重试只会再被拒一次。
+		if errors.Is(err, errCrossHostRedirect) || errors.Is(err, errInsecureRedirect) {
+			return searchResponse{}, false, &safeError{"搜索服务试图不安全重定向，已拒绝（避免泄漏密钥）", err}
+		}
 		return searchResponse{}, true, &safeError{"搜索请求失败", err}
 	}
 	defer resp.Body.Close()
