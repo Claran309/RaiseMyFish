@@ -33,7 +33,7 @@
 - 时间：可注入 clock（避免 sleep 测试）
 - 数据库：集成测试用真实 PG，不用 sqlite 替代
 
-0.1：`go test -tags=integration ./... -count=1` 使用 `FISH_TEST_DSN`，本机未设置时仅从根目录 `.env` 取DB连接串。数据库迁移与服务启动测试创建独立随机schema，不清空业务public表；测试结束只清理自己的schema。缺PG配置/连接失败将失败，不静默skip。CI的PG17服务已启用。
+0.1：`go test -tags=integration ./... -count=1` 使用 `FISH_TEST_DSN`，本机未设置时仅从根目录 `.env` 取DB连接串。数据库迁移与服务启动测试创建独立随机schema，不清空业务public表；测试结束只清理自己的schema。缺PG配置/连接失败将失败，不静默skip。CI 的集成 job 使用带 pgvector 的 PG17 镜像（`pgvector/pgvector:pg17`），保证迁移 0006 在干净环境可执行。
 
 0.6：Provider/Brain使用httptest与fake UsageRepo验证HTTP、重试、隐私、预算、并发/取消；database的integration测试另覆盖真实llm_usage写入，以及本地假HTTP→现有人格→Brain→真实PG账本的组合路径。测试不调用真实模型，不把mock通过当作0.7c人格回归通过。check-brain诊断也必须保持模型调用数为0。
 

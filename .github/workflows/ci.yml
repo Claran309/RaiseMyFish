@@ -62,11 +62,12 @@ jobs:
           go build -trimpath -o bin/fishctl ./cmd/fishctl
 
   integration:
-    name: PostgreSQL17集成测试
+    name: PostgreSQL17+pgvector集成测试
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17
+        # 迁移 0006 强依赖 CREATE EXTENSION vector；官方 postgres:17 不带扩展。
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_USER: fish
           POSTGRES_PASSWORD: fish

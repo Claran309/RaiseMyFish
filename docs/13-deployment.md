@@ -24,6 +24,8 @@
 
 容器镜像已内置 Node、ffmpeg/ffprobe、CA 证书与时区；**不包含 PostgreSQL**。
 
+CI 的集成 job 同样使用 `pgvector/pgvector:pg17`，保证干净环境能执行迁移 0006；不要换回不带扩展的官方 `postgres:17`。
+
 ## 2. Windows 本机（现有方式）
 
 ```
