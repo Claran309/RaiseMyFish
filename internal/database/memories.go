@@ -418,17 +418,28 @@ func (r *MemoryRepo) KeywordMessages(ctx context.Context, s memory.Scope, keywor
 }
 
 // SemanticRecords 在 scope 可见范围内按余弦距离取最相近的摘要。
-func (r *MemoryRepo) SemanticRecords(ctx context.Context, s memory.Scope, vector []float64, limit int) ([]memory.SemanticRecord, error) {
+//
+// stale 拒绝（C2/N08）：向量非空还不够——
+//   - 索引指纹必须等于查询侧指纹（换模型/提供方/维度/模板后旧向量不参与排序）；
+//   - 写回时的源 hash 必须等于当前源字段 hash（summary 更新后旧向量立即失效）；
+//   - 索引文本 hash 非空（未标记索引版本的向量不可信）。
+//
+// 三者任一不满足都不进入排序，宁可暂时少召回，也不拿旧语义给新正文排序。
+func (r *MemoryRepo) SemanticRecords(ctx context.Context, s memory.Scope, vector []float64, fingerprint string, limit int) ([]memory.SemanticRecord, error) {
 	if err := validateRecall(ctx, s, limit); err != nil {
 		return nil, err
+	}
+	fingerprint = strings.TrimSpace(fingerprint)
+	if fingerprint == "" {
+		return nil, store.ErrInvalid
 	}
 	literal, err := vectorLiteral(vector, memory.EmbeddingDimension)
 	if err != nil {
 		return nil, store.ErrInvalid
 	}
 	visibility, args := memoryVisibilitySQL(s)
-	params := make([]any, 0, len(args)+2)
-	params = append(params, literal)
+	params := make([]any, 0, len(args)+3)
+	params = append(params, literal, fingerprint)
 	params = append(params, args...)
 	params = append(params, limit)
 	var rows []memoryRecordRow
@@ -438,7 +449,11 @@ SELECT id, channel, session, summary, importance, confidence, private, valid_fro
        to_json(event_ids) AS ids, 1 - (embedding <=> q.v) AS sim
 FROM memory_records, q
 WHERE valid_to IS NULL AND NOT archived AND valid_from <= now()
-  AND embedding IS NOT NULL AND `+visibility+`
+  AND embedding IS NOT NULL
+  AND COALESCE(embedding_text_hash,'') <> ''
+  AND embedding_fingerprint = ?
+  AND embedding_source_hash = `+memorySourceHashExpr+`
+  AND `+visibility+`
 ORDER BY embedding <=> q.v, id ASC
 LIMIT ?`, params...).Scan(&rows).Error
 	if err != nil {
@@ -477,16 +492,18 @@ func (r *MemoryRepo) MemoryEmbeddingInputs(ctx context.Context, allowPrivate boo
 		return nil, store.ErrInvalid
 	}
 	var rows []struct {
-		ID        string
-		Title     string
-		Summary   string
-		Private   bool
-		Archived  bool
-		ValidFrom time.Time
-		ValidTo   *time.Time
+		ID         string
+		Title      string
+		Summary    string
+		SourceHash string
+		Private    bool
+		Archived   bool
+		ValidFrom  time.Time
+		ValidTo    *time.Time
 	}
 	query := r.db.WithContext(ctx).Table("memory_records").
-		Select("id, COALESCE(title,'') AS title, COALESCE(summary,'') AS summary, private, archived, valid_from, valid_to").
+		Select("id, COALESCE(title,'') AS title, COALESCE(summary,'') AS summary, " +
+			memorySourceHashExpr + " AS source_hash, private, archived, valid_from, valid_to").
 		Where("COALESCE(summary,'') <> '' AND valid_to IS NULL AND NOT archived AND valid_from <= now()").
 		Order("id ASC")
 	if !allowPrivate {
@@ -498,67 +515,93 @@ func (r *MemoryRepo) MemoryEmbeddingInputs(ctx context.Context, allowPrivate boo
 	inputs := make([]memory.EmbeddingInput, 0, len(rows))
 	for _, row := range rows {
 		inputs = append(inputs, memory.EmbeddingInput{
-			ID:        row.ID,
-			Title:     row.Title,
-			Summary:   row.Summary,
-			Private:   row.Private,
-			Archived:  row.Archived,
-			ValidFrom: row.ValidFrom,
-			ValidTo:   row.ValidTo,
+			ID:         row.ID,
+			Title:      row.Title,
+			Summary:    row.Summary,
+			SourceHash: row.SourceHash,
+			Private:    row.Private,
+			Archived:   row.Archived,
+			ValidFrom:  row.ValidFrom,
+			ValidTo:    row.ValidTo,
 		})
 	}
 	return inputs, nil
 }
 
-// ExistingMemoryEmbeddingHashes 返回已入库向量的文本 hash，用于增量跳过。
-func (r *MemoryRepo) ExistingMemoryEmbeddingHashes(ctx context.Context) (map[string]string, error) {
+// ExistingMemoryEmbeddingIndexes 返回已入库向量的索引状态，用于增量跳过。
+//
+// 三个 hash 各司其职：文本 hash 判断正文是否变化，源 hash 判断写回后源是否变化，
+// 指纹判断向量空间是否一致。只要任一不一致都必须重新向量化。
+func (r *MemoryRepo) ExistingMemoryEmbeddingIndexes(ctx context.Context) (map[string]memory.EmbeddingIndex, error) {
 	if ctx == nil {
 		return nil, store.ErrInvalid
 	}
 	var rows []struct {
-		ID   string
-		Hash string
+		ID          string
+		TextHash    string
+		SourceHash  string
+		Fingerprint string
 	}
 	err := r.db.WithContext(ctx).Table("memory_records").
-		Select("id, embedding_text_hash AS hash").
-		Where("embedding IS NOT NULL AND COALESCE(embedding_text_hash,'') <> ''").
+		Select("id, COALESCE(embedding_text_hash,'') AS text_hash, COALESCE(embedding_source_hash,'') AS source_hash, COALESCE(embedding_fingerprint,'') AS fingerprint").
+		Where("embedding IS NOT NULL").
 		Scan(&rows).Error
 	if err != nil {
 		return nil, &safeError{"查询记忆向量状态失败", err}
 	}
-	hashes := make(map[string]string, len(rows))
+	indexes := make(map[string]memory.EmbeddingIndex, len(rows))
 	for _, row := range rows {
-		hashes[row.ID] = row.Hash
+		indexes[row.ID] = memory.EmbeddingIndex{
+			TextHash:    row.TextHash,
+			SourceHash:  row.SourceHash,
+			Fingerprint: row.Fingerprint,
+		}
 	}
-	return hashes, nil
+	return indexes, nil
 }
 
 // UpsertMemoryEmbeddings 只更新既有记录的向量列，不新建记忆行。
-func (r *MemoryRepo) UpsertMemoryEmbeddings(ctx context.Context, records []memory.EmbeddingRecord) error {
+//
+// 写回用 CAS 校验源未变化：源 hash 在读取时随输入下发，写回时再与当前行
+// 重新计算的源 hash 比较；不一致说明读取后摘要已被更新或清洗，本次结果
+// 属于过期计算，必须拒绝写回，否则会把刚清掉的污染向量重新种回去。
+// 返回实际写入条数，被拒绝的由调用方计入 Rejected。
+func (r *MemoryRepo) UpsertMemoryEmbeddings(ctx context.Context, records []memory.EmbeddingRecord) (int, error) {
 	if ctx == nil {
-		return store.ErrInvalid
+		return 0, store.ErrInvalid
 	}
 	if len(records) == 0 {
-		return nil
+		return 0, nil
 	}
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	written := 0
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, record := range records {
-			if strings.TrimSpace(record.ID) == "" || strings.TrimSpace(record.Hash) == "" {
+			if strings.TrimSpace(record.ID) == "" || strings.TrimSpace(record.Hash) == "" ||
+				strings.TrimSpace(record.SourceHash) == "" || strings.TrimSpace(record.Fingerprint) == "" {
 				return store.ErrInvalid
 			}
 			literal, err := vectorLiteral(record.Embedding, memory.EmbeddingDimension)
 			if err != nil {
 				return err
 			}
-			if err := tx.Exec(`
+			result := tx.Exec(`
 UPDATE memory_records
-SET embedding=?::vector, embedding_text_hash=?, embedding_updated_at=clock_timestamp()
-WHERE id=?`, literal, record.Hash, record.ID).Error; err != nil {
-				return &safeError{"写入记忆向量失败", err}
+SET embedding=?::vector, embedding_text_hash=?, embedding_source_hash=?, embedding_fingerprint=?, embedding_updated_at=clock_timestamp()
+WHERE id=? AND `+memorySourceHashExpr+` = ?`,
+				literal, record.Hash, record.SourceHash, record.Fingerprint, record.ID, record.SourceHash)
+			if result.Error != nil {
+				return &safeError{"写入记忆向量失败", result.Error}
+			}
+			if result.RowsAffected == 1 {
+				written++
 			}
 		}
 		return nil
 	})
+	if err != nil {
+		return 0, err
+	}
+	return written, nil
 }
 
 // ListRecords 返回最近创建的记录（含私密与归档行）。

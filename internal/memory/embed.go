@@ -23,6 +23,9 @@ import (
 // EmbeddingDimension 与 migrations/0007 的 vector(1024) 对齐。
 const EmbeddingDimension = 1024
 
+// IndexTemplate 是记忆索引的输入模板版本；拼接规则变化时必须改版本号。
+const IndexTemplate = "memory.title-summary/v1"
+
 const (
 	defaultEmbedBatchSize = 32
 	defaultEmbedRetryWait = 200 * time.Millisecond
@@ -37,6 +40,9 @@ type EmbeddingInput struct {
 	ID      string
 	Title   string
 	Summary string
+	// SourceHash 是仓储对原始字段（title+summary）计算的版本 hash。
+	// 它与「索引文本 hash」分开：查询拒绝 stale、写回 CAS 都以它为准。
+	SourceHash string
 	// Private 表示记录只属于私密范围；默认不外发，需显式授权。
 	Private bool
 	// Archived 表示已归档；归档行不参与外发。
@@ -46,11 +52,23 @@ type EmbeddingInput struct {
 	ValidTo   *time.Time
 }
 
+// EmbeddingIndex 是已入库向量的索引状态，三个字段各司其职：
+//   - TextHash 是嵌入文本的 hash，用于内容未变的增量跳过；
+//   - SourceHash 是写回时源字段的 hash，用于 stale 判定与写回 CAS；
+//   - Fingerprint 是向量空间指纹，换模型/提供方/维度/模板后不得复用。
+type EmbeddingIndex struct {
+	TextHash    string
+	SourceHash  string
+	Fingerprint string
+}
+
 // EmbeddingRecord 是一次批量 upsert 的单行。
 type EmbeddingRecord struct {
-	ID        string
-	Hash      string
-	Embedding []float64
+	ID          string
+	Hash        string
+	SourceHash  string
+	Fingerprint string
+	Embedding   []float64
 }
 
 // EmbeddingStore 由 database 层实现，负责读取源字段、增量状态与写回向量。
@@ -58,8 +76,10 @@ type EmbeddingStore interface {
 	// MemoryEmbeddingInputs 读取向量化源字段；allowPrivate 控制是否包含私密记录。
 	// 实现方应在查询层就排除未授权的私密、归档与失效行。
 	MemoryEmbeddingInputs(ctx context.Context, allowPrivate bool) ([]EmbeddingInput, error)
-	ExistingMemoryEmbeddingHashes(ctx context.Context) (map[string]string, error)
-	UpsertMemoryEmbeddings(ctx context.Context, records []EmbeddingRecord) error
+	ExistingMemoryEmbeddingIndexes(ctx context.Context) (map[string]EmbeddingIndex, error)
+	// UpsertMemoryEmbeddings 只对「源 hash 未变」的行写回，返回实际写入条数。
+	// 返回条数小于 records 表示这些行的源在计算期间发生了变化，写回被拒绝。
+	UpsertMemoryEmbeddings(ctx context.Context, records []EmbeddingRecord) (int, error)
 }
 
 // EmbedOptions 控制批量与重试；零值按默认值处理。
@@ -71,6 +91,9 @@ type EmbedOptions struct {
 	AllowPrivate bool
 	// Now 是判断有效期的时钟；零值用 time.Now。
 	Now func() time.Time
+	// Fingerprint 是当前向量空间的指纹（模型/提供方/维度/输入模板），必填。
+	// 与已入库指纹不同的行会重新计算，避免同维度换模型后复用旧空间。
+	Fingerprint string
 	// Progress 在每批成功后调用，供 CLI 打进度日志。
 	Progress func(done, total, batches int)
 }
@@ -82,12 +105,15 @@ type EmbedStats struct {
 	Pending  int
 	Batches  int
 	Embedded int
+	// Rejected 是计算期间源已变化、被 CAS 拒绝写回的条数。
+	Rejected int
 }
 
 type embedDocument struct {
-	id   string
-	text string
-	hash string
+	id         string
+	text       string
+	hash       string
+	sourceHash string
 }
 
 // RunEmbedding 执行一次增量向量化：新增或文本变化的记忆才重新计算。
@@ -100,6 +126,10 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 	}
 	if store == nil || embedder == nil {
 		return EmbedStats{}, errors.New("记忆向量化依赖不能为空")
+	}
+	fingerprint := strings.TrimSpace(opts.Fingerprint)
+	if fingerprint == "" {
+		return EmbedStats{}, errors.New("记忆向量化缺少索引指纹：无法确认向量空间")
 	}
 	batchSize := opts.BatchSize
 	if batchSize == 0 {
@@ -124,7 +154,7 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 	if err != nil {
 		return EmbedStats{}, err
 	}
-	existing, err := store.ExistingMemoryEmbeddingHashes(ctx)
+	existing, err := store.ExistingMemoryEmbeddingIndexes(ctx)
 	if err != nil {
 		return EmbedStats{}, err
 	}
@@ -143,12 +173,17 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 			stats.Skipped++
 			continue
 		}
+		sourceHash := strings.TrimSpace(input.SourceHash)
+		if sourceHash == "" {
+			return stats, fmt.Errorf("记忆 %s 缺少源hash，拒绝向量化", input.ID)
+		}
 		hash := hashText(text)
-		if existing[input.ID] == hash {
+		known := existing[input.ID]
+		if known.TextHash == hash && known.SourceHash == sourceHash && known.Fingerprint == fingerprint {
 			stats.Skipped++
 			continue
 		}
-		pending = append(pending, embedDocument{id: input.ID, text: text, hash: hash})
+		pending = append(pending, embedDocument{id: input.ID, text: text, hash: hash, sourceHash: sourceHash})
 	}
 	stats.Pending = len(pending)
 	if len(pending) == 0 {
@@ -174,12 +209,20 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 			if err := validateEmbeddingVector(vector); err != nil {
 				return stats, err
 			}
-			records = append(records, EmbeddingRecord{ID: batch[i].id, Hash: batch[i].hash, Embedding: vector})
+			records = append(records, EmbeddingRecord{
+				ID: batch[i].id, Hash: batch[i].hash, SourceHash: batch[i].sourceHash,
+				Fingerprint: fingerprint, Embedding: vector,
+			})
 		}
-		if err := store.UpsertMemoryEmbeddings(ctx, records); err != nil {
+		written, err := store.UpsertMemoryEmbeddings(ctx, records)
+		if err != nil {
 			return stats, fmt.Errorf("写入记忆向量失败：%w", err)
 		}
-		stats.Embedded += len(records)
+		if written < 0 || written > len(records) {
+			return stats, errors.New("写入记忆向量返回条数非法")
+		}
+		stats.Embedded += written
+		stats.Rejected += len(records) - written
 		if opts.Progress != nil {
 			opts.Progress(stats.Embedded, stats.Pending, stats.Batches)
 		}

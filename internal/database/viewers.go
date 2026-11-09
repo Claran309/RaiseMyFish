@@ -219,6 +219,12 @@ ON CONFLICT (uid) DO UPDATE SET
   identity_embedding_hash = CASE
     WHEN viewer_profiles.name IS DISTINCT FROM EXCLUDED.name
     THEN NULL ELSE viewer_profiles.identity_embedding_hash END,
+  identity_embedding_source_hash = CASE
+    WHEN viewer_profiles.name IS DISTINCT FROM EXCLUDED.name
+    THEN NULL ELSE viewer_profiles.identity_embedding_source_hash END,
+  identity_embedding_fingerprint = CASE
+    WHEN viewer_profiles.name IS DISTINCT FROM EXCLUDED.name
+    THEN NULL ELSE viewer_profiles.identity_embedding_fingerprint END,
   identity_embedding_updated_at = CASE
     WHEN viewer_profiles.name IS DISTINCT FROM EXCLUDED.name
     THEN NULL ELSE viewer_profiles.identity_embedding_updated_at END,
@@ -228,6 +234,12 @@ ON CONFLICT (uid) DO UPDATE SET
   facts_embedding_hash = CASE
     WHEN viewer_profiles.recent_texts IS DISTINCT FROM EXCLUDED.recent_texts
     THEN NULL ELSE viewer_profiles.facts_embedding_hash END,
+  facts_embedding_source_hash = CASE
+    WHEN viewer_profiles.recent_texts IS DISTINCT FROM EXCLUDED.recent_texts
+    THEN NULL ELSE viewer_profiles.facts_embedding_source_hash END,
+  facts_embedding_fingerprint = CASE
+    WHEN viewer_profiles.recent_texts IS DISTINCT FROM EXCLUDED.recent_texts
+    THEN NULL ELSE viewer_profiles.facts_embedding_fingerprint END,
   facts_embedding_updated_at = CASE
     WHEN viewer_profiles.recent_texts IS DISTINCT FROM EXCLUDED.recent_texts
     THEN NULL ELSE viewer_profiles.facts_embedding_updated_at END,
@@ -237,6 +249,12 @@ ON CONFLICT (uid) DO UPDATE SET
   interaction_embedding_hash = CASE
     WHEN viewer_profiles.recent_replies IS DISTINCT FROM EXCLUDED.recent_replies
     THEN NULL ELSE viewer_profiles.interaction_embedding_hash END,
+  interaction_embedding_source_hash = CASE
+    WHEN viewer_profiles.recent_replies IS DISTINCT FROM EXCLUDED.recent_replies
+    THEN NULL ELSE viewer_profiles.interaction_embedding_source_hash END,
+  interaction_embedding_fingerprint = CASE
+    WHEN viewer_profiles.recent_replies IS DISTINCT FROM EXCLUDED.recent_replies
+    THEN NULL ELSE viewer_profiles.interaction_embedding_fingerprint END,
   interaction_embedding_updated_at = CASE
     WHEN viewer_profiles.recent_replies IS DISTINCT FROM EXCLUDED.recent_replies
     THEN NULL ELSE viewer_profiles.interaction_embedding_updated_at END,

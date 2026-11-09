@@ -45,6 +45,8 @@ type viewerEmbedOutput struct {
 	Pending  int `json:"pending"`
 	Batches  int `json:"batches"`
 	Embedded int `json:"embedded"`
+	// Rejected 是计算期间该路源已变化、被 CAS 拒绝写回的条数（下一轮会重算）。
+	Rejected int `json:"rejected"`
 }
 
 // viewerItem 是检索命中的 JSON 投影，只暴露认人需要的字段。
@@ -109,11 +111,13 @@ func runViewer(ctx context.Context, configPath, envPath string, args []string, o
 
 	switch spec.Action {
 	case "embed":
-		return executeViewerEmbed(probe, repo, client, cfg.Embedding.BatchSize, out, stderr)
+		return executeViewerEmbed(probe, repo, client, client.Fingerprint(viewer.IndexTemplate), cfg.Embedding.BatchSize, out, stderr)
 	case "search":
 		var embedder viewer.Embedder
+		viewerFingerprint := ""
 		if client != nil {
 			embedder = client
+			viewerFingerprint = client.Fingerprint(viewer.IndexTemplate)
 		}
 		var aliasSource viewer.AliasSource
 		if path := strings.TrimSpace(cfg.Viewer.AliasFile); path != "" {
@@ -129,6 +133,7 @@ func runViewer(ctx context.Context, configPath, envPath string, args []string, o
 		searcher, err := viewer.NewSearcher(repo, embedder, viewer.SearchOptions{
 			Alpha:         cfg.Embedding.Alpha,
 			MinSimilarity: cfg.Embedding.MinSimilarity,
+			Fingerprint:   viewerFingerprint,
 			OnSemanticError: func(err error) {
 				fmt.Fprintf(stderr, "viewer search: 语义检索不可用，已降级为关键词：%v\n", err)
 			},
@@ -193,13 +198,14 @@ func parseViewerArgs(args []string, stderr io.Writer) (viewerCommand, error) {
 }
 
 // executeViewerEmbed 执行增量入库并输出摘要；进度逐批写 stderr。
-func executeViewerEmbed(ctx context.Context, store viewer.EmbeddingStore, embedder viewer.Embedder, batchSize int, out, progressOut io.Writer) error {
+func executeViewerEmbed(ctx context.Context, store viewer.EmbeddingStore, embedder viewer.Embedder, fingerprint string, batchSize int, out, progressOut io.Writer) error {
 	if store == nil || embedder == nil {
 		return errors.New("档案入库依赖不能为空")
 	}
 	doneBatches := 0
 	stats, err := viewer.RunEmbedding(ctx, store, embedder, viewer.EmbedOptions{
-		BatchSize: batchSize,
+		BatchSize:   batchSize,
+		Fingerprint: fingerprint,
 		Progress: func(done, total, batches int) {
 			doneBatches++
 			fmt.Fprintf(progressOut, "viewer embed: 已处理 %d/%d 条（%d/%d 批）\n", done, total, doneBatches, batches)
@@ -214,6 +220,7 @@ func executeViewerEmbed(ctx context.Context, store viewer.EmbeddingStore, embedd
 		Pending:  stats.Pending,
 		Batches:  stats.Batches,
 		Embedded: stats.Embedded,
+		Rejected: stats.Rejected,
 	}
 	if err := json.NewEncoder(out).Encode(summary); err != nil {
 		return fmt.Errorf("输出档案入库结果：%w", err)

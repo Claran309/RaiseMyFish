@@ -16,6 +16,9 @@ import (
 	"RaiseMyFish/internal/store"
 )
 
+// testIndexFingerprint 是集成测试使用的索引指纹。
+const testIndexFingerprint = "integration-fingerprint"
+
 // memoryVector 造一个第 idx 位为 1 的 1024 维测试向量。
 func memoryVector(idx int) []float64 {
 	vector := make([]float64, memory.EmbeddingDimension)
@@ -23,7 +26,21 @@ func memoryVector(idx int) []float64 {
 	return vector
 }
 
-// insertSearchRecords 写入记忆并更新向量。
+// memorySourceHashes 按仓储给出的当前源字段 hash 建 ID 索引。
+func memorySourceHashes(t *testing.T, ctx context.Context, repo *MemoryRepo) map[string]string {
+	t.Helper()
+	inputs, err := repo.MemoryEmbeddingInputs(ctx, true)
+	if err != nil {
+		t.Fatalf("读取入库输入失败：%v", err)
+	}
+	hashes := make(map[string]string, len(inputs))
+	for _, input := range inputs {
+		hashes[input.ID] = input.SourceHash
+	}
+	return hashes
+}
+
+// insertSearchRecords 写入记忆并更新向量（源 hash 取自当前行，模拟真实写回）。
 func insertSearchRecords(t *testing.T, ctx context.Context, repo *MemoryRepo) {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -40,12 +57,17 @@ func insertSearchRecords(t *testing.T, ctx context.Context, repo *MemoryRepo) {
 			t.Fatalf("写入记忆 %s 失败：%v", record.ID, err)
 		}
 	}
-	if err := repo.UpsertMemoryEmbeddings(ctx, []memory.EmbeddingRecord{
-		{ID: "mem-kw", Hash: "h-kw", Embedding: memoryVector(0)},
-		{ID: "mem-sem", Hash: "h-sem", Embedding: memoryVector(1)},
-		{ID: "mem-private", Hash: "h-private", Embedding: memoryVector(0)},
-	}); err != nil {
+	hashes := memorySourceHashes(t, ctx, repo)
+	written, err := repo.UpsertMemoryEmbeddings(ctx, []memory.EmbeddingRecord{
+		{ID: "mem-kw", Hash: "h-kw", SourceHash: hashes["mem-kw"], Fingerprint: testIndexFingerprint, Embedding: memoryVector(0)},
+		{ID: "mem-sem", Hash: "h-sem", SourceHash: hashes["mem-sem"], Fingerprint: testIndexFingerprint, Embedding: memoryVector(1)},
+		{ID: "mem-private", Hash: "h-private", SourceHash: hashes["mem-private"], Fingerprint: testIndexFingerprint, Embedding: memoryVector(0)},
+	})
+	if err != nil {
 		t.Fatalf("写回记忆向量失败：%v", err)
+	}
+	if written != 3 {
+		t.Fatalf("写回记忆向量条数 = %d，期望 3", written)
 	}
 }
 
@@ -70,7 +92,7 @@ func TestMemoryKeywordAndSemanticScope(t *testing.T) {
 		t.Fatalf("关键词公开视角不符：%+v", keyword)
 	}
 
-	semantic, err := repo.SemanticRecords(ctx, public, memoryVector(0), 10)
+	semantic, err := repo.SemanticRecords(ctx, public, memoryVector(0), testIndexFingerprint, 10)
 	if err != nil {
 		t.Fatalf("语义检索失败：%v", err)
 	}
@@ -88,7 +110,7 @@ func TestMemoryKeywordAndSemanticScope(t *testing.T) {
 
 	// 私密视角能看到自己的私密行，也仍能看到公开行
 	private := memory.Scope{Channel: event.ChDM, Session: "owner", Private: true}
-	semantic, err = repo.SemanticRecords(ctx, private, memoryVector(0), 10)
+	semantic, err = repo.SemanticRecords(ctx, private, memoryVector(0), testIndexFingerprint, 10)
 	if err != nil {
 		t.Fatalf("私密语义检索失败：%v", err)
 	}
@@ -102,7 +124,7 @@ func TestMemoryKeywordAndSemanticScope(t *testing.T) {
 
 	// 私密行不能借别的 DM 会话越权
 	other := memory.Scope{Channel: event.ChDM, Session: "other", Private: true}
-	semantic, err = repo.SemanticRecords(ctx, other, memoryVector(0), 10)
+	semantic, err = repo.SemanticRecords(ctx, other, memoryVector(0), testIndexFingerprint, 10)
 	if err != nil {
 		t.Fatalf("越权视角检索失败：%v", err)
 	}
@@ -208,7 +230,7 @@ func TestMemoryHybridSearchAndDegrade(t *testing.T) {
 	scope := memory.Scope{Channel: event.ChLive, Session: "room"}
 
 	embedder := &fakeMemoryEmbedder{vector: memoryVector(1)}
-	hybrid, err := memory.NewHybridSearcher(reader, repo, embedder, memory.HybridSearchOptions{Alpha: 0.5})
+	hybrid, err := memory.NewHybridSearcher(reader, repo, embedder, memory.HybridSearchOptions{Alpha: 0.5, Fingerprint: testIndexFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,6 +247,7 @@ func TestMemoryHybridSearchAndDegrade(t *testing.T) {
 	var degraded error
 	failing, err := memory.NewHybridSearcher(reader, repo, &fakeMemoryEmbedder{err: errors.New("embedding 不可用")}, memory.HybridSearchOptions{
 		Alpha:           0.5,
+		Fingerprint:     testIndexFingerprint,
 		OnSemanticError: func(err error) { degraded = err },
 	})
 	if err != nil {
@@ -254,19 +277,28 @@ func TestMemoryEmbeddingIncremental(t *testing.T) {
 	}
 	insertSearchRecords(t, ctx, repo)
 
-	// 清掉向量，模拟首次入库
-	if err := db.WithContext(ctx).Exec("UPDATE memory_records SET embedding=NULL, embedding_text_hash=NULL").Error; err != nil {
+	// 清掉向量与索引状态，模拟首次入库
+	if err := db.WithContext(ctx).Exec("UPDATE memory_records SET embedding=NULL, embedding_text_hash=NULL, embedding_source_hash=NULL, embedding_fingerprint=NULL").Error; err != nil {
 		t.Fatal(err)
 	}
 	embedder := &fakeMemoryEmbedder{vector: memoryVector(0)}
-	stats, err := memory.RunEmbedding(ctx, repo, embedder, memory.EmbedOptions{BatchSize: 2})
+	// 默认未授权私密：只有两条公开记录参与向量化。
+	stats, err := memory.RunEmbedding(ctx, repo, embedder, memory.EmbedOptions{BatchSize: 2, Fingerprint: testIndexFingerprint})
 	if err != nil {
 		t.Fatalf("首次入库失败：%v", err)
 	}
-	if stats.Embedded != 3 || stats.Pending != 3 {
-		t.Fatalf("首次入库统计不符：%+v", stats)
+	if stats.Total != 2 || stats.Embedded != 2 || stats.Pending != 2 {
+		t.Fatalf("默认授权入库统计不符：%+v", stats)
 	}
-	stats, err = memory.RunEmbedding(ctx, repo, embedder, memory.EmbedOptions{BatchSize: 2})
+	// 显式授权后：私密行补齐，已入库的公开行按 hash 跳过。
+	stats, err = memory.RunEmbedding(ctx, repo, embedder, memory.EmbedOptions{BatchSize: 2, AllowPrivate: true, Fingerprint: testIndexFingerprint})
+	if err != nil {
+		t.Fatalf("授权入库失败：%v", err)
+	}
+	if stats.Total != 3 || stats.Skipped != 2 || stats.Pending != 1 || stats.Embedded != 1 {
+		t.Fatalf("授权入库统计不符：%+v", stats)
+	}
+	stats, err = memory.RunEmbedding(ctx, repo, embedder, memory.EmbedOptions{BatchSize: 2, AllowPrivate: true, Fingerprint: testIndexFingerprint})
 	if err != nil {
 		t.Fatalf("二次入库失败：%v", err)
 	}

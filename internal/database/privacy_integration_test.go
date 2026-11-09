@@ -263,7 +263,7 @@ func TestPublicProjectionExcludesPrivateSources(t *testing.T) {
 		if err != nil || len(keywords) != 0 {
 			t.Fatalf("%s 关键词检索不应命中私密来源：%+v / %v", kind, keywords, err)
 		}
-		semantic, err := viewers.SemanticProfiles(ctx, kind, vector, 10)
+		semantic, err := viewers.SemanticProfiles(ctx, kind, vector, testIndexFingerprint, 10)
 		if err != nil || len(semantic) != 0 {
 			t.Fatalf("%s 失效向量不应再参与召回：%+v / %v", kind, semantic, err)
 		}
@@ -317,9 +317,13 @@ func TestPublicProjectionExcludesPrivateSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"fact:public", "fact:dm-a", "fact:dm-b", "fact:leak"} {
+		// 索引状态按当前源字段写足，模拟「刚完成入库」的新鲜态。
 		if err := db.WithContext(ctx).Exec(
-			`UPDATE memory_records SET embedding=?::vector, embedding_text_hash='src', embedding_updated_at=now() WHERE id=?`,
-			memLiteral, id).Error; err != nil {
+			`UPDATE memory_records
+			 SET embedding=?::vector, embedding_text_hash='src',
+			     embedding_source_hash=`+memorySourceHashExpr+`, embedding_fingerprint=?, embedding_updated_at=now()
+			 WHERE id=?`,
+			memLiteral, testIndexFingerprint, id).Error; err != nil {
 			t.Fatalf("写入记忆向量 %s 失败：%v", id, err)
 		}
 	}
@@ -342,7 +346,7 @@ func TestPublicProjectionExcludesPrivateSources(t *testing.T) {
 	if err != nil || len(records) != 1 || records[0].ID != "fact:public" {
 		t.Fatalf("公开记忆摘要泄漏私密来源：%+v / %v", records, err)
 	}
-	semanticPublic, err := memories.SemanticRecords(ctx, publicScope, memVector, 10)
+	semanticPublic, err := memories.SemanticRecords(ctx, publicScope, memVector, testIndexFingerprint, 10)
 	if err != nil {
 		t.Fatalf("公开语义检索失败：%v", err)
 	}
@@ -350,7 +354,7 @@ func TestPublicProjectionExcludesPrivateSources(t *testing.T) {
 		t.Fatalf("公开向量检索泄漏私密来源：%+v", semanticPublic)
 	}
 	dmScope := memory.Scope{Channel: event.ChDM, Session: privacyDM, Private: true}
-	semanticDM, err := memories.SemanticRecords(ctx, dmScope, memVector, 10)
+	semanticDM, err := memories.SemanticRecords(ctx, dmScope, memVector, testIndexFingerprint, 10)
 	if err != nil {
 		t.Fatalf("私密语义检索失败：%v", err)
 	}

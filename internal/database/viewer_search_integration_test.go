@@ -110,7 +110,7 @@ func TestViewerSemanticSearchFindsUID(t *testing.T) {
 	seedViewerProfiles(t, ctx, repo)
 
 	embedder := &fakeViewerEmbedder{}
-	stats, err := viewer.RunEmbedding(ctx, repo, embedder, viewer.EmbedOptions{BatchSize: 2})
+	stats, err := viewer.RunEmbedding(ctx, repo, embedder, viewer.EmbedOptions{BatchSize: 2, Fingerprint: testIndexFingerprint})
 	if err != nil {
 		t.Fatalf("档案入库失败：%v", err)
 	}
@@ -119,7 +119,7 @@ func TestViewerSemanticSearchFindsUID(t *testing.T) {
 		t.Fatalf("档案入库统计不符：%+v", stats)
 	}
 
-	searcher, err := viewer.NewSearcher(repo, embedder, viewer.SearchOptions{Alpha: 0.5})
+	searcher, err := viewer.NewSearcher(repo, embedder, viewer.SearchOptions{Alpha: 0.5, Fingerprint: testIndexFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestViewerIndexesIsolatedByKind(t *testing.T) {
 			t.Fatalf("写入档案 %s 失败：%v", profile.UID, err)
 		}
 	}
-	if _, err := viewer.RunEmbedding(ctx, repo, &fakeViewerEmbedder{}, viewer.EmbedOptions{}); err != nil {
+	if _, err := viewer.RunEmbedding(ctx, repo, &fakeViewerEmbedder{}, viewer.EmbedOptions{Fingerprint: testIndexFingerprint}); err != nil {
 		t.Fatalf("档案入库失败：%v", err)
 	}
 
@@ -177,7 +177,7 @@ func TestViewerIndexesIsolatedByKind(t *testing.T) {
 	}
 	semantic := func(kind viewer.EmbeddingKind) string {
 		t.Helper()
-		rows, err := repo.SemanticProfiles(ctx, kind, vector, 10)
+		rows, err := repo.SemanticProfiles(ctx, kind, vector, testIndexFingerprint, 10)
 		if err != nil {
 			t.Fatalf("%s 向量检索失败：%v", kind, err)
 		}
@@ -216,7 +216,7 @@ func TestViewerIndexesIsolatedByKind(t *testing.T) {
 	}
 
 	// 认人链路：鱼的「白饭真香」不能把 6001 拉成候选。
-	searcher, err := viewer.NewSearcher(repo, &fakeViewerEmbedder{}, viewer.SearchOptions{Alpha: 0.5})
+	searcher, err := viewer.NewSearcher(repo, &fakeViewerEmbedder{}, viewer.SearchOptions{Alpha: 0.5, Fingerprint: testIndexFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,11 +244,11 @@ func TestViewerHybridAndDegrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedViewerProfiles(t, ctx, repo)
-	if _, err := viewer.RunEmbedding(ctx, repo, &fakeViewerEmbedder{}, viewer.EmbedOptions{}); err != nil {
+	if _, err := viewer.RunEmbedding(ctx, repo, &fakeViewerEmbedder{}, viewer.EmbedOptions{Fingerprint: testIndexFingerprint}); err != nil {
 		t.Fatalf("档案入库失败：%v", err)
 	}
 
-	searcher, err := viewer.NewSearcher(repo, &fakeViewerEmbedder{}, viewer.SearchOptions{Alpha: 0.5})
+	searcher, err := viewer.NewSearcher(repo, &fakeViewerEmbedder{}, viewer.SearchOptions{Alpha: 0.5, Fingerprint: testIndexFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,6 +263,7 @@ func TestViewerHybridAndDegrade(t *testing.T) {
 	var degraded error
 	failing, err := viewer.NewSearcher(repo, &fakeViewerEmbedder{err: errors.New("embedding 不可用")}, viewer.SearchOptions{
 		Alpha:           0.5,
+		Fingerprint:     testIndexFingerprint,
 		OnSemanticError: func(err error) { degraded = err },
 	})
 	if err != nil {
@@ -292,14 +293,14 @@ func TestViewerEmbeddingIncremental(t *testing.T) {
 	}
 	seedViewerProfiles(t, ctx, repo)
 	embedder := &fakeViewerEmbedder{}
-	stats, err := viewer.RunEmbedding(ctx, repo, embedder, viewer.EmbedOptions{})
+	stats, err := viewer.RunEmbedding(ctx, repo, embedder, viewer.EmbedOptions{Fingerprint: testIndexFingerprint})
 	if err != nil {
 		t.Fatalf("首次入库失败：%v", err)
 	}
 	if stats.Embedded != 6 {
 		t.Fatalf("首次入库统计不符：%+v", stats)
 	}
-	stats, err = viewer.RunEmbedding(ctx, repo, embedder, viewer.EmbedOptions{})
+	stats, err = viewer.RunEmbedding(ctx, repo, embedder, viewer.EmbedOptions{Fingerprint: testIndexFingerprint})
 	if err != nil {
 		t.Fatalf("二次入库失败：%v", err)
 	}

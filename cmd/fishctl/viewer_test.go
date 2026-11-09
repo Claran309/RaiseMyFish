@@ -64,10 +64,22 @@ func TestParseViewerArgsRejectsBadInput(t *testing.T) {
 	}
 }
 
+// viewerEmbedInput 造一条带三路源 hash 的档案输入（CAS 要求源 hash 非空）。
+func viewerEmbedInput(uid, name string, texts, replies []string) viewer.EmbeddingInput {
+	return viewer.EmbeddingInput{
+		UID: uid, Name: name, Texts: texts, Replies: replies,
+		SourceHashes: map[viewer.EmbeddingKind]string{
+			viewer.KindIdentity:    "src-identity-" + uid,
+			viewer.KindFacts:       "src-facts-" + uid,
+			viewer.KindInteraction: "src-interaction-" + uid,
+		},
+	}
+}
+
 // mockViewerEmbedStore 是命令层测试用的增量向量化仓储。
 type mockViewerEmbedStore struct {
 	inputs  []viewer.EmbeddingInput
-	hashes  map[string]map[viewer.EmbeddingKind]string
+	indexes map[string]map[viewer.EmbeddingKind]viewer.EmbeddingIndex
 	records []viewer.EmbeddingRecord
 }
 
@@ -75,24 +87,24 @@ func (m *mockViewerEmbedStore) ViewerEmbeddingInputs(context.Context) ([]viewer.
 	return m.inputs, nil
 }
 
-func (m *mockViewerEmbedStore) ExistingProfileEmbeddingHashes(context.Context) (map[string]map[viewer.EmbeddingKind]string, error) {
-	return m.hashes, nil
+func (m *mockViewerEmbedStore) ExistingProfileEmbeddingIndexes(context.Context) (map[string]map[viewer.EmbeddingKind]viewer.EmbeddingIndex, error) {
+	return m.indexes, nil
 }
 
-func (m *mockViewerEmbedStore) UpsertProfileEmbeddings(_ context.Context, records []viewer.EmbeddingRecord) error {
+func (m *mockViewerEmbedStore) UpsertProfileEmbeddings(_ context.Context, records []viewer.EmbeddingRecord) (int, error) {
 	m.records = append(m.records, records...)
-	return nil
+	return len(records), nil
 }
 
 // TestExecuteViewerEmbedIncremental 增量入库输出摘要、进度与二次跳过。
 func TestExecuteViewerEmbedIncremental(t *testing.T) {
 	store := &mockViewerEmbedStore{inputs: []viewer.EmbeddingInput{
-		{UID: "u-1", Name: "白饭哥", Texts: []string{"今天也要白饭"}},
-		{UID: "u-2", Name: "熟客", Texts: []string{"又来了"}},
+		viewerEmbedInput("u-1", "白饭哥", []string{"今天也要白饭"}, nil),
+		viewerEmbedInput("u-2", "熟客", []string{"又来了"}, nil),
 	}}
 	embedder := &cliEmbedder{}
 	var out, progress bytes.Buffer
-	if err := executeViewerEmbed(context.Background(), store, embedder, 1, &out, &progress); err != nil {
+	if err := executeViewerEmbed(context.Background(), store, embedder, testEmbedFingerprint, 1, &out, &progress); err != nil {
 		t.Fatalf("入库失败：%v", err)
 	}
 	var summary viewerEmbedOutput
@@ -110,16 +122,20 @@ func TestExecuteViewerEmbedIncremental(t *testing.T) {
 		t.Fatalf("进度日志不正确：%s", progress.String())
 	}
 
-	store.hashes = map[string]map[viewer.EmbeddingKind]string{}
+	store.indexes = map[string]map[viewer.EmbeddingKind]viewer.EmbeddingIndex{}
 	for _, record := range store.records {
-		if store.hashes[record.UID] == nil {
-			store.hashes[record.UID] = map[viewer.EmbeddingKind]string{}
+		if store.indexes[record.UID] == nil {
+			store.indexes[record.UID] = map[viewer.EmbeddingKind]viewer.EmbeddingIndex{}
 		}
-		store.hashes[record.UID][record.Kind] = record.Hash
+		store.indexes[record.UID][record.Kind] = viewer.EmbeddingIndex{
+			TextHash:    record.Hash,
+			SourceHash:  record.SourceHash,
+			Fingerprint: record.Fingerprint,
+		}
 	}
 	out.Reset()
 	progress.Reset()
-	if err := executeViewerEmbed(context.Background(), store, embedder, 1, &out, &progress); err != nil {
+	if err := executeViewerEmbed(context.Background(), store, embedder, testEmbedFingerprint, 1, &out, &progress); err != nil {
 		t.Fatalf("二次入库失败：%v", err)
 	}
 	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
@@ -135,9 +151,9 @@ func TestExecuteViewerEmbedIncremental(t *testing.T) {
 
 // TestExecuteViewerEmbedReportsFailure embedding 失败时不出成功摘要。
 func TestExecuteViewerEmbedReportsFailure(t *testing.T) {
-	store := &mockViewerEmbedStore{inputs: []viewer.EmbeddingInput{{UID: "u-1", Name: "鱼"}}}
+	store := &mockViewerEmbedStore{inputs: []viewer.EmbeddingInput{viewerEmbedInput("u-1", "鱼", nil, nil)}}
 	var out bytes.Buffer
-	err := executeViewerEmbed(context.Background(), store, &cliEmbedder{err: errors.New("上游不可用")}, 8, &out, io.Discard)
+	err := executeViewerEmbed(context.Background(), store, &cliEmbedder{err: errors.New("上游不可用")}, testEmbedFingerprint, 8, &out, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "档案入库失败") {
 		t.Fatalf("embedding失败未向上返回：%v", err)
 	}
@@ -155,7 +171,7 @@ func (s *cliProfileSource) KeywordProfiles(context.Context, viewer.EmbeddingKind
 	return s.hits, nil
 }
 
-func (s *cliProfileSource) SemanticProfiles(context.Context, viewer.EmbeddingKind, []float64, int) ([]store.ViewerProfileHit, error) {
+func (s *cliProfileSource) SemanticProfiles(context.Context, viewer.EmbeddingKind, []float64, string, int) ([]store.ViewerProfileHit, error) {
 	return nil, nil
 }
 

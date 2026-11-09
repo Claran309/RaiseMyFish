@@ -28,6 +28,9 @@ import (
 // EmbeddingDimension 与 migrations/0007 的 vector(1024) 对齐。
 const EmbeddingDimension = 1024
 
+// IndexTemplate 是三路索引输入模板的版本打包；任一路拼接规则变化都要改版本。
+const IndexTemplate = "viewer.identity-v1+facts-v1+interaction-v1"
+
 const (
 	defaultEmbedBatchSize = 32
 	defaultEmbedRetryWait = 200 * time.Millisecond
@@ -67,28 +70,46 @@ type EmbeddingInput struct {
 	Name    string
 	Texts   []string
 	Replies []string
+	// SourceHashes 是仓储按「这一路自己的源字段」计算的版本 hash。
+	// identity 只看昵称、facts 只看本人发言、interaction 只看鱼的回复，
+	// 任一路变化只让该路 stale，不影响另外两路。
+	SourceHashes map[EmbeddingKind]string
+}
+
+// EmbeddingIndex 是某一路已入库向量的索引状态：
+// TextHash 用于内容未变的增量跳过，SourceHash 用于 stale 判定与写回 CAS，
+// Fingerprint 用于拒绝跨向量空间复用。
+type EmbeddingIndex struct {
+	TextHash    string
+	SourceHash  string
+	Fingerprint string
 }
 
 // EmbeddingRecord 是一次批量 upsert 的单行（一条向量）。
 type EmbeddingRecord struct {
-	UID       string
-	Kind      EmbeddingKind
-	Hash      string
-	Embedding []float64
+	UID         string
+	Kind        EmbeddingKind
+	Hash        string
+	SourceHash  string
+	Fingerprint string
+	Embedding   []float64
 }
 
 // EmbeddingStore 由 database 层实现，负责读取源字段、增量状态与写回向量。
 type EmbeddingStore interface {
 	ViewerEmbeddingInputs(ctx context.Context) ([]EmbeddingInput, error)
-	// ExistingProfileEmbeddingHashes 返回 uid → kind → 内容 hash（只含有向量的路）。
-	ExistingProfileEmbeddingHashes(ctx context.Context) (map[string]map[EmbeddingKind]string, error)
-	UpsertProfileEmbeddings(ctx context.Context, records []EmbeddingRecord) error
+	// ExistingProfileEmbeddingIndexes 返回 uid → kind → 索引状态（只含有向量的路）。
+	ExistingProfileEmbeddingIndexes(ctx context.Context) (map[string]map[EmbeddingKind]EmbeddingIndex, error)
+	// UpsertProfileEmbeddings 只对「该路源 hash 未变」的行写回，返回实际写入条数。
+	UpsertProfileEmbeddings(ctx context.Context, records []EmbeddingRecord) (int, error)
 }
 
 // EmbedOptions 控制批量与重试；零值按默认值处理。
 type EmbedOptions struct {
 	BatchSize  int
 	RetryDelay time.Duration
+	// Fingerprint 是当前向量空间的指纹（模型/提供方/维度/三路模板），必填。
+	Fingerprint string
 	// Progress 在每批成功后调用，供 CLI 打进度日志。
 	Progress func(done, total, batches int)
 }
@@ -103,13 +124,16 @@ type EmbedStats struct {
 	Pending  int
 	Batches  int
 	Embedded int
+	// Rejected 是计算期间该路源已变化、被 CAS 拒绝写回的条数。
+	Rejected int
 }
 
 type embedDocument struct {
-	uid  string
-	kind EmbeddingKind
-	text string
-	hash string
+	uid        string
+	kind       EmbeddingKind
+	text       string
+	hash       string
+	sourceHash string
 }
 
 // RunEmbedding 执行一次增量向量化：新增或内容变化的档案才重新计算。
@@ -122,6 +146,10 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 	}
 	if store == nil || embedder == nil {
 		return EmbedStats{}, errors.New("档案向量化依赖不能为空")
+	}
+	fingerprint := strings.TrimSpace(opts.Fingerprint)
+	if fingerprint == "" {
+		return EmbedStats{}, errors.New("档案向量化缺少索引指纹：无法确认向量空间")
 	}
 	batchSize := opts.BatchSize
 	if batchSize == 0 {
@@ -142,7 +170,7 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 	if err != nil {
 		return EmbedStats{}, err
 	}
-	existing, err := store.ExistingProfileEmbeddingHashes(ctx)
+	existing, err := store.ExistingProfileEmbeddingIndexes(ctx)
 	if err != nil {
 		return EmbedStats{}, err
 	}
@@ -162,7 +190,13 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 				continue
 			}
 			doc.hash = hashText(doc.text)
-			if known[doc.kind] == doc.hash {
+			sourceHash := strings.TrimSpace(input.SourceHashes[doc.kind])
+			if sourceHash == "" {
+				return EmbedStats{}, fmt.Errorf("档案 %s 缺少 %s 源hash，拒绝向量化", input.UID, doc.kind)
+			}
+			doc.sourceHash = sourceHash
+			index := known[doc.kind]
+			if index.TextHash == doc.hash && index.SourceHash == sourceHash && index.Fingerprint == fingerprint {
 				stats.Skipped++
 				continue
 			}
@@ -195,13 +229,19 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 			}
 			records = append(records, EmbeddingRecord{
 				UID: batch[i].uid, Kind: batch[i].kind,
-				Hash: batch[i].hash, Embedding: vector,
+				Hash: batch[i].hash, SourceHash: batch[i].sourceHash,
+				Fingerprint: fingerprint, Embedding: vector,
 			})
 		}
-		if err := store.UpsertProfileEmbeddings(ctx, records); err != nil {
+		written, err := store.UpsertProfileEmbeddings(ctx, records)
+		if err != nil {
 			return stats, fmt.Errorf("写入档案向量失败：%w", err)
 		}
-		stats.Embedded += len(records)
+		if written < 0 || written > len(records) {
+			return stats, errors.New("写入档案向量返回条数非法")
+		}
+		stats.Embedded += written
+		stats.Rejected += len(records) - written
 		if opts.Progress != nil {
 			opts.Progress(stats.Embedded, stats.Pending, stats.Batches)
 		}

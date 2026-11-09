@@ -55,7 +55,7 @@ func (s *viewerSearchStub) KeywordProfiles(_ context.Context, kind viewer.Embedd
 	return hits, nil
 }
 
-func (s *viewerSearchStub) SemanticProfiles(context.Context, viewer.EmbeddingKind, []float64, int) ([]store.ViewerProfileHit, error) {
+func (s *viewerSearchStub) SemanticProfiles(context.Context, viewer.EmbeddingKind, []float64, string, int) ([]store.ViewerProfileHit, error) {
 	return nil, nil
 }
 
@@ -124,7 +124,7 @@ phonetic_groups:
 		viewerSearchProfile("5005", "弓长三益"),
 		viewerSearchProfile("5006", "真得"),
 	}}
-	searcher, err := buildViewerSearcher(viewerSearchConfig(path), source, nil, zap.NewNop())
+	searcher, err := buildViewerSearcher(viewerSearchConfig(path), source, nil, "", zap.NewNop())
 	if err != nil {
 		t.Fatalf("生产装配失败：%v", err)
 	}
@@ -187,7 +187,7 @@ func TestBuildViewerSearcherTreatsNotFoundAsNoMatch(t *testing.T) {
 	for name, getErr := range cases {
 		t.Run(name, func(t *testing.T) {
 			source := &viewerSearchStub{getErr: getErr}
-			searcher, err := buildViewerSearcher(viewerSearchConfig(""), source, nil, zap.NewNop())
+			searcher, err := buildViewerSearcher(viewerSearchConfig(""), source, nil, "", zap.NewNop())
 			if err != nil {
 				t.Fatalf("生产装配失败：%v", err)
 			}
@@ -202,7 +202,7 @@ func TestBuildViewerSearcherTreatsNotFoundAsNoMatch(t *testing.T) {
 	}
 
 	boom := errors.New("数据库连接断了")
-	searcher, err := buildViewerSearcher(viewerSearchConfig(""), &viewerSearchStub{getErr: boom}, nil, zap.NewNop())
+	searcher, err := buildViewerSearcher(viewerSearchConfig(""), &viewerSearchStub{getErr: boom}, nil, "", zap.NewNop())
 	if err != nil {
 		t.Fatalf("生产装配失败：%v", err)
 	}
@@ -224,7 +224,7 @@ aliases:
 	source := &viewerSearchStub{profiles: []store.ViewerProfile{
 		viewerSearchProfile("5005", "弓长三益"),
 	}}
-	searcher, err := buildViewerSearcher(viewerSearchConfig(path), source, nil, zap.NewNop())
+	searcher, err := buildViewerSearcher(viewerSearchConfig(path), source, nil, "", zap.NewNop())
 	if err != nil {
 		t.Fatalf("生产装配失败：%v", err)
 	}

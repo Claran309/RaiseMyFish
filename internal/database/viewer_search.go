@@ -92,9 +92,21 @@ LIMIT ?`, column)
 //   - interaction：鱼的回复向量，只用于互动查询，不参与认人。
 //
 // 列名来自白名单（profileEmbeddingColumnSet），不接受外部输入。
-func (r *ViewerRepo) SemanticProfiles(ctx context.Context, kind viewer.EmbeddingKind, vector []float64, limit int) ([]store.ViewerProfileHit, error) {
+//
+// stale 拒绝（C2/N08）：向量非空还不够——
+//   - 索引指纹必须等于查询侧指纹（换模型/提供方/维度/模板后旧向量不参与排序）；
+//   - 写回时的源 hash 必须等于该路当前源字段 hash（档案重建/清洗后旧向量立即失效）；
+//   - 索引文本 hash 非空（未标记索引版本的向量不可信）。
+//
+// 三者任一不满足都不进入排序，宁可暂时少召回，也不拿旧语义给新档案排序。
+func (r *ViewerRepo) SemanticProfiles(ctx context.Context, kind viewer.EmbeddingKind, vector []float64, fingerprint string, limit int) ([]store.ViewerProfileHit, error) {
 	columns, ok := profileEmbeddingColumnSet[kind]
-	if ctx == nil || !ok || limit < 1 || limit > 200 {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if ctx == nil || !ok || fingerprint == "" || limit < 1 || limit > 200 {
+		return nil, store.ErrInvalid
+	}
+	sourceExpr, ok := viewerSourceHashExpr(kind)
+	if !ok {
 		return nil, store.ErrInvalid
 	}
 	literal, err := vectorLiteral(vector, viewer.EmbeddingDimension)
@@ -108,9 +120,15 @@ SELECT uid, name, hits, replies, last_seen, recent_texts, recent_replies, update
        1 - (%s <=> q.v) AS sim
 FROM viewer_profiles, q
 WHERE %s IS NOT NULL
+  AND COALESCE(%s,'') <> ''
+  AND %s = ?
+  AND %s = %s
 ORDER BY %s <=> q.v, uid ASC
-LIMIT ?`, columns.vector, columns.vector, columns.vector)
-	err = r.db.WithContext(ctx).Raw(query, literal, limit).Scan(&rows).Error
+LIMIT ?`,
+		columns.vector, columns.vector, columns.hash,
+		columns.fingerprint, columns.sourceHash, sourceExpr,
+		columns.vector)
+	err = r.db.WithContext(ctx).Raw(query, literal, fingerprint, limit).Scan(&rows).Error
 	if err != nil {
 		return nil, &safeError{"向量检索观众档案失败", err}
 	}

@@ -102,6 +102,11 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取记忆主体迁移：%w", err)
 	}
 	memoryProvenanceHash := sha256.Sum256(memoryProvenance)
+	embeddingIndexState, err := migrations.Files.ReadFile("0014_embedding_index_state.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取向量索引状态迁移：%w", err)
+	}
+	embeddingIndexStateHash := sha256.Sum256(embeddingIndexState)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -116,6 +121,7 @@ func migrationSteps() ([]migrationStep, error) {
 		{11, string(deliveryPlans), hex.EncodeToString(deliveryPlansHash[:])},
 		{12, string(sendLogPlannedAttempt), hex.EncodeToString(sendLogPlannedAttemptHash[:])},
 		{13, string(memoryProvenance), hex.EncodeToString(memoryProvenanceHash[:])},
+		{14, string(embeddingIndexState), hex.EncodeToString(embeddingIndexStateHash[:])},
 	}, nil
 }
 
@@ -228,13 +234,13 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	if err := db.Exec("SELECT id,source,title,updated_at,embedding FROM " + table("knowledge_embeddings") + " LIMIT 0").Error; err != nil {
 		return &safeError{"知识向量表不完整", err}
 	}
-	if err := db.Exec("SELECT embedding,embedding_text_hash,embedding_updated_at FROM " + table("memory_records") + " LIMIT 0").Error; err != nil {
+	if err := db.Exec("SELECT embedding,embedding_text_hash,embedding_source_hash,embedding_fingerprint,embedding_updated_at FROM " + table("memory_records") + " LIMIT 0").Error; err != nil {
 		return &safeError{"记忆向量字段不完整", err}
 	}
 	if err := db.Exec("SELECT asserted_by_id,asserted_by_name,subject FROM " + table("memory_records") + " LIMIT 0").Error; err != nil {
 		return &safeError{"记忆主体字段不完整", err}
 	}
-	if err := db.Exec("SELECT identity_embedding,identity_embedding_hash,identity_embedding_updated_at,facts_embedding,facts_embedding_hash,facts_embedding_updated_at,interaction_embedding,interaction_embedding_hash,interaction_embedding_updated_at FROM " + table("viewer_profiles") + " LIMIT 0").Error; err != nil {
+	if err := db.Exec("SELECT identity_embedding,identity_embedding_hash,identity_embedding_source_hash,identity_embedding_fingerprint,identity_embedding_updated_at,facts_embedding,facts_embedding_hash,facts_embedding_source_hash,facts_embedding_fingerprint,facts_embedding_updated_at,interaction_embedding,interaction_embedding_hash,interaction_embedding_source_hash,interaction_embedding_fingerprint,interaction_embedding_updated_at FROM " + table("viewer_profiles") + " LIMIT 0").Error; err != nil {
 		return &safeError{"档案向量字段不完整", err}
 	}
 	if err := db.Exec("SELECT id,mid,name,cookie,csrf,status,last_check,note,is_active FROM " + table("accounts") + " LIMIT 0").Error; err != nil {

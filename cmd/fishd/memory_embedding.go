@@ -70,12 +70,15 @@ type memoryEmbeddingRefresher struct {
 	// memoryAllowPrivate 透传 [embedding] memory_allow_private：默认 false，
 	// 私密记忆摘要不离开本机，也就不参与记忆向量化。
 	memoryAllowPrivate bool
-	logger             *zap.Logger
+	// 两侧的索引指纹各自独立：领域模板不同，换模型/提供方后都必须全量重算。
+	memoryFingerprint string
+	viewerFingerprint string
+	logger            *zap.Logger
 }
 
 // embedSummary 把两个领域包的统计收敛成同一个形状（字段名相同、类型不同）。
 type embedSummary struct {
-	total, skipped, pending, embedded int
+	total, skipped, pending, embedded, rejected int
 }
 
 // refreshOnce 依次刷新两类索引。
@@ -86,12 +89,16 @@ func (r *memoryEmbeddingRefresher) refreshOnce(ctx context.Context) {
 		stats, err := memory.RunEmbedding(ctx, r.memoryStore, r.embedder, memory.EmbedOptions{
 			BatchSize:    r.batchSize,
 			AllowPrivate: r.memoryAllowPrivate,
+			Fingerprint:  r.memoryFingerprint,
 		})
-		return embedSummary{stats.Total, stats.Skipped, stats.Pending, stats.Embedded}, err
+		return embedSummary{stats.Total, stats.Skipped, stats.Pending, stats.Embedded, stats.Rejected}, err
 	})
 	r.embedAndLog(ctx, "viewer", func() (embedSummary, error) {
-		stats, err := viewer.RunEmbedding(ctx, r.viewerStore, r.embedder, viewer.EmbedOptions{BatchSize: r.batchSize})
-		return embedSummary{stats.Total, stats.Skipped, stats.Pending, stats.Embedded}, err
+		stats, err := viewer.RunEmbedding(ctx, r.viewerStore, r.embedder, viewer.EmbedOptions{
+			BatchSize:   r.batchSize,
+			Fingerprint: r.viewerFingerprint,
+		})
+		return embedSummary{stats.Total, stats.Skipped, stats.Pending, stats.Embedded, stats.Rejected}, err
 	})
 }
 
@@ -109,8 +116,9 @@ func (r *memoryEmbeddingRefresher) embedAndLog(ctx context.Context, kind string,
 		)
 		return
 	}
-	// 没有待处理行时不打日志，避免每 5 分钟刷一条无意义记录
-	if stats.embedded == 0 {
+	// 没有实际写入时不打日志，避免每 5 分钟刷一条无意义记录；
+	// 但被 CAS 拒绝（计算期间源已变化）必须可见，否则会误以为索引已齐全。
+	if stats.embedded == 0 && stats.rejected == 0 {
 		return
 	}
 	r.logger.Info("向量增量刷新完成",
@@ -120,6 +128,7 @@ func (r *memoryEmbeddingRefresher) embedAndLog(ctx context.Context, kind string,
 		zap.Int("skipped", stats.skipped),
 		zap.Int("pending", stats.pending),
 		zap.Int("embedded", stats.embedded),
+		zap.Int("rejected", stats.rejected),
 	)
 }
 
@@ -156,6 +165,8 @@ func startMemoryEmbeddingRefresh(ctx context.Context, cfg config.Config, db *gor
 		embedder:           client,
 		batchSize:          cfg.Embedding.BatchSize,
 		memoryAllowPrivate: cfg.Embedding.MemoryAllowPrivate,
+		memoryFingerprint:  client.Fingerprint(memory.IndexTemplate),
+		viewerFingerprint:  client.Fingerprint(viewer.IndexTemplate),
 		logger:             logger,
 	}
 	logger.Info("记忆/档案向量定时增量已启动",

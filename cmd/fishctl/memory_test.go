@@ -359,10 +359,18 @@ func TestRunMemoryFreezeWithoutConfigOrDatabase(t *testing.T) {
 	}
 }
 
+// testEmbedFingerprint 是命令层测试用的索引指纹。
+const testEmbedFingerprint = "test-fingerprint"
+
+// memoryEmbedInput 造一条带源 hash 的入库输入（CAS 要求源 hash 非空）。
+func memoryEmbedInput(id, title, summary string) memory.EmbeddingInput {
+	return memory.EmbeddingInput{ID: id, Title: title, Summary: summary, SourceHash: "src-" + id}
+}
+
 // mockMemoryEmbedStore 是命令层测试用的增量向量化仓储。
 type mockMemoryEmbedStore struct {
 	inputs  []memory.EmbeddingInput
-	hashes  map[string]string
+	indexes map[string]memory.EmbeddingIndex
 	records []memory.EmbeddingRecord
 	// allowPrivate 记录命令层传给仓储的授权参数。
 	allowPrivate bool
@@ -373,24 +381,24 @@ func (m *mockMemoryEmbedStore) MemoryEmbeddingInputs(_ context.Context, allowPri
 	return m.inputs, nil
 }
 
-func (m *mockMemoryEmbedStore) ExistingMemoryEmbeddingHashes(context.Context) (map[string]string, error) {
-	return m.hashes, nil
+func (m *mockMemoryEmbedStore) ExistingMemoryEmbeddingIndexes(context.Context) (map[string]memory.EmbeddingIndex, error) {
+	return m.indexes, nil
 }
 
-func (m *mockMemoryEmbedStore) UpsertMemoryEmbeddings(_ context.Context, records []memory.EmbeddingRecord) error {
+func (m *mockMemoryEmbedStore) UpsertMemoryEmbeddings(_ context.Context, records []memory.EmbeddingRecord) (int, error) {
 	m.records = append(m.records, records...)
-	return nil
+	return len(records), nil
 }
 
 // TestExecuteMemoryEmbedIncremental 增量入库输出摘要、进度与二次跳过。
 func TestExecuteMemoryEmbedIncremental(t *testing.T) {
 	store := &mockMemoryEmbedStore{inputs: []memory.EmbeddingInput{
-		{ID: "mem-1", Title: "猫", Summary: "很乖"},
-		{ID: "mem-2", Title: "", Summary: "今天晴天"},
+		memoryEmbedInput("mem-1", "猫", "很乖"),
+		memoryEmbedInput("mem-2", "", "今天晴天"),
 	}}
 	embedder := &cliEmbedder{}
 	var out, progress bytes.Buffer
-	if err := executeMemoryEmbed(context.Background(), store, embedder, 1, false, &out, &progress); err != nil {
+	if err := executeMemoryEmbed(context.Background(), store, embedder, testEmbedFingerprint, 1, false, &out, &progress); err != nil {
 		t.Fatalf("入库失败：%v", err)
 	}
 	var summary memoryEmbedOutput
@@ -410,14 +418,18 @@ func TestExecuteMemoryEmbedIncremental(t *testing.T) {
 		t.Fatalf("进度日志不正确：%s", progress.String())
 	}
 
-	// 二次执行：hash 已写入，应全部跳过
-	store.hashes = map[string]string{}
+	// 二次执行：索引信息已写入，应全部跳过。
+	store.indexes = map[string]memory.EmbeddingIndex{}
 	for _, record := range store.records {
-		store.hashes[record.ID] = record.Hash
+		store.indexes[record.ID] = memory.EmbeddingIndex{
+			TextHash:    record.Hash,
+			SourceHash:  record.SourceHash,
+			Fingerprint: record.Fingerprint,
+		}
 	}
 	out.Reset()
 	progress.Reset()
-	if err := executeMemoryEmbed(context.Background(), store, embedder, 1, false, &out, &progress); err != nil {
+	if err := executeMemoryEmbed(context.Background(), store, embedder, testEmbedFingerprint, 1, false, &out, &progress); err != nil {
 		t.Fatalf("二次入库失败：%v", err)
 	}
 	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
@@ -434,15 +446,17 @@ func TestExecuteMemoryEmbedIncremental(t *testing.T) {
 // TestExecuteMemoryEmbedPrivateGate 私密记忆默认不外发，授权后才发送；归档始终排除。
 func TestExecuteMemoryEmbedPrivateGate(t *testing.T) {
 	inputs := []memory.EmbeddingInput{
-		{ID: "mem-public", Summary: "公开"},
-		{ID: "mem-private", Summary: "私密", Private: true},
-		{ID: "mem-archived", Summary: "归档", Archived: true},
+		memoryEmbedInput("mem-public", "", "公开"),
+		memoryEmbedInput("mem-private", "", "私密"),
+		memoryEmbedInput("mem-archived", "", "归档"),
 	}
+	inputs[1].Private = true
+	inputs[2].Archived = true
 
 	store := &mockMemoryEmbedStore{inputs: inputs}
 	embedder := &cliEmbedder{}
 	var out bytes.Buffer
-	if err := executeMemoryEmbed(context.Background(), store, embedder, 8, false, &out, io.Discard); err != nil {
+	if err := executeMemoryEmbed(context.Background(), store, embedder, testEmbedFingerprint, 8, false, &out, io.Discard); err != nil {
 		t.Fatalf("默认入库失败：%v", err)
 	}
 	var summary memoryEmbedOutput
@@ -460,7 +474,7 @@ func TestExecuteMemoryEmbedPrivateGate(t *testing.T) {
 	store = &mockMemoryEmbedStore{inputs: inputs}
 	embedder = &cliEmbedder{}
 	out.Reset()
-	if err := executeMemoryEmbed(context.Background(), store, embedder, 8, true, &out, io.Discard); err != nil {
+	if err := executeMemoryEmbed(context.Background(), store, embedder, testEmbedFingerprint, 8, true, &out, io.Discard); err != nil {
 		t.Fatalf("授权入库失败：%v", err)
 	}
 	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
@@ -476,9 +490,9 @@ func TestExecuteMemoryEmbedPrivateGate(t *testing.T) {
 
 // TestExecuteMemoryEmbedReportsFailure embedding 失败时不出成功摘要。
 func TestExecuteMemoryEmbedReportsFailure(t *testing.T) {
-	store := &mockMemoryEmbedStore{inputs: []memory.EmbeddingInput{{ID: "mem-1", Summary: "鱼"}}}
+	store := &mockMemoryEmbedStore{inputs: []memory.EmbeddingInput{memoryEmbedInput("mem-1", "", "鱼")}}
 	var out bytes.Buffer
-	err := executeMemoryEmbed(context.Background(), store, &cliEmbedder{err: errors.New("上游不可用")}, 8, false, &out, io.Discard)
+	err := executeMemoryEmbed(context.Background(), store, &cliEmbedder{err: errors.New("上游不可用")}, testEmbedFingerprint, 8, false, &out, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "记忆入库失败") {
 		t.Fatalf("embedding失败未向上返回：%v", err)
 	}

@@ -49,7 +49,9 @@ type SemanticRecord struct {
 // 两个方法都必须在 SQL 层完成有效期、公开/私密范围过滤。
 type SearchRecordSource interface {
 	KeywordRecords(ctx context.Context, scope Scope, keyword string, limit int) ([]Record, error)
-	SemanticRecords(ctx context.Context, scope Scope, vector []float64, limit int) ([]SemanticRecord, error)
+	// SemanticRecords 只返回「索引指纹匹配且源 hash 未过期」的向量命中；
+	// 查询与入库必须使用同一个指纹，否则旧向量空间的条目不会参与排序。
+	SemanticRecords(ctx context.Context, scope Scope, vector []float64, fingerprint string, limit int) ([]SemanticRecord, error)
 }
 
 // SearchMessageSource 是可选的原始消息检索能力，由 database.MemoryRepo 实现。
@@ -71,6 +73,9 @@ type HybridSearchOptions struct {
 	OnSemanticError func(error)
 	// MinSimilarity 是语义召回的最低相关性；<=0 用默认值。
 	MinSimilarity float64
+	// Fingerprint 是当前向量空间指纹；embedder 非 nil 时必填。
+	// 空指纹意味着无法确认查询向量与库内向量同源，宁可拒绝装配也不静默混用。
+	Fingerprint string
 }
 
 // HybridSearcher 在既有 Reader 上叠加带查询词的混合检索。
@@ -82,6 +87,7 @@ type HybridSearcher struct {
 	embedder        Embedder
 	alpha           float64
 	minSimilarity   float64
+	fingerprint     string
 	onSemanticError func(error)
 }
 
@@ -106,12 +112,17 @@ func NewHybridSearcher(base Reader, source SearchRecordSource, embedder Embedder
 	if math.IsNaN(minSim) || minSim > 1 {
 		return nil, errors.New("混合检索最低相关性必须在0至1之间")
 	}
+	fingerprint := strings.TrimSpace(opts.Fingerprint)
+	if embedder != nil && fingerprint == "" {
+		return nil, errors.New("混合检索缺少索引指纹：无法确认向量空间")
+	}
 	return &HybridSearcher{
 		base:            base,
 		source:          source,
 		embedder:        embedder,
 		alpha:           opts.Alpha,
 		minSimilarity:   minSim,
+		fingerprint:     fingerprint,
 		onSemanticError: opts.OnSemanticError,
 	}, nil
 }
@@ -187,7 +198,7 @@ func (h *HybridSearcher) Search(ctx context.Context, query SearchQuery) (Context
 		h.degrade(err)
 		return buildSearchContext(query.Scope, messages, keywordRecords, nil, 0, limit, "关键词记忆召回数据无效")
 	}
-	semantic, err := h.source.SemanticRecords(ctx, query.Scope, vector, semanticCandidateLimit)
+	semantic, err := h.source.SemanticRecords(ctx, query.Scope, vector, h.fingerprint, semanticCandidateLimit)
 	if err != nil {
 		if ctx.Err() != nil {
 			return Context{}, ctx.Err()

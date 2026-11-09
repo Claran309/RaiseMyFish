@@ -40,10 +40,14 @@ func buildViewerAliasSource(cfg config.Viewer, log *zap.Logger) viewer.AliasSour
 }
 
 // buildViewerSearcher 构造生产档案检索；embedder 可为 nil（纯关键词）。
-func buildViewerSearcher(cfg config.Config, source viewer.ProfileSource, embedder viewer.Embedder, log *zap.Logger) (*viewer.Searcher, error) {
+//
+// fingerprint 是当前向量空间指纹（提供方/模型/维度/模板）；有 embedder 时必填，
+// 否则语义查询无法拒绝跨模型复用的旧向量。
+func buildViewerSearcher(cfg config.Config, source viewer.ProfileSource, embedder viewer.Embedder, fingerprint string, log *zap.Logger) (*viewer.Searcher, error) {
 	return viewer.NewSearcher(source, embedder, viewer.SearchOptions{
 		Alpha:         cfg.Embedding.Alpha,
 		MinSimilarity: cfg.Embedding.MinSimilarity,
+		Fingerprint:   fingerprint,
 		OnSemanticError: func(err error) {
 			log.Warn("档案语义检索降级为关键词", zap.String("action", "viewer_semantic"), zap.Error(err))
 		},

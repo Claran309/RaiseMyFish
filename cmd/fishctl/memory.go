@@ -211,6 +211,8 @@ type memoryEmbedOutput struct {
 	Pending  int `json:"pending"`
 	Batches  int `json:"batches"`
 	Embedded int `json:"embedded"`
+	// Rejected 是计算期间源已变化、被 CAS 拒绝写回的条数（下一轮会重算）。
+	Rejected int `json:"rejected"`
 	// AllowPrivate 回显本次是否获准外发私密记忆摘要（对应 [embedding] memory_allow_private）。
 	AllowPrivate bool `json:"allow_private"`
 }
@@ -255,14 +257,15 @@ func runMemoryEmbed(ctx context.Context, configPath, envPath string, out, stderr
 	if err != nil {
 		return err
 	}
-	return executeMemoryEmbed(probe, repo, client, cfg.Embedding.BatchSize, cfg.Embedding.MemoryAllowPrivate, out, stderr)
+	return executeMemoryEmbed(probe, repo, client, client.Fingerprint(memory.IndexTemplate), cfg.Embedding.BatchSize, cfg.Embedding.MemoryAllowPrivate, out, stderr)
 }
 
 // executeMemoryEmbed 执行增量入库并输出摘要；进度逐批写 stderr。
 //
 // allowPrivate 来自 [embedding] memory_allow_private：默认 false 时私密记忆
 // 不进入外发请求，归档/失效记录在任何情况下都不外发。
-func executeMemoryEmbed(ctx context.Context, store memory.EmbeddingStore, embedder memory.Embedder, batchSize int, allowPrivate bool, out, progressOut io.Writer) error {
+// fingerprint 是当前向量空间指纹；空值会在 RunEmbedding 被拒绝。
+func executeMemoryEmbed(ctx context.Context, store memory.EmbeddingStore, embedder memory.Embedder, fingerprint string, batchSize int, allowPrivate bool, out, progressOut io.Writer) error {
 	if store == nil || embedder == nil {
 		return errors.New("记忆入库依赖不能为空")
 	}
@@ -270,6 +273,7 @@ func executeMemoryEmbed(ctx context.Context, store memory.EmbeddingStore, embedd
 	stats, err := memory.RunEmbedding(ctx, store, embedder, memory.EmbedOptions{
 		BatchSize:    batchSize,
 		AllowPrivate: allowPrivate,
+		Fingerprint:  fingerprint,
 		Progress: func(done, total, batches int) {
 			doneBatches++
 			fmt.Fprintf(progressOut, "memory embed: 已处理 %d/%d 条（%d/%d 批）\n", done, total, doneBatches, batches)
@@ -284,6 +288,7 @@ func executeMemoryEmbed(ctx context.Context, store memory.EmbeddingStore, embedd
 		Pending:      stats.Pending,
 		Batches:      stats.Batches,
 		Embedded:     stats.Embedded,
+		Rejected:     stats.Rejected,
 		AllowPrivate: allowPrivate,
 	}
 	if err := json.NewEncoder(out).Encode(summary); err != nil {

@@ -33,20 +33,21 @@ func (f *fakeSearchBase) Shared(_ context.Context, scope Scope) (SharedState, er
 }
 
 type fakeSearchSource struct {
-	keyword       []Record
-	semantic      []SemanticRecord
-	messages      []Message
-	keywordErr    error
-	semanticErr   error
-	messageErr    error
-	gotKeyword    string
-	gotMsgKeyword string
-	gotLimit      int
-	gotSemLimit   int
-	gotVector     []float64
-	keywordCalls  int
-	semanticCalls int
-	messageCalls  int
+	keyword        []Record
+	semantic       []SemanticRecord
+	messages       []Message
+	keywordErr     error
+	semanticErr    error
+	messageErr     error
+	gotKeyword     string
+	gotMsgKeyword  string
+	gotLimit       int
+	gotSemLimit    int
+	gotVector      []float64
+	gotFingerprint string
+	keywordCalls   int
+	semanticCalls  int
+	messageCalls   int
 }
 
 func (f *fakeSearchSource) KeywordRecords(_ context.Context, _ Scope, keyword string, limit int) ([]Record, error) {
@@ -62,9 +63,10 @@ func (f *fakeSearchSource) KeywordMessages(_ context.Context, _ Scope, keyword s
 	return f.messages, f.messageErr
 }
 
-func (f *fakeSearchSource) SemanticRecords(_ context.Context, _ Scope, vector []float64, limit int) ([]SemanticRecord, error) {
+func (f *fakeSearchSource) SemanticRecords(_ context.Context, _ Scope, vector []float64, fingerprint string, limit int) ([]SemanticRecord, error) {
 	f.semanticCalls++
 	f.gotVector = vector
+	f.gotFingerprint = fingerprint
 	f.gotSemLimit = limit
 	return f.semantic, f.semanticErr
 }
@@ -100,6 +102,10 @@ func searchBaseContext() Context {
 
 func newTestHybrid(t *testing.T, source SearchRecordSource, embedder Embedder, opts HybridSearchOptions) *HybridSearcher {
 	t.Helper()
+	// 有 embedder 时构造函数要求指纹；测试默认给一个固定值，个别用例自行覆盖。
+	if embedder != nil && strings.TrimSpace(opts.Fingerprint) == "" {
+		opts.Fingerprint = "test-fingerprint"
+	}
 	base := &fakeSearchBase{ctx: searchBaseContext()}
 	h, err := NewHybridSearcher(base, source, embedder, opts)
 	if err != nil {
@@ -195,6 +201,9 @@ func TestHybridSearchScoresKeywordAndSemantic(t *testing.T) {
 	}
 	if source.semanticCalls != 1 || len(source.gotVector) != EmbeddingDimension {
 		t.Errorf("语义查询参数不符：calls=%d dim=%d", source.semanticCalls, len(source.gotVector))
+	}
+	if source.gotFingerprint != "test-fingerprint" {
+		t.Errorf("语义查询应带索引指纹，实际 %q", source.gotFingerprint)
 	}
 	if source.gotSemLimit != semanticCandidateLimit {
 		t.Errorf("语义候选数 = %d，期望 %d", source.gotSemLimit, semanticCandidateLimit)
@@ -405,6 +414,23 @@ func TestNewHybridSearcherValidation(t *testing.T) {
 	base := &fakeSearchBase{ctx: searchBaseContext()}
 	if _, err := NewHybridSearcher(base, &fakeSearchSource{}, nil, HybridSearchOptions{Alpha: 1.5}); err == nil {
 		t.Error("alpha 越界应报错")
+	}
+}
+
+// TestNewHybridSearcherRequiresFingerprint 有 embedder 却缺指纹时拒绝装配。
+//
+// 缺指纹意味着无法区分向量空间：同维度换模型后会把旧向量当成本空间结果排序。
+func TestNewHybridSearcherRequiresFingerprint(t *testing.T) {
+	base := &fakeSearchBase{ctx: searchBaseContext()}
+	embedder := &fakeQueryEmbedder{vectors: [][]float64{vectorWith(1)}}
+	if _, err := NewHybridSearcher(base, &fakeSearchSource{}, embedder, HybridSearchOptions{}); err == nil {
+		t.Fatal("有 embedder 缺指纹应报错")
+	}
+	if _, err := NewHybridSearcher(base, &fakeSearchSource{}, embedder, HybridSearchOptions{Fingerprint: "  "}); err == nil {
+		t.Fatal("空白指纹应报错")
+	}
+	if _, err := NewHybridSearcher(base, &fakeSearchSource{}, nil, HybridSearchOptions{}); err != nil {
+		t.Fatalf("纯关键词检索不需要指纹：%v", err)
 	}
 }
 

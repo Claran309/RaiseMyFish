@@ -405,12 +405,15 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	// 即使没有 embedding 也要装混合检索：关键词档位包含 events 原文，
 	// 否则 memory_search 只能走 Recall，摘要没提炼出来时会「数据在却说不知道」。
 	var memEmbedder memory.Embedder
+	memoryFingerprint := ""
 	if embedClient != nil {
 		memEmbedder = embedClient
+		memoryFingerprint = embedClient.Fingerprint(memory.IndexTemplate)
 	}
 	hybrid, err := memory.NewHybridSearcher(memReader, memRepo, memEmbedder, memory.HybridSearchOptions{
 		Alpha:         cfg.Embedding.Alpha,
 		MinSimilarity: cfg.Embedding.MinSimilarity,
+		Fingerprint:   memoryFingerprint,
 		OnSemanticError: func(err error) {
 			log.Warn("记忆语义召回降级为关键词", zap.String("action", "memory_semantic"), zap.Error(err))
 		},
@@ -452,10 +455,12 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 			viewerRepo = viewerStore
 		}
 		var embedder viewer.Embedder
+		viewerFingerprint := ""
 		if embedClient != nil {
 			embedder = embedClient
+			viewerFingerprint = embedClient.Fingerprint(viewer.IndexTemplate)
 		}
-		searcher, err := buildViewerSearcher(cfg, viewerStore, embedder, log)
+		searcher, err := buildViewerSearcher(cfg, viewerStore, embedder, viewerFingerprint, log)
 		if err != nil {
 			log.Warn("档案检索装配失败，viewer_search 不注册", zap.String("action", "viewer_semantic"), zap.Error(err))
 		} else {

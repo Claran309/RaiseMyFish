@@ -52,7 +52,7 @@ func (f *fakeVectorEmbedder) count() int {
 // fakeMemoryEmbedStore 是内存版记忆向量存储。
 type fakeMemoryEmbedStore struct {
 	inputs    []memory.EmbeddingInput
-	existing  map[string]string
+	existing  map[string]memory.EmbeddingIndex
 	upserted  []memory.EmbeddingRecord
 	inputsErr error
 	upsertErr error
@@ -69,26 +69,26 @@ func (f *fakeMemoryEmbedStore) MemoryEmbeddingInputs(_ context.Context, allowPri
 	return f.inputs, nil
 }
 
-func (f *fakeMemoryEmbedStore) ExistingMemoryEmbeddingHashes(context.Context) (map[string]string, error) {
+func (f *fakeMemoryEmbedStore) ExistingMemoryEmbeddingIndexes(context.Context) (map[string]memory.EmbeddingIndex, error) {
 	if f.existing == nil {
-		return map[string]string{}, nil
+		return map[string]memory.EmbeddingIndex{}, nil
 	}
 	return f.existing, nil
 }
 
-func (f *fakeMemoryEmbedStore) UpsertMemoryEmbeddings(_ context.Context, records []memory.EmbeddingRecord) error {
+func (f *fakeMemoryEmbedStore) UpsertMemoryEmbeddings(_ context.Context, records []memory.EmbeddingRecord) (int, error) {
 	if f.upsertErr != nil {
-		return f.upsertErr
+		return 0, f.upsertErr
 	}
 	f.upserts++
 	f.upserted = append(f.upserted, records...)
-	return nil
+	return len(records), nil
 }
 
 // fakeViewerEmbedStore 是内存版档案向量存储。
 type fakeViewerEmbedStore struct {
 	inputs    []viewer.EmbeddingInput
-	existing  map[string]map[viewer.EmbeddingKind]string
+	existing  map[string]map[viewer.EmbeddingKind]viewer.EmbeddingIndex
 	upserted  []viewer.EmbeddingRecord
 	inputsErr error
 }
@@ -100,37 +100,62 @@ func (f *fakeViewerEmbedStore) ViewerEmbeddingInputs(context.Context) ([]viewer.
 	return f.inputs, nil
 }
 
-func (f *fakeViewerEmbedStore) ExistingProfileEmbeddingHashes(context.Context) (map[string]map[viewer.EmbeddingKind]string, error) {
+func (f *fakeViewerEmbedStore) ExistingProfileEmbeddingIndexes(context.Context) (map[string]map[viewer.EmbeddingKind]viewer.EmbeddingIndex, error) {
 	if f.existing == nil {
-		return map[string]map[viewer.EmbeddingKind]string{}, nil
+		return map[string]map[viewer.EmbeddingKind]viewer.EmbeddingIndex{}, nil
 	}
 	return f.existing, nil
 }
 
-func (f *fakeViewerEmbedStore) UpsertProfileEmbeddings(_ context.Context, records []viewer.EmbeddingRecord) error {
+func (f *fakeViewerEmbedStore) UpsertProfileEmbeddings(_ context.Context, records []viewer.EmbeddingRecord) (int, error) {
 	f.upserted = append(f.upserted, records...)
-	return nil
+	return len(records), nil
+}
+
+// 测试固定的索引指纹：refresher 会把当前向量空间指纹下发给两个领域包。
+const (
+	testMemoryFingerprint = "test-memory-fingerprint"
+	testViewerFingerprint = "test-viewer-fingerprint"
+)
+
+// memoryEmbedInput 构造带源 hash 的记忆输入。
+func memoryEmbedInput(id, title, summary string) memory.EmbeddingInput {
+	return memory.EmbeddingInput{ID: id, Title: title, Summary: summary, SourceHash: "src-" + id}
+}
+
+// viewerEmbedInput 构造带三路源 hash 的档案输入。
+func viewerEmbedInput(uid, name string, texts, replies []string) viewer.EmbeddingInput {
+	hashes := map[viewer.EmbeddingKind]string{viewer.KindIdentity: "src-identity-" + uid}
+	if len(texts) > 0 {
+		hashes[viewer.KindFacts] = "src-facts-" + uid
+	}
+	if len(replies) > 0 {
+		hashes[viewer.KindInteraction] = "src-interaction-" + uid
+	}
+	return viewer.EmbeddingInput{UID: uid, Name: name, Texts: texts, Replies: replies, SourceHashes: hashes}
 }
 
 // newTestRefresher 造一个只跑一轮的 refresher。
 func newTestRefresher(mem memory.EmbeddingStore, vw viewer.EmbeddingStore, emb vectorEmbedder) *memoryEmbeddingRefresher {
 	return &memoryEmbeddingRefresher{
-		memoryStore: mem,
-		viewerStore: vw,
-		embedder:    emb,
-		batchSize:   32,
-		logger:      zap.NewNop(),
+		memoryStore:       mem,
+		viewerStore:       vw,
+		embedder:          emb,
+		batchSize:         32,
+		memoryFingerprint: testMemoryFingerprint,
+		viewerFingerprint: testViewerFingerprint,
+		logger:            zap.NewNop(),
 	}
 }
 
 // TestVectorRefreshEmbedsPending 缺向量的行必须被算出来。
 func TestVectorRefreshEmbedsPending(t *testing.T) {
 	memStore := &fakeMemoryEmbedStore{inputs: []memory.EmbeddingInput{
-		{ID: "m1", Title: "事实：我是学生", Summary: "我今年大二"},
-		{ID: "m2", Title: "偏好：爱吃白饭", Summary: "每天都要白饭"},
+		memoryEmbedInput("m1", "事实：我是学生", "我今年大二"),
+		memoryEmbedInput("m2", "偏好：爱吃白饭", "每天都要白饭"),
 	}}
 	vwStore := &fakeViewerEmbedStore{inputs: []viewer.EmbeddingInput{
-		{UID: "2002", Name: "白饭哥", Texts: []string{"今天也要白饭"}},
+		viewerEmbedInput("2002", "白饭哥", []string{"今天也要白饭"}, nil),
 	}}
 	emb := &fakeVectorEmbedder{}
 
@@ -147,8 +172,13 @@ func TestVectorRefreshEmbedsPending(t *testing.T) {
 		t.Errorf("embedding 调用条数 = %d，期望 4", emb.count())
 	}
 	for _, rec := range memStore.upserted {
-		if rec.Hash == "" || len(rec.Embedding) != memory.EmbeddingDimension {
-			t.Errorf("向量记录不完整：%+v", rec)
+		if rec.Hash == "" || rec.SourceHash == "" || rec.Fingerprint != testMemoryFingerprint || len(rec.Embedding) != memory.EmbeddingDimension {
+			t.Errorf("记忆向量记录不完整：%+v", rec)
+		}
+	}
+	for _, rec := range vwStore.upserted {
+		if rec.Hash == "" || rec.SourceHash == "" || rec.Fingerprint != testViewerFingerprint {
+			t.Errorf("档案向量记录不完整：%+v", rec)
 		}
 	}
 }
@@ -156,10 +186,10 @@ func TestVectorRefreshEmbedsPending(t *testing.T) {
 // TestVectorRefreshSkipsUnchanged 第二轮不应重复花钱（hash 未变即跳过）。
 func TestVectorRefreshSkipsUnchanged(t *testing.T) {
 	memStore := &fakeMemoryEmbedStore{inputs: []memory.EmbeddingInput{
-		{ID: "m1", Title: "事实：我是学生", Summary: "我今年大二"},
+		memoryEmbedInput("m1", "事实：我是学生", "我今年大二"),
 	}}
 	vwStore := &fakeViewerEmbedStore{inputs: []viewer.EmbeddingInput{
-		{UID: "2002", Name: "白饭哥", Texts: []string{"今天也要白饭"}},
+		viewerEmbedInput("2002", "白饭哥", []string{"今天也要白饭"}, nil),
 	}}
 	emb := &fakeVectorEmbedder{}
 	r := newTestRefresher(memStore, vwStore, emb)
@@ -171,17 +201,21 @@ func TestVectorRefreshSkipsUnchanged(t *testing.T) {
 		t.Fatalf("首轮应调用 3 次 embedding，实际 %d", first)
 	}
 
-	// 把首轮结果当成「已入库」的 hash，模拟下一次轮询。
-	memStore.existing = map[string]string{}
+	// 把首轮结果当成「已入库」的索引状态，模拟下一次轮询。
+	memStore.existing = map[string]memory.EmbeddingIndex{}
 	for _, rec := range memStore.upserted {
-		memStore.existing[rec.ID] = rec.Hash
+		memStore.existing[rec.ID] = memory.EmbeddingIndex{
+			TextHash: rec.Hash, SourceHash: rec.SourceHash, Fingerprint: rec.Fingerprint,
+		}
 	}
-	vwStore.existing = map[string]map[viewer.EmbeddingKind]string{}
+	vwStore.existing = map[string]map[viewer.EmbeddingKind]viewer.EmbeddingIndex{}
 	for _, rec := range vwStore.upserted {
 		if vwStore.existing[rec.UID] == nil {
-			vwStore.existing[rec.UID] = map[viewer.EmbeddingKind]string{}
+			vwStore.existing[rec.UID] = map[viewer.EmbeddingKind]viewer.EmbeddingIndex{}
 		}
-		vwStore.existing[rec.UID][rec.Kind] = rec.Hash
+		vwStore.existing[rec.UID][rec.Kind] = viewer.EmbeddingIndex{
+			TextHash: rec.Hash, SourceHash: rec.SourceHash, Fingerprint: rec.Fingerprint,
+		}
 	}
 
 	r.refreshOnce(context.Background())
@@ -194,7 +228,7 @@ func TestVectorRefreshSkipsUnchanged(t *testing.T) {
 func TestVectorRefreshFailureDoesNotBlockOther(t *testing.T) {
 	memStore := &fakeMemoryEmbedStore{inputsErr: errors.New("记忆表读取失败")}
 	vwStore := &fakeViewerEmbedStore{inputs: []viewer.EmbeddingInput{
-		{UID: "2002", Name: "白饭哥", Texts: []string{"今天也要白饭"}},
+		viewerEmbedInput("2002", "白饭哥", []string{"今天也要白饭"}, nil),
 	}}
 	emb := &fakeVectorEmbedder{}
 
@@ -211,9 +245,10 @@ func TestVectorRefreshFailureDoesNotBlockOther(t *testing.T) {
 // TestVectorRefreshPrivateGate 私密记忆默认不外发；授权后 refresher 透传并纳入。
 func TestVectorRefreshPrivateGate(t *testing.T) {
 	inputs := []memory.EmbeddingInput{
-		{ID: "m1", Title: "公开", Summary: "公开内容"},
-		{ID: "m2", Title: "私密", Summary: "私密内容", Private: true},
+		memoryEmbedInput("m1", "公开", "公开内容"),
+		memoryEmbedInput("m2", "私密", "私密内容"),
 	}
+	inputs[1].Private = true
 
 	// 默认：即使仓储把私密行带回来了，领域层也必须在外发前剔除。
 	memStore := &fakeMemoryEmbedStore{inputs: inputs}
@@ -243,7 +278,7 @@ func TestVectorRefreshPrivateGate(t *testing.T) {
 // TestVectorRefreshEmbedderErrorIsSoft embedding 挂了只记日志，不 panic、不中断。
 func TestVectorRefreshEmbedderErrorIsSoft(t *testing.T) {
 	memStore := &fakeMemoryEmbedStore{inputs: []memory.EmbeddingInput{
-		{ID: "m1", Title: "事实", Summary: "内容"},
+		memoryEmbedInput("m1", "事实", "内容"),
 	}}
 	vwStore := &fakeViewerEmbedStore{}
 	emb := &fakeVectorEmbedder{err: errors.New("embedding 服务不可用")}
@@ -287,7 +322,7 @@ func TestStartMemoryEmbeddingRefreshRequiresDB(t *testing.T) {
 func TestMemoryEmbeddingRefresherStopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	memStore := &fakeMemoryEmbedStore{inputs: []memory.EmbeddingInput{{ID: "m1", Title: "t", Summary: "s"}}}
+	memStore := &fakeMemoryEmbedStore{inputs: []memory.EmbeddingInput{memoryEmbedInput("m1", "t", "s")}}
 	emb := &fakeVectorEmbedder{}
 	done := make(chan struct{})
 	go func() {

@@ -13,18 +13,19 @@ import (
 )
 
 type fakeProfileSource struct {
-	keyword     []store.ViewerProfileHit
-	semantic    []store.ViewerProfileHit
-	keywordErr  error
-	semanticErr error
-	gotKeyword  string
-	gotKeywords []string
-	gotLimit    int
-	gotVector   []float64
-	kwKinds     []EmbeddingKind
-	semKinds    []EmbeddingKind
-	kwCalls     int
-	semCalls    int
+	keyword        []store.ViewerProfileHit
+	semantic       []store.ViewerProfileHit
+	keywordErr     error
+	semanticErr    error
+	gotKeyword     string
+	gotKeywords    []string
+	gotLimit       int
+	gotVector      []float64
+	gotFingerprint string
+	kwKinds        []EmbeddingKind
+	semKinds       []EmbeddingKind
+	kwCalls        int
+	semCalls       int
 }
 
 func (f *fakeProfileSource) KeywordProfiles(_ context.Context, kind EmbeddingKind, keyword string, limit int) ([]store.ViewerProfileHit, error) {
@@ -36,10 +37,11 @@ func (f *fakeProfileSource) KeywordProfiles(_ context.Context, kind EmbeddingKin
 	return f.keyword, f.keywordErr
 }
 
-func (f *fakeProfileSource) SemanticProfiles(_ context.Context, kind EmbeddingKind, vector []float64, limit int) ([]store.ViewerProfileHit, error) {
+func (f *fakeProfileSource) SemanticProfiles(_ context.Context, kind EmbeddingKind, vector []float64, fingerprint string, limit int) ([]store.ViewerProfileHit, error) {
 	f.semCalls++
 	f.semKinds = append(f.semKinds, kind)
 	f.gotVector = vector
+	f.gotFingerprint = fingerprint
 	if len(vector) != EmbeddingDimension {
 		return nil, errors.New("向量维度不符")
 	}
@@ -76,6 +78,10 @@ func hit(uid, name string, sim float64) store.ViewerProfileHit {
 
 func newTestSearcher(t *testing.T, source ProfileSource, embedder Embedder, opts SearchOptions) *Searcher {
 	t.Helper()
+	// 有 embedder 时构造函数要求指纹；测试默认给一个固定值，个别用例自行覆盖。
+	if embedder != nil && strings.TrimSpace(opts.Fingerprint) == "" {
+		opts.Fingerprint = "test-fingerprint"
+	}
 	s, err := NewSearcher(source, embedder, opts)
 	if err != nil {
 		t.Fatalf("装配档案检索失败：%v", err)
@@ -126,6 +132,9 @@ func TestSearchScoresKeywordAndSemantic(t *testing.T) {
 	}
 	if !hasKind(source.semKinds, KindIdentity) || !hasKind(source.semKinds, KindFacts) || hasKind(source.semKinds, KindInteraction) {
 		t.Errorf("语义索引用途不符：%v", source.semKinds)
+	}
+	if source.gotFingerprint != "test-fingerprint" {
+		t.Errorf("语义查询应带索引指纹，实际 %q", source.gotFingerprint)
 	}
 }
 
@@ -196,6 +205,22 @@ func TestSearchKeywordOnlyWithoutEmbedder(t *testing.T) {
 	}
 }
 
+// TestNewSearcherRequiresFingerprint 有 embedder 却缺指纹时拒绝装配。
+//
+// 缺指纹意味着无法区分向量空间：同维度换模型后会把旧向量当成本空间结果排序。
+func TestNewSearcherRequiresFingerprint(t *testing.T) {
+	embedder := &fakeQueryEmbedder{vectors: [][]float64{vectorWith(1)}}
+	if _, err := NewSearcher(&fakeProfileSource{}, embedder, SearchOptions{}); err == nil {
+		t.Fatal("有 embedder 缺指纹应报错")
+	}
+	if _, err := NewSearcher(&fakeProfileSource{}, embedder, SearchOptions{Fingerprint: "  "}); err == nil {
+		t.Fatal("空白指纹应报错")
+	}
+	if _, err := NewSearcher(&fakeProfileSource{}, nil, SearchOptions{}); err != nil {
+		t.Fatalf("纯关键词检索不需要指纹：%v", err)
+	}
+}
+
 // questionProfileSource 只在剥掉问句外壳后命中，模拟真实昵称匹配。
 type questionProfileSource struct {
 	queries []string
@@ -209,7 +234,7 @@ func (s *questionProfileSource) KeywordProfiles(_ context.Context, kind Embeddin
 	return []store.ViewerProfileHit{hit("5005", "弓长三益", 0)}, nil
 }
 
-func (s *questionProfileSource) SemanticProfiles(context.Context, EmbeddingKind, []float64, int) ([]store.ViewerProfileHit, error) {
+func (s *questionProfileSource) SemanticProfiles(context.Context, EmbeddingKind, []float64, string, int) ([]store.ViewerProfileHit, error) {
 	return nil, nil
 }
 
@@ -331,7 +356,7 @@ func (f *identitySource) KeywordProfiles(_ context.Context, kind EmbeddingKind, 
 	return hits, nil
 }
 
-func (f *identitySource) SemanticProfiles(context.Context, EmbeddingKind, []float64, int) ([]store.ViewerProfileHit, error) {
+func (f *identitySource) SemanticProfiles(context.Context, EmbeddingKind, []float64, string, int) ([]store.ViewerProfileHit, error) {
 	f.semCalls++
 	if f.semanticErr != nil {
 		return nil, f.semanticErr

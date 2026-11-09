@@ -143,7 +143,9 @@ type Embedder interface {
 // 认人只允许查 identity/facts；interaction 留给互动查询，不能拿来认人。
 type ProfileSource interface {
 	KeywordProfiles(ctx context.Context, kind EmbeddingKind, keyword string, limit int) ([]store.ViewerProfileHit, error)
-	SemanticProfiles(ctx context.Context, kind EmbeddingKind, vector []float64, limit int) ([]store.ViewerProfileHit, error)
+	// SemanticProfiles 只返回「该路指纹匹配且源 hash 未过期」的向量命中，
+	// 避免换了模型或昵称/发言已更新后仍用旧向量排序。
+	SemanticProfiles(ctx context.Context, kind EmbeddingKind, vector []float64, fingerprint string, limit int) ([]store.ViewerProfileHit, error)
 }
 
 // uidSource 是按 UID 精确取档案的可选能力（database.ViewerRepo 已实现）。
@@ -182,6 +184,8 @@ type SearchOptions struct {
 	AliasSource AliasSource
 	// MaxNameScan 是昵称池扫描上限；<=0 用默认值 defaultNameScan。
 	MaxNameScan int
+	// Fingerprint 是当前向量空间指纹；embedder 非 nil 时必填。
+	Fingerprint string
 }
 
 // Searcher 组合词法身份解析与语义补充。
@@ -192,6 +196,7 @@ type Searcher struct {
 	onSemanticError func(error)
 	minSimilarity   float64
 	ambiguityGap    float64
+	fingerprint     string
 	aliases         []Alias
 	phonetic        func(string) []string
 	aliasSource     AliasSource
@@ -221,6 +226,10 @@ func NewSearcher(source ProfileSource, embedder Embedder, opts SearchOptions) (*
 	if scan <= 0 {
 		scan = defaultNameScan
 	}
+	fingerprint := strings.TrimSpace(opts.Fingerprint)
+	if embedder != nil && fingerprint == "" {
+		return nil, errors.New("档案检索缺少索引指纹：无法确认向量空间")
+	}
 	return &Searcher{
 		source:          source,
 		embedder:        embedder,
@@ -228,6 +237,7 @@ func NewSearcher(source ProfileSource, embedder Embedder, opts SearchOptions) (*
 		onSemanticError: opts.OnSemanticError,
 		minSimilarity:   minSim,
 		ambiguityGap:    gap,
+		fingerprint:     fingerprint,
 		aliases:         opts.Aliases,
 		phonetic:        opts.Phonetic,
 		aliasSource:     opts.AliasSource,
@@ -559,7 +569,7 @@ func (s *Searcher) semanticCandidates(ctx context.Context, text string) ([]store
 	}
 	merged := make(map[string]store.ViewerProfileHit, semanticCandidateLimit*len(identitySearchKinds))
 	for _, kind := range identitySearchKinds {
-		hits, err := s.source.SemanticProfiles(ctx, kind, vector, semanticCandidateLimit)
+		hits, err := s.source.SemanticProfiles(ctx, kind, vector, s.fingerprint, semanticCandidateLimit)
 		if err != nil {
 			return nil, err
 		}

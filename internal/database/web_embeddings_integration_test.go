@@ -25,7 +25,7 @@ func TestWebEmbeddingStatusCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedViewerProfiles(t, ctx, viewerRepo)
-	if _, err := viewer.RunEmbedding(ctx, viewerRepo, &fakeViewerEmbedder{}, viewer.EmbedOptions{BatchSize: 2}); err != nil {
+	if _, err := viewer.RunEmbedding(ctx, viewerRepo, &fakeViewerEmbedder{}, viewer.EmbedOptions{BatchSize: 2, Fingerprint: testIndexFingerprint}); err != nil {
 		t.Fatalf("档案入库失败：%v", err)
 	}
 	knowledgeRepo, err := NewKnowledgeEmbeddingRepo(db)
@@ -41,11 +41,11 @@ func TestWebEmbeddingStatusCounts(t *testing.T) {
 
 	// 各制造一条待嵌入，验证 pending 与最后同步只统计已嵌入行。
 	if err := db.WithContext(ctx).Exec(
-		"UPDATE memory_records SET embedding=NULL, embedding_text_hash=NULL, embedding_updated_at=NULL WHERE id='mem-sem'").Error; err != nil {
+		"UPDATE memory_records SET embedding=NULL, embedding_text_hash=NULL, embedding_source_hash=NULL, embedding_fingerprint=NULL, embedding_updated_at=NULL WHERE id='mem-sem'").Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.WithContext(ctx).Exec(
-		"UPDATE viewer_profiles SET facts_embedding=NULL, facts_embedding_hash=NULL, facts_embedding_updated_at=NULL WHERE uid='4004'").Error; err != nil {
+		"UPDATE viewer_profiles SET facts_embedding=NULL, facts_embedding_hash=NULL, facts_embedding_source_hash=NULL, facts_embedding_fingerprint=NULL, facts_embedding_updated_at=NULL WHERE uid='4004'").Error; err != nil {
 		t.Fatal(err)
 	}
 
