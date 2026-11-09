@@ -188,8 +188,9 @@ func planNewAttempt(tx *gorm.DB, p *deliveryPlanRow) (deliveryAttemptRow, error)
 
 // PreparePlan 在首次 POST 前写入不可变正文；已存在计划时只返回原快照。
 //
-// 阶段保持在 generate：投递成功后由 Generate 的 Mark 负责 sent/verify，
-// 这样「记录 attempt → 标 sent」之间仍保留可核验的恢复点。
+// 计划与阶段同事务推进：可投递尝试落到 deliver，armed/unknown 落到 verify。
+// 崩溃恢复时调度器按阶段直接进入 Deliver/Verify→Resume，不再重跑 Brain/ReAct；
+// 终态尝试（旧数据）保持原阶段，避免改写既有结算路径。
 func (r *PlannedRepo) PreparePlan(ctx context.Context, c event.Claim, key store.PlanKey, text string) (sender.Attempt, error) {
 	if ctx == nil || !validClaim(c) || !validPlanKey(key) || !validPlanText(text) {
 		return sender.Attempt{}, store.ErrInvalid
@@ -203,7 +204,8 @@ func (r *PlannedRepo) PreparePlan(ctx context.Context, c event.Claim, key store.
 		if err := planActual(row, key); err != nil {
 			return err
 		}
-		if row.Stage != event.StageGenerate {
+		// 旧数据的计划可能停在 generate；恢复建计划/换尝试时允许从此推进。
+		if row.Stage != event.StageGenerate && row.Stage != event.StageDeliver {
 			return store.ErrConflict
 		}
 		switch row.Event.Status {
@@ -240,7 +242,7 @@ func (r *PlannedRepo) PreparePlan(ctx context.Context, c event.Claim, key store.
 				return err
 			}
 			out = p.attempt(a)
-			return nil
+			return updateClaim(tx, c, map[string]any{"stage": event.StageDeliver})
 		}
 		if err != nil {
 			return err
@@ -261,9 +263,27 @@ func (r *PlannedRepo) PreparePlan(ctx context.Context, c event.Claim, key store.
 			}
 		}
 		out = p.attempt(a)
+		if stage := planNextStage(row.Stage, a.State); stage != row.Stage {
+			return updateClaim(tx, c, map[string]any{"stage": stage})
+		}
 		return nil
 	})
 	return out, queueFailure("保存投递计划失败", err)
+}
+
+// planNextStage 决定计划落库后的执行阶段。
+//
+// ready/not_posted 还需要 POST，切到 deliver；armed/unknown 可能已到平台，
+// 只允许 verify 核验；终态保持原阶段，兼容旧数据的结算路径。
+func planNextStage(current event.Stage, state string) event.Stage {
+	switch state {
+	case sender.StateReady, sender.StateNotPosted:
+		return event.StageDeliver
+	case sender.StateArmed, sender.StateUnknown:
+		return event.StageVerify
+	default:
+		return current
+	}
 }
 
 // PlanAccount 返回计划绑定的账号（B站 MID）。
@@ -345,7 +365,8 @@ func (r *PlannedRepo) ArmPlan(ctx context.Context, c event.Claim, key store.Plan
 		if err := planActual(row, key); err != nil {
 			return err
 		}
-		if row.Stage != event.StageGenerate && row.Stage != event.StageDeliver {
+		// 取得许可即进入 verify：POST 期间崩溃时恢复只能核验，不能重新生成或重投。
+		if row.Stage != event.StageDeliver {
 			return store.ErrConflict
 		}
 		switch row.Event.Status {
@@ -394,6 +415,9 @@ func (r *PlannedRepo) ArmPlan(ctx context.Context, c event.Claim, key store.Plan
 			return store.ErrConflict
 		}
 		if err := tx.Table("delivery_plans").Where("event_id=? AND current_attempt_id=?", p.EventID, a.ID).Update("state", sender.StateArmed).Error; err != nil {
+			return err
+		}
+		if err := updateClaim(tx, c, map[string]any{"stage": event.StageVerify}); err != nil {
 			return err
 		}
 		a.State, a.ArmedAt, a.PermitUntil = sender.StateArmed, &now, &until
@@ -523,6 +547,13 @@ func (r *PlannedRepo) RecordPlan(ctx context.Context, c event.Claim, key store.P
 		}
 		if err := tx.Table("delivery_plans").Where("event_id=? AND current_attempt_id=?", p.EventID, a.ID).Update("state", outcome.State).Error; err != nil {
 			return err
+		}
+		if outcome.State == sender.StateNotPosted {
+			// 可信未投递还要再 POST：把阶段退回 deliver，恢复时才会走投递而不是核验。
+			// 租约已失效时不改阶段，交给恢复按未知保守停止。
+			if err := tx.Table("events").Where("id=? AND lease_owner=? AND lease_version=? AND lease_until>clock_timestamp() AND stage=?", p.EventID, c.Lease.Owner, c.Lease.Version, event.StageVerify).Update("stage", event.StageDeliver).Error; err != nil {
+				return err
+			}
 		}
 		a.State, a.OK, a.Verified, a.MsgID, a.ErrorKind = outcome.State, ok, outcome.Verified, outcome.MsgID, outcome.ErrorKind
 		if outcome.State == sender.StateAccepted {

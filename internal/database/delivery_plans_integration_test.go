@@ -108,6 +108,9 @@ func planSetup(t *testing.T, db *gorm.DB, ch event.Channel) (*PlannedRepo, *dura
 }
 
 // planRecover 模拟进程崩溃：租约到期后恢复并重新领取。
+//
+// 计划一旦落库，阶段已切到 deliver/verify；恢复不会再进 generate，
+// 所以这里不伪造 queued→replying，交给 Deliver/Verify 的 Resume 路径结清。
 func planRecover(t *testing.T, db *gorm.DB, ctx context.Context, id string) event.Claim {
 	t.Helper()
 	expireClaim(t, db, id)
@@ -115,11 +118,16 @@ func planRecover(t *testing.T, db *gorm.DB, ctx context.Context, id string) even
 	if n, err := b.Recover(ctx, 10); err != nil || n != 1 {
 		t.Fatalf("恢复过期事件=%d %v", n, err)
 	}
-	c := oneClaim(t, b, ctx)
-	if err := b.Mark(ctx, c, []event.Status{event.StatusQueued}, event.StatusReplying); err != nil {
+	return oneClaim(t, b, ctx)
+}
+
+func planStage(t *testing.T, db *gorm.DB, eventID string) event.Stage {
+	t.Helper()
+	var row queueRow
+	if err := db.Table("events").Where("id=?", eventID).Take(&row).Error; err != nil {
 		t.Fatal(err)
 	}
-	return c
+	return row.Stage
 }
 
 func planCurrent(t *testing.T, db *gorm.DB, eventID string) (deliveryPlanRow, deliveryAttemptRow) {
@@ -165,6 +173,10 @@ func TestDeliveryPlanCrashAfterPlanReusesOriginalText(t *testing.T) {
 	if err != nil || a.State != sender.StateReady || a.Number != 1 || a.Text != "计划原文" {
 		t.Fatalf("准备计划=%+v %v", a, err)
 	}
+	// 计划与阶段同事务：落计划即可投递，恢复不需要再进 generate。
+	if stage := planStage(t, db, id); stage != event.StageDeliver {
+		t.Fatalf("建计划后阶段=%s want deliver", stage)
+	}
 	// 计划正文不可变：模型重建出的新文字不会覆盖原快照。
 	again, err := repo.PreparePlan(ctx, c, key, "模型重新生成")
 	if err != nil || again.ID != a.ID || again.Text != "计划原文" {
@@ -175,10 +187,10 @@ func TestDeliveryPlanCrashAfterPlanReusesOriginalText(t *testing.T) {
 	}
 
 	resumed := planRecover(t, db, ctx, id)
-	if resumed.Stage != event.StageGenerate {
-		t.Fatalf("窗口1恢复阶段=%s want generate", resumed.Stage)
+	if resumed.Stage != event.StageDeliver {
+		t.Fatalf("窗口1恢复阶段=%s want deliver", resumed.Stage)
 	}
-	res, err := snd.Send(ctx, resumed, planReply(ch, session, false, "模型重新生成"))
+	res, err := snd.Resume(ctx, resumed)
 	if err != nil || !res.OK || !res.Verified {
 		t.Fatalf("恢复投递=%+v %v", res, err)
 	}
@@ -235,12 +247,16 @@ func TestDeliveryPlanCrashAfterArmNeverReposts(t *testing.T) {
 	if err != nil || armed.State != sender.StateArmed {
 		t.Fatalf("许可=%+v %v", armed, err)
 	}
+	// 取得许可即进入 verify：崩溃恢复只能核验，不能重投。
+	if stage := planStage(t, db, id); stage != event.StageVerify {
+		t.Fatalf("arm 后阶段=%s want verify", stage)
+	}
 
 	resumed := planRecover(t, db, ctx, id)
-	if resumed.Stage != event.StageGenerate {
-		t.Fatalf("armed 恢复阶段=%s", resumed.Stage)
+	if resumed.Stage != event.StageVerify {
+		t.Fatalf("armed 恢复阶段=%s want verify", resumed.Stage)
 	}
-	_, err = snd.Send(ctx, resumed, planReply(ch, session, true, "模型重新生成"))
+	_, err = snd.Resume(ctx, resumed)
 	if planKind(t, err) != sender.KindUncertain {
 		t.Fatalf("kind=%s want uncertain", planKind(t, err))
 	}
@@ -251,10 +267,10 @@ func TestDeliveryPlanCrashAfterArmNeverReposts(t *testing.T) {
 		t.Fatalf("armed 恢复创建了新尝试：%d", n)
 	}
 	b := makeBus(t, db)
-	if err := b.Mark(ctx, resumed, []event.Status{event.StatusReplying}, event.StatusDead); err != nil {
+	if err := b.Mark(ctx, resumed, []event.Status{event.StatusQueued}, event.StatusDead); err != nil {
 		t.Fatal(err)
 	}
-	sendState(t, db, id, event.StatusDead, event.StageGenerate)
+	sendState(t, db, id, event.StatusDead, event.StageVerify)
 }
 
 // TestDeliveryPlanUnknownResultStopsAutomatically 未知结果同样停止自动处理。
@@ -277,7 +293,8 @@ func TestDeliveryPlanUnknownResultStopsAutomatically(t *testing.T) {
 	}
 
 	resumed := planRecover(t, db, ctx, id)
-	_, err = snd.Send(ctx, resumed, planReply(ch, session, false, "模型重新生成"))
+	// 恢复只走 Resume：模型不重新生成，已记录的未知结果也不会重发。
+	_, err = snd.Resume(ctx, resumed)
 	if planKind(t, err) != sender.KindUncertain {
 		t.Fatalf("kind=%s want uncertain", planKind(t, err))
 	}
@@ -313,7 +330,10 @@ func TestDeliveryPlanCrashAfterAcceptBeforeSent(t *testing.T) {
 	}
 
 	resumed := planRecover(t, db, ctx, id)
-	res, err := snd.Send(ctx, resumed, planReply(ch, session, false, "模型重新生成"))
+	if resumed.Stage != event.StageVerify {
+		t.Fatalf("已接受结果恢复阶段=%s want verify", resumed.Stage)
+	}
+	res, err := snd.Resume(ctx, resumed)
 	if err != nil || !res.OK || !res.Verified || res.MsgID != "legacy-rpid" {
 		t.Fatalf("恢复核验=%+v %v", res, err)
 	}
@@ -324,12 +344,9 @@ func TestDeliveryPlanCrashAfterAcceptBeforeSent(t *testing.T) {
 		t.Fatalf("重复结算产生新尝试：%d", n)
 	}
 
-	// 旧数据没有 S05 审计，仍由既有 Generate 标记结清。
+	// 旧数据没有 S05 审计，恢复领取后仍是 queued；按既有结清路径直接标 done。
 	b := makeBus(t, db)
-	if err := b.Mark(ctx, resumed, []event.Status{event.StatusReplying}, event.StatusSent); err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Mark(ctx, resumed, []event.Status{event.StatusSent}, event.StatusDone); err != nil {
+	if err := b.Mark(ctx, resumed, []event.Status{event.StatusQueued}, event.StatusDone); err != nil {
 		t.Fatal(err)
 	}
 	sendState(t, db, id, event.StatusDone, event.StageVerify)
@@ -346,13 +363,23 @@ func TestDeliveryPlanTrustedNotPostedIsBounded(t *testing.T) {
 
 	b := makeBus(t, db)
 	for i := 1; i <= 3; i++ {
-		_, err := snd.Send(ctx, c, planReply(ch, session, false, "原文"))
+		// 首轮由生成路径建计划；后续轮次走投递恢复，不再重新生成。
+		var err error
+		if i == 1 {
+			_, err = snd.Send(ctx, c, planReply(ch, session, false, "原文"))
+		} else {
+			_, err = snd.Resume(ctx, c)
+		}
 		if planKind(t, err) != sender.KindRetry {
 			t.Fatalf("第%d次 kind=%s want retry", i, planKind(t, err))
 		}
 		p, a := planCurrent(t, db, id)
 		if p.AttemptCount != i || a.Number != i || a.State != sender.StateNotPosted {
 			t.Fatalf("第%d次尝试=%+v/%+v", i, p, a)
+		}
+		// 可信未投递必须把阶段退回 deliver，恢复/重试才会继续投递而不是误走核验。
+		if stage := planStage(t, db, id); stage != event.StageDeliver {
+			t.Fatalf("第%d次尝试后阶段=%s want deliver", i, stage)
 		}
 		if err := b.Defer(ctx, c, time.Now().UTC().Add(time.Second)); err != nil {
 			t.Fatal(err)
@@ -361,15 +388,12 @@ func TestDeliveryPlanTrustedNotPostedIsBounded(t *testing.T) {
 			t.Fatal(err)
 		}
 		c = oneClaim(t, b, ctx)
-		if err := b.Mark(ctx, c, []event.Status{event.StatusQueued}, event.StatusReplying); err != nil {
-			t.Fatal(err)
-		}
 	}
 	if post.sends != 3 {
 		t.Fatalf("重试实际 POST=%d want 3", post.sends)
 	}
 
-	_, err := snd.Send(ctx, c, planReply(ch, session, false, "原文"))
+	_, err := snd.Resume(ctx, c)
 	if planKind(t, err) != sender.KindDead {
 		t.Fatalf("尝试用尽 kind=%s want dead", planKind(t, err))
 	}
@@ -525,7 +549,7 @@ func TestDeliveryPlanAccountingIsAtomic(t *testing.T) {
 	if err := db.Table("events").Where("id=?", id).Take(&row).Error; err != nil {
 		t.Fatal(err)
 	}
-	if row.Event.Status != event.StatusReplying || row.Stage != event.StageGenerate ||
+	if row.Event.Status != event.StatusReplying || row.Stage != event.StageVerify ||
 		row.Owner == nil || *row.Owner != c.Lease.Owner || row.Version != c.Lease.Version {
 		t.Fatalf("输入被半套记账改写=%+v owner=%v version=%d", row, row.Owner, row.Version)
 	}
