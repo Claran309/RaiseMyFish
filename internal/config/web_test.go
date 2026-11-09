@@ -10,7 +10,8 @@ import (
 
 // TestWebValidate 空地址合法；已配置地址必须是无用户信息/查询的 HTTP(S)。
 func TestWebValidate(t *testing.T) {
-	good := []string{"", "https://search.example.com/api", "http://127.0.0.1:8080/search", "http://localhost:9000"}
+	good := []string{"", "https://search.example.com/api", "http://127.0.0.1:8080/search", "http://localhost:9000",
+		"http://host.docker.internal:9200/search", "http://HOST.DOCKER.INTERNAL:9200/search"}
 	for _, raw := range good {
 		if err := (Web{SearchURL: raw}).Validate(); err != nil {
 			t.Errorf("地址 %q 应合法：%v", raw, err)
@@ -23,6 +24,12 @@ func TestWebValidate(t *testing.T) {
 		"https://search.example.com/api#frag",
 		"not a url",
 		"http://192.168.1.10:8080/search", // 非本机HTTP需要HTTPS
+		// 容器宿主别名只认精确的 host.docker.internal；相似域名/网关 IP 不放行。
+		"http://host.containers.internal:9200/search",
+		"http://gateway.docker.internal:9200/search",
+		"http://host.docker.internal.evil.com:9200/search",
+		"http://host.docker.internal.:9200/search",
+		"http://192.168.65.254:9200/search",
 	}
 	for _, raw := range bad {
 		if err := (Web{SearchURL: raw}).Validate(); err == nil {
@@ -102,6 +109,23 @@ func TestLoadWebConfigAndKeyNotSerialized(t *testing.T) {
 	}
 	if strings.Contains(string(data), "super-secret") {
 		t.Fatalf("密钥被序列化：%s", data)
+	}
+}
+
+// TestLoadWebSearchContainerHost 完整加载接受容器宿主别名（N19）。
+func TestLoadWebSearchContainerHost(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fish:private@localhost/fish")
+	p := filepath.Join(t.TempDir(), "fishd.toml")
+	body := "[web]\nsearch_url='http://host.docker.internal:9200/search'\n"
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p, "")
+	if err != nil {
+		t.Fatalf("加载失败：%v", err)
+	}
+	if cfg.Web.SearchURL != "http://host.docker.internal:9200/search" {
+		t.Fatalf("search_url 未生效：%q", cfg.Web.SearchURL)
 	}
 }
 

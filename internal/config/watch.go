@@ -116,8 +116,9 @@ func (w Watch) validateStructure() error {
 	if w.Frames < 3 || w.Frames > 5 {
 		return errors.New("看直播帧数必须在3至5之间")
 	}
-	if valid, _ := validEndpoint(w.ASRURL); !valid {
-		return errors.New("看直播 asr_url 必须是HTTPS或本机HTTP地址")
+	// 容器内访问宿主机 ASR 走 host.docker.internal：与搜索同一窄授权。
+	if !validServiceEndpoint(w.ASRURL) {
+		return errors.New("看直播 asr_url 必须是HTTPS、本机HTTP或host.docker.internal HTTP地址")
 	}
 	if strings.TrimSpace(w.LLMRoute) == "" || strings.ContainsAny(w.LLMRoute, "\r\n") {
 		return errors.New("看直播 llm_route 不能为空")

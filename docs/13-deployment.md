@@ -185,10 +185,54 @@ docker compose -f deployment/docker-compose.yml exec fishd curl -s http://127.0.
 | `../config/fishd.toml`（bind，只读） | `/app/config/fishd.toml` | 运行配置 |
 
 - 容器以 uid 1000（`node`）运行。Linux 宿主机需保证 `personas/` 对该 uid 可写：`sudo chown -R 1000:1000 personas`。
-- ASR/本机搜索服务跑在宿主机时，容器内把地址改成 `host.docker.internal`（compose 已加 `host-gateway` 映射）。
+- ASR/本机搜索服务跑在宿主机时，容器内用 `host.docker.internal`；宿主监听地址、防火墙与替代方案见 4.4。
 - 宿主机 5432 已被本机 PostgreSQL 占用时，改 `postgres.ports` 左侧端口即可；容器内 `FISH_DB_DSN` 仍用 `postgres:5432`。
 
-### 4.4 使用外部 PostgreSQL
+### 4.4 容器访问宿主机 ASR/搜索
+
+容器里的 `127.0.0.1` 指向容器自身，不是宿主机。Compose 已给 `fishd` 加：
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+因此 `config/fishd.toml` 可以写：
+
+```toml
+[watch]
+asr_url = "http://host.docker.internal:8077/v1/audio/transcriptions"
+
+[web]
+search_url = "http://host.docker.internal:9200/search"
+```
+
+配置校验对明文 HTTP 只额外放行**精确主机名 `host.docker.internal`**（大小写不敏感）。以下地址仍会被拒绝：
+
+- `host.containers.internal`、`gateway.docker.internal` 等其它别名；
+- `host.docker.internal.evil.com`、`host.docker.internal.` 等相似或带尾点写法；
+- Docker 网关 IP 或其它私网地址（`192.168.*`、`10.*` 等）；
+- 带用户信息、查询串或片段的地址。
+
+这个窄授权只覆盖 ASR 与搜索。LLM、Embedding、视觉模型仍只接受 HTTPS 或回环 HTTP（`contracts/brain.md` 对 Provider 的约束），不能填 `http://host.docker.internal`；本地模型服务请在宿主机或 Compose 内加一层 HTTPS 反向代理，让容器用 HTTPS 域名访问。Podman 的 `host.containers.internal` 不在本例外内，需要改用 HTTPS 端点或 Compose 内的受控代理。
+
+`host-gateway` 只解决「容器 → 宿主机」的名字解析，**不会让宿主机只监听 `127.0.0.1` 的服务自动接受网桥连接**。宿主机服务必须满足：
+
+1. 监听容器可达的地址：`0.0.0.0:<port>` 或具体的网桥/网关地址；只绑 `127.0.0.1` 时通常连不上（宿主机回环与容器网桥不是同一地址空间）。
+2. 允许 Docker 网段访问：Linux 下用防火墙只放行 Docker 网段（如 `172.16.0.0/12` 或 `docker0` 网段），不要直接暴露到公网；Windows/macOS 的 Docker Desktop 由虚拟机转发，通常监听 `0.0.0.0` 并放行防火墙即可。
+
+明文 HTTP 会经过 Docker 虚拟网桥：只用于可信的本机辅助服务。搜索若配置了 `search_key`，密钥同样明文上网桥；对密钥敏感时，把 `search_url`/`asr_url` 指向 HTTPS 反向代理（宿主机或 Compose 内的受控代理），而不是直接明文。
+
+验证（返回任意 HTTP 状态码都说明网络可达）：
+
+```bash
+docker compose -f deployment/docker-compose.yml exec fishd \
+  curl -sS -m 3 -o /dev/null -w '%{http_code}\n' http://host.docker.internal:8077/
+```
+
+连接失败时先查宿主机监听地址与防火墙，不要把地址改回 `127.0.0.1`（那会指向容器自身）。
+
+### 4.5 使用外部 PostgreSQL
 
 Dockerfile 本身不包含数据库。若已有外部 PG 17 + pgvector：
 
@@ -200,11 +244,14 @@ docker run --rm --env-file deployment/.env \
   raisemyfish/fishd:local --config config/fishd.toml migrate up
 
 docker run -d --name fishd --restart unless-stopped --env-file deployment/.env \
+  --add-host=host.docker.internal:host-gateway \
   -v "$PWD/config/fishd.toml:/app/config/fishd.toml:ro" \
   -v "$PWD/personas:/app/personas" \
   -v fishd-logs:/app/logs -v fishd-data:/app/data -v fishd-state:/app/state \
   raisemyfish/fishd:local --config config/fishd.toml
 ```
+
+> `docker run` 不读取 Compose 的 `extra_hosts`；需要访问宿主机 ASR/搜索时必须显式加 `--add-host=host.docker.internal:host-gateway`。
 
 或在 `deployment/docker-compose.yml` 中删除 `postgres` 服务与 `fishd.depends_on.postgres`，把 `FISH_DB_DSN` 指向外部实例。
 

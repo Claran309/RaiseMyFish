@@ -103,6 +103,8 @@ func TestEmbeddingValidation(t *testing.T) {
 		{"刷新关未启用", "[embedding]\nauto_refresh=true\n", "定时增量"},
 		{"刷新间隔", "[knowledge]\nenabled=true\n[embedding]\nenabled=true\nauto_refresh=true\nrefresh_interval_seconds=10\n", "刷新间隔"},
 		{"地址", "[embedding]\nenabled=true\nurl='http://example.com/embed'\n", "地址"},
+		// 窄授权只覆盖 ASR/搜索；embedding 仍拒绝容器宿主明文 HTTP。
+		{"宿主别名HTTP", "[embedding]\nenabled=true\nurl='http://host.docker.internal:11434/v1/embeddings'\n", "地址"},
 		{"模型", "[embedding]\nenabled=true\nmodel=''\n", "model"},
 	}
 	for _, tc := range cases {

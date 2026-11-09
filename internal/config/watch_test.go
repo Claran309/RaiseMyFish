@@ -161,6 +161,29 @@ func TestWatchInvalidConfigIsSafe(t *testing.T) {
 	}
 }
 
+// TestWatchASRContainerHost 容器内可用宿主机别名访问 ASR；相似域名/网关 IP 仍拒绝。
+func TestWatchASRContainerHost(t *testing.T) {
+	setWatchEnv(t)
+	raw := "http://host.docker.internal:8077/v1/audio/transcriptions"
+	cfg, err := loadWatchConfig(t, watchLLMSection+"\n[watch]\nenabled=true\nasr_url=\""+raw+"\"\n")
+	if err != nil {
+		t.Fatalf("host.docker.internal 的 ASR 地址应被接受：%v", err)
+	}
+	if cfg.Watch.ASRURL != raw {
+		t.Fatalf("asr_url 未生效：%q", cfg.Watch.ASRURL)
+	}
+	for _, bad := range []string{
+		"http://host.containers.internal:8077/v1/audio/transcriptions",
+		"http://host.docker.internal.:8077/v1/audio/transcriptions",
+		"http://192.168.65.254:8077/v1/audio/transcriptions",
+	} {
+		body := watchLLMSection + "\n[watch]\nenabled=true\nasr_url=\"" + bad + "\"\n"
+		if _, err := loadWatchConfig(t, body); err == nil {
+			t.Errorf("ASR 地址 %q 应被拒绝", bad)
+		}
+	}
+}
+
 func TestWatchDisabledIgnoresInvalidFields(t *testing.T) {
 	// 默认关闭时，不因未配置凭据/LLM而拒绝启动；字段仍会做结构校验。
 	t.Setenv("FISH_DB_DSN", "postgres://fixture")

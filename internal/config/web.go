@@ -85,8 +85,10 @@ func (w Web) ResolveKey() string {
 func (w Web) Validate() error {
 	raw := strings.TrimSpace(w.SearchURL)
 	if raw != "" {
-		if valid, _ := validEndpoint(raw); !valid {
-			return errors.New("搜索服务地址必须是HTTPS或本机HTTP地址")
+		// 容器内访问宿主机搜索服务走 host.docker.internal：这是唯一的非回环
+		// 明文 HTTP 窄授权（validServiceEndpoint），不泛化到其它私网地址。
+		if !validServiceEndpoint(raw) {
+			return errors.New("搜索服务地址必须是HTTPS、本机HTTP或host.docker.internal HTTP地址")
 		}
 	}
 	if w.Enabled {

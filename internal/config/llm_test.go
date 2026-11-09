@@ -68,6 +68,9 @@ func TestLLMInvalidConfigurationDoesNotEchoValues(t *testing.T) {
 		strings.ReplaceAll(testLLMConfig, "fake:small", "missing:small"),
 		strings.ReplaceAll(testLLMConfig, "fake:small", "fake:missing"),
 		strings.ReplaceAll(testLLMConfig, "https://example.com/v1", "http://example.com/secret"),
+		// host.docker.internal 的窄授权只覆盖 ASR/搜索；LLM 仍须 HTTPS 或回环。
+		strings.ReplaceAll(testLLMConfig, "https://example.com/v1", "http://host.docker.internal/v1"),
+		strings.ReplaceAll(testLLMConfig, "https://example.com/v1", "http://host.containers.internal/v1"),
 		strings.ReplaceAll(testLLMConfig, "input_usd_per_million=0.1", "input_usd_per_million=-1"),
 		strings.ReplaceAll(testLLMConfig, "output_usd_per_million=0.2", ""),
 		strings.ReplaceAll(testLLMConfig, "enabled=true", "enabled=true\nattempt_timeout_ms=0"),

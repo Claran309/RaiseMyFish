@@ -76,7 +76,9 @@ services:
       - fishd-logs:/app/logs
       - fishd-data:/app/data
       - fishd-state:/app/state
-    # 让容器内可访问宿主机上的本机 ASR/搜索服务（[watch].asr_url 默认指向 127.0.0.1）。
+    # 容器访问宿主机 ASR/搜索：host.docker.internal 解析到宿主机网关。
+    # 配置校验只为这个精确主机名放行明文 HTTP（仅 ASR/搜索）；
+    # 宿主机服务必须监听容器可达地址，不能只听 127.0.0.1（见 docs/13-deployment.md 4.4）。
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
