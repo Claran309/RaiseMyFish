@@ -34,6 +34,9 @@ type Embedding struct {
 	// MemoryRefreshIntervalSeconds 是记忆/观众档案向量的增量刷新间隔（默认 300）。
 	// 与知识库共用 auto_refresh 总开关，但节奏独立：记忆写得多、知识变得少。
 	MemoryRefreshIntervalSeconds int `toml:"memory_refresh_interval_seconds"`
+	// MemoryAllowPrivate 显式授权把 private 记忆的摘要发送给当前配置的
+	// embedding 提供方（url/model）。默认 false：私密摘要不外发，相关行不参与向量化。
+	MemoryAllowPrivate bool `toml:"memory_allow_private"`
 }
 
 func defaultEmbedding() Embedding {

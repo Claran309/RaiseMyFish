@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -363,9 +364,12 @@ type mockMemoryEmbedStore struct {
 	inputs  []memory.EmbeddingInput
 	hashes  map[string]string
 	records []memory.EmbeddingRecord
+	// allowPrivate 记录命令层传给仓储的授权参数。
+	allowPrivate bool
 }
 
-func (m *mockMemoryEmbedStore) MemoryEmbeddingInputs(context.Context) ([]memory.EmbeddingInput, error) {
+func (m *mockMemoryEmbedStore) MemoryEmbeddingInputs(_ context.Context, allowPrivate bool) ([]memory.EmbeddingInput, error) {
+	m.allowPrivate = allowPrivate
 	return m.inputs, nil
 }
 
@@ -386,7 +390,7 @@ func TestExecuteMemoryEmbedIncremental(t *testing.T) {
 	}}
 	embedder := &cliEmbedder{}
 	var out, progress bytes.Buffer
-	if err := executeMemoryEmbed(context.Background(), store, embedder, 1, &out, &progress); err != nil {
+	if err := executeMemoryEmbed(context.Background(), store, embedder, 1, false, &out, &progress); err != nil {
 		t.Fatalf("入库失败：%v", err)
 	}
 	var summary memoryEmbedOutput
@@ -395,6 +399,9 @@ func TestExecuteMemoryEmbedIncremental(t *testing.T) {
 	}
 	if summary.Total != 2 || summary.Pending != 2 || summary.Embedded != 2 || summary.Batches != 2 || summary.Skipped != 0 {
 		t.Fatalf("入库摘要不正确：%+v", summary)
+	}
+	if summary.AllowPrivate || store.allowPrivate {
+		t.Errorf("默认不应授权私密外发：summary=%+v store=%v", summary, store.allowPrivate)
 	}
 	if embedder.calls != 2 || len(store.records) != 2 {
 		t.Fatalf("批量写入不符：calls=%d records=%d", embedder.calls, len(store.records))
@@ -410,7 +417,7 @@ func TestExecuteMemoryEmbedIncremental(t *testing.T) {
 	}
 	out.Reset()
 	progress.Reset()
-	if err := executeMemoryEmbed(context.Background(), store, embedder, 1, &out, &progress); err != nil {
+	if err := executeMemoryEmbed(context.Background(), store, embedder, 1, false, &out, &progress); err != nil {
 		t.Fatalf("二次入库失败：%v", err)
 	}
 	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
@@ -424,11 +431,54 @@ func TestExecuteMemoryEmbedIncremental(t *testing.T) {
 	}
 }
 
+// TestExecuteMemoryEmbedPrivateGate 私密记忆默认不外发，授权后才发送；归档始终排除。
+func TestExecuteMemoryEmbedPrivateGate(t *testing.T) {
+	inputs := []memory.EmbeddingInput{
+		{ID: "mem-public", Summary: "公开"},
+		{ID: "mem-private", Summary: "私密", Private: true},
+		{ID: "mem-archived", Summary: "归档", Archived: true},
+	}
+
+	store := &mockMemoryEmbedStore{inputs: inputs}
+	embedder := &cliEmbedder{}
+	var out bytes.Buffer
+	if err := executeMemoryEmbed(context.Background(), store, embedder, 8, false, &out, io.Discard); err != nil {
+		t.Fatalf("默认入库失败：%v", err)
+	}
+	var summary memoryEmbedOutput
+	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.AllowPrivate || summary.Embedded != 1 || summary.Skipped != 2 {
+		t.Fatalf("默认授权摘要不符：%+v", summary)
+	}
+	if !slices.Equal(embedder.inputs, []string{"公开"}) {
+		t.Fatalf("默认外发输入 = %v，期望只有公开内容", embedder.inputs)
+	}
+
+	// 显式授权：私密加入，归档仍然排除。
+	store = &mockMemoryEmbedStore{inputs: inputs}
+	embedder = &cliEmbedder{}
+	out.Reset()
+	if err := executeMemoryEmbed(context.Background(), store, embedder, 8, true, &out, io.Discard); err != nil {
+		t.Fatalf("授权入库失败：%v", err)
+	}
+	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if !summary.AllowPrivate || summary.Embedded != 2 || summary.Skipped != 1 {
+		t.Fatalf("授权摘要不符：%+v", summary)
+	}
+	if !slices.Equal(embedder.inputs, []string{"公开", "私密"}) {
+		t.Fatalf("授权外发输入 = %v，期望公开+私密", embedder.inputs)
+	}
+}
+
 // TestExecuteMemoryEmbedReportsFailure embedding 失败时不出成功摘要。
 func TestExecuteMemoryEmbedReportsFailure(t *testing.T) {
 	store := &mockMemoryEmbedStore{inputs: []memory.EmbeddingInput{{ID: "mem-1", Summary: "鱼"}}}
 	var out bytes.Buffer
-	err := executeMemoryEmbed(context.Background(), store, &cliEmbedder{err: errors.New("上游不可用")}, 8, &out, io.Discard)
+	err := executeMemoryEmbed(context.Background(), store, &cliEmbedder{err: errors.New("上游不可用")}, 8, false, &out, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "记忆入库失败") {
 		t.Fatalf("embedding失败未向上返回：%v", err)
 	}

@@ -29,6 +29,9 @@ func TestEmbeddingDefaults(t *testing.T) {
 	if e.Enabled || e.Dimension != 1024 || e.BatchSize != 32 || e.Alpha != 0.5 || e.AutoRefresh || e.RefreshIntervalSeconds != 3600 {
 		t.Fatalf("embedding 默认值不符：%+v", e)
 	}
+	if e.MemoryAllowPrivate {
+		t.Fatal("私密记忆外发必须默认关闭")
+	}
 	if e.Model != "embedding-3" || e.KeyEnv != "FISH_EMBEDDING_KEY" || e.URL == "" {
 		t.Fatalf("embedding 默认服务参数不符：%+v", e)
 	}
@@ -71,6 +74,18 @@ func TestEmbeddingDisabledSkipsKey(t *testing.T) {
 	}
 	if cfg.Embedding.Key != "" {
 		t.Fatal("关闭时不应解析出密钥")
+	}
+}
+
+// TestEmbeddingMemoryAllowPrivateExplicit 私密外发只有显式配置才开启。
+func TestEmbeddingMemoryAllowPrivateExplicit(t *testing.T) {
+	t.Setenv("FISH_EMBEDDING_KEY", "secret")
+	cfg, err := loadEmbeddingConfig(t, "[embedding]\nenabled=true\nmemory_allow_private=true\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Embedding.MemoryAllowPrivate {
+		t.Fatal("显式配置 memory_allow_private=true 未生效")
 	}
 }
 

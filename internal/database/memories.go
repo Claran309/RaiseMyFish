@@ -396,29 +396,45 @@ func memoryRows(rows []memoryRecordRow) ([]memory.Record, error) {
 	return records, nil
 }
 
-// MemoryEmbeddingInputs 返回全部非空摘要的向量化源字段。
+// MemoryEmbeddingInputs 返回允许外发的向量化源字段（增量候选）。
 //
-// 本机运维任务视角：不按 visibility 过滤，召回查询仍会在 SQL 层做范围过滤。
-func (r *MemoryRepo) MemoryEmbeddingInputs(ctx context.Context) ([]memory.EmbeddingInput, error) {
+// 选择策略在 SQL 层先执行一遍：只取当前有效（valid_to IS NULL、未归档、
+// valid_from 已生效）且摘要非空的行；私密记录只有在 allowPrivate 显式授权时
+// 才离开数据库。领域层 RunEmbedding 会按同样规则再校验一次。
+func (r *MemoryRepo) MemoryEmbeddingInputs(ctx context.Context, allowPrivate bool) ([]memory.EmbeddingInput, error) {
 	if ctx == nil {
 		return nil, store.ErrInvalid
 	}
 	var rows []struct {
-		ID      string
-		Title   string
-		Summary string
+		ID        string
+		Title     string
+		Summary   string
+		Private   bool
+		Archived  bool
+		ValidFrom time.Time
+		ValidTo   *time.Time
 	}
-	err := r.db.WithContext(ctx).Table("memory_records").
-		Select("id, COALESCE(title,'') AS title, COALESCE(summary,'') AS summary").
-		Where("COALESCE(summary,'') <> ''").
-		Order("id ASC").
-		Scan(&rows).Error
-	if err != nil {
+	query := r.db.WithContext(ctx).Table("memory_records").
+		Select("id, COALESCE(title,'') AS title, COALESCE(summary,'') AS summary, private, archived, valid_from, valid_to").
+		Where("COALESCE(summary,'') <> '' AND valid_to IS NULL AND NOT archived AND valid_from <= now()").
+		Order("id ASC")
+	if !allowPrivate {
+		query = query.Where("NOT private")
+	}
+	if err := query.Scan(&rows).Error; err != nil {
 		return nil, &safeError{"读取记忆向量化源失败", err}
 	}
 	inputs := make([]memory.EmbeddingInput, 0, len(rows))
 	for _, row := range rows {
-		inputs = append(inputs, memory.EmbeddingInput{ID: row.ID, Title: row.Title, Summary: row.Summary})
+		inputs = append(inputs, memory.EmbeddingInput{
+			ID:        row.ID,
+			Title:     row.Title,
+			Summary:   row.Summary,
+			Private:   row.Private,
+			Archived:  row.Archived,
+			ValidFrom: row.ValidFrom,
+			ValidTo:   row.ValidTo,
+		})
 	}
 	return inputs, nil
 }

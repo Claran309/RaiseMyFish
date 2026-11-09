@@ -5,7 +5,9 @@ package memory
 // 边界：
 //   - 不直接访问数据库或 HTTP，由注入的 EmbeddingStore / Embedder 完成；
 //   - 增量判断用文本 SHA-256：内容没变就不重复调用 embedding；
-//   - 空摘要跳过，避免把整表空行送进向量服务。
+//   - 空摘要跳过，避免把整表空行送进向量服务；
+//   - 外发前按「私密授权 + 有效期」选择：未获准的私密、归档、失效、
+//     未生效记录不进入请求，授权在构造外部请求之前生效。
 
 import (
 	"context"
@@ -28,10 +30,20 @@ const (
 )
 
 // EmbeddingInput 是一条待向量化记忆的源字段。
+//
+// 除文本外还带私密与有效期标记：即使仓储实现返回了不该外发的行，
+// RunEmbedding 也会在拼装外部请求之前按同样规则再筛选一次（fail-closed）。
 type EmbeddingInput struct {
 	ID      string
 	Title   string
 	Summary string
+	// Private 表示记录只属于私密范围；默认不外发，需显式授权。
+	Private bool
+	// Archived 表示已归档；归档行不参与外发。
+	Archived bool
+	// ValidFrom 在未来表示尚未生效；ValidTo 非空表示已失效（与召回口径一致）。
+	ValidFrom time.Time
+	ValidTo   *time.Time
 }
 
 // EmbeddingRecord 是一次批量 upsert 的单行。
@@ -43,7 +55,9 @@ type EmbeddingRecord struct {
 
 // EmbeddingStore 由 database 层实现，负责读取源字段、增量状态与写回向量。
 type EmbeddingStore interface {
-	MemoryEmbeddingInputs(ctx context.Context) ([]EmbeddingInput, error)
+	// MemoryEmbeddingInputs 读取向量化源字段；allowPrivate 控制是否包含私密记录。
+	// 实现方应在查询层就排除未授权的私密、归档与失效行。
+	MemoryEmbeddingInputs(ctx context.Context, allowPrivate bool) ([]EmbeddingInput, error)
 	ExistingMemoryEmbeddingHashes(ctx context.Context) (map[string]string, error)
 	UpsertMemoryEmbeddings(ctx context.Context, records []EmbeddingRecord) error
 }
@@ -52,6 +66,11 @@ type EmbeddingStore interface {
 type EmbedOptions struct {
 	BatchSize  int
 	RetryDelay time.Duration
+	// AllowPrivate 显式授权把私密记忆摘要发给当前配置的 embedding 提供方。
+	// 默认 false：私密行不进入外发请求。
+	AllowPrivate bool
+	// Now 是判断有效期的时钟；零值用 time.Now。
+	Now func() time.Time
 	// Progress 在每批成功后调用，供 CLI 打进度日志。
 	Progress func(done, total, batches int)
 }
@@ -96,8 +115,12 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 	if retryDelay == 0 {
 		retryDelay = defaultEmbedRetryWait
 	}
+	now := time.Now
+	if opts.Now != nil {
+		now = opts.Now
+	}
 
-	inputs, err := store.MemoryEmbeddingInputs(ctx)
+	inputs, err := store.MemoryEmbeddingInputs(ctx, opts.AllowPrivate)
 	if err != nil {
 		return EmbedStats{}, err
 	}
@@ -109,6 +132,12 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 	stats := EmbedStats{Total: len(inputs)}
 	pending := make([]embedDocument, 0, len(inputs))
 	for _, input := range inputs {
+		// 授权与有效性在外发前裁决：未获准的私密、归档、失效、未生效记录
+		// 一律不进入待发送队列，更不会到达 embedding 提供方。
+		if !embeddingEligible(input, opts.AllowPrivate, now()) {
+			stats.Skipped++
+			continue
+		}
 		text := embeddingText(input)
 		if text == "" {
 			stats.Skipped++
@@ -156,6 +185,26 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 		}
 	}
 	return stats, nil
+}
+
+// embeddingEligible 判断一条记录是否允许外发给 embedding 服务。
+//
+// 口径与召回一致：valid_to 非空即失效、valid_from 在未来即未生效；
+// 私密记录还要额外获得 allowPrivate 授权。任一不满足即不外发。
+func embeddingEligible(input EmbeddingInput, allowPrivate bool, now time.Time) bool {
+	if input.Private && !allowPrivate {
+		return false
+	}
+	if input.Archived {
+		return false
+	}
+	if input.ValidTo != nil {
+		return false
+	}
+	if !input.ValidFrom.IsZero() && input.ValidFrom.After(now) {
+		return false
+	}
+	return true
 }
 
 // embeddingText 按「标题 + 摘要」拼接；空段不产生多余换行。

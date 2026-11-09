@@ -142,6 +142,11 @@ refresh_interval_seconds = 3600
 # 记忆/观众档案向量的增量刷新间隔（60-86400 秒，默认 300）：
 # 只重算 embedding 为空或内容 hash 变化过的行，内容没变不重复调用模型。
 memory_refresh_interval_seconds = 300
+# 私密记忆外发授权（默认 false）：
+# 开启等于允许把 private 记忆的摘要发送给上面配置的 url/model 提供方。
+# 关闭时私密行不参与向量化（也就不会被语义召回命中）；归档/失效/未生效记录
+# 在任何情况下都不会外发。改动只影响后续增量，已入库的旧向量不会自动清除。
+memory_allow_private = false
 
 # 联网搜索（ReAct 的 web_search 工具）：留空表示未配置，工具明确回「未配置搜索源」。
 # 协议：POST {"query": "..."} → {"results": [{"title","snippet","url"}]}，

@@ -67,7 +67,10 @@ type memoryEmbeddingRefresher struct {
 	viewerStore viewer.EmbeddingStore
 	embedder    vectorEmbedder
 	batchSize   int
-	logger      *zap.Logger
+	// memoryAllowPrivate 透传 [embedding] memory_allow_private：默认 false，
+	// 私密记忆摘要不离开本机，也就不参与记忆向量化。
+	memoryAllowPrivate bool
+	logger             *zap.Logger
 }
 
 // embedSummary 把两个领域包的统计收敛成同一个形状（字段名相同、类型不同）。
@@ -80,7 +83,10 @@ type embedSummary struct {
 // 记忆与档案互不阻塞：一侧失败另一侧照跑；失败只记日志，下一轮自然重试。
 func (r *memoryEmbeddingRefresher) refreshOnce(ctx context.Context) {
 	r.embedAndLog(ctx, "memory", func() (embedSummary, error) {
-		stats, err := memory.RunEmbedding(ctx, r.memoryStore, r.embedder, memory.EmbedOptions{BatchSize: r.batchSize})
+		stats, err := memory.RunEmbedding(ctx, r.memoryStore, r.embedder, memory.EmbedOptions{
+			BatchSize:    r.batchSize,
+			AllowPrivate: r.memoryAllowPrivate,
+		})
 		return embedSummary{stats.Total, stats.Skipped, stats.Pending, stats.Embedded}, err
 	})
 	r.embedAndLog(ctx, "viewer", func() (embedSummary, error) {
@@ -145,15 +151,17 @@ func startMemoryEmbeddingRefresh(ctx context.Context, cfg config.Config, db *gor
 		interval = defaultMemoryRefreshInterval
 	}
 	refresher := &memoryEmbeddingRefresher{
-		memoryStore: memoryStore,
-		viewerStore: viewerStore,
-		embedder:    client,
-		batchSize:   cfg.Embedding.BatchSize,
-		logger:      logger,
+		memoryStore:        memoryStore,
+		viewerStore:        viewerStore,
+		embedder:           client,
+		batchSize:          cfg.Embedding.BatchSize,
+		memoryAllowPrivate: cfg.Embedding.MemoryAllowPrivate,
+		logger:             logger,
 	}
 	logger.Info("记忆/档案向量定时增量已启动",
 		zap.String("action", "vector_embed"),
 		zap.Duration("interval", interval),
+		zap.Bool("memory_allow_private", cfg.Embedding.MemoryAllowPrivate),
 	)
 
 	runCtx, cancel := context.WithCancel(ctx)

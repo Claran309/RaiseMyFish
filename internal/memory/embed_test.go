@@ -5,8 +5,10 @@ package memory
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeEmbedStore struct {
@@ -15,9 +17,12 @@ type fakeEmbedStore struct {
 	upserts []EmbeddingRecord
 	err     error
 	upsErrs error
+	// allowPrivate 记录仓储收到的授权参数，用于断言入口透传。
+	allowPrivate bool
 }
 
-func (f *fakeEmbedStore) MemoryEmbeddingInputs(context.Context) ([]EmbeddingInput, error) {
+func (f *fakeEmbedStore) MemoryEmbeddingInputs(_ context.Context, allowPrivate bool) ([]EmbeddingInput, error) {
+	f.allowPrivate = allowPrivate
 	return f.inputs, f.err
 }
 
@@ -100,6 +105,66 @@ func TestRunEmbeddingIncrementalSkipsUnchanged(t *testing.T) {
 	}
 	if _, ok := got["mem-a"]; ok {
 		t.Error("未变更记录不应重新写入")
+	}
+}
+
+// TestRunEmbeddingSelectionMatrix 私密/归档/失效/未生效记录不得进入外部请求。
+//
+// 用捕获输入的假 Embedder 验证选择矩阵：默认只发公开有效行；
+// 显式授权后加入私密行；归档、valid_to 已失效、valid_from 未生效始终排除。
+func TestRunEmbeddingSelectionMatrix(t *testing.T) {
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	expiredAt := now.Add(-time.Minute)
+	inputs := []EmbeddingInput{
+		{ID: "public", Summary: "公开有效"},
+		{ID: "private", Summary: "私密有效", Private: true},
+		{ID: "archived", Summary: "已归档", Archived: true},
+		{ID: "expired", Summary: "已失效", ValidTo: &expiredAt},
+		{ID: "future", Summary: "尚未生效", ValidFrom: now.Add(time.Hour)},
+		{ID: "fresh", Summary: "刚刚生效", ValidFrom: now.Add(-time.Minute)},
+	}
+	clock := func() time.Time { return now }
+
+	// 默认（未授权）：只有公开且有效的行外发。
+	store := &fakeEmbedStore{inputs: inputs}
+	embedder := &fakeEmbedWorker{}
+	stats, err := RunEmbedding(context.Background(), store, embedder, EmbedOptions{Now: clock})
+	if err != nil {
+		t.Fatalf("默认授权下入库失败：%v", err)
+	}
+	if store.allowPrivate {
+		t.Error("默认不应向仓储申请私密行")
+	}
+	if stats.Total != 6 || stats.Skipped != 4 || stats.Pending != 2 || stats.Embedded != 2 {
+		t.Fatalf("默认授权统计不符：%+v", stats)
+	}
+	assertEmbedInputs(t, embedder.gotInputs, []string{"公开有效", "刚刚生效"})
+
+	// 显式授权：私密行加入，但归档/失效/未生效仍然排除。
+	store = &fakeEmbedStore{inputs: inputs}
+	embedder = &fakeEmbedWorker{}
+	stats, err = RunEmbedding(context.Background(), store, embedder, EmbedOptions{AllowPrivate: true, Now: clock})
+	if err != nil {
+		t.Fatalf("授权后入库失败：%v", err)
+	}
+	if !store.allowPrivate {
+		t.Error("授权后应向仓储申请私密行")
+	}
+	if stats.Pending != 3 || stats.Embedded != 3 {
+		t.Fatalf("授权后统计不符：%+v", stats)
+	}
+	assertEmbedInputs(t, embedder.gotInputs, []string{"公开有效", "私密有效", "刚刚生效"})
+}
+
+// assertEmbedInputs 断言假 Embedder 实际收到的文本恰好等于期望序列（按批展平）。
+func assertEmbedInputs(t *testing.T, batches [][]string, want []string) {
+	t.Helper()
+	var got []string
+	for _, batch := range batches {
+		got = append(got, batch...)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("外发输入 = %v，期望 %v", got, want)
 	}
 }
 

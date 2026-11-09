@@ -57,9 +57,12 @@ type fakeMemoryEmbedStore struct {
 	inputsErr error
 	upsertErr error
 	upserts   int
+	// allowPrivate 记录 refresher 透传的授权参数。
+	allowPrivate bool
 }
 
-func (f *fakeMemoryEmbedStore) MemoryEmbeddingInputs(context.Context) ([]memory.EmbeddingInput, error) {
+func (f *fakeMemoryEmbedStore) MemoryEmbeddingInputs(_ context.Context, allowPrivate bool) ([]memory.EmbeddingInput, error) {
+	f.allowPrivate = allowPrivate
 	if f.inputsErr != nil {
 		return nil, f.inputsErr
 	}
@@ -202,6 +205,38 @@ func TestVectorRefreshFailureDoesNotBlockOther(t *testing.T) {
 	}
 	if emb.count() != 2 {
 		t.Errorf("embedding 调用 = %d，期望 2（identity+facts）", emb.count())
+	}
+}
+
+// TestVectorRefreshPrivateGate 私密记忆默认不外发；授权后 refresher 透传并纳入。
+func TestVectorRefreshPrivateGate(t *testing.T) {
+	inputs := []memory.EmbeddingInput{
+		{ID: "m1", Title: "公开", Summary: "公开内容"},
+		{ID: "m2", Title: "私密", Summary: "私密内容", Private: true},
+	}
+
+	// 默认：即使仓储把私密行带回来了，领域层也必须在外发前剔除。
+	memStore := &fakeMemoryEmbedStore{inputs: inputs}
+	emb := &fakeVectorEmbedder{}
+	newTestRefresher(memStore, &fakeViewerEmbedStore{}, emb).refreshOnce(context.Background())
+	if memStore.allowPrivate {
+		t.Error("默认刷新不应授权私密外发")
+	}
+	if emb.count() != 1 {
+		t.Fatalf("默认刷新外发条数 = %d，期望 1（只发公开）", emb.count())
+	}
+
+	// 授权：refresher 把开关透传给仓储，私密行才进入外发。
+	memStore = &fakeMemoryEmbedStore{inputs: inputs}
+	emb = &fakeVectorEmbedder{}
+	r := newTestRefresher(memStore, &fakeViewerEmbedStore{}, emb)
+	r.memoryAllowPrivate = true
+	r.refreshOnce(context.Background())
+	if !memStore.allowPrivate {
+		t.Error("授权后 refresher 未向仓储透传 allowPrivate")
+	}
+	if emb.count() != 2 {
+		t.Fatalf("授权后外发条数 = %d，期望 2", emb.count())
 	}
 }
 
