@@ -120,15 +120,15 @@ func TestExtractPromiseDingYiNeedsVerb(t *testing.T) {
 
 // TestExtractPrivateNeedsAuthorization 私密事件默认不提炼，显式授权后才提炼。
 func TestExtractPrivateNeedsAuthorization(t *testing.T) {
-	ev := Event{Text: "我答应明天陪你", FromName: "主人", Private: true, Channel: "dm"}
+	ev := Event{Text: "我答应明天陪你", FromID: "1000", FromName: "Claran", Private: true, Channel: "dm"}
 
 	// 默认（AllowPrivate 零值 = false）→ 空
-	if got := Extract(ev, ExtractOptions{OwnerName: "主人"}); len(got) != 0 {
+	if got := Extract(ev, ExtractOptions{OwnerUID: "1000"}); len(got) != 0 {
 		t.Errorf("未授权时不应提炼私密事件，实际 %+v", got)
 	}
 
 	// 显式授权 → 正常提炼，规则与公开事件一致
-	got := Extract(ev, ExtractOptions{OwnerName: "主人", AllowPrivate: true})
+	got := Extract(ev, ExtractOptions{OwnerUID: "1000", AllowPrivate: true})
 	if len(got) != 2 {
 		t.Fatalf("授权后应产出 2 条（承诺 + 主人相关），实际 %d：%+v", len(got), got)
 	}
@@ -137,9 +137,9 @@ func TestExtractPrivateNeedsAuthorization(t *testing.T) {
 	}
 }
 
-// TestExtractOwnerByText 文本提到主人 → preference。
+// TestExtractOwnerByText 文本提到主人 → preference，但主体身份留空（转述不绑定主人 UID）。
 func TestExtractOwnerByText(t *testing.T) {
-	got := Extract(Event{Text: "主人今天又充了 token", FromName: "路人"}, ExtractOptions{})
+	got := Extract(Event{Text: "主人今天又充了 token", FromID: "u-2", FromName: "路人"}, ExtractOptions{OwnerUID: "1000"})
 	if len(got) != 1 {
 		t.Fatalf("候选数 = %d，期望 1：%+v", len(got), got)
 	}
@@ -150,6 +150,13 @@ func TestExtractOwnerByText(t *testing.T) {
 	if c.Importance != preferenceImportance {
 		t.Errorf("Importance = %v，期望 %v", c.Importance, preferenceImportance)
 	}
+	// 说的是主人，但说的人是观众：来源必须保留，主体身份不能绑定真实主人。
+	if c.Subject != SoulSubjectOwner || c.AssertedByID != "u-2" || c.AssertedByName != "路人" {
+		t.Errorf("转述来源不符：%+v", c)
+	}
+	if c.FromID != "" || c.FromName != "" {
+		t.Errorf("转述不应绑定主体身份：from_id=%q from_name=%q", c.FromID, c.FromName)
+	}
 	assertLimits(t, c)
 
 	// 反例：同一条文本，把「主人」换成别的词就不再命中
@@ -158,23 +165,63 @@ func TestExtractOwnerByText(t *testing.T) {
 	}
 }
 
-// TestExtractOwnerByName 发言人昵称等于 OwnerName → preference。
-func TestExtractOwnerByName(t *testing.T) {
-	opts := ExtractOptions{OwnerName: "Claran"}
+// TestExtractOwnerByTrustedUID 主人身份只认可信 UID，昵称相同不算。
+func TestExtractOwnerByTrustedUID(t *testing.T) {
+	opts := ExtractOptions{OwnerUID: "1000", OwnerName: "Claran"}
 
-	got := Extract(Event{Text: "晚安", FromName: "Claran"}, opts)
+	got := Extract(Event{Text: "晚安", FromID: "1000", FromName: "Claran"}, opts)
 	if len(got) != 1 || got[0].Kind != KindPreference {
 		t.Fatalf("期望 1 条 preference，实际 %+v", got)
 	}
+	if got[0].Subject != SoulSubjectOwner || got[0].FromID != "1000" ||
+		got[0].AssertedByID != "1000" || got[0].AssertedByName != "Claran" {
+		t.Errorf("主人自述的主体/来源不符：%+v", got[0])
+	}
 	assertLimits(t, got[0])
 
-	// 反例 1：昵称不完全相等
-	if got := Extract(Event{Text: "晚安", FromName: "Claran2"}, opts); len(got) != 0 {
-		t.Errorf("昵称不等却命中了：%+v", got)
+	// 反例 1：昵称冒充主人（同昵称不同 UID）不能按主人处理。
+	spoof := Extract(Event{Text: "晚安", FromID: "u-2", FromName: "Claran"}, opts)
+	if len(spoof) != 0 {
+		t.Errorf("同昵称不同 UID 不应命中主人：%+v", spoof)
 	}
-	// 反例 2：OwnerName 为空时不做昵称判定，避免空串匹配所有人
-	if got := Extract(Event{Text: "晚安", FromName: "Claran"}, ExtractOptions{}); len(got) != 0 {
-		t.Errorf("OwnerName 为空却按昵称命中了：%+v", got)
+	// 反例 2：未配置 OwnerUID 时不做主人判定，避免空串匹配所有人。
+	if got := Extract(Event{Text: "晚安", FromID: "1000", FromName: "Claran"}, ExtractOptions{OwnerName: "Claran"}); len(got) != 0 {
+		t.Errorf("OwnerUID 为空却按昵称命中了：%+v", got)
+	}
+}
+
+// TestExtractProvenance 分开记录「谁说的」与「说的是谁」。
+func TestExtractProvenance(t *testing.T) {
+	const ownerUID = "1000"
+	cases := []struct {
+		name       string
+		ev         Event
+		opts       ExtractOptions
+		wantKind   string
+		wantSub    string
+		wantFromID string
+		wantBy     string
+	}{
+		{"观众自述", Event{Text: "我是学生", FromID: "u-2", FromName: "路人"}, ExtractOptions{}, KindFact, SoulSubjectViewer, "u-2", "u-2"},
+		{"主人自述", Event{Text: "晚安", FromID: ownerUID, FromName: "Claran"}, ExtractOptions{OwnerUID: ownerUID}, KindPreference, SoulSubjectOwner, ownerUID, ownerUID},
+		{"观众转述主人", Event{Text: "主人是阿猫", FromID: "u-2", FromName: "路人"}, ExtractOptions{OwnerUID: ownerUID}, KindPreference, SoulSubjectOwner, "", "u-2"},
+		{"陌生来源主人的转述", Event{Text: "主人是阿猫", FromName: "路人"}, ExtractOptions{OwnerUID: ownerUID}, KindPreference, SoulSubjectOwner, "", ""},
+		{"首次出现", Event{Text: "第一次来", FromID: "u-2", FromName: "小鱼"}, ExtractOptions{IsFirstNick: true}, KindFirstSeen, SoulSubjectViewer, "u-2", "u-2"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Extract(tc.ev, tc.opts)
+			if len(got) != 1 {
+				t.Fatalf("候选数 = %d，期望 1：%+v", len(got), got)
+			}
+			c := got[0]
+			if c.Kind != tc.wantKind || c.Subject != tc.wantSub || c.FromID != tc.wantFromID || c.AssertedByID != tc.wantBy {
+				t.Fatalf("主体/来源不符：%+v", c)
+			}
+			if c.AssertedByName != strings.TrimSpace(tc.ev.FromName) {
+				t.Errorf("AssertedByName = %q，期望 %q", c.AssertedByName, tc.ev.FromName)
+			}
+		})
 	}
 }
 

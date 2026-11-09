@@ -99,3 +99,21 @@ func TestMemoryIntervalRange(t *testing.T) {
 		})
 	}
 }
+
+// TestMemoryOwnerUIDValidation owner_uid 是唯一身份证据，必须是干净 UID。
+func TestMemoryOwnerUIDValidation(t *testing.T) {
+	cfg, err := loadMemoryConfig(t, "[memory]\nenabled=true\nowner_uid=\"313591854\"\n")
+	if err != nil {
+		t.Fatalf("合法 owner_uid 被拒绝：%v", err)
+	}
+	if cfg.Memory.OwnerUID != "313591854" {
+		t.Fatalf("owner_uid 未生效：%q", cfg.Memory.OwnerUID)
+	}
+
+	for _, bad := range []string{"a b", "a\\tb", strings.Repeat("9", 65)} {
+		_, err := loadMemoryConfig(t, "[memory]\nenabled=true\nowner_uid=\""+bad+"\"\n")
+		if err == nil || !strings.Contains(err.Error(), "owner_uid") {
+			t.Fatalf("owner_uid=%q 未按非法 UID 拒绝：%v", bad, err)
+		}
+	}
+}

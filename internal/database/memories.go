@@ -72,22 +72,25 @@ func (r *MemoryRepo) InsertRecord(ctx context.Context, m store.MemoryRecord) (bo
 	// valid_from 取 EXCLUDED 的事件时间而不是 now()：否则「更新时间」会顶替
 	// 「事实发生时间」，让第 3 道的先后比较失真。
 	result := r.db.WithContext(ctx).Exec(`INSERT INTO memory_records
-(id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name)
-VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''))
+(id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name,asserted_by_id,asserted_by_name,subject)
+VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''))
 ON CONFLICT (id) DO UPDATE SET
   summary    = EXCLUDED.summary,
   confidence = EXCLUDED.confidence,
   valid_from = EXCLUDED.valid_from,
   event_ids  = EXCLUDED.event_ids,
   from_id    = COALESCE(EXCLUDED.from_id, memory_records.from_id),
-  from_name  = COALESCE(EXCLUDED.from_name, memory_records.from_name)
+  from_name  = COALESCE(EXCLUDED.from_name, memory_records.from_name),
+  asserted_by_id   = COALESCE(EXCLUDED.asserted_by_id, memory_records.asserted_by_id),
+  asserted_by_name = COALESCE(EXCLUDED.asserted_by_name, memory_records.asserted_by_name),
+  subject    = COALESCE(EXCLUDED.subject, memory_records.subject)
 WHERE memory_records.kind = 'fact'
   AND EXCLUDED.kind = 'fact'
   AND memory_records.private = EXCLUDED.private
   AND COALESCE(memory_records.channel,'') = COALESCE(EXCLUDED.channel,'')
   AND COALESCE(memory_records.session,'') = COALESCE(EXCLUDED.session,'')
   AND EXCLUDED.valid_from > memory_records.valid_from
-  AND memory_records.summary IS DISTINCT FROM EXCLUDED.summary`, m.ID, m.Source, m.Kind, m.Title, m.Summary, m.Body, m.Importance, m.Confidence, m.Private, m.Channel, m.Session, m.ValidFrom, string(ids), m.FromID, m.FromName)
+  AND memory_records.summary IS DISTINCT FROM EXCLUDED.summary`, m.ID, m.Source, m.Kind, m.Title, m.Summary, m.Body, m.Importance, m.Confidence, m.Private, m.Channel, m.Session, m.ValidFrom, string(ids), m.FromID, m.FromName, m.AssertedByID, m.AssertedByName, m.Subject)
 	if result.Error != nil {
 		return false, &safeError{"写入记忆失败", result.Error}
 	}
@@ -527,23 +530,28 @@ func (r *MemoryRepo) queryMemoryRecords(ctx context.Context, keyword string, lim
 	}
 	// channel/session 可为 NULL（全局记录）：先归一成空串，避免扫描 NULL 失败。
 	var rows []struct {
-		ID         string
-		Source     string
-		Kind       string
-		Title      string
-		Summary    string
-		Body       string
-		Importance float64
-		Confidence float64
-		Private    bool
-		Channel    event.Channel
-		Session    string
-		ValidFrom  time.Time
-		CreatedAt  time.Time
-		IDs        json.RawMessage
+		ID             string
+		Source         string
+		Kind           string
+		Title          string
+		Summary        string
+		Body           string
+		Importance     float64
+		Confidence     float64
+		Private        bool
+		Channel        event.Channel
+		Session        string
+		FromID         string
+		FromName       string
+		AssertedByID   string
+		AssertedByName string
+		Subject        string
+		ValidFrom      time.Time
+		CreatedAt      time.Time
+		IDs            json.RawMessage
 	}
 	err := query.
-		Select("id, source, kind, title, summary, body, importance, confidence, private, COALESCE(channel,'') AS channel, COALESCE(session,'') AS session, valid_from, created_at, to_json(event_ids) AS ids").
+		Select("id, source, kind, title, summary, body, importance, confidence, private, COALESCE(channel,'') AS channel, COALESCE(session,'') AS session, COALESCE(from_id,'') AS from_id, COALESCE(from_name,'') AS from_name, COALESCE(asserted_by_id,'') AS asserted_by_id, COALESCE(asserted_by_name,'') AS asserted_by_name, COALESCE(subject,'') AS subject, valid_from, created_at, to_json(event_ids) AS ids").
 		Order("created_at DESC, id ASC").
 		Limit(limit).
 		Find(&rows).Error
@@ -564,11 +572,16 @@ func (r *MemoryRepo) queryMemoryRecords(ctx context.Context, keyword string, lim
 				Private:    row.Private,
 				ValidFrom:  row.ValidFrom,
 			},
-			Source:    row.Source,
-			Kind:      row.Kind,
-			Title:     row.Title,
-			Body:      row.Body,
-			CreatedAt: row.CreatedAt,
+			Source:         row.Source,
+			Kind:           row.Kind,
+			Title:          row.Title,
+			Body:           row.Body,
+			FromID:         row.FromID,
+			FromName:       row.FromName,
+			AssertedByID:   row.AssertedByID,
+			AssertedByName: row.AssertedByName,
+			Subject:        row.Subject,
+			CreatedAt:      row.CreatedAt,
 		}
 		if len(row.IDs) > 0 {
 			if err := json.Unmarshal(row.IDs, &record.EventIDs); err != nil {
@@ -606,26 +619,29 @@ func (r *MemoryRepo) SoulCandidates(ctx context.Context, minImportance float64, 
 		return nil, store.ErrInvalid
 	}
 	var rows []struct {
-		ID         string
-		Source     string
-		Kind       string
-		Title      string
-		Summary    string
-		Importance float64
-		Confidence float64
-		Private    bool
-		Channel    event.Channel
-		Session    string
-		FromID     string
-		FromName   string
-		ValidFrom  time.Time
-		CreatedAt  time.Time
-		IDs        json.RawMessage
+		ID             string
+		Source         string
+		Kind           string
+		Title          string
+		Summary        string
+		Importance     float64
+		Confidence     float64
+		Private        bool
+		Channel        event.Channel
+		Session        string
+		FromID         string
+		FromName       string
+		AssertedByID   string
+		AssertedByName string
+		Subject        string
+		ValidFrom      time.Time
+		CreatedAt      time.Time
+		IDs            json.RawMessage
 	}
 	err := r.db.WithContext(ctx).Table("memory_records").
 		Where("kind IN ? AND valid_to IS NULL AND NOT archived AND valid_from <= now() AND importance >= ?", []string{"fact", "preference"}, minImportance).
 		Where("NOT private AND (channel IS NULL OR channel <> 'dm' OR private)").
-		Select("id, source, kind, title, summary, importance, confidence, private, COALESCE(channel,'') AS channel, COALESCE(session,'') AS session, COALESCE(from_id,'') AS from_id, COALESCE(from_name,'') AS from_name, valid_from, created_at, to_json(event_ids) AS ids").
+		Select("id, source, kind, title, summary, importance, confidence, private, COALESCE(channel,'') AS channel, COALESCE(session,'') AS session, COALESCE(from_id,'') AS from_id, COALESCE(from_name,'') AS from_name, COALESCE(asserted_by_id,'') AS asserted_by_id, COALESCE(asserted_by_name,'') AS asserted_by_name, COALESCE(subject,'') AS subject, valid_from, created_at, to_json(event_ids) AS ids").
 		Order("importance DESC, valid_from DESC, id ASC").Limit(limit).Find(&rows).Error
 	if err != nil {
 		return nil, &safeError{"读取灵魂记忆候选失败", err}
@@ -643,7 +659,10 @@ func (r *MemoryRepo) SoulCandidates(ctx context.Context, minImportance float64, 
 				EventIDs: ids, ValidFrom: row.ValidFrom,
 			},
 			Source: row.Source, Kind: row.Kind, Title: row.Title,
-			FromID: row.FromID, FromName: row.FromName, CreatedAt: row.CreatedAt,
+			FromID: row.FromID, FromName: row.FromName,
+			AssertedByID: row.AssertedByID, AssertedByName: row.AssertedByName,
+			Subject:   row.Subject,
+			CreatedAt: row.CreatedAt,
 		})
 	}
 	return out, nil

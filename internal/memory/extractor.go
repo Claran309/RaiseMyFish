@@ -172,7 +172,7 @@ func (e *LLMExtractor) llmOut(ctx context.Context, ev event.Event, opts ExtractO
 	if err != nil {
 		return nil, err
 	}
-	return parseLLMRecords(raw, ev)
+	return parseLLMRecords(raw, ev, opts)
 }
 
 // buildLLMInput 拼「事件正文 + 昵称 + 最近上下文」。
@@ -220,9 +220,10 @@ type llmReply struct {
 // parseLLMRecords 解析模型输出并校验成 Candidate。
 //
 // 两条硬规则（M04）：
-//  1. 主体只从事件取（FromID/FromName），模型只负责「记什么」，不负责「谁的」；
+//  1. 来源只从事件取（AssertedBy=发言人，主体身份按可信 UID 判定），
+//     模型只负责「记什么」，不负责「谁的」；
 //  2. archive=false 返回 errArchiveRejected，由调用方决定「一条都不写」。
-func parseLLMRecords(raw string, ev event.Event) ([]Candidate, error) {
+func parseLLMRecords(raw string, ev event.Event, opts ExtractOptions) ([]Candidate, error) {
 	text := strings.TrimSpace(raw)
 	if text == "" {
 		return nil, errors.New("模型输出为空")
@@ -250,8 +251,6 @@ func parseLLMRecords(raw string, ev event.Event) ([]Candidate, error) {
 		// archive=true 但没有记录：属于模型输出不完整，按解析失败处理。
 		return nil, nil
 	}
-	subjectID := strings.TrimSpace(ev.FromID)
-	subjectName := strings.TrimSpace(ev.FromName)
 	out := make([]Candidate, 0, len(reply.Records))
 	for _, r := range reply.Records {
 		kind := normalizeKind(r.Kind)
@@ -268,11 +267,13 @@ func parseLLMRecords(raw string, ev event.Event) ([]Candidate, error) {
 		if confidence <= 0 || confidence > 1 {
 			confidence = 0.7
 		}
+		fromID, fromName, assertedID, assertedName, subject := candidateProvenance(ev, opts, kind, title, summary)
 		out = append(out, Candidate{
 			Kind: kind, Title: title, Summary: summary,
 			Importance: importance, Confidence: confidence,
-			// 主体由可信事件带出：模型编造的名字不会被采信。
-			FromID: subjectID, FromName: subjectName,
+			// 来源由可信事件带出：模型编造的 from_id/from_name 不会被采信。
+			FromID: fromID, FromName: fromName,
+			AssertedByID: assertedID, AssertedByName: assertedName, Subject: subject,
 		})
 	}
 	if len(out) == 0 {

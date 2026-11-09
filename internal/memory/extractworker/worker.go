@@ -70,7 +70,10 @@ type Watermark interface {
 
 // Options 是 worker 的行为参数。
 type Options struct {
-	// OwnerName 主人昵称，透传给提炼规则。
+	// OwnerUID 是主人的可信平台 UID：只有发言人 UID 与之相等才算主人自述，
+	// 昵称可被改名冒充，不参与身份判定。
+	OwnerUID string
+	// OwnerName 主人昵称，仅用于 LLM 提炼的语义提示。
 	OwnerName string
 	// AllowPrivate 为 true 时才提炼私密事件；默认 false（fail-closed）。
 	AllowPrivate bool
@@ -505,6 +508,7 @@ func (w *Worker) processEvent(ctx context.Context, ev event.Event, stats *Stats)
 	}
 
 	extractOpts := memory.ExtractOptions{
+		OwnerUID:  w.opts.OwnerUID,
 		OwnerName: w.opts.OwnerName,
 		// 首次出现需要「该 session 已见昵称集合」，属持久化能力，
 		// 既有 repo 没有对应接口，本批不臆造存储，固定传 false。
@@ -613,6 +617,10 @@ func (w *Worker) buildRecord(ev event.Event, c memory.Candidate) store.MemoryRec
 		Title:    c.Title,
 		FromID:   strings.TrimSpace(c.FromID),
 		FromName: strings.TrimSpace(c.FromName),
+		// 谁说的与说的是谁分开落库：Soul 重建只按可信证据决定是否提升。
+		AssertedByID:   strings.TrimSpace(c.AssertedByID),
+		AssertedByName: strings.TrimSpace(c.AssertedByName),
+		Subject:        strings.TrimSpace(c.Subject),
 		// Body 留空：摘要已经够召回用，不把完整正文写进记忆库
 		Body: "",
 	}

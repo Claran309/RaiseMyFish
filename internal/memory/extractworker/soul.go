@@ -14,8 +14,8 @@ import (
 	"RaiseMyFish/internal/store"
 )
 
-// soulOwnerKeyword 是「关于主人」的文本标记：带这个标记的记录归主人主体，
-// 即使发言人是观众（观众也可能提供主人的设定）。
+// soulOwnerKeyword 是「关于主人」的文本标记，只用于旧数据的回退判断：
+// 文本提到主人 ≠ 主人本人说的，不能作为身份证据。
 const soulOwnerKeyword = "主人"
 
 // SoulSource 是灵魂记忆重建所需的最小能力（由 database.MemoryRepo 实现）。
@@ -69,7 +69,7 @@ func (w *Worker) rebuildSoul(ctx context.Context, stats *Stats) {
 		stats.SoulSkipped = "failed"
 		return
 	}
-	generated := memory.NormalizeSoul(soulEntriesFrom(records, w.opts.OwnerName))
+	generated := memory.NormalizeSoul(soulEntriesFrom(records, w.opts.OwnerUID))
 	entries := memory.MergeSoul(existing, generated)
 	if len(entries) > maxEntries {
 		entries = entries[:maxEntries]
@@ -84,12 +84,14 @@ func (w *Worker) rebuildSoul(ctx context.Context, stats *Stats) {
 
 // soulEntriesFrom 把记录转成灵魂条目，保留主体与来源。
 //
-// 观众自述（from_id/from_name 指向非主人，且正文不是关于主人）一律不写全局设定；
-// 主人本人的设定、关于主人的陈述、以及没有主体标识的系统设定才入选。
-func soulEntriesFrom(records []store.MemoryRecord, ownerName string) []memory.SoulMemory {
+// 提升为全局设定的策略是 fail-closed：
+//   - 观众自述、观众对主人的转述一律不提升，只留在记忆库当带来源候选；
+//   - 主人主体必须由可信 UID 证明是主人本人说的，昵称不计；
+//   - 没有说话人标识的系统设定按本鱼处理，其余未知主体一律不提升。
+func soulEntriesFrom(records []store.MemoryRecord, ownerUID string) []memory.SoulMemory {
 	entries := make([]memory.SoulMemory, 0, len(records))
 	for _, rec := range records {
-		subject := soulSubjectFrom(rec, ownerName)
+		subject := soulSubjectFrom(rec, ownerUID)
 		if subject == memory.SoulSubjectViewer {
 			continue
 		}
@@ -115,29 +117,50 @@ func soulEntriesFrom(records []store.MemoryRecord, ownerName string) []memory.So
 	return entries
 }
 
-// soulSubjectFrom 推导条目主体。
+// soulSubjectFrom 判定一条记录能否提升为全局设定，并返回提升后的主体。
 //
-// 顺序很重要：
-//  1. 发言人就是主人 → owner；
-//  2. 正文明确提到主人 → owner（观众提供的主人设定也有效）；
-//  3. 其余带发送者标识的记录是观众自述 → viewer，不进全局；
-//  4. 没有任何主体标识时，preference 按主人相关处理，其余按本鱼设定。
-func soulSubjectFrom(rec store.MemoryRecord, ownerName string) string {
-	name := strings.TrimSpace(rec.FromName)
-	owner := strings.TrimSpace(ownerName)
-	if owner != "" && name == owner {
-		return memory.SoulSubjectOwner
+// 「谁说的」和「说的是谁」分开看：
+//  1. asserted_by 为空时回退 from_id——旧行里 from_id 存的就是发言人；
+//  2. Subject=owner 只认「asserted_by == owner_uid」这一条证据；
+//     观众转述（哪怕正文反复出现「主人」）只返回 viewer，不提升；
+//  3. Subject=fish 只接受无发言人（系统设定）或主人本人，其余降级 viewer；
+//  4. 旧行没有 subject 列时按发言人推导；无来源的「主人」旧数据按未知处理，
+//     宁可让旧设定重新积累，也不把无法溯源的转述升成全局人格。
+func soulSubjectFrom(rec store.MemoryRecord, ownerUID string) string {
+	owner := strings.TrimSpace(ownerUID)
+	assertedBy := strings.TrimSpace(rec.AssertedByID)
+	if assertedBy == "" {
+		assertedBy = strings.TrimSpace(rec.FromID)
 	}
-	if strings.Contains(rec.Title+"\n"+rec.Summary, soulOwnerKeyword) {
-		return memory.SoulSubjectOwner
+	subject := strings.ToLower(strings.TrimSpace(rec.Subject))
+	if subject == "" {
+		switch {
+		case owner != "" && assertedBy == owner:
+			subject = memory.SoulSubjectOwner
+		case assertedBy != "" || strings.TrimSpace(rec.FromName) != "":
+			subject = memory.SoulSubjectViewer
+		case strings.Contains(rec.Title+"\n"+rec.Summary, soulOwnerKeyword):
+			subject = memory.SoulSubjectViewer
+		default:
+			subject = memory.SoulSubjectFish
+		}
 	}
-	if strings.TrimSpace(rec.FromID) != "" || name != "" {
+	switch subject {
+	case memory.SoulSubjectOwner:
+		if owner != "" && assertedBy == owner {
+			return memory.SoulSubjectOwner
+		}
+		return memory.SoulSubjectViewer
+	case memory.SoulSubjectFish:
+		if assertedBy == "" || (owner != "" && assertedBy == owner) {
+			return memory.SoulSubjectFish
+		}
+		return memory.SoulSubjectViewer
+	case memory.SoulSubjectViewer:
+		return memory.SoulSubjectViewer
+	default:
 		return memory.SoulSubjectViewer
 	}
-	if rec.Kind == memory.KindPreference {
-		return memory.SoulSubjectOwner
-	}
-	return memory.SoulSubjectFish
 }
 
 // soulVisibility 把「私密记录」映射成条目可见性；私密条目不会进全局注入。

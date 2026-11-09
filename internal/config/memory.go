@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path"
 	"strings"
+	"unicode/utf8"
 )
 
 // Memory 是记忆提炼 worker 的配置（`[memory]`）。
@@ -27,8 +28,10 @@ type Memory struct {
 	SoulMaxEntries int `toml:"soul_max_entries"`
 	// SoulPath 是 soul-memories.md 路径；留空时从 LLM.PersonaDir 派生。
 	SoulPath string `toml:"soul_path"`
-	// OwnerName 是主人的昵称：提炼时 FromName 与之相等会判成「主人相关」偏好。
-	// 留空表示不按昵称判定（只靠正文里的「主人」关键词）。
+	// OwnerUID 是主人的可信平台 UID：只有发言人 UID 与之相等才算主人自述，
+	// 也才可能提升为长期设定。昵称可被改名冒充，不参与身份判定。
+	OwnerUID string `toml:"owner_uid"`
+	// OwnerName 是主人的昵称，仅用于 LLM 提炼时的语义提示，不用于身份认证。
 	OwnerName string `toml:"owner_name"`
 }
 
@@ -60,6 +63,9 @@ func (m Memory) Validate() error {
 	}
 	if m.LLMExtract && (m.LLMExtractMaxPerHour < 1 || m.LLMExtractMaxPerHour > 1000) {
 		return errors.New("LLM 提炼每小时上限必须在1至1000之间")
+	}
+	if strings.ContainsAny(m.OwnerUID, " \t\r\n\x00") || utf8.RuneCountInString(m.OwnerUID) > 64 {
+		return errors.New("记忆 owner_uid 必须是不含空白和控制字符的 UID")
 	}
 	if strings.ContainsAny(m.OwnerName, "\r\n\x00") {
 		return errors.New("记忆 owner_name 不能包含控制字符")

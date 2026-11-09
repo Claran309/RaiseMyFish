@@ -25,18 +25,31 @@ func (f *fakeSoul) SoulCandidates(context.Context, float64, int) ([]store.Memory
 	return f.records, f.err
 }
 
+// soulRec 造一条无说话人的系统设定（提升后主体是本鱼）。
 func soulRec(id, title, summary string, imp float64) store.MemoryRecord {
 	return store.MemoryRecord{
-		Record: memory.Record{ID: id, Summary: summary, Importance: imp, ValidFrom: time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)},
-		Kind:   "fact",
-		Title:  title,
+		Record:  memory.Record{ID: id, Summary: summary, Importance: imp, ValidFrom: time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)},
+		Kind:    "fact",
+		Title:   title,
+		Subject: memory.SoulSubjectFish,
 	}
+}
+
+// ownerSoulRec 造一条主人本人自述的设定：断言者 UID 与 owner_uid 一致。
+func ownerSoulRec(id, title, summary string, imp float64) store.MemoryRecord {
+	rec := soulRec(id, title, summary, imp)
+	rec.Subject = memory.SoulSubjectOwner
+	rec.AssertedByID, rec.AssertedByName = "1000", "Claran"
+	rec.FromID, rec.FromName = "1000", "Claran"
+	rec.Source = "persona"
+	return rec
 }
 
 func newSoulWorker(t *testing.T, src SoulSource, path string, now *time.Time) *Worker {
 	t.Helper()
 	return &Worker{opts: Options{
 		Soul:     src,
+		OwnerUID: "1000",
 		SoulOpts: SoulOptions{Path: path, MaxEntries: 20, MinImportance: 0.8, Interval: time.Hour},
 		Now:      func() time.Time { return *now },
 	}}
@@ -47,8 +60,8 @@ func TestSoulRebuildSelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "soul.md")
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 	src := &fakeSoul{records: []store.MemoryRecord{
-		soulRec("a", "主人是学生", "在读大学", 0.9),
-		soulRec("b", "主人爱吃辣", "无辣不欢", 0.85),
+		ownerSoulRec("a", "主人是学生", "在读大学", 0.9),
+		ownerSoulRec("b", "主人爱吃辣", "无辣不欢", 0.85),
 	}}
 	w := newSoulWorker(t, src, path, &now)
 
@@ -71,8 +84,8 @@ func TestSoulRebuildDedup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "soul.md")
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 	src := &fakeSoul{records: []store.MemoryRecord{
-		soulRec("a", "主人是学生", "大二", 0.8),
-		soulRec("b", "主人是学生", "大三", 0.9),
+		ownerSoulRec("a", "主人是学生", "大二", 0.8),
+		ownerSoulRec("b", "主人是学生", "大三", 0.9),
 	}}
 	w := newSoulWorker(t, src, path, &now)
 
@@ -91,7 +104,7 @@ func TestSoulRebuildDedup(t *testing.T) {
 func TestSoulRebuildThrottled(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "soul.md")
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
-	src := &fakeSoul{records: []store.MemoryRecord{soulRec("a", "主人是学生", "在读大学", 0.9)}}
+	src := &fakeSoul{records: []store.MemoryRecord{ownerSoulRec("a", "主人是学生", "在读大学", 0.9)}}
 	w := newSoulWorker(t, src, path, &now)
 
 	var first Stats
@@ -119,7 +132,7 @@ func TestSoulRebuildThrottled(t *testing.T) {
 func TestSoulRebuildUpdatesOnFactChange(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "soul.md")
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
-	src := &fakeSoul{records: []store.MemoryRecord{soulRec("a", "主人是学生", "大二", 0.9)}}
+	src := &fakeSoul{records: []store.MemoryRecord{ownerSoulRec("a", "主人是学生", "大二", 0.9)}}
 	w := newSoulWorker(t, src, path, &now)
 	w.rebuildSoul(context.Background(), &Stats{})
 
@@ -184,7 +197,7 @@ func TestSoulRebuildKeepsManualEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	src := &fakeSoul{records: []store.MemoryRecord{soulRec("a", "主人是学生", "在读大学", 0.9)}}
+	src := &fakeSoul{records: []store.MemoryRecord{ownerSoulRec("a", "主人是学生", "在读大学", 0.9)}}
 	w := newSoulWorker(t, src, path, &now)
 	var stats Stats
 	w.rebuildSoul(context.Background(), &stats)
@@ -216,10 +229,13 @@ func TestSoulRebuildExcludesViewerIdentity(t *testing.T) {
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 
 	// 「我是大三学生」来自观众；即使 important 很高也不能进全局。
+	// 这里把 subject 留空，顺带覆盖旧行（无 subject 列）的回退推导。
 	viewerFact := soulRec("v1", "事实：我是大三学生", "我是大三学生", 0.95)
+	viewerFact.Subject = ""
 	viewerFact.FromID, viewerFact.FromName, viewerFact.Source = "u-42", "小明", "persona"
 	// LLM 误标成 preference 的观众自述（不含「主人」）同样要排除。
 	viewerPref := soulRec("v2", "事实：我爱吃辣", "我爱吃辣", 0.9)
+	viewerPref.Subject = ""
 	viewerPref.Kind = "preference"
 	viewerPref.FromID, viewerPref.FromName, viewerPref.Source = "u-43", "小红", "persona"
 
@@ -237,28 +253,31 @@ func TestSoulRebuildExcludesViewerIdentity(t *testing.T) {
 }
 
 // TestSoulRebuildKeepsSubjectAndSource 主体/来源/发送者在转换时保留。
+//
+// A2/N05 重新裁决：观众转述的「主人设定」不再视为必收正例——
+// 它只保留在记忆库当带来源候选，不进入全局人格文件。
 func TestSoulRebuildKeepsSubjectAndSource(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "soul.md")
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 
-	// 主人本人的事实：靠 OwnerName 判定。
-	ownerFact := soulRec("o1", "事实：我是学生", "我是学生", 0.9)
-	ownerFact.FromID, ownerFact.FromName, ownerFact.Source = "1000", "Claran", "persona"
-	// 观众提供的主人设定：主体是 owner，但发送者字段要保留。
+	// 主人本人的事实：断言者 UID 与 owner_uid 一致。
+	ownerFact := ownerSoulRec("o1", "事实：我是学生", "我是学生", 0.9)
+	// 观众转述的主人设定：主体标 owner，但断言者是路人，不能提升。
 	viewerOwnerPref := soulRec("p1", "主人相关：主人爱吃甜", "主人爱吃甜", 0.9)
 	viewerOwnerPref.Kind = "preference"
-	viewerOwnerPref.FromID, viewerOwnerPref.FromName, viewerOwnerPref.Source = "u-2", "路人", "persona"
+	viewerOwnerPref.Subject = memory.SoulSubjectOwner
+	viewerOwnerPref.AssertedByID, viewerOwnerPref.AssertedByName = "u-2", "路人"
+	viewerOwnerPref.Source = "persona"
 	// 无主体标识的系统设定：按本鱼处理。
 	fishFact := soulRec("f1", "本鱼是直播鱼", "陪大家聊天", 0.9)
 	fishFact.Source = "owner_direct"
 
 	src := &fakeSoul{records: []store.MemoryRecord{ownerFact, viewerOwnerPref, fishFact}}
 	w := newSoulWorker(t, src, path, &now)
-	w.opts.OwnerName = "Claran"
 	var stats Stats
 	w.rebuildSoul(context.Background(), &stats)
-	if stats.SoulEntries != 3 {
-		t.Fatalf("应写入 3 条：%+v", stats)
+	if stats.SoulEntries != 2 {
+		t.Fatalf("应写入 2 条（主人自述 + 本鱼设定）：%+v", stats)
 	}
 
 	got, err := memory.LoadSoul(context.Background(), path)
@@ -275,12 +294,124 @@ func TestSoulRebuildKeepsSubjectAndSource(t *testing.T) {
 		owner.FromName != "Claran" || owner.Source != "persona" || owner.Visibility != memory.SoulVisibilityPublic {
 		t.Errorf("主人主体字段不符：%+v", owner)
 	}
-	pref := byTitle["主人相关：主人爱吃甜"]
-	if pref.Subject != memory.SoulSubjectOwner || pref.FromID != "u-2" || pref.FromName != "路人" {
-		t.Errorf("主人陈述的主体/说话人不符：%+v", pref)
+	if _, ok := byTitle["主人相关：主人爱吃甜"]; ok {
+		t.Error("观众转述的主人设定不能被提升为全局设定")
 	}
 	fish := byTitle["本鱼是直播鱼"]
 	if fish.Subject != memory.SoulSubjectFish || fish.Source != "owner_direct" {
 		t.Errorf("本鱼主体字段不符：%+v", fish)
+	}
+}
+
+// TestSoulRebuildRejectsViewerOwnerClaim N05 核心回归：普通观众说「主人是阿猫」，
+// 即使正文反复出现「主人」也不能变成 owner 全局设定。
+func TestSoulRebuildRejectsViewerOwnerClaim(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "soul.md")
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+
+	claim := soulRec("c1", "主人是阿猫", "主人是阿猫，大家都这么叫", 0.9)
+	claim.Subject = memory.SoulSubjectOwner
+	claim.AssertedByID, claim.AssertedByName = "u-666", "捣蛋鬼"
+	claim.Source = "persona"
+
+	src := &fakeSoul{records: []store.MemoryRecord{claim}}
+	w := newSoulWorker(t, src, path, &now)
+	var stats Stats
+	w.rebuildSoul(context.Background(), &stats)
+	if stats.SoulEntries != 0 {
+		t.Fatalf("观众转述不应提升：%+v", stats)
+	}
+	got, _ := memory.LoadSoul(context.Background(), path)
+	if len(got) != 0 {
+		t.Fatalf("全局设定被观众污染：%+v", got)
+	}
+}
+
+// TestSoulRebuildRejectsNicknameImpersonation 昵称与主人相同但 UID 不同，不算主人自述。
+func TestSoulRebuildRejectsNicknameImpersonation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "soul.md")
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+
+	rec := soulRec("n1", "事实：我是学生", "我是学生", 0.95)
+	rec.Subject = memory.SoulSubjectOwner
+	rec.AssertedByID, rec.AssertedByName = "u-777", "Claran"
+	rec.FromName = "Claran"
+	rec.Source = "persona"
+
+	src := &fakeSoul{records: []store.MemoryRecord{rec}}
+	w := newSoulWorker(t, src, path, &now)
+	var stats Stats
+	w.rebuildSoul(context.Background(), &stats)
+	if stats.SoulEntries != 0 {
+		t.Fatalf("同昵称不同 UID 不应提升：%+v", stats)
+	}
+}
+
+// TestSoulRebuildLegacyRows 旧行（无 subject）按说话人推导；无来源的「主人」文本 fail-closed。
+func TestSoulRebuildLegacyRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "soul.md")
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+
+	// 主人本人说的旧行：from_id 就是发言人，回退后视为 owner 自述。
+	legacyOwner := soulRec("l1", "事实：我是学生", "我是学生", 0.9)
+	legacyOwner.Subject = ""
+	legacyOwner.FromID, legacyOwner.FromName, legacyOwner.Source = "1000", "Claran", "persona"
+	// 观众转述主人的旧行：发言人不是主人，不能提升。
+	legacyViewer := soulRec("l2", "主人是阿猫", "主人是阿猫", 0.9)
+	legacyViewer.Subject = ""
+	legacyViewer.FromID, legacyViewer.FromName, legacyViewer.Source = "u-2", "路人", "persona"
+	// 无来源的「主人」旧数据：无法证明是谁说的，宁可重新积累也不提升。
+	legacyUnknown := soulRec("l3", "主人是阿猫", "主人是阿猫", 0.9)
+	legacyUnknown.Subject = ""
+	legacyUnknown.Source = "persona"
+	// 无来源且不提主人的系统设定：按本鱼保留。
+	legacyFish := soulRec("l4", "本鱼是直播鱼", "陪大家聊天", 0.9)
+	legacyFish.Subject = ""
+	legacyFish.Source = "owner_direct"
+
+	src := &fakeSoul{records: []store.MemoryRecord{legacyOwner, legacyViewer, legacyUnknown, legacyFish}}
+	w := newSoulWorker(t, src, path, &now)
+	var stats Stats
+	w.rebuildSoul(context.Background(), &stats)
+	if stats.SoulEntries != 2 {
+		t.Fatalf("旧行只应提升主人自述与本鱼设定：%+v", stats)
+	}
+	got, err := memory.LoadSoul(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := map[string]memory.SoulMemory{}
+	for _, e := range got {
+		byTitle[e.Title] = e
+	}
+	if _, ok := byTitle["主人是阿猫"]; ok {
+		t.Error("无来源/观众转述的「主人」旧数据不能提升")
+	}
+	owner := byTitle["事实：我是学生"]
+	if owner.Subject != memory.SoulSubjectOwner || owner.FromID != "1000" {
+		t.Errorf("旧行主人自述推导错误：%+v", owner)
+	}
+	if fish := byTitle["本鱼是直播鱼"]; fish.Subject != memory.SoulSubjectFish {
+		t.Errorf("系统设定应按本鱼保留：%+v", fish)
+	}
+}
+
+// TestSoulRebuildRequiresOwnerUID 未配置 owner_uid 时任何「主人」主体都不提升。
+func TestSoulRebuildRequiresOwnerUID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "soul.md")
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+
+	rec := soulRec("o1", "事实：我是学生", "我是学生", 0.9)
+	rec.Subject = memory.SoulSubjectOwner
+	rec.AssertedByID, rec.AssertedByName = "1000", "Claran"
+	rec.Source = "persona"
+
+	src := &fakeSoul{records: []store.MemoryRecord{rec}}
+	w := newSoulWorker(t, src, path, &now)
+	w.opts.OwnerUID = ""
+	var stats Stats
+	w.rebuildSoul(context.Background(), &stats)
+	if stats.SoulEntries != 0 {
+		t.Fatalf("缺 owner_uid 时必须拒绝提升：%+v", stats)
 	}
 }

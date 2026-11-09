@@ -403,6 +403,7 @@ func newMemoryWorker(deps memoryWorkerDeps) (*extractworker.Worker, error) {
 		JobOwner:     extractJobOwner(),
 		// 提炼上下文：只读「严格早于当前事件」的历史，避免回放时混入未来发言（M07）。
 		Recent:    deps.Recent,
+		OwnerUID:  deps.Config.OwnerUID,
 		OwnerName: deps.Config.OwnerName,
 	}
 	// 灵魂记忆（M12）：只有显式开启时才接来源；路径由配置派生/显式给出，

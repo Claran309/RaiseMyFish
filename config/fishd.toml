@@ -254,8 +254,10 @@ soul_max_entries = 20
 # 留空表示跟随 [llm] persona_dir：<persona_dir>/knowledge/soul-memories.md，
 # 多 persona 各用各的；显式填写则优先。
 soul_path = ""
-# 主人昵称：提炼时发言人昵称等于它 → 记成「主人相关」偏好（Importance 0.8）。
-# 留空表示只靠正文里的「主人」关键词判定，不按昵称。
+# 主人可信 UID：只有发言人 UID 与之相等才算主人自述，才可能提升为长期设定。
+# 观众转述「主人是…」只保留为带来源的记忆候选，不进入全局设定。
+# 昵称可被改名冒充，owner_name 仅用于 LLM 提炼的语义提示。
+owner_uid = "313591854"
 owner_name = "Claran309"
 
 # 消费循环（Claim → Scheduler → Brain → Sender）。

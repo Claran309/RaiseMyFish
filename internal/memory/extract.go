@@ -99,9 +99,15 @@ type Candidate struct {
 	Importance float64
 	// Confidence 置信度，0..1。
 	Confidence float64
-	// FromID/FromName 是这条候选的主体（观众），由事件带出。
+	// FromID/FromName 是已验证的陈述主体身份（说的是谁）：观众自述填发言人，
+	// 主人自述填主人 UID；观众转述主人时留空，不把真实主人 UID 绑定到未验证的转述上。
 	FromID   string
 	FromName string
+	// AssertedByID/AssertedByName 是说话人（谁说的），始终来自可信事件。
+	AssertedByID   string
+	AssertedByName string
+	// Subject 是内容主体（说的是谁），取值 owner/viewer/fish，与 SoulSubject* 一致。
+	Subject string
 }
 
 // ExtractOptions 是提炼所需的调用方上下文。
@@ -109,7 +115,10 @@ type Candidate struct {
 // 隐私授权用 AllowPrivate 显式表达，**默认拒绝**：不传就是 false，
 // 私密事件一律不提炼（fail-closed）。要提炼私密会话，必须由知道的调用方主动置 true。
 type ExtractOptions struct {
-	// OwnerName 主人的昵称；FromName 与之相等时判为主人相关。为空表示不按昵称判定。
+	// OwnerUID 是主人的可信平台 UID：FromID 与之相等才算主人自述。
+	// 昵称可被改名冒充，OwnerName 只用于语义提示，不参与身份认证。
+	OwnerUID string
+	// OwnerName 主人的昵称，仅用于 LLM 提炼的语义提示；留空表示不提示。
 	OwnerName string
 	// IsFirstNick 由调用方判定：该昵称是否在本 session 首次出现。
 	IsFirstNick bool
@@ -126,9 +135,13 @@ type ExtractOptions struct {
 // 规则（只做这四条）：
 //  1. 承诺：文本含「我答应 / 我保证 / 包在我身上」，或含「一定 + 动词」白名单
 //     （一定帮 / 一定给 / 一定做到 / 一定带 / 一定发）→ promise，Importance 0.9；
-//  2. 主人相关：文本含「主人」，或 FromName 等于 OwnerName → preference，Importance 0.8；
+//  2. 主人相关：文本含「主人」，或 FromID 等于可信 OwnerUID → preference，Importance 0.8；
 //  3. 首次出现：IsFirstNick 为真且 FromName 非空 → first_seen，Importance 0.4；
 //  4. 默认：四条都不匹配则不提炼，返回空。
+//
+// 主体与说话人分开记录：AssertedBy* 始终是发言人，Subject 说的是这条内容关于谁。
+// 只有 FromID 等于 OwnerUID 才算主人自述；观众转述「主人是…」仍是候选，
+// 但主体身份留空、提升为全局设定的判断留给 Soul 重建层（那里要求可信证据）。
 //
 // 过滤（任一命中即返回空）：
 //   - 私密事件（Private=true）且调用方未 AllowPrivate 授权；
@@ -201,15 +214,38 @@ func Extract(ev Event, opts ExtractOptions) []Candidate {
 	}
 
 	// 规则 4：默认不提炼（out 为 nil 时直接返回空）
-	// 统一带上主体：所有候选都属于这条事件的发送者
+	// 统一带上来源与主体：谁说的来自事件，说的是谁按规则推导。
 	for i := range out {
-		out[i].FromID = strings.TrimSpace(ev.FromID)
-		out[i].FromName = strings.TrimSpace(ev.FromName)
+		out[i].FromID, out[i].FromName, out[i].AssertedByID, out[i].AssertedByName, out[i].Subject =
+			candidateProvenance(ev, opts, out[i].Kind, out[i].Title, out[i].Summary)
 	}
 	return out
 }
 
-// isOwnerRelated 判断是否「主人相关」：文本提到主人，或发言人就是主人。
+// candidateProvenance 分别填「谁说的」与「说的是谁」。
+//
+// 主人身份只认 OwnerUID：昵称可被改名冒充，不参与认证。
+// 观众提到主人时主体仍记为 owner（内容关于主人），但断言来源是观众，
+// 重建长期设定时只保留为带来源候选，不会提升为全局设定。
+// 只有 fact/preference 会查正文里的「主人」：promise/first_seen 的主体是发言人本人。
+func candidateProvenance(ev Event, opts ExtractOptions, kind, title, summary string) (fromID, fromName, assertedID, assertedName, subject string) {
+	speakerID := strings.TrimSpace(ev.FromID)
+	speakerName := strings.TrimSpace(ev.FromName)
+	ownerUID := strings.TrimSpace(opts.OwnerUID)
+	ownerSpoke := ownerUID != "" && speakerID == ownerUID
+
+	subject = SoulSubjectViewer
+	if ownerSpoke || ((kind == KindFact || kind == KindPreference) && strings.Contains(title+"\n"+summary, ownerKeyword)) {
+		subject = SoulSubjectOwner
+	}
+	fromID, fromName = speakerID, speakerName
+	if subject == SoulSubjectOwner && !ownerSpoke {
+		// 转述不是主人自述：主体身份未知，不能把真实主人 UID 绑到这句话上。
+		fromID, fromName = "", ""
+	}
+	return fromID, fromName, speakerID, speakerName, subject
+}
+
 // selfStatement 判断文本是不是「对方在说自己的事」，返回去掉首位标点的正文。
 //
 // 反例处理：「你是学生吧」「他是学生」不含「我 + 陈述」组合，自然不命中；
@@ -238,12 +274,16 @@ func selfStatement(text string) (string, bool) {
 	return "", false
 }
 
+// isOwnerRelated 判断是否「主人相关」：正文提到主人，或发言人就是主人。
+//
+// 主人身份只认可信 UID（OwnerUID）。OwnerName 仅用于语义提示，
+// 按昵称判定会让改名成主人的观众被当成主人，不能再作为身份依据。
 func isOwnerRelated(ev Event, opts ExtractOptions, text string) bool {
 	if strings.Contains(text, ownerKeyword) {
 		return true
 	}
-	owner := strings.TrimSpace(opts.OwnerName)
-	return owner != "" && strings.TrimSpace(ev.FromName) == owner
+	owner := strings.TrimSpace(opts.OwnerUID)
+	return owner != "" && strings.TrimSpace(ev.FromID) == owner
 }
 
 // containsAny 判断 s 是否包含任一子串。

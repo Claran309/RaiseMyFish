@@ -219,7 +219,7 @@ func TestLLMExtractorPrivateRequiresAuthorization(t *testing.T) {
 	}
 }
 
-// TestLLMExtractorFillsSubjectFromEvent M04/T05：模型只给内容，主体由可信事件提供。
+// TestLLMExtractorFillsSubjectFromEvent M04/T05：模型只给内容，说话人/主体由可信事件提供。
 //
 // 回归背景：parseLLMRecords 曾用 `_ = ev` 丢掉事件，导致 LLM 提炼出的记忆
 // 没有 from_id/from_name，之后问「这个人喜欢什么」时找不到主体。
@@ -242,6 +242,40 @@ func TestLLMExtractorFillsSubjectFromEvent(t *testing.T) {
 		if c.FromID != "2002" || c.FromName != "熟客乙" {
 			t.Errorf("第 %d 条主体不符：from_id=%q from_name=%q", i, c.FromID, c.FromName)
 		}
+		if c.AssertedByID != "2002" || c.AssertedByName != "熟客乙" {
+			t.Errorf("第 %d 条说话人不符：%+v", i, c)
+		}
+		if c.Subject != SoulSubjectViewer {
+			t.Errorf("第 %d 条主体应记为观众：%+v", i, c)
+		}
+	}
+}
+
+// TestLLMExtractorViewerOwnerClaimKeepsProvenance N05：模型认出「主人是阿猫」时，
+// 可以保留这条候选，但断言者必须是观众本人，且不能把主人 UID 绑到主体上。
+func TestLLMExtractorViewerOwnerClaimKeepsProvenance(t *testing.T) {
+	llm := &mockLLM{reply: `{"archive":true,"records":[
+		{"kind":"fact","title":"主人是阿猫","summary":"主人是阿猫","importance":0.9}
+	],"confidence":0.9}`}
+	e := newLLM(t, llm)
+
+	ev := llmEvent("说起来主人其实是阿猫吧，你们不觉得吗，反正我一直这么叫")
+	got, err := e.Extract(context.Background(), ev, ExtractOptions{OwnerUID: "1000"})
+	if err != nil {
+		t.Fatalf("提取失败：%v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("应保留一条候选：%+v", got)
+	}
+	c := got[0]
+	if c.AssertedByID != "2002" || c.AssertedByName != "熟客乙" {
+		t.Errorf("断言者必须是说话的观众：%+v", c)
+	}
+	if c.FromID != "" || c.FromName != "" {
+		t.Errorf("转述不能绑定主体身份：%+v", c)
+	}
+	if c.Subject != SoulSubjectOwner {
+		t.Errorf("内容主体应记为 owner（说的是主人）：%+v", c)
 	}
 }
 

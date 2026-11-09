@@ -32,8 +32,12 @@ func TestSoulCandidatesSkipsFutureFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
+	past := soulRecord("soul:past", "fact", "主人是学生", "在读大学", "1000", "Claran", now.Add(-2*time.Hour))
+	// 显式带上来源分离字段，验证 asserted_by/subject 能往返 PG。
+	past.Subject = memory.SoulSubjectOwner
+	past.AssertedByID, past.AssertedByName = "1000", "Claran"
 	seeds := []store.MemoryRecord{
-		soulRecord("soul:past", "fact", "主人是学生", "在读大学", "1000", "Claran", now.Add(-2*time.Hour)),
+		past,
 		soulRecord("soul:future-fact", "fact", "事实：我是大三学生", "我是大三学生", "u-42", "小明", now.Add(2*time.Hour)),
 		soulRecord("soul:future-pref", "preference", "主人相关：明天爱吃甜", "明天开始爱吃甜", "1000", "Claran", now.Add(3*time.Hour)),
 	}
@@ -51,5 +55,8 @@ func TestSoulCandidatesSkipsFutureFacts(t *testing.T) {
 	// 主体字段必须原样带出，后续重建才能判断 fish/owner/viewer。
 	if got[0].FromID != "1000" || got[0].FromName != "Claran" || got[0].Source != "persona" {
 		t.Fatalf("主体/来源字段丢失：%+v", got[0])
+	}
+	if got[0].Subject != memory.SoulSubjectOwner || got[0].AssertedByID != "1000" || got[0].AssertedByName != "Claran" {
+		t.Fatalf("来源分离字段丢失：%+v", got[0])
 	}
 }

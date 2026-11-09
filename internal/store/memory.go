@@ -15,9 +15,15 @@ type MemoryRecord struct {
 	Kind   string
 	Title  string
 	Body   string
-	// FromID/FromName 是事实的主体（观众 uid/昵称）；非事实类可留空。
+	// FromID/FromName 是已验证的陈述主体身份（说的是谁）：观众自述填发言人 UID，
+	// 主人自述填主人 UID；观众转述主人时留空，转述内容不绑定真实主人身份。
 	FromID   string
 	FromName string
+	// AssertedByID/AssertedByName 是说话人（谁说的），来自可信事件，不能由模型编造。
+	AssertedByID   string
+	AssertedByName string
+	// Subject 是陈述主体（说的是谁）：owner/viewer/fish；空表示旧数据未知。
+	Subject string
 	// CreatedAt 只由 ListRecords/SearchRecords 填充，用于运维查看；写入时忽略。
 	CreatedAt time.Time
 }
@@ -45,6 +51,11 @@ func (r MemoryRecord) Validate() error {
 	case "talk", "preference", "promise", "fact", "summary", "note":
 	default:
 		return fmt.Errorf("记忆类型错误：%w", ErrInvalid)
+	}
+	switch r.Subject {
+	case "", memory.SoulSubjectOwner, memory.SoulSubjectViewer, memory.SoulSubjectFish:
+	default:
+		return fmt.Errorf("记忆主体错误：%w", ErrInvalid)
 	}
 	scope := memory.Scope{Channel: r.Channel, Session: r.Session, Private: r.Private}
 	if r.Channel == "" && r.Session == "" && !r.Private {

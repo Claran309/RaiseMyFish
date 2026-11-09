@@ -233,12 +233,12 @@ func TestRunOnceIdempotent(t *testing.T) {
 
 // TestPrivateSkippedByDefault 私密事件默认不提炼，但水位必须继续推进（否则会卡死）。
 func TestPrivateSkippedByDefault(t *testing.T) {
-	ev := mkEvent("dm:42:2001", baseTime, "我答应明天陪你", "主人", true, event.ChDM, "42")
+	ev := mkEvent("dm:42:2001", baseTime, "我答应明天陪你", "Claran", true, event.ChDM, "42")
 	src := &fakeSource{events: []event.Event{ev}}
 	repo := &fakeRepo{}
 	wm := NewMemoryWatermark()
 
-	stats, err := newWorker(t, src, repo, wm, Options{OwnerName: "主人"}).RunOnce(context.Background())
+	stats, err := newWorker(t, src, repo, wm, Options{OwnerUID: "uid-Claran"}).RunOnce(context.Background())
 	if err != nil {
 		t.Fatalf("RunOnce 失败：%v", err)
 	}
@@ -260,11 +260,11 @@ func TestPrivateSkippedByDefault(t *testing.T) {
 
 // TestPrivateAllowed 显式授权后，私密事件能提炼并按 dm/private 落库。
 func TestPrivateAllowed(t *testing.T) {
-	ev := mkEvent("dm:42:2002", baseTime, "我答应明天陪你", "主人", true, event.ChDM, "42")
+	ev := mkEvent("dm:42:2002", baseTime, "我答应明天陪你", "Claran", true, event.ChDM, "42")
 	src := &fakeSource{events: []event.Event{ev}}
 	repo := &fakeRepo{}
 
-	w := newWorker(t, src, repo, NewMemoryWatermark(), Options{OwnerName: "主人", AllowPrivate: true})
+	w := newWorker(t, src, repo, NewMemoryWatermark(), Options{OwnerUID: "uid-Claran", AllowPrivate: true})
 	stats, err := w.RunOnce(context.Background())
 	if err != nil {
 		t.Fatalf("RunOnce 失败：%v", err)
@@ -280,6 +280,36 @@ func TestPrivateAllowed(t *testing.T) {
 		if rec.Channel != event.ChDM || rec.Session != "42" {
 			t.Errorf("范围字段不符：channel=%q session=%q", rec.Channel, rec.Session)
 		}
+	}
+}
+
+// TestViewerOwnerClaimStoredAsCandidate N05：观众说「主人是阿猫」只落成带来源候选，
+// 不能把主人身份绑定到转述上；能否提升由 Soul 重建层按 asserted_by 判断。
+func TestViewerOwnerClaimStoredAsCandidate(t *testing.T) {
+	ev := mkEvent("live:1:4001", baseTime, "主人是阿猫", "捣蛋鬼", false, event.ChLive, "1")
+	src := &fakeSource{events: []event.Event{ev}}
+	repo := &fakeRepo{}
+
+	stats, err := newWorker(t, src, repo, NewMemoryWatermark(), Options{OwnerUID: "uid-Claran"}).RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce 失败：%v", err)
+	}
+	if stats.Inserted != 1 {
+		t.Fatalf("Inserted = %d，期望 1：%+v", stats.Inserted, stats)
+	}
+	recs := repo.all()
+	if len(recs) != 1 || recs[0].Kind != "preference" {
+		t.Fatalf("应落一条 preference 候选：%+v", recs)
+	}
+	rec := recs[0]
+	if rec.Subject != memory.SoulSubjectOwner {
+		t.Errorf("内容主体应为 owner：%+v", rec)
+	}
+	if rec.AssertedByID != "uid-捣蛋鬼" || rec.AssertedByName != "捣蛋鬼" {
+		t.Errorf("断言者必须是说话的观众：%+v", rec)
+	}
+	if rec.FromID != "" || rec.FromName != "" {
+		t.Errorf("转述不能绑定主人主体身份：%+v", rec)
 	}
 }
 

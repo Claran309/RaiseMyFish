@@ -109,10 +109,12 @@ func TestNewMemoryWorkerWiresSoul(t *testing.T) {
 	soul := &memoryTestSoul{records: []store.MemoryRecord{{
 		Record: memory.Record{ID: "soul-1", Summary: "主人是学生", Importance: 0.9, ValidFrom: at},
 		Source: "persona", Kind: "fact", Title: "主人是学生",
+		Subject: memory.SoulSubjectOwner, AssertedByID: "1000", AssertedByName: "Claran",
+		FromID: "1000", FromName: "Claran",
 	}}}
 	worker, err := newMemoryWorker(memoryWorkerDeps{
 		Config: config.Memory{
-			Enabled: true, IntervalSeconds: 300,
+			Enabled: true, IntervalSeconds: 300, OwnerUID: "1000",
 			SoulEnabled: true, SoulPath: soulPath, SoulMaxEntries: 5,
 		},
 		Source:        &memoryTestSource{},
@@ -418,11 +420,11 @@ func TestNewMemoryWorkerWiresRecent(t *testing.T) {
 	}
 }
 
-// TestNewMemoryWorkerWiresOwnerName M06：owner_name 必须真正传到提炼规则。
+// TestNewMemoryWorkerWiresOwnerUID M06：owner_uid 必须真正传到提炼规则。
 //
-// 发言人昵称等于 owner_name → 额外产出一条 preference；
-// 没接线时 OwnerName 为空，这条规则永远不会命中。
-func TestNewMemoryWorkerWiresOwnerName(t *testing.T) {
+// 发言人 UID 等于 owner_uid → 额外产出一条 preference；
+// 没接线时 OwnerUID 为空，这条规则永远不会命中。
+func TestNewMemoryWorkerWiresOwnerUID(t *testing.T) {
 	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
 	ev := event.Event{
 		ID: "live:room:o1", Channel: event.ChLive, Dir: event.DirIn, Session: "room",
@@ -430,7 +432,7 @@ func TestNewMemoryWorkerWiresOwnerName(t *testing.T) {
 	}
 	repo := &memoryTestRepo{}
 	worker, err := newMemoryWorker(memoryWorkerDeps{
-		Config:        config.Memory{Enabled: true, IntervalSeconds: 300, OwnerName: "Claran"},
+		Config:        config.Memory{Enabled: true, IntervalSeconds: 300, OwnerUID: "1000"},
 		Source:        &memoryTestSource{events: []event.Event{ev}},
 		Repo:          repo,
 		WatermarkPath: filepath.Join(t.TempDir(), "watermark.json"),
@@ -443,10 +445,14 @@ func TestNewMemoryWorkerWiresOwnerName(t *testing.T) {
 		t.Fatalf("RunOnce 失败：%v", err)
 	}
 	if stats.Inserted != 1 || repo.count() != 1 {
-		t.Fatalf("未按 owner_name 产生偏好：stats=%+v records=%d", stats, repo.count())
+		t.Fatalf("未按 owner_uid 产生偏好：stats=%+v records=%d", stats, repo.count())
 	}
-	if kind := repo.records[0].Kind; kind != memory.KindPreference {
-		t.Fatalf("记录类型 = %q，期望 preference", kind)
+	rec := repo.records[0]
+	if rec.Kind != memory.KindPreference {
+		t.Fatalf("记录类型 = %q，期望 preference", rec.Kind)
+	}
+	if rec.Subject != memory.SoulSubjectOwner || rec.AssertedByID != "1000" {
+		t.Fatalf("主人自述的来源/主体不符：%+v", rec)
 	}
 }
 
