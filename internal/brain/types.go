@@ -32,6 +32,14 @@ type Tool struct{ Name string }
 // Action 仅保留名字；P0结果必须为空。
 type Action struct{ Name string }
 
+// Evidence 是 ReAct 已执行工具的可复用观察：只含查证结果，不含思维文本。
+// 回落单步生成时作为资料注入，避免「查对了但回落又不知道」。
+type Evidence struct {
+	Tool   string
+	Args   string
+	Result string
+}
+
 // ContextInput 必须显式携带相同目标Scope。
 type ContextInput struct {
 	Event     event.Event
@@ -40,6 +48,8 @@ type ContextInput struct {
 	Shared    memory.SharedState
 	Knowledge *knowledge.Context
 	Tools     []Tool
+	// Evidence 是 ReAct 降级时已获得的工具查证结果；空表示没有可复用证据。
+	Evidence []Evidence
 	// State 是当前状态摘要（如正在看谁的直播）；空表示不注入 prompt。
 	State string
 	// Visual 是画面描述（主动弹幕/看直播注入）；空则不出现 <visual> 段。

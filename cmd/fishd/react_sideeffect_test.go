@@ -74,7 +74,7 @@ func TestReasonerFactorySharesSideEffectLimiterAcrossEvents(t *testing.T) {
 
 	scope := memory.Scope{Channel: event.ChLive, Session: "30308220"}
 	for i := 1; i <= 2; i++ {
-		agent, err := factory(scope, "313591854")
+		agent, err := factory(scope, "313591854", false)
 		if err != nil {
 			t.Fatalf("第 %d 个事件创建 agent 失败：%v", i, err)
 		}

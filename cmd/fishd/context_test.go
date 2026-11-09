@@ -387,7 +387,7 @@ func newCapturingReactRuntime(t *testing.T, llm *capturingReactLLM) *reactRuntim
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory := func(memory.Scope, string) (*reasoning.Agent, error) {
+	factory := func(memory.Scope, string, bool) (*reasoning.Agent, error) {
 		return reasoning.New(llm, box, reasoning.Options{MaxSteps: 2, Timeout: 2 * time.Second}, zap.NewNop())
 	}
 	return &reactRuntime{factory: factory, defaultReact: true}
@@ -463,7 +463,7 @@ func TestRunReactRejectsBadInputBeforeFactory(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
-			runtime := &reactRuntime{factory: func(memory.Scope, string) (*reasoning.Agent, error) {
+			runtime := &reactRuntime{factory: func(memory.Scope, string, bool) (*reasoning.Agent, error) {
 				calls++
 				return nil, errors.New("不应创建 Agent")
 			}, defaultReact: true}

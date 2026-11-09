@@ -23,6 +23,8 @@ type scriptedLLM struct {
 	prompts []string
 	// block 在返回前调用，用来模拟卡住（超时用例）。
 	block func(ctx context.Context) error
+	// blockAt 非 nil 时只在指定调用序号（0 起）阻塞，用于「先查工具再卡住」。
+	blockAt func(idx int) bool
 }
 
 func (m *scriptedLLM) Complete(ctx context.Context, system, user string) (string, error) {
@@ -32,7 +34,7 @@ func (m *scriptedLLM) Complete(ctx context.Context, system, user string) (string
 	m.mu.Unlock()
 	m.prompts = append(m.prompts, system+"\n---\n"+user)
 
-	if m.block != nil {
+	if m.block != nil && (m.blockAt == nil || m.blockAt(idx)) {
 		if err := m.block(ctx); err != nil {
 			return "", err
 		}
@@ -116,6 +118,9 @@ func TestRunToolThenFinal(t *testing.T) {
 	if len(got.Tools) != 1 || got.Tools[0] != ToolMemorySearch {
 		t.Errorf("工具记录不符：%v", got.Tools)
 	}
+	if len(got.Evidence) != 1 || got.Evidence[0].Tool != ToolMemorySearch || !strings.Contains(got.Evidence[0].Result, "想吃鱼") {
+		t.Errorf("成功工具结果应进证据：%+v", got.Evidence)
+	}
 	// 第二轮 prompt 必须带上观察结果，否则模型无从利用
 	if !strings.Contains(llm.prompts[1], "上次说想吃鱼") {
 		t.Errorf("第二轮 prompt 未包含观察：%s", llm.prompts[1])
@@ -178,6 +183,46 @@ func TestTimeoutDegrades(t *testing.T) {
 	}
 }
 
+// TestTimeoutAfterToolKeepsEvidence B2/N03 验收：
+// 工具已经查到结果、随后模型卡住超时，降级结果仍携带可复用证据（不含思维文本）。
+func TestTimeoutAfterToolKeepsEvidence(t *testing.T) {
+	tool := &countingTool{name: ToolHistory, out: "刚才在聊吃鱼"}
+	llm := &scriptedLLM{
+		replies: []string{`{"thought":"查历史","action":"history","args":"5"}`},
+		block: func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		blockAt: func(idx int) bool { return idx >= 1 },
+	}
+	agent := newTestAgent(t, llm, Options{MaxSteps: 3, Timeout: 50 * time.Millisecond}, tool.tool())
+
+	got, err := agent.Run(context.Background(), Input{Question: "刚才聊什么了"})
+	if err != nil {
+		t.Fatalf("超时应降级而不是报错：%v", err)
+	}
+	if !got.Degraded || got.Reason != DegradeTimeout {
+		t.Fatalf("应为超时降级，实际 degraded=%v reason=%q", got.Degraded, got.Reason)
+	}
+	if got.Text != "" {
+		t.Errorf("超时后不应再有正文，实际 %q", got.Text)
+	}
+	if tool.calls != 1 {
+		t.Fatalf("工具调用 %d 次，期望 1", tool.calls)
+	}
+	if len(got.Evidence) != 1 {
+		t.Fatalf("超时降级必须保留已查到的证据：%+v", got.Evidence)
+	}
+	if ev := got.Evidence[0]; ev.Tool != ToolHistory || ev.Args != "5" || !strings.Contains(ev.Result, "吃鱼") {
+		t.Errorf("证据不符：%+v", ev)
+	}
+	for _, text := range []string{"查历史", "thought"} {
+		if strings.Contains(got.Evidence[0].Result, text) {
+			t.Errorf("证据不应包含思维文本：%+v", got.Evidence[0])
+		}
+	}
+}
+
 // TestParseFailureDegrades 模型输出不是合法 JSON → 解析失败降级。
 func TestParseFailureDegrades(t *testing.T) {
 	tool := &countingTool{name: ToolHistory, out: "x"}
@@ -218,6 +263,10 @@ func TestUnknownToolBecomesObservation(t *testing.T) {
 	}
 	if got.Text != "刚在聊吃的" || got.Degraded {
 		t.Errorf("未按预期收尾：%+v", got)
+	}
+	// 未知工具失败只进观察；之后成功的 history 才是证据。
+	if len(got.Evidence) != 1 || got.Evidence[0].Tool != ToolHistory || got.Evidence[0].Result != "弹幕一" {
+		t.Errorf("证据应只保留成功工具：%+v", got.Evidence)
 	}
 	if !strings.Contains(llm.prompts[1], "工具失败") {
 		t.Errorf("未知工具应变成观察喂回去：%s", llm.prompts[1])

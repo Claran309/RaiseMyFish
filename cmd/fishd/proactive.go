@@ -118,8 +118,9 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 			return nil, err
 		}
 		// 主动弹幕没有「提问者」，身份查询用空 UID（「我是谁」会被明确拒绝）。
+		// 主动路径不预召回知识（由工具按需查），因此 knowledgePreloaded=false。
 		react = proactive.ReactFactory(func(scope memory.Scope) (*reasoning.Agent, error) {
-			return factory(scope, "")
+			return factory(scope, "", false)
 		})
 	}
 	options := senderlive.DefaultProactiveOptions()

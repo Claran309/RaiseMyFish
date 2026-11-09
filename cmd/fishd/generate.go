@@ -18,6 +18,7 @@ import (
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/presence"
+	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
 	"RaiseMyFish/internal/store"
@@ -148,8 +149,17 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		}()
 
 		scope := memory.Scope{Channel: ev.Channel, Session: ev.Session, Private: ev.Private}
+		// 一轮预算：ReAct 路径把「读取/召回/embedding/Prepare/工具」都压进
+		// prepCtx（父 deadline 减 finalReserve），父 ctx 的最后一段留给最终正文。
+		// 单步路径不拆预算：读取与生成本来就共享同一个父 deadline。
+		useReact := deps.react != nil && deps.react.factory != nil && shouldUseReAct(ev.Text, deps.react.defaultReact)
+		prepCtx, cancelPrep := ctx, context.CancelFunc(func() {})
+		if useReact {
+			prepCtx, cancelPrep = prepareDeadline(ctx, deps.react.finalReserve)
+		}
+		defer cancelPrep()
 		// 统一快照：近期记忆默认注入，知识按意图补充（与 ReAct/主动弹幕同源）。
-		input, decision := buildPassiveInput(ctx, deps.context, ev)
+		input, decision := buildPassiveInput(prepCtx, deps.context, ev)
 		deps.log.Info("意图判断完成",
 			zap.String("action", "reasoning"),
 			zap.Bool("need_memory", decision.NeedMemory),
@@ -160,12 +170,12 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 
 		// ReAct：默认除短句外全部走多步（default_react=true），短句保持单步以维持 1 秒级延迟。
 		// 工具要按**当前事件**的 Scope 查（并发 worker 共享一个可变 Scope 会串会话），
-		// 所以 Agent 由工厂按事件现造；相同问题 5 分钟内直接复用结果。
+		// 所以 Agent 由工厂按事件现造（不做成品答案缓存，见 reactRuntime 注释）。
 		var reply brain.Reply
 		var err error
-		reactText := ""
-		if deps.react != nil && deps.react.factory != nil && shouldUseReAct(ev.Text, deps.react.defaultReact) {
-			reactText, err = runReact(ctx, deps.react, scope, ev, task, input, deps.log)
+		var reactResult reasoning.Result
+		if useReact {
+			reactResult, err = runReact(prepCtx, deps.react, scope, ev, task, input, deps.log)
 			if err != nil {
 				// ReAct 是增强：失败就回落单步，不能把弹幕卡死
 				deps.log.Warn("ReAct 执行失败，回落单步生成",
@@ -173,12 +183,22 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 					zap.String("event_id", ev.ID),
 					zap.Error(err),
 				)
-				reactText = ""
+				reactResult = reasoning.Result{}
 			}
 		}
-		if strings.TrimSpace(reactText) != "" {
-			reply = brain.Reply{Text: reactText}
+		if strings.TrimSpace(reactResult.Text) != "" {
+			reply = brain.Reply{Text: reactResult.Text}
 		} else {
+			// 回落复用 ReAct 已验证的工具观察：花时间查到的证据不能因为
+			// 最终生成降级而丢掉；思维文本不在 Evidence 里。
+			input.Evidence = reactEvidence(reactResult.Evidence)
+			if len(input.Evidence) > 0 {
+				deps.log.Info("回落单步生成复用 ReAct 证据",
+					zap.String("action", "react_evidence"),
+					zap.String("event_id", ev.ID),
+					zap.Int("evidence", len(input.Evidence)),
+				)
+			}
 			reply, err = engine.Reply(ctx, task, input)
 			if budgetFailure(err) && input.Knowledge != nil {
 				// 预算错误常常是知识段撑爆提示：去掉知识再试一次，仍失败才进 dead。
@@ -284,6 +304,19 @@ func logWorkFailure(log *zap.Logger, action string, w scheduler.Work, err error)
 func budgetFailure(err error) bool {
 	var typed *brain.Error
 	return errors.As(err, &typed) && typed.Kind == brain.KindBudget
+}
+
+// reactEvidence 把 ReAct 的工具证据投影成 Brain 资料条目。
+// 只带工具名/参数/结果；思维文本（thought）不进证据，也不进 prompt。
+func reactEvidence(items []reasoning.Evidence) []brain.Evidence {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]brain.Evidence, 0, len(items))
+	for _, item := range items {
+		out = append(out, brain.Evidence{Tool: item.Tool, Args: item.Args, Result: item.Result})
+	}
+	return out
 }
 
 // safeErrorKind 提取项目内已知错误类型的类别；未知错误返回空串。

@@ -27,7 +27,9 @@ import (
 // 为什么是工厂而不是单个实例：工具要在**当前事件**的 Scope 内查询，
 // 并发 worker 共享一个可变 Scope 会串会话（数据竞争 + 隐私越界）。
 // fromID 是本条事件的发送者平台 UID，供「我是谁」做精确身份查询。
-type reactFactory func(scope memory.Scope, fromID string) (*reasoning.Agent, error)
+// knowledgePreloaded 表示 Prepare 已把知识写进资料段，工厂据此不再注册
+// knowledge_search（避免同一轮重复召回）；零命中时传 false，工具保留。
+type reactFactory func(scope memory.Scope, fromID string, knowledgePreloaded bool) (*reasoning.Agent, error)
 
 // reactRuntime 是 Generate 阶段用到的 ReAct 装配：工厂 + 触发策略。
 //
@@ -41,6 +43,10 @@ type reactRuntime struct {
 	defaultReact bool
 	// budget 与单步 Brain 使用同一口径；runReact 通过 brain.Prepare 统一校验与裁剪。
 	budget brain.Budget
+	// finalReserve 是从本轮预算里给「最终正文」留的时间：准备（读取/召回/
+	// embedding/Prepare）与 ReAct 工具都在父 deadline 减预留的 prepCtx 内跑，
+	// 即使 ReAct 把准备段耗光，回落单步生成仍有时间。
+	finalReserve time.Duration
 }
 
 // shouldUseReAct 判断这条弹幕要不要走多步思考。
@@ -62,6 +68,31 @@ func shouldUseReAct(text string, defaultReact bool) bool {
 	return d.NeedMemory || d.NeedKnowledge
 }
 
+// prepareDeadline 给「准备 + ReAct」划出预算：父 deadline 减去最终正文预留。
+//
+// 预留按剩余时间的一半封顶：剩余本来就不多时，不能让准备阶段 0 预算直接超时，
+// 否则回落单步反而一点时间拿不到。没有 deadline 或没有预留时原样返回父 ctx。
+func prepareDeadline(ctx context.Context, reserve time.Duration) (context.Context, context.CancelFunc) {
+	if reserve <= 0 {
+		return ctx, func() {}
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return ctx, func() {}
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return ctx, func() {}
+	}
+	if half := remaining / 2; reserve > half {
+		reserve = half
+	}
+	if reserve <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithDeadline(ctx, deadline.Add(-reserve))
+}
+
 // runReact 执行一次 ReAct 并记录预算相关日志（步数/工具/降级/耗时）。
 //
 // 不做结果缓存：最终答案依赖现场、提问人、最近对话与时间，
@@ -70,13 +101,16 @@ func shouldUseReAct(text string, defaultReact bool) bool {
 // 上下文与单步 Brain 同源：input 是 ContextBuilder 组装的统一快照，
 // 经 brain.Prepare 完成与单步完全相同的校验/预算裁剪后进入 user 段。
 // 准备失败是明确停止：不再「渲染失败只带问题」继续，回落策略交给调用方。
-func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev event.Event, task brain.Task, input brain.ContextInput, log *zap.Logger) (string, error) {
+//
+// 返回值带 Result（含 Evidence）：调用方在 Text 为空回落单步时，
+// 把已验证的工具观察注入普通 Brain，避免「查对了但回落又不知道」。
+func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev event.Event, task brain.Task, input brain.ContextInput, log *zap.Logger) (reasoning.Result, error) {
 	if runtime == nil || runtime.factory == nil {
-		return "", nil
+		return reasoning.Result{}, nil
 	}
 	prepared, err := brain.Prepare(ctx, task, input, runtime.budget)
 	if err != nil {
-		return "", fmt.Errorf("准备 ReAct 生成输入失败：%w", err)
+		return reasoning.Result{}, fmt.Errorf("准备 ReAct 生成输入失败：%w", err)
 	}
 	if prepared.Truncated {
 		log.Warn("ReAct 上下文超出预算已裁剪",
@@ -84,9 +118,12 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 			zap.String("event_id", ev.ID),
 		)
 	}
-	agent, err := runtime.factory(scope, ev.FromID)
+	// 知识已注入资料段 → 不再注册 knowledge_search，避免同一轮重复召回；
+	// 零命中（IncludedIDs 为空）时保留工具，模型可以换关键词主动查。
+	knowledgePreloaded := prepared.KnowledgeInjected()
+	agent, err := runtime.factory(scope, ev.FromID, knowledgePreloaded)
 	if err != nil || agent == nil {
-		return "", err
+		return reasoning.Result{}, err
 	}
 	started := time.Now()
 	res, err := agent.Run(ctx, reasoning.Input{
@@ -100,14 +137,16 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 		zap.String("event_id", ev.ID),
 		zap.Int("steps", res.Steps),
 		zap.Strings("tools_used", res.Tools),
+		zap.Int("evidence", len(res.Evidence)),
+		zap.Bool("knowledge_preloaded", knowledgePreloaded),
 		zap.Bool("degraded", res.Degraded),
 		zap.String("degrade_reason", res.Reason),
 		zap.Int64("latency_ms", elapsed),
 	)
 	if err != nil {
-		return "", err
+		return res, err
 	}
-	return res.Text, nil
+	return res, nil
 }
 
 // buildReasonerFactory 装配 ReAct：模型走主路由，工具走记忆/知识/状态/历史。
@@ -138,10 +177,16 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 		presenceFn = pres.Summary
 	}
 
-	return func(scope memory.Scope, fromID string) (*reasoning.Agent, error) {
+	return func(scope memory.Scope, fromID string, knowledgePreloaded bool) (*reasoning.Agent, error) {
+		// 预召回命中时把知识工具摘掉：资料已在 Context 里，再查一遍是重复召回。
+		// 零命中时保留工具（know 原样传入），让模型能换关键词主动查。
+		toolKnowledge := know
+		if knowledgePreloaded {
+			toolKnowledge = nil
+		}
 		recall, err := reasoning.BuildTools(reasoning.ToolDeps{
 			Memory:    mem,
-			Knowledge: know,
+			Knowledge: toolKnowledge,
 			Presence:  presenceFn,
 			History:   events,
 			Scope:     scope,

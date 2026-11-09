@@ -1816,7 +1816,7 @@ func newFakeReactFactory(t *testing.T, llm *fakeReactLLM) (*reactRuntime, *int) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory := func(_ memory.Scope, _ string) (*reasoning.Agent, error) {
+	factory := func(_ memory.Scope, _ string, _ bool) (*reasoning.Agent, error) {
 		calls++
 		return reasoning.New(llm, box, reasoning.Options{MaxSteps: 3, Timeout: 2 * time.Second}, zap.NewNop())
 	}
@@ -1946,7 +1946,7 @@ func TestReactFailureFallsBackToSingleStep(t *testing.T) {
 	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
 
 	// 工厂直接报错，模拟工具装配失败
-	factory := reactFactory(func(memory.Scope, string) (*reasoning.Agent, error) {
+	factory := reactFactory(func(memory.Scope, string, bool) (*reasoning.Agent, error) {
 		return nil, errors.New("工具装配失败")
 	})
 	react := &reactRuntime{factory: factory, defaultReact: true}

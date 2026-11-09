@@ -481,6 +481,8 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 			factory:      react,
 			defaultReact: cfg.Reasoning.DefaultReact,
 			budget:       brain.Budget{MaxPromptTokens: cfg.LLM.MaxPromptTokens, KnowledgeBudgetPercent: cfg.Knowledge.BudgetPercent},
+			// 最终正文预留与单次模型尝试同一口径：准备/工具跑完后仍有至少一次尝试的时间。
+			finalReserve: time.Duration(cfg.LLM.AttemptTimeoutMS) * time.Millisecond,
 		}
 	}
 	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log)

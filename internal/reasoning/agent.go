@@ -28,6 +28,21 @@ const (
 	DegradeEmpty    = "empty"
 )
 
+// 证据复用上限：回落单步时只带最近几条工具结果，避免多轮查证撑爆 prompt。
+const (
+	maxEvidenceItems     = 6
+	maxEvidenceArgsRunes = 200
+)
+
+// appendEvidence 追加一条证据并只保留最近几条。
+func appendEvidence(list []Evidence, e Evidence) []Evidence {
+	list = append(list, e)
+	if len(list) > maxEvidenceItems {
+		list = append([]Evidence(nil), list[len(list)-maxEvidenceItems:]...)
+	}
+	return list
+}
+
 // LLM 是 ReAct 需要的单次文本补全；由 provider 适配，测试用 mock。
 type LLM interface {
 	Complete(ctx context.Context, system, user string) (string, error)
@@ -64,6 +79,16 @@ type Step struct {
 	Final string `json:"final"`
 }
 
+// Evidence 是一次成功工具查证的可复用结果。
+//
+// 只含工具名、参数与结果，不含 thought：思维文本属于内部推理，任何情况下不外发。
+// 回落单步生成时作为「已查证的资料」注入 prompt，避免「查对了但回落又不知道」。
+type Evidence struct {
+	Tool   string
+	Args   string
+	Result string
+}
+
 // Result 是一次 ReAct 的结果。
 type Result struct {
 	// Text 是最终回复；降级且来不及生成时为空（调用方回落单步生成）。
@@ -72,6 +97,8 @@ type Result struct {
 	Steps int
 	// Tools 是按顺序调用过的工具名。
 	Tools []string
+	// Evidence 是本轮成功的工具查证结果；降级/超时也保留，供回落单步复用。
+	Evidence []Evidence
 	// Degraded 表示走了降级路径。
 	Degraded bool
 	// Reason 是降级原因，取自 Degrade* 常量。
@@ -123,35 +150,36 @@ func (a *Agent) Run(ctx context.Context, in Input) (Result, error) {
 
 	var (
 		observations []string
+		evidence     []Evidence
 		used         []string
 		steps        int
 	)
 
 	for step := 1; step <= a.opts.MaxSteps; step++ {
 		if runCtx.Err() != nil {
-			return a.degrade(runCtx, in, observations, used, steps, DegradeTimeout)
+			return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeTimeout)
 		}
 		out, err := a.llm.Complete(runCtx, a.systemPrompt(in), a.userPrompt(in, observations))
 		steps++
 		if err != nil {
 			if runCtx.Err() != nil {
-				return a.degrade(runCtx, in, observations, used, steps, DegradeTimeout)
+				return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeTimeout)
 			}
-			return a.degrade(runCtx, in, observations, used, steps, DegradeLLMError)
+			return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeLLMError)
 		}
 
 		decision, perr := ParseStep(out)
 		if perr != nil {
-			return a.degrade(runCtx, in, observations, used, steps, DegradeParse)
+			return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeParse)
 		}
 		if decision.Action == "final" {
 			// action=final 时正文可放 final 或 args（协议约定），但必须过正文校验
 			text := replyBody(finalBody(decision))
 			if text == "" {
 				// 说 final 却没给可用正文：走降级，绝不把内部内容当回复
-				return a.degrade(runCtx, in, observations, used, steps, DegradeEmpty)
+				return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeEmpty)
 			}
-			return Result{Text: text, Steps: steps, Tools: used}, nil
+			return Result{Text: text, Steps: steps, Tools: used, Evidence: evidence}, nil
 		}
 
 		// action 是工具名：执行并把结果回填进下一轮
@@ -159,17 +187,20 @@ func (a *Agent) Run(ctx context.Context, in Input) (Result, error) {
 		if toolErr != nil {
 			// 工具失败不终止循环：把失败也当成一条观察，让模型自己决定换招
 			out2 = "工具失败：" + toolErr.Error()
+		} else if observed := strings.TrimSpace(out2); observed != "" {
+			// 只有成功的查证才是可复用证据；失败结果只进观察，不进证据。
+			evidence = appendEvidence(evidence, Evidence{Tool: decision.Action, Args: clip(decision.Args, maxEvidenceArgsRunes), Result: observed})
 		}
 		used = append(used, decision.Action)
 		observations = append(observations, fmt.Sprintf("%s(%s) → %s", decision.Action, clip(decision.Args, 60), clip(out2, maxObservationRunes)))
 	}
 
-	return a.degrade(runCtx, in, observations, used, steps, DegradeSteps)
+	return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeSteps)
 }
 
 // degrade 用已有观察再要一次回复；预算已耗尽则直接返回空，交给调用方回落。
-func (a *Agent) degrade(ctx context.Context, in Input, observations, used []string, steps int, reason string) (Result, error) {
-	result := Result{Steps: steps, Tools: used, Degraded: true, Reason: reason}
+func (a *Agent) degrade(ctx context.Context, in Input, observations []string, evidence []Evidence, used []string, steps int, reason string) (Result, error) {
+	result := Result{Steps: steps, Tools: used, Degraded: true, Reason: reason, Evidence: evidence}
 
 	// 超时已经把预算花光：不再调用模型，避免把 8 秒拖成 16 秒
 	if ctx.Err() != nil {

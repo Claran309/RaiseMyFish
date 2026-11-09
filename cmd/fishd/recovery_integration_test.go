@@ -163,7 +163,7 @@ func newRecoveryReact(t *testing.T) *recoveryReact {
 }
 
 func (r *recoveryReact) runtime() *reactRuntime {
-	factory := func(memory.Scope, string) (*reasoning.Agent, error) {
+	factory := func(memory.Scope, string, bool) (*reasoning.Agent, error) {
 		r.factories.Add(1)
 		return reasoning.New(r.llm, r.box, reasoning.Options{MaxSteps: 2, Timeout: time.Second}, zap.NewNop())
 	}
