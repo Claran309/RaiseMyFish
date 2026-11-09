@@ -10,8 +10,8 @@ package dm
 //     基线之外，记 dm_history_baseline，不无限重扫全部历史。
 //   - 已有水位时，积压超过单轮上限会保留 pending_from 缺口，后续轮次继续回填，
 //     不把没看到的区间当已读；回填期间新消息照常产出。
-//   - 水位由 Batch.Commit 在整批事件成功送入总线后落盘；落盘失败下一轮重试，
-//     可能重复产出，由事件 ID 幂等兜底。
+//   - 水位由 Batch.Commit 在整批事件获得持久化确认（Publish 成功）后落盘；
+//     仅有 channel 接收不算落库，落盘失败下一轮重试，可能重复产出，由事件 ID 幂等兜底。
 //   - 平台未给 seqno 的会话退回 last_msg 去重，不承诺跨重启水位。
 
 import (
@@ -92,7 +92,7 @@ type BiliFetcher struct {
 	lastAccount    string
 }
 
-// Fetch 实现 Fetcher；返回的 Batch.Commit 需要在消息成功入总线后调用，
+// Fetch 实现 Fetcher；返回的 Batch.Commit 需要在整批事件获得持久化确认后调用，
 // Batch.Close 在整批处理结束后调用（释放账号切换准入）。
 //
 // 账号快照只在开头取一次：之后即使活跃账号被切换，本批 list/detail 仍用

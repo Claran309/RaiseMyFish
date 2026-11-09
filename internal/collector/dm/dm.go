@@ -71,8 +71,9 @@ type Message struct {
 
 // Batch 是一轮拉取结果。
 //
-// Commit 在本批消息全部成功送入总线后调用，用于持久化水位；
-// 中途取消则不提交，下一轮会重新拉取（事件 ID 幂等兜底可能重复）。
+// Commit 在本批消息全部获得持久化确认后调用，用于持久化水位；
+// 仅有 channel 接收不算落库（StartAck 路径由桥逐条回执）。
+// 中途取消或确认失败则不提交，下一轮会重新拉取（事件 ID 幂等兜底可能重复）。
 // Close 释放账号切换准入：整批处理结束（成功/失败/取消）都必须调用一次。
 // AccountID/SelfID 是本次批次绑定的账号快照，整批 list/detail 只使用它。
 type Batch struct {
@@ -142,8 +143,20 @@ func (c *Collector) Health() collector.Health {
 	return c.health
 }
 
-// Start 轮询直到 ctx 取消或鉴权失效；只会有一个 Start 拥有循环。
+// Start 实现 collector.Collector；直连（无持久化回执通道）时按旧语义提交水位。
+//
+// 生产路径由 RunToBus 优先调用 StartAck：只有桥确认 Publish 成功后水位才推进。
 func (c *Collector) Start(ctx context.Context, events chan<- event.Event, errs chan<- error) error {
+	return c.start(ctx, events, nil, errs)
+}
+
+// StartAck 实现 collector.AckCollector：每条事件等到桥的落库回执后才记已见/推进水位。
+func (c *Collector) StartAck(ctx context.Context, events chan<- event.Event, acks <-chan collector.DeliveryAck, errs chan<- error) error {
+	return c.start(ctx, events, acks, errs)
+}
+
+// start 轮询直到 ctx 取消或鉴权失效；只会有一个循环。
+func (c *Collector) start(ctx context.Context, events chan<- event.Event, acks <-chan collector.DeliveryAck, errs chan<- error) error {
 	if ctx == nil {
 		return &Error{Kind: KindInput, Cause: errors.New("上下文不能为 nil")}
 	}
@@ -158,7 +171,7 @@ func (c *Collector) Start(ctx context.Context, events chan<- event.Event, errs c
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := c.poll(ctx, events); err != nil {
+			if err := c.poll(ctx, events, acks); err != nil {
 				c.record()
 				if errors.Is(err, errAuth) {
 					// 鉴权失效：停采集，别继续挨风控
@@ -175,8 +188,8 @@ func (c *Collector) Start(ctx context.Context, events chan<- event.Event, errs c
 // errAuth 是内部哨兵：命中即停采集。
 var errAuth = errors.New("私信采集鉴权失效")
 
-// poll 拉一轮并产出事件。
-func (c *Collector) poll(ctx context.Context, events chan<- event.Event) error {
+// poll 拉一轮并产出事件；acks 非 nil 时每条事件都要等到桥的持久化回执。
+func (c *Collector) poll(ctx context.Context, events chan<- event.Event, acks <-chan collector.DeliveryAck) error {
 	batch, err := c.fetcher.Fetch(ctx)
 	if err != nil {
 		var kinded *Error
@@ -205,12 +218,26 @@ func (c *Collector) poll(ctx context.Context, events chan<- event.Event) error {
 		}
 		select {
 		case events <- ev:
-			// 只有事件真正进入总线后才记已见并允许推进水位。
-			c.markSeen(id)
-			c.recordEvent(now)
 		case <-ctx.Done():
 			return nil
 		}
+		if acks != nil {
+			// channel 接收不等于 PG 落库：必须等桥回执确认后才算这条消息成功。
+			select {
+			case ack := <-acks:
+				if ack.EventID != ev.ID {
+					return fmt.Errorf("私信采集确认错位：期望 %s，实际 %s", ev.ID, ack.EventID)
+				}
+				if ack.Err != nil {
+					return fmt.Errorf("私信事件持久化失败：%w", ack.Err)
+				}
+			case <-ctx.Done():
+				return nil
+			}
+		}
+		// 确认成功后才记已见并允许推进水位；未确认的消息下一轮重拉（事件 ID 幂等）。
+		c.markSeen(id)
+		c.recordEvent(now)
 	}
 	if batch.Commit != nil {
 		if err := batch.Commit(); err != nil {

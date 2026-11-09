@@ -26,3 +26,22 @@ type Health struct {
 type Publisher interface {
 	Publish(context.Context, event.Event) (bool, error)
 }
+
+// DeliveryAck 是桥对一条事件的持久化回执。
+//
+// Err 为 nil 表示 bus.Publish 已成功（含幂等重复）；否则该事件没有落库。
+type DeliveryAck struct {
+	EventID string
+	Err     error
+}
+
+// AckCollector 是「持久化确认后才推进水位」的采集器可选契约。
+//
+// 实现者仍满足 Collector；RunToBus 会优先调用 StartAck，并在每条事件
+// Publish 完成之后回执。采集器必须收到成功回执才能提交水位，并且要在
+// 发送下一条事件之前读取回执（回执通道不提供缓存）。
+// 事件被 channel 接收不等于已落库。
+type AckCollector interface {
+	Collector
+	StartAck(ctx context.Context, events chan<- event.Event, acks <-chan DeliveryAck, errs chan<- error) error
+}

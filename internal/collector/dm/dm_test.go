@@ -5,9 +5,11 @@ package dm
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"RaiseMyFish/internal/collector"
 	"RaiseMyFish/internal/event"
 	"go.uber.org/zap"
 )
@@ -95,7 +97,7 @@ func TestCollectorDedupByMsgID(t *testing.T) {
 	events := make(chan event.Event, 4)
 	ctx := context.Background()
 	for i := 0; i < 2; i++ {
-		if err := c.poll(ctx, events); err != nil {
+		if err := c.poll(ctx, events, nil); err != nil {
 			t.Fatalf("第 %d 轮失败：%v", i+1, err)
 		}
 	}
@@ -121,7 +123,7 @@ func TestCollectorEmptyFieldsIgnored(t *testing.T) {
 	}}
 	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
 	events := make(chan event.Event, 4)
-	if err := c.poll(context.Background(), events); err != nil {
+	if err := c.poll(context.Background(), events, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(events) != 0 {
@@ -184,7 +186,7 @@ func TestCollectorCommitsAfterEmission(t *testing.T) {
 	}}
 	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
 	events := make(chan event.Event, 1)
-	if err := c.poll(context.Background(), events); err != nil {
+	if err := c.poll(context.Background(), events, nil); err != nil {
 		t.Fatal(err)
 	}
 	if committed != 1 {
@@ -203,12 +205,12 @@ func TestCollectorNoCommitWhenCancelled(t *testing.T) {
 	// 第一轮用已取消上下文 + 无缓冲通道：消息不会入总线，也不该记已见。
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := c.poll(ctx, make(chan event.Event)); err != nil {
+	if err := c.poll(ctx, make(chan event.Event), nil); err != nil {
 		t.Fatal(err)
 	}
 	// 第二轮正常发送：说明上轮没有提前 markSeen。
 	events := make(chan event.Event, 1)
-	if err := c.poll(context.Background(), events); err != nil {
+	if err := c.poll(context.Background(), events, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(events) != 1 {
@@ -220,8 +222,151 @@ func TestCollectorNoCommitWhenCancelled(t *testing.T) {
 func TestCollectorCommitFailure(t *testing.T) {
 	f := &commitFetcher{batch: Batch{Commit: func() error { return errors.New("disk full") }}}
 	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
-	err := c.poll(context.Background(), make(chan event.Event, 1))
+	err := c.poll(context.Background(), make(chan event.Event, 1), nil)
 	if err == nil || errors.Is(err, errAuth) {
 		t.Fatalf("应返回非鉴权错误，实际 %v", err)
+	}
+}
+
+// onePollCollector 只执行一轮 poll，便于在 RunToBus 下精确断言水位时序。
+type onePollCollector struct{ *Collector }
+
+func (c onePollCollector) Start(ctx context.Context, events chan<- event.Event, errs chan<- error) error {
+	return c.poll(ctx, events, nil)
+}
+
+func (c onePollCollector) StartAck(ctx context.Context, events chan<- event.Event, acks <-chan collector.DeliveryAck, errs chan<- error) error {
+	return c.poll(ctx, events, acks)
+}
+
+// TestCollectorWaitsForPersistentAckBeforeCommit channel 接收后必须等桥回执才提交水位。
+func TestCollectorWaitsForPersistentAckBeforeCommit(t *testing.T) {
+	var committed atomic.Int32
+	f := &commitFetcher{batch: Batch{
+		Messages: []Message{{ID: "1", PeerID: "2", Text: "hi", At: time.Now()}},
+		Commit:   func() error { committed.Add(1); return nil },
+	}}
+	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
+	events := make(chan event.Event)
+	acks := make(chan collector.DeliveryAck)
+	done := make(chan error, 1)
+	go func() { done <- c.poll(context.Background(), events, acks) }()
+
+	ev := <-events
+	select {
+	case <-time.After(100 * time.Millisecond):
+	case err := <-done:
+		t.Fatalf("未收到回执 poll 不应结束：%v", err)
+	}
+	if committed.Load() != 0 {
+		t.Fatal("channel 接收后未获回执就提交了水位")
+	}
+
+	acks <- collector.DeliveryAck{EventID: ev.ID}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if committed.Load() != 1 {
+		t.Fatalf("确认成功后应恰好提交一次，实际 %d", committed.Load())
+	}
+}
+
+// TestCollectorNoCommitWhenAckFails 回执失败 → poll 报错、水位不前进、消息可重拉。
+func TestCollectorNoCommitWhenAckFails(t *testing.T) {
+	var committed atomic.Int32
+	f := &commitFetcher{batch: Batch{
+		Messages: []Message{{ID: "1", PeerID: "2", Text: "hi", At: time.Now()}},
+		Commit:   func() error { committed.Add(1); return nil },
+	}}
+	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
+	events := make(chan event.Event)
+	acks := make(chan collector.DeliveryAck)
+	done := make(chan error, 1)
+	go func() { done <- c.poll(context.Background(), events, acks) }()
+
+	ev := <-events
+	acks <- collector.DeliveryAck{EventID: ev.ID, Err: errors.New("pg down")}
+	err := <-done
+	if err == nil || errors.Is(err, errAuth) {
+		t.Fatalf("回执失败应返回非鉴权错误，实际 %v", err)
+	}
+	if committed.Load() != 0 {
+		t.Fatal("持久化失败后水位不得前进")
+	}
+	// 未记已见：下一轮应重新产出同一条消息。
+	retry := make(chan event.Event, 1)
+	if err := c.poll(context.Background(), retry, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(retry) != 1 {
+		t.Fatalf("未落库的消息应重试，实际事件 %d", len(retry))
+	}
+}
+
+// blockingFailPublisher 模拟桥已接收、PG 写入卡住后失败。
+type blockingFailPublisher struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingFailPublisher) Publish(ctx context.Context, _ event.Event) (bool, error) {
+	close(p.entered)
+	select {
+	case <-p.release:
+		return false, errors.New("fixture: postgres write failed")
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+}
+
+// countingPublisher 记录发布次数并总是成功（等价落库成功）。
+type countingPublisher struct{ calls atomic.Int32 }
+
+func (p *countingPublisher) Publish(context.Context, event.Event) (bool, error) {
+	p.calls.Add(1)
+	return true, nil
+}
+
+// TestRunToBusDoesNotCommitWhenPublishFails 验收：假 Publisher 阻塞后失败 → 水位不前进。
+func TestRunToBusDoesNotCommitWhenPublishFails(t *testing.T) {
+	var committed atomic.Int32
+	f := &commitFetcher{batch: Batch{
+		Messages: []Message{{ID: "9001", PeerID: "2002", Text: "fixture", At: time.Unix(1700000000, 0)}},
+		Commit:   func() error { committed.Add(1); return nil },
+	}}
+	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
+	pub := &blockingFailPublisher{entered: make(chan struct{}), release: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		done <- collector.RunToBus(context.Background(), onePollCollector{c}, pub, time.Second, zap.NewNop())
+	}()
+
+	<-pub.entered
+	if committed.Load() != 0 {
+		t.Fatal("Publish 未返回前水位已前进")
+	}
+	close(pub.release)
+	if err := <-done; err == nil {
+		t.Fatal("发布失败应返回错误")
+	}
+	if committed.Load() != 0 {
+		t.Fatal("假 Publisher 阻塞后失败 → 水位不得前进")
+	}
+}
+
+// TestRunToBusCommitsAfterPublishSucceeds 发布成功路径：每条事件确认后才提交一次水位。
+func TestRunToBusCommitsAfterPublishSucceeds(t *testing.T) {
+	var committed atomic.Int32
+	f := &commitFetcher{batch: Batch{
+		Messages: []Message{{ID: "9001", PeerID: "2002", Text: "fixture", At: time.Unix(1700000000, 0)}},
+		Commit:   func() error { committed.Add(1); return nil },
+	}}
+	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
+	pub := &countingPublisher{}
+	if err := collector.RunToBus(context.Background(), onePollCollector{c}, pub, time.Second, zap.NewNop()); err != nil {
+		t.Fatal(err)
+	}
+	if pub.calls.Load() != 1 || committed.Load() != 1 {
+		t.Fatalf("应发布并提交各一次，实际 publish=%d commit=%d", pub.calls.Load(), committed.Load())
 	}
 }
