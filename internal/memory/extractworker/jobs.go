@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/store"
 )
 
 // JobStatus 是提炼任务状态。
@@ -54,12 +55,18 @@ type Job struct {
 	Event event.Event
 }
 
+// RecordOutcome 是一条记忆记录在事务内的落库结果。
+type RecordOutcome struct {
+	// Inserted 为 true 表示新增或更新了记录；false 表示内容幂等或冲突被拒绝。
+	Inserted bool
+}
+
 // JobSource 是提炼任务队列的持久化能力（database.ExtractionJobsRepo 实现）。
 //
 // 所有方法都必须保证：
 //   - Enqueue 幂等（同一事件不会出现两条任务）；
 //   - Claim 并发安全（SKIP LOCKED，不重复领取）；
-//   - Complete/Fail/Renew 带租约栅栏（租约被抢走后旧 worker 不能覆盖结果）。
+//   - Complete/CompleteWithRecords/Fail/Renew 带租约栅栏（租约被抢走后旧 worker 不能覆盖结果）。
 type JobSource interface {
 	// Enqueue 把「还没入队的有价值入向事件」补成 pending 任务，返回新增条数。
 	Enqueue(ctx context.Context, limit int) (int, error)
@@ -67,6 +74,11 @@ type JobSource interface {
 	Claim(ctx context.Context, owner string, ttl time.Duration, limit int) ([]Job, error)
 	// Complete 标记完成；租约已失效时返回 store.ErrConflict。
 	Complete(ctx context.Context, job Job) error
+	// CompleteWithRecords 在同一事务里做租约栅栏、写入 records 并标记完成。
+	//
+	// 栅栏先于写入：租约已被抢占/过期时返回 store.ErrConflict 且**不写任何记录**；
+	// 任一记录写入失败则整体回滚，任务保持 running 由租约到期后重新领取。
+	CompleteWithRecords(ctx context.Context, job Job, records []store.MemoryRecord) ([]RecordOutcome, error)
 	// Fail 记录失败：retryable 且未超上限时回 pending，否则置 failed。
 	Fail(ctx context.Context, job Job, reason string, retryable bool, maxAttempts int) error
 	// Renew 续租；租约已失效时返回 store.ErrConflict。

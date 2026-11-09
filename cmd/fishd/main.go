@@ -529,6 +529,7 @@ func runMemoryExtract(ctx context.Context, worker memoryExtractWorker, interval 
 			zap.Int("inserted", stats.Inserted),
 			zap.Int("duplicated", stats.Duplicated),
 			zap.Int("skipped", stats.Skipped),
+			zap.Int("lease_lost", stats.LeaseLost),
 		)
 	}
 	runOnce()

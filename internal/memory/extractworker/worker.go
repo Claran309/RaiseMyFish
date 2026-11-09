@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"RaiseMyFish/internal/event"
@@ -33,6 +34,15 @@ const (
 	defaultBatchSize = 50
 	// maxBatchSize 防止调用方传过大的 limit 把库里一次捞爆。
 	maxBatchSize = 500
+	// maxJobClaimSize 是任务队列单次领取上限（C1/N06）。
+	//
+	// 任务领取后串行处理，一批太大时队尾会在轮到之前就租约到期，
+	// 被第二个 worker 抢走后重做；按实际容量小批领取，让租约只覆盖
+	// 真正在手里的工作。
+	maxJobClaimSize = 10
+	// jobRenewDivisor 决定续租频率：每 TTL/3 续一次，
+	// 单次网络抖动或调度延迟不会直接让租约过期。
+	jobRenewDivisor = 3
 	// defaultScanInterval 是定时扫描间隔；phase-0 计划里写的是「先每 5 分钟扫一次」。
 	defaultScanInterval = 5 * time.Minute
 )
@@ -86,6 +96,7 @@ type Options struct {
 	// 传 LLMExtractor 时按触发策略走模型，失败内部回落规则版。
 	Extractor memory.Extractor
 	// BatchSize 单次拉取条数，<=0 用默认值，超过上限会被夹到上限。
+	// 任务队列路径单次领取还会再夹到 maxJobClaimSize（执行中续租，队尾不排队过期）。
 	BatchSize int
 	// ScanInterval 定时扫描间隔，<=0 用 5 分钟。
 	ScanInterval time.Duration
@@ -162,6 +173,9 @@ type Stats struct {
 	Skipped int
 	// Failed 处理失败、已回队等待重试（或已置 failed）的任务条数。
 	Failed int
+	// LeaseLost 本轮失租的任务条数：提炼期间租约被抢占/过期，
+	// 结果已放弃写入，由当前持有者重做。失租不是失败，不计入 Failed。
+	LeaseLost int
 	// Enqueued 本轮新入队的任务条数（任务队列模式）。
 	Enqueued int
 	// ProfilesRebuilt 本轮重建的档案数（-1 表示本轮跳过）。
@@ -366,6 +380,12 @@ func (w *Worker) runJobs(ctx context.Context, stats *Stats) (Stats, error) {
 	if enqueueLimit > 500 {
 		enqueueLimit = 500
 	}
+	// 领取批次按实际容量收窄：串行处理 + 执行中续租，一批只拿
+	// 在租约内做得到的量，队尾才不会在排队时过期。
+	claimLimit := w.opts.BatchSize
+	if claimLimit > maxJobClaimSize {
+		claimLimit = maxJobClaimSize
+	}
 
 	for batch := 0; batch < maxJobBatches; batch++ {
 		if err := ctx.Err(); err != nil {
@@ -378,7 +398,7 @@ func (w *Worker) runJobs(ctx context.Context, stats *Stats) (Stats, error) {
 		}
 		stats.Enqueued += enqueued
 
-		jobs, err := w.jobs.Claim(ctx, w.opts.JobOwner, w.opts.JobTTL, w.opts.BatchSize)
+		jobs, err := w.jobs.Claim(ctx, w.opts.JobOwner, w.opts.JobTTL, claimLimit)
 		if err != nil {
 			return *stats, fmt.Errorf("领取提炼任务：%w", err)
 		}
@@ -399,27 +419,162 @@ func (w *Worker) runJobs(ctx context.Context, stats *Stats) (Stats, error) {
 	return *stats, nil
 }
 
-// handleJob 处理一条任务：提炼 → 落库 → 标记完成；失败则记录原因并回队。
+// handleJob 处理一条任务：提炼 → 租约围栏内提交 → 标记完成；失败则记录原因并回队。
+//
+// 执行期间启动续租心跳；续租发现失租时取消提炼。真正的写保护仍在
+// CompleteWithRecords 的事务里：即使取消晚了一步，栅栏也会让结果整体回滚。
 func (w *Worker) handleJob(ctx context.Context, job Job, stats *Stats) error {
 	stats.Scanned++
 	// 事件已被删除（隐私撤回 / 清理）：任务直接完成，不无限重试。
 	if strings.TrimSpace(job.Event.ID) == "" {
 		stats.Skipped++
-		if err := w.jobs.Complete(ctx, job); err != nil && !errors.Is(err, store.ErrConflict) {
+		if err := w.jobs.Complete(ctx, job); err != nil {
+			if errors.Is(err, store.ErrConflict) {
+				stats.LeaseLost++
+				return nil
+			}
 			return fmt.Errorf("完成空任务：%w", err)
 		}
 		return nil
 	}
-	if err := w.processEvent(ctx, job.Event, stats); err != nil {
+
+	workCtx, cancelWork := context.WithCancel(ctx)
+	lost, stopHeartbeat := w.startLeaseHeartbeat(ctx, job, cancelWork)
+	records, skipped, err := w.extractEvent(workCtx, job.Event)
+	stopHeartbeat()
+	if leaseLost(lost) {
+		// 续租已确认失租：提炼结果作废，新持有者会重做。
+		stats.LeaseLost++
+		return nil
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		lostLease, failErr := w.failJob(ctx, job, err.Error())
+		if lostLease {
+			stats.LeaseLost++
+			return nil
+		}
+		if failErr != nil {
+			return errors.Join(err, failErr)
+		}
 		stats.Failed++
-		// 失败原因写进任务表；租约被抢时忽略（持有者变了，由对方接手）。
-		_ = w.jobs.Fail(ctx, job, err.Error(), true, w.opts.MaxAttempts)
 		return err
 	}
-	if err := w.jobs.Complete(ctx, job); err != nil && !errors.Is(err, store.ErrConflict) {
-		return fmt.Errorf("完成提炼任务：%w", err)
+	if skipped {
+		stats.Skipped++
+		if err := w.jobs.Complete(ctx, job); err != nil {
+			if errors.Is(err, store.ErrConflict) {
+				stats.LeaseLost++
+				return nil
+			}
+			return fmt.Errorf("完成提炼任务：%w", err)
+		}
+		return nil
+	}
+
+	stats.Extracted += len(records)
+	outcomes, err := w.jobs.CompleteWithRecords(ctx, job, records)
+	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			stats.LeaseLost++
+			return nil
+		}
+		lostLease, failErr := w.failJob(ctx, job, err.Error())
+		if lostLease {
+			stats.LeaseLost++
+			return nil
+		}
+		if failErr != nil {
+			return errors.Join(fmt.Errorf("提交提炼结果：%w", err), failErr)
+		}
+		stats.Failed++
+		return fmt.Errorf("提交提炼结果：%w", err)
+	}
+	for _, outcome := range outcomes {
+		if outcome.Inserted {
+			stats.Inserted++
+		} else {
+			stats.Duplicated++
+		}
 	}
 	return nil
+}
+
+// failJob 把失败写回任务表；返回 true 表示租约已被抢走（无需再记失败）。
+func (w *Worker) failJob(ctx context.Context, job Job, reason string) (bool, error) {
+	if err := w.jobs.Fail(ctx, job, reason, true, w.opts.MaxAttempts); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return true, nil
+		}
+		return false, fmt.Errorf("记录提炼任务失败：%w", err)
+	}
+	return false, nil
+}
+
+// startLeaseHeartbeat 在提炼执行期间定期续租，返回「失租」信号与停止函数。
+//
+// 启动时先立刻续一次：任务在队列里等待过，租约可能已经接近到期。
+// 只有 Renew 明确返回 ErrConflict 才算失租；网络/DB 抖动留到下一拍重试，
+// 租约是否仍然有效最终由提交事务的条件更新裁决。
+func (w *Worker) startLeaseHeartbeat(ctx context.Context, job Job, cancelWork context.CancelFunc) (<-chan struct{}, func()) {
+	lost := make(chan struct{})
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	interval := w.opts.JobTTL / jobRenewDivisor
+	if interval <= 0 {
+		interval = w.opts.JobTTL
+	}
+
+	go func() {
+		defer close(done)
+		renew := func() bool {
+			if _, err := w.jobs.Renew(ctx, job, w.opts.JobTTL); err != nil {
+				if errors.Is(err, store.ErrConflict) {
+					close(lost)
+					cancelWork()
+					return false
+				}
+				// 非冲突错误：下一拍再试；父 ctx 已停则直接退出。
+				return ctx.Err() == nil
+			}
+			return true
+		}
+		if !renew() {
+			return
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				if !renew() {
+					return
+				}
+			}
+		}
+	}()
+
+	var once sync.Once
+	return lost, func() {
+		once.Do(func() {
+			close(stop)
+			<-done
+		})
+	}
+}
+
+// leaseLost 判断续租是否已经明确失租。
+func leaseLost(lost <-chan struct{}) bool {
+	select {
+	case <-lost:
+		return true
+	default:
+		return false
+	}
 }
 
 // 冻结来源，用于日志区分「配置写死」与「运行时开关」。
@@ -489,22 +644,53 @@ func (w *Worker) handleEvent(ctx context.Context, ev event.Event, stats *Stats) 
 	return next, nil
 }
 
-// processEvent 提炼并落库一条事件（任务队列与水位模式共用）。
+// processEvent 提炼并逐条落库一条事件（水位路径）。
 //
 // 「有意跳过」（时间缺失 / 私密未授权 / 没有候选）返回 nil：
 // 这些是正常结论，不该让任务反复重试。
 func (w *Worker) processEvent(ctx context.Context, ev event.Event, stats *Stats) error {
-	// 事件时间缺失：算不出有效期，也过不了持久化校验（valid_from 不能为零）
-	if ev.At.IsZero() {
+	records, skipped, err := w.extractEvent(ctx, ev)
+	if err != nil {
+		return err
+	}
+	if skipped {
 		stats.Skipped++
 		return nil
+	}
+	for _, record := range records {
+		stats.Extracted++
+		inserted, err := w.repo.InsertRecord(ctx, record)
+		if err != nil {
+			return fmt.Errorf("写入记忆记录：%w", err)
+		}
+		if inserted {
+			stats.Inserted++
+		} else {
+			stats.Duplicated++
+		}
+	}
+	return nil
+}
+
+// extractEvent 只提炼、不落库，供水位路径与任务路径共用。
+//
+// 任务路径不能在这里写库：必须先过租约栅栏，再在同一个事务里
+// 写入记录并完成任务（C1/N06），否则旧 worker 失租返回会重复写。
+//
+// 「有意跳过」（时间缺失 / 私密未授权 / 没有候选）返回 skipped=true 且 err=nil。
+func (w *Worker) extractEvent(ctx context.Context, ev event.Event) ([]store.MemoryRecord, bool, error) {
+	// 事件时间缺失：算不出有效期，也过不了持久化校验（valid_from 不能为零）
+	if ev.At.IsZero() {
+		return nil, true, nil
 	}
 
 	// 私密边界在任何上下文拼装、提炼器调用和模型调用之前：未授权直接跳过。
 	// 跳过也算处理完毕，否则每轮都会重复扫描同一批私信。
 	if ev.Private && !w.opts.AllowPrivate {
-		stats.Skipped++
-		return nil
+		return nil, true, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
 	}
 
 	extractOpts := memory.ExtractOptions{
@@ -528,27 +714,22 @@ func (w *Worker) processEvent(ctx context.Context, ev event.Event, stats *Stats)
 	}
 	candidates, err := extractor.Extract(ctx, ev, extractOpts)
 	if err != nil {
+		// 失租/停机取消不要回落规则版：结果已经作废，继续算只是浪费。
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, false, ctxErr
+		}
 		// 提炼器异常兜底规则版；LLMExtractor 内部通常已降级，这里防未来实现。
 		candidates = memory.Extract(ev, extractOpts)
 	}
 	if len(candidates) == 0 {
-		stats.Skipped++
-		return nil
+		return nil, true, nil
 	}
 
+	records := make([]store.MemoryRecord, 0, len(candidates))
 	for _, candidate := range candidates {
-		stats.Extracted++
-		inserted, err := w.repo.InsertRecord(ctx, w.buildRecord(ev, candidate))
-		if err != nil {
-			return fmt.Errorf("写入记忆记录：%w", err)
-		}
-		if inserted {
-			stats.Inserted++
-		} else {
-			stats.Duplicated++
-		}
+		records = append(records, w.buildRecord(ev, candidate))
 	}
-	return nil
+	return records, false, nil
 }
 
 // recentBefore 取「严格早于当前事件」的上下文（M07）。

@@ -58,6 +58,14 @@ func (r *MemoryRepo) InsertRecord(ctx context.Context, m store.MemoryRecord) (bo
 	if ctx == nil {
 		return false, store.ErrInvalid
 	}
+	return insertMemoryRecord(ctx, r.db, m)
+}
+
+// insertMemoryRecord 是 InsertRecord 与「提炼结果 + 任务完成同事务」共用的写入实现。
+//
+// db 可以是普通连接，也可以是事务；事务边界（先租约栅栏、后写入、再提交）
+// 由调用方负责，本函数只保证单条记录的 SQL 语义一致。
+func insertMemoryRecord(ctx context.Context, db *gorm.DB, m store.MemoryRecord) (bool, error) {
 	if err := m.Validate(); err != nil {
 		return false, err
 	}
@@ -74,7 +82,7 @@ func (r *MemoryRepo) InsertRecord(ctx context.Context, m store.MemoryRecord) (bo
 	//  4. 摘要确实变化才更新，重复提炼保持幂等。
 	// valid_from 取 EXCLUDED 的事件时间而不是 now()：否则「更新时间」会顶替
 	// 「事实发生时间」，让第 3 道的先后比较失真。
-	result := r.db.WithContext(ctx).Exec(`INSERT INTO memory_records
+	result := db.WithContext(ctx).Exec(`INSERT INTO memory_records
 (id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name,asserted_by_id,asserted_by_name,subject)
 VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''))
 ON CONFLICT (id) DO UPDATE SET

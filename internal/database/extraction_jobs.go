@@ -10,6 +10,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -180,19 +181,69 @@ func (r *ExtractionJobsRepo) Complete(ctx context.Context, job extractworker.Job
 	if ctx == nil || strings.TrimSpace(job.EventID) == "" || strings.TrimSpace(job.LeaseOwner) == "" {
 		return store.ErrInvalid
 	}
-	res := r.db.WithContext(ctx).Exec(`
+	rows, err := markJobDone(r.db.WithContext(ctx), job)
+	if err != nil {
+		return &safeError{"完成任务失败", err}
+	}
+	if rows == 0 {
+		return store.ErrConflict
+	}
+	return nil
+}
+
+// CompleteWithRecords 是「结果提交 + 任务完成」的原子版本。
+//
+// 事务内顺序固定：
+//  1. 条件 UPDATE 做租约栅栏；0 行说明租约已被抢占/过期，返回 ErrConflict 并回滚；
+//  2. 用同一事务写记忆记录；任一失败整体回滚，任务保持 running 等租约到期重领；
+//  3. 提交——记录与 done 同时可见，不会出现「记录已写、任务未完成」的半成品。
+//
+// 必须先栅栏后写：旧 worker 失租返回时若先写记录再发现冲突，同一事件的结果
+// 会写两遍，第二份还可能覆盖新持有者的更新。
+func (r *ExtractionJobsRepo) CompleteWithRecords(ctx context.Context, job extractworker.Job, records []store.MemoryRecord) ([]extractworker.RecordOutcome, error) {
+	if ctx == nil || strings.TrimSpace(job.EventID) == "" || strings.TrimSpace(job.LeaseOwner) == "" {
+		return nil, store.ErrInvalid
+	}
+	outcomes := make([]extractworker.RecordOutcome, 0, len(records))
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		rows, err := markJobDone(tx, job)
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return store.ErrConflict
+		}
+		for _, record := range records {
+			inserted, err := insertMemoryRecord(ctx, tx, record)
+			if err != nil {
+				return err
+			}
+			outcomes = append(outcomes, extractworker.RecordOutcome{Inserted: inserted})
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return nil, store.ErrConflict
+		}
+		return nil, &safeError{"提交提炼结果失败", err}
+	}
+	return outcomes, nil
+}
+
+// markJobDone 在给定执行器（普通连接或事务）上做租约栅栏并置 done。
+// 返回 0 行表示租约已被抢占/过期，由调用方映射为 store.ErrConflict。
+func markJobDone(db *gorm.DB, job extractworker.Job) (int64, error) {
+	res := db.Exec(`
 UPDATE extraction_jobs
 SET status = 'done', lease_owner = NULL, lease_until = NULL,
     last_error = NULL, updated_at = clock_timestamp()
 WHERE event_id = ? AND status = 'running' AND lease_owner = ?
   AND lease_until > clock_timestamp()`, job.EventID, job.LeaseOwner)
 	if res.Error != nil {
-		return &safeError{"完成任务失败", res.Error}
+		return 0, res.Error
 	}
-	if res.RowsAffected == 0 {
-		return store.ErrConflict
-	}
-	return nil
+	return res.RowsAffected, nil
 }
 
 // Fail 记录失败：可重试且未超上限回 pending，否则置 failed。

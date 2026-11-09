@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/memory/extractworker"
 	"RaiseMyFish/internal/store"
 )
@@ -369,5 +370,180 @@ func TestExtractionWorkerJobQueueEndToEnd(t *testing.T) {
 	}
 	if again.Enqueued != 0 || again.Scanned != 0 || again.Inserted != 0 {
 		t.Fatalf("第二轮不应重复处理：%+v", again)
+	}
+}
+
+// jobRecord 造一条能通过持久化校验的记忆记录（任务原子提交用）。
+func jobRecord(id string, ev event.Event) store.MemoryRecord {
+	return store.MemoryRecord{
+		Record: memory.Record{
+			ID: id, Channel: ev.Channel, Session: ev.Session,
+			Summary: "我保证明天带话", Importance: 0.7, Confidence: 0.9,
+			EventIDs: []string{ev.ID}, ValidFrom: ev.At,
+		},
+		Source: "owner_direct", Kind: "promise", Title: "承诺：带话",
+	}
+}
+
+// memoryRecordRows 统计指定主键的记录条数（直接查库，绕过仓库投影）。
+func memoryRecordRows(t *testing.T, ctx context.Context, repo *ExtractionJobsRepo, ids ...string) int {
+	t.Helper()
+	var count int64
+	if err := repo.db.WithContext(ctx).Raw(
+		"SELECT count(*) FROM memory_records WHERE id IN ?", ids).Scan(&count).Error; err != nil {
+		t.Fatalf("统计记忆记录失败：%v", err)
+	}
+	return int(count)
+}
+
+// TestExtractionJobsCompleteWithRecordsFence C1/N06：旧 worker 失租返回时一条都不能写；
+// 新持有者（模拟第二个进程/断电重启）原子提交后才落库。
+func TestExtractionJobsCompleteWithRecordsFence(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	events, err := NewEventRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := NewExtractionJobsRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	ev := inboundEvent("live:room:fence1", false, base, "我保证明天带话")
+	if _, err := events.Insert(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Enqueue(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	// 旧 worker 领取后失联（相当于进程断电/被挂起），租约到期。
+	old, err := repo.Claim(ctx, "worker-old", time.Second, 10)
+	if err != nil || len(old) != 1 {
+		t.Fatalf("旧 worker 领取失败：%v %+v", err, old)
+	}
+	time.Sleep(1100 * time.Millisecond)
+
+	// 新 worker 接手同一条任务。
+	fresh, err := repo.Claim(ctx, "worker-new", time.Minute, 10)
+	if err != nil || len(fresh) != 1 {
+		t.Fatalf("新 worker 接手失败：%v %+v", err, fresh)
+	}
+	if fresh[0].LeaseOwner != "worker-new" || fresh[0].Attempts != 2 {
+		t.Fatalf("接手语义不符：%+v", fresh[0])
+	}
+
+	record := jobRecord("mem_fence_1", ev)
+	// 旧 worker 恢复后提交：栅栏先失败，记录不得写入。
+	outcomes, err := repo.CompleteWithRecords(ctx, old[0], []store.MemoryRecord{record})
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("旧租约提交应冲突，实际 err=%v outcomes=%+v", err, outcomes)
+	}
+	if n := memoryRecordRows(t, ctx, repo, record.ID); n != 0 {
+		t.Fatalf("旧 worker 不得写入记录，实际 %d 条", n)
+	}
+	if status, attempts, _ := jobState(t, ctx, repo, ev.ID); status != "running" || attempts != 2 {
+		t.Fatalf("冲突后任务应仍归新 worker：status=%s attempts=%d", status, attempts)
+	}
+
+	// 新 worker 原子提交：记录与 done 同时生效。
+	outcomes, err = repo.CompleteWithRecords(ctx, fresh[0], []store.MemoryRecord{record})
+	if err != nil {
+		t.Fatalf("新 worker 提交失败：%v", err)
+	}
+	if len(outcomes) != 1 || !outcomes[0].Inserted {
+		t.Fatalf("提交结果不符：%+v", outcomes)
+	}
+	if n := memoryRecordRows(t, ctx, repo, record.ID); n != 1 {
+		t.Fatalf("新 worker 应写入 1 条，实际 %d 条", n)
+	}
+	if status, attempts, _ := jobState(t, ctx, repo, ev.ID); status != "done" || attempts != 2 {
+		t.Fatalf("完成状态不符：status=%s attempts=%d", status, attempts)
+	}
+}
+
+// TestExtractionJobsCompleteWithRecordsAtomic 任一记录失败整体回滚，任务保持 running。
+func TestExtractionJobsCompleteWithRecordsAtomic(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	events, err := NewEventRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := NewExtractionJobsRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	ev := inboundEvent("live:room:atomic1", false, base, "我保证明天带话")
+	if _, err := events.Insert(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Enqueue(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := repo.Claim(ctx, "worker-a", time.Minute, 10)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("领取失败：%v %+v", err, jobs)
+	}
+
+	good := jobRecord("mem_atomic_good", ev)
+	bad := jobRecord("mem_atomic_bad", ev)
+	bad.Kind = "bogus" // 持久化校验必然失败
+	if _, err := repo.CompleteWithRecords(ctx, jobs[0], []store.MemoryRecord{good, bad}); err == nil {
+		t.Fatal("含非法记录时应整体失败")
+	}
+	if n := memoryRecordRows(t, ctx, repo, good.ID, bad.ID); n != 0 {
+		t.Fatalf("事务回滚后不应留下记录，实际 %d 条", n)
+	}
+	if status, _, _ := jobState(t, ctx, repo, ev.ID); status != "running" {
+		t.Fatalf("回滚后任务应保持 running，实际 %s", status)
+	}
+
+	// 修正输入后同一租约可以正常提交。
+	outcomes, err := repo.CompleteWithRecords(ctx, jobs[0], []store.MemoryRecord{good})
+	if err != nil || len(outcomes) != 1 || !outcomes[0].Inserted {
+		t.Fatalf("修正后提交失败：err=%v outcomes=%+v", err, outcomes)
+	}
+	if status, _, _ := jobState(t, ctx, repo, ev.ID); status != "done" {
+		t.Fatalf("提交后任务应为 done，实际 %s", status)
+	}
+}
+
+// TestExtractionJobsRenewExtendsLease 续租确实延长租约：原 TTL 过后仍归原 worker。
+func TestExtractionJobsRenewExtendsLease(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	events, err := NewEventRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := NewExtractionJobsRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	ev := inboundEvent("live:room:renew1", false, base, "我保证明天带话")
+	if _, err := events.Insert(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Enqueue(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := repo.Claim(ctx, "worker-a", time.Second, 10)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("领取失败：%v %+v", err, jobs)
+	}
+	renewed, err := repo.Renew(ctx, jobs[0], time.Minute)
+	if err != nil {
+		t.Fatalf("续租失败：%v", err)
+	}
+	if !renewed.LeaseUntil.After(jobs[0].LeaseUntil.Add(time.Second)) {
+		t.Fatalf("续租未延长：原 %v 新 %v", jobs[0].LeaseUntil, renewed.LeaseUntil)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if other, err := repo.Claim(ctx, "worker-b", time.Minute, 10); err != nil || len(other) != 0 {
+		t.Fatalf("续租后不应被其他 worker 领取：%v %+v", err, other)
+	}
+	if err := repo.Complete(ctx, renewed); err != nil {
+		t.Fatalf("续租后完成失败：%v", err)
 	}
 }
