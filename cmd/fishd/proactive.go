@@ -174,6 +174,9 @@ func runProactive(ctx context.Context, runner proactiveRunner, ticks <-chan time
 			if err != nil {
 				logger.Error("主动弹幕失败，等待下一轮",
 					zap.String("action", "proactive"),
+					zap.String("decision", string(result.Action)),
+					zap.String("observation_id", result.ObservationID),
+					zap.Time("observed_at", result.ObservedAt),
 					zap.Int64("latency_ms", elapsed.Milliseconds()),
 					zap.Error(err),
 				)
@@ -183,7 +186,10 @@ func runProactive(ctx context.Context, runner proactiveRunner, ticks <-chan time
 			logger.Debug("主动弹幕本轮完成",
 				zap.String("action", "proactive"),
 				zap.Bool("sent", result.Sent),
+				zap.String("decision", string(result.Action)),
 				zap.String("reason", result.Reason),
+				zap.String("observation_id", result.ObservationID),
+				zap.Time("observed_at", result.ObservedAt),
 				zap.Int64("latency_ms", elapsed.Milliseconds()),
 			)
 		}

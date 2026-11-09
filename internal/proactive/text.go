@@ -100,7 +100,8 @@ func levenshtein(a, b []rune) int {
 	return previous[len(b)]
 }
 
-// recent 保存最近发送的主动弹幕，用于挡住整句重复和高度相似。
+// recent 只保存「已确认发送成功」的主动弹幕，用于挡住整句重复和语义近似。
+// 失败/未接受的尝试走 policyState.attempts，不进入这里，不能算“已经说过”。
 type recent struct {
 	limit int
 	texts []string
@@ -111,6 +112,9 @@ func newRecent(limit int) *recent { return &recent{limit: limit} }
 func (r *recent) similar(text string) bool {
 	for _, previous := range r.texts {
 		if similarity(previous, text) >= similarityThreshold {
+			return true
+		}
+		if shingleOverlap(previous, text) >= textSemanticThreshold {
 			return true
 		}
 	}

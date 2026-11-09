@@ -213,8 +213,10 @@ llm_route = "default"
 # 去重 + max_per_hour 限流后经 [sender] 发送，并写 DirOut 事件记账。
 # 复用 [watch] 的流清晰度/ffmpeg/凭据配置；需要同时开启 live 采集与 [llm]。
 [proactive]
-# 0.19 重构：取消 max_per_hour 固定窗口与像素变化检测，频率只看 send_gap。
-# 链路：gap 检查 → 截帧 → 详细识图 → 注入 Visual 走 Brain 管线 → 清洗/15字/去重 → 发送
+# 频率只看 send_gap；取消 max_per_hour 固定窗口与像素变化检测。
+# 链路：gap → 截帧 → 识图 → 追问/纠正让路 → 画面/对话新颖性 → Brain
+#      → 四态（comment/ask/react/stay_silent）→ 语义去重 → 发送。
+# 画面与用户对话都没变化时保持安静；发送失败不算“已经说过”。
 enabled = true
 interval_seconds = 20
 send_gap_seconds = 30 # 两次主动发送的最小间隔；间隔内跳过（reason=gap）

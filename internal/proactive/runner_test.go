@@ -224,19 +224,21 @@ func TestRunOnceGapSkips(t *testing.T) {
 	}
 }
 
-// TestRunOnceDedupSimilar 相似度 ≥0.75 不重复发。
+// TestRunOnceDedupSimilar 新观察生成了已说过的内容时，不重复发。
 func TestRunOnceDedupSimilar(t *testing.T) {
 	f := newFixture(t)
 	if _, err := f.runner.RunOnce(context.Background()); err != nil {
 		t.Fatalf("首轮失败：%v", err)
 	}
 	*f.clock = f.clock.Add(time.Minute)
+	// 换一个完全不同的画面，确保走到生成后的文本去重，而不是观察未变化。
+	f.vision.text = "窗外下着小雨，一只黑猫趴在窗台上看风景。"
 
 	got, err := f.runner.RunOnce(context.Background())
 	if err != nil {
 		t.Fatalf("第二轮失败：%v", err)
 	}
-	if got.Reason != ReasonSimilar {
+	if got.Reason != ReasonSimilar || got.Action != ActionStaySilent {
 		t.Fatalf("相同内容应被去重：%+v", got)
 	}
 	if f.snd.calls != 1 {

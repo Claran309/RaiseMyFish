@@ -1,10 +1,13 @@
 // Package proactive 实现「观众视角主动发弹幕」。
 //
-// 0.19 重构后的链路（复用直播回复管线，只多注入一段画面描述）：
+// 链路（复用直播回复管线，只多注入一段画面描述）：
 //
-//	gap 检查 → 截帧 → 详细识图 → 构造 ContextInput（Visual + 合成事件）
-//	→ Brain.Reply（人设/记忆/知识/预算全部复用）→ 清洗/15字/去重 → 发送
+//	gap 检查 → 截帧 → 详细识图 → 构造 ContextInput（Visual + 合成观察事件）
+//	→ 追问/纠正让路 → 画面/对话新颖性 → Brain.Reply（人设/记忆/知识/预算复用）
+//	→ 清洗/15字 → 四态归类 → 语义去重 → 发送
 //
+// 主动发言有明确四态 comment / ask / react / stay_silent；画面与用户对话都没变化、
+// 用户正在追问/纠正、同一观点已经说过时保持安静。静音是正常结果，不是失败。
 // 它是旁路能力：任何一步失败都只让本轮跳过，不影响直播采集、调度与回复主链路。
 package proactive
 
@@ -96,16 +99,21 @@ type Options struct {
 // Result 描述本轮结果，便于日志与测试断言。
 type Result struct {
 	Sent   bool
+	Action Action
 	Reason string
 	// Text 是真正发出去的弹幕（未发送时为空）。
 	Text string
 	// Visual 是本轮注入给 Brain 的画面描述（便于排查「模型凭什么这么说」）。
 	Visual string
 	// React 表示本轮走了 ReAct 多步（降级回落单步时为 false）。
+	// 它是执行策略，不等于 ActionReact（对画面的即时反应）。
 	React bool
+	// ObservationID/ObservedAt 是本轮触发主动判断的观察证据。
+	ObservationID string
+	ObservedAt    time.Time
 }
 
-// Runner 一次只跑一轮；不保存上一帧（像素变化检测已删除）。
+// Runner 一次只跑一轮；保存最近观察与已确认发言，用于克制与语义去重。
 type Runner struct {
 	snapshot Snapshotter
 	vision   VisionDescriber
@@ -122,6 +130,7 @@ type Runner struct {
 	minVisualRunes int
 	limiter        *gapLimiter
 	recent         *recent
+	policy         *policyState
 	log            *zap.Logger
 	now            func() time.Time
 }
@@ -178,6 +187,7 @@ func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack 
 		minVisualRunes: 10,
 		limiter:        newGapLimiter(gap),
 		recent:         newRecent(recentLimit),
+		policy:         newPolicyState(),
 		log:            log,
 		now:            now,
 	}, nil
@@ -185,8 +195,11 @@ func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack 
 
 // RunOnce 执行一轮：
 //
-//	gap 检查 → 截帧 → 详细识图 → 构造 ContextInput → Brain.Reply
-//	→ 清洗/15字 → 去重 → 发送
+//	gap 检查 → 截帧 → 详细识图 → 构造 ContextInput/观察 → 让路与新颖性判断
+//	→ Brain.Reply → 清洗/15字 → 语义去重 → 发送
+//
+// 无新事实、用户正在追问/纠正、同一观点已说过时都返回 stay_silent；
+// 静音是正常结果，不是错误。
 func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 	if ctx == nil {
 		return Result{}, errors.New("主动弹幕缺少上下文")
@@ -197,10 +210,11 @@ func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 	// 1. gap：间隔内直接跳过，不截帧不调模型（省钱也省 CPU）
 	if reason := r.limiter.Check(r.now()); reason != "" {
 		r.skip(reason)
-		return Result{Reason: reason}, nil
+		return Result{Action: ActionStaySilent, Reason: reason}, nil
 	}
 
-	// 2. 截帧（临时文件用完即删）
+	// 2. 截帧（临时文件用完即删）；观察时间取截帧时刻，而不是模型返回时刻。
+	capturedAt := r.now()
 	path, err := r.snapshot.Snapshot(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("截取直播画面失败：%w", err)
@@ -219,58 +233,135 @@ func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{Visual: visual}, err
 	}
+	obs := r.newObservation(capturedAt, visual)
 
 	// 4. 构造统一快照：合成事件 + 画面描述；档案/双方对话/状态/长期设定
 	//    与被动回复走同一个 ContextBuilder，单步与 ReAct 都吃这份资料。
-	ev := r.syntheticEvent()
+	//    事件 ID 直接绑定观察 ID，后续日志/去重可追溯到这一帧。
+	ev := r.syntheticEvent(obs)
 	scope := memory.Scope{Channel: ev.Channel, Session: ev.Session}
 	input := r.buildInput(ctx, ev, visual)
 	task := brain.Task{ID: ev.ID, EventID: ev.ID, Channel: ev.Channel, Session: ev.Session}
+	conversation := conversationFrom(input.Memory)
+	obs.ConversationKey = conversation.key
 
-	// 5. 生成：画面里出现「要查事实」的线索就走 ReAct，否则单步 Brain
+	// 5. 让路：用户正在追问/纠正且尚未被回复时，主动弹幕不插话。
+	if reason := conversation.yieldReason(capturedAt); reason != "" {
+		r.policy.commitObservation(obs)
+		r.silent(obs, reason)
+		return silentResult(obs, reason, false), nil
+	}
+
+	// 6. 新颖性：画面和用户对话都没变化 → stay_silent，不调用模型。
+	last, seen := r.policy.lastObservation()
+	visualChanged := true
+	conversationChanged := obs.ConversationKey != ""
+	if seen {
+		visualChanged = similarity(last.Visual, obs.Visual) < observationSimilarityThreshold
+		conversationChanged = obs.ConversationKey != "" && obs.ConversationKey != last.ConversationKey
+	}
+	if !visualChanged && !conversationChanged {
+		r.policy.commitObservation(obs)
+		r.silent(obs, ReasonNoNewFact)
+		return silentResult(obs, ReasonNoNewFact, false), nil
+	}
+	// 同一画面/观点的另一种说法：即使措辞变化，也不重新生成。
+	if visualChanged && r.policy.viewpointSimilar(obs) {
+		r.policy.commitObservation(obs)
+		r.silent(obs, ReasonSemanticView)
+		return silentResult(obs, ReasonSemanticView, false), nil
+	}
+
+	// 7. 生成：画面里出现「要查事实」的线索就走 ReAct，否则单步 Brain
 	//    （两条路都复用同一套人设/记忆/知识/预算管线）
 	usedReact, raw, err := r.generate(ctx, scope, input, task, visual)
 	if err != nil {
-		return Result{Visual: visual}, err
+		// 生成失败不提交观察：下一轮仍可重试，不把临时故障当成「已经看过」。
+		return Result{Visual: visual, ObservationID: obs.ID, ObservedAt: obs.CapturedAt}, err
 	}
 
-	// 6. 清洗 + 15 字截断
+	// 8. 清洗 + 15 字截断
 	text := sanitizeDanmaku(raw)
 	if text == "" {
-		return Result{Visual: visual, React: usedReact}, errors.New("生成主动弹幕为空")
+		return Result{Visual: visual, React: usedReact, ObservationID: obs.ID, ObservedAt: obs.CapturedAt}, errors.New("生成主动弹幕为空")
 	}
-	// 7. 去重：最近 20 条里相似度 ≥0.75 视为重复
+	action := classifyAction(text, visualChanged)
+	// 9. 语义去重：只比较已确认发送成功的记录；失败尝试不算说过。
 	if r.recent.similar(text) {
-		r.skip(ReasonSimilar)
-		return Result{Reason: ReasonSimilar, Visual: visual, React: usedReact}, nil
+		r.policy.commitObservation(obs)
+		r.policy.addViewpoint(obs)
+		r.silent(obs, ReasonSimilar)
+		return silentResult(obs, ReasonSimilar, usedReact), nil
 	}
 	if !r.limiter.Reserve(r.now()) {
-		r.skip(ReasonGap)
-		return Result{Reason: ReasonGap, Visual: visual, React: usedReact}, nil
+		r.policy.commitObservation(obs)
+		r.policy.addViewpoint(obs)
+		r.silent(obs, ReasonGap)
+		return silentResult(obs, ReasonGap, usedReact), nil
 	}
-	r.recent.add(text)
+	// 候选已生成：先记入观察语义去重；发送失败只进 attempts 审计。
+	r.policy.addViewpoint(obs)
 
-	// 8. 发送
+	// 10. 发送
 	res, err := r.sender.Send(ctx, text)
 	if err != nil {
-		// 发送成功但审计落库失败时 res.OK 仍为 true，保留真实结果供上层区分。
-		return Result{Sent: res.OK, Text: text, Visual: visual, React: usedReact}, fmt.Errorf("发送主动弹幕失败：%w", err)
+		// 发送成功但审计落库失败时 res.OK 仍为 true：这是已发送，不是失败尝试。
+		if res.OK {
+			r.recent.add(text)
+		} else {
+			r.policy.recordAttempt(attemptRecord{
+				ObservationID: obs.ID,
+				ObservedAt:    obs.CapturedAt,
+				Action:        action,
+				Text:          text,
+				Outcome:       "send_error",
+				At:            r.now(),
+			})
+		}
+		r.policy.commitObservation(obs)
+		return Result{
+			Sent: res.OK, Action: action, Text: text, Visual: visual,
+			React: usedReact, ObservationID: obs.ID, ObservedAt: obs.CapturedAt,
+		}, fmt.Errorf("发送主动弹幕失败：%w", err)
 	}
 	if !res.OK {
+		r.policy.recordAttempt(attemptRecord{
+			ObservationID: obs.ID,
+			ObservedAt:    obs.CapturedAt,
+			Action:        action,
+			Text:          text,
+			Outcome:       "not_accepted",
+			At:            r.now(),
+		})
+		r.policy.commitObservation(obs)
 		r.log.Warn("主动弹幕未被接受",
 			zap.String("action", "proactive"),
 			zap.String("error_kind", res.Error),
+			zap.String("decision", string(action)),
+			zap.String("observation_id", obs.ID),
 		)
-		return Result{Reason: "send_not_accepted", Text: text, Visual: visual, React: usedReact}, nil
+		return Result{
+			Action: action, Reason: "send_not_accepted", Text: text, Visual: visual,
+			React: usedReact, ObservationID: obs.ID, ObservedAt: obs.CapturedAt,
+		}, nil
 	}
+	// 只有平台接受后才进入「已经说过」记录。
+	r.recent.add(text)
+	r.policy.commitObservation(obs)
 	r.log.Info("主动弹幕已发送",
 		zap.String("action", "proactive"),
+		zap.String("decision", string(action)),
+		zap.String("observation_id", obs.ID),
+		zap.Time("observed_at", obs.CapturedAt),
 		zap.Bool("verified", res.Verified),
 		zap.Bool("react", usedReact),
 		zap.Int("runes", len([]rune(text))),
 		zap.Int("visual_runes", len([]rune(visual))),
 	)
-	return Result{Sent: true, Text: text, Visual: visual, React: usedReact}, nil
+	return Result{
+		Sent: true, Action: action, Text: text, Visual: visual,
+		React: usedReact, ObservationID: obs.ID, ObservedAt: obs.CapturedAt,
+	}, nil
 }
 
 // generate 决定本轮走 ReAct 还是单步，返回「原始回复文本 + 是否用了 ReAct」。
@@ -373,19 +464,29 @@ func (r *Runner) runReact(ctx context.Context, scope memory.Scope, input brain.C
 	return res.Text, nil
 }
 
+// newObservation 为一次截帧建立可追溯的观察记录。
+func (r *Runner) newObservation(capturedAt time.Time, visual string) observation {
+	return observation{
+		ID:         "proactive:" + r.room + ":" + strconv.FormatInt(capturedAt.UnixNano(), 10),
+		RoomID:     r.room,
+		Source:     "live_frame",
+		CapturedAt: capturedAt,
+		Visual:     visual,
+	}
+}
+
 // syntheticEvent 造一条「没有弹幕的弹幕」。
 //
 // Brain 要求事件 ID 稳定非空、Text 非空、Dir=in；这里用固定占位正文，
-// 真正的画面信息走 ContextInput.Visual。
-func (r *Runner) syntheticEvent() event.Event {
-	now := r.now()
+// 真正的画面信息走 ContextInput.Visual。事件 ID 直接复用观察 ID。
+func (r *Runner) syntheticEvent(obs observation) event.Event {
 	return event.Event{
-		ID:      "proactive:" + r.room + ":" + strconv.FormatInt(now.UnixNano(), 10),
+		ID:      obs.ID,
 		Channel: event.ChLive,
 		Dir:     event.DirIn,
 		Session: r.room,
 		Text:    SyntheticEventText,
-		At:      now,
+		At:      obs.CapturedAt,
 		Status:  event.StatusQueued,
 	}
 }
@@ -414,5 +515,33 @@ func (r *Runner) skip(reason string) {
 	r.log.Info("主动弹幕跳过",
 		zap.String("action", "proactive"),
 		zap.String("reason", reason),
+		zap.String("decision", string(ActionStaySilent)),
 	)
+}
+
+// silent 记录保持安静；带观察证据时一并输出 ID 与时间。
+func (r *Runner) silent(obs observation, reason string) {
+	fields := []zap.Field{
+		zap.String("action", "proactive"),
+		zap.String("reason", reason),
+		zap.String("decision", string(ActionStaySilent)),
+	}
+	if obs.ID != "" {
+		fields = append(fields,
+			zap.String("observation_id", obs.ID),
+			zap.Time("observed_at", obs.CapturedAt),
+		)
+	}
+	r.log.Info("主动弹幕保持安静", fields...)
+}
+
+func silentResult(obs observation, reason string, usedReact bool) Result {
+	return Result{
+		Action:        ActionStaySilent,
+		Reason:        reason,
+		Visual:        obs.Visual,
+		React:         usedReact,
+		ObservationID: obs.ID,
+		ObservedAt:    obs.CapturedAt,
+	}
 }
