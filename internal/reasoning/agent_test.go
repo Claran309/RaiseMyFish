@@ -81,12 +81,22 @@ func newTestAgent(t *testing.T, llm LLM, opts Options, tools ...Tool) *Agent {
 	return agent
 }
 
-// TestSystemPromptDistinguishesWhoIsWho 防止「XX 是谁」被当成「你是谁」。
+// TestSystemPromptDistinguishesWhoIsWho 防止「XX 是谁」被一律当成观众或一律解释成自己。
 func TestSystemPromptDistinguishesWhoIsWho(t *testing.T) {
 	tool := &countingTool{name: ToolViewerSearch, out: "档案"}
 	agent := newTestAgent(t, &scriptedLLM{}, DefaultOptions(), tool.tool())
 	prompt := agent.systemPrompt(Input{System: "人设"})
-	for _, want := range []string{"「XX 是谁」是在问观众 XX", "viewer_search", "「你是谁」才是问你自己", "memory_search 的 args 传昵称或关键词"} {
+	for _, want := range []string{
+		"「XX 是谁」不一定是在问观众",
+		"current_event.question_subject",
+		"kind=room_candidate",
+		"kind=unresolved",
+		"viewer_search",
+		"「你是谁」才是问你自己",
+		"memory_search 的 args 传昵称或关键词",
+		"corrections",
+		"搜索状态：已完成（已联网）",
+	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("ReAct system prompt 缺少规则 %q：%s", want, prompt)
 		}

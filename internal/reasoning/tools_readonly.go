@@ -148,7 +148,7 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 	if d.ViewerSearch != nil {
 		tools = append(tools, Tool{
 			Name: ToolViewerSearch,
-			Desc: "查某个观众是谁（uid/昵称/别名/描述都行）；args 传名字或描述（问「XX是谁」就传 XX）",
+			Desc: "查某个观众是谁（uid/昵称/别名/描述都行）；只用于 current_event.question_subject.kind=room_candidate/speaker 的观众，args 传名字或描述",
 			Run: func(ctx context.Context, args string) (string, error) {
 				query := strings.TrimSpace(args)
 				if query == "" {
@@ -275,7 +275,7 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 
 	tools = append(tools, Tool{
 		Name: ToolWebSearch,
-		Desc: "联网查证一个事实；args 传查询词（≤100 字）",
+		Desc: "联网查证一个事实；args 传查询词（≤100 字）；结果会标注「搜索状态」",
 		Run: func(ctx context.Context, args string) (string, error) {
 			query := strings.TrimSpace(args)
 			if query == "" {
@@ -285,7 +285,7 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 				return "", fmt.Errorf("查询词不能超过100字")
 			}
 			if d.Search == nil {
-				return "未配置搜索源，无法联网查证", nil
+				return "搜索能力：未配置搜索源，本轮没有联网，无法查证；不要声称已联网，也不要把未配置说成「查无此事」。", nil
 			}
 			out, err := d.Search.Search(ctx, query)
 			if err != nil {
@@ -331,7 +331,7 @@ func resolveIdentitySubject(query, speakerUID string) (string, string) {
 func formatIdentityResult(result viewer.Result) string {
 	switch result.Status {
 	case viewer.StatusNotFound:
-		return "没有找到匹配的观众（可以老实说不认识）"
+		return "没有找到匹配的观众档案；这只表示档案里没有，不代表世上没这个人，也不要把外部人物/公众人物说成「查无此人」"
 	case viewer.StatusUnavailable:
 		return "观众档案检索暂时不可用（这不等于「没有这个人」，只能说暂时查不到）"
 	case viewer.StatusAmbiguous:

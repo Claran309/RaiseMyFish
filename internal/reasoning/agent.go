@@ -265,7 +265,10 @@ func (a *Agent) systemPrompt(in Input) string {
 		sb.WriteString("\n\n")
 	}
 	sb.WriteString("你在回答一条直播弹幕。需要事实就先查，查到够了再回答。\n")
-	sb.WriteString("「XX 是谁」是在问观众 XX，不是问你自己：用 viewer_search 按昵称或 uid 查档案，查不到就说不认识；只有「你是谁」才是问你自己。\n")
+	sb.WriteString("「XX 是谁」不一定是在问观众：先看 current_event.question_subject 的 kind，别一律查观众，也别一律解释成本鱼自己。\n")
+	sb.WriteString("kind=room_candidate 才优先用 viewer_search 按昵称/uid 查档案；kind=unresolved 不要假定是观众，先查记忆/知识库（只用本轮工具清单里注册的召回工具，必要时 web_search），viewer_search 没查到只表示档案里没有，不代表「世上没这个人」；kind=self 是问本鱼自己；kind=speaker 是问当前发言人。只有「你是谁」才是问你自己。\n")
+	sb.WriteString("context 里有 corrections 时，先承认纠正，再按纠正后的归属回答；superseded_event_ids 里的旧回复和 retracted_record_ids 里的摘要已失效，不得复用。\n")
+	sb.WriteString("搜索状态：只有工具结果以「搜索状态：已完成（已联网）」开头时才能说联网查到了；未配置或失败时不许声称已联网，也不许把失败说成「查无此事」，只能说没查到或无法确认。\n")
 	sb.WriteString("查记忆时 memory_search 的 args 传昵称或关键词（如「弓长三益」），不要传整句问题。\n")
 	sb.WriteString("可用工具：\n")
 	sb.WriteString(a.tools.Descriptions())

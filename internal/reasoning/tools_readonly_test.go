@@ -272,7 +272,7 @@ func TestViewerSearchOptionalTool(t *testing.T) {
 	}
 }
 
-// TestViewerSearchEmptyResult 没有命中时给明确文案。
+// TestViewerSearchEmptyResult 没有命中时给明确文案，但不能说成「世上没这个人」。
 func TestViewerSearchEmptyResult(t *testing.T) {
 	d := readonlyDeps()
 	d.ViewerSearch = &fakeViewerProfileSearch{result: viewer.Result{Status: viewer.StatusNotFound}}
@@ -281,8 +281,10 @@ func TestViewerSearchEmptyResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("执行失败：%v", err)
 	}
-	if got != "没有找到匹配的观众（可以老实说不认识）" {
-		t.Errorf("空结果文案 = %q", got)
+	for _, want := range []string{"没有找到匹配的观众档案", "不代表世上没这个人", "查无此人"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("空结果文案缺少 %q：%q", want, got)
+		}
 	}
 }
 

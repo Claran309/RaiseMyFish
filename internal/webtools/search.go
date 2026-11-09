@@ -38,6 +38,17 @@ const (
 	maxRedirects = 5
 )
 
+// 搜索状态文案：让模型能区分「没配置」「调用失败」「确实没结果」。
+//
+// 这三种状态都不能被讲成「查无此事」：未配置/失败只说明本轮拿不到证据，
+// 零结果也只说明搜索源没返回，不代表事实不存在。
+const (
+	searchStatusUnconfigured = "搜索能力：未配置搜索源，本轮没有联网，无法查证；不要声称已联网，也不要把未配置说成「查无此事」。"
+	searchStatusDone         = "搜索状态：已完成（已联网）。"
+	searchStatusNoResult     = "搜索状态：已完成（已联网），但没有搜到相关结果；这只表示搜索源没有返回结果，不代表事实不存在。"
+	searchStatusFailed       = "搜索状态：失败（已联网尝试但没有拿到结果；这不代表没有相关事实）"
+)
+
 // errCrossHostRedirect 表示搜索服务想把请求带到别的 host（含端口）去。
 //
 // O12：Go 的默认重定向只剥离 Authorization/Cookie 等，**不剥离自定义头**——
@@ -172,7 +183,7 @@ func (h *HTTP) Search(ctx context.Context, query string) (string, error) {
 		return "", errors.New("查询词不能为空")
 	}
 	if h == nil || h.url == "" {
-		return "未配置搜索源，无法联网查证", nil
+		return searchStatusUnconfigured, nil
 	}
 	var parsed searchResponse
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -183,7 +194,7 @@ func (h *HTTP) Search(ctx context.Context, query string) (string, error) {
 		}
 		// 只对瞬时失败重试一次；4xx/解析错误立刻返回，避免放大风控与浪费配额。
 		if attempt+1 >= maxAttempts || !retryable || ctx.Err() != nil {
-			return "", err
+			return "", fmt.Errorf("%s：%w", searchStatusFailed, err)
 		}
 	}
 	return formatResults(filterResults(parsed.Results, h.allowed)), nil
@@ -401,9 +412,9 @@ func formatResults(results []searchResult) string {
 		}
 	}
 	if n == 0 {
-		return "没有搜到相关结果"
+		return searchStatusNoResult
 	}
-	return clipRunes(b.String(), maxResultRunes)
+	return clipRunes(searchStatusDone+"\n"+b.String(), maxResultRunes)
 }
 
 func clipRunes(s string, max int) string {
