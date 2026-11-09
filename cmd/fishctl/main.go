@@ -62,13 +62,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if len(action) != 1 || (action[0] != "status" && action[0] != "tail") {
 		return errors.New("用法：fishctl [--config 路径] [--env-file 路径] status|tail|persona eval|memory list|search|stats|embed|freeze|unfreeze|gift send|knowledge embed|viewer embed|viewer search")
 	}
-	// status/tail 只读本机运行信息；live 配置缺失不直接报错。
-	cfg, err := config.LoadForCLI(*path, *envPath)
+	// status/tail 只读本机运行信息，各自按实际能力加载配置：
+	// tail 只认日志目录，status 只认数据库与状态文件；不校验采集/发送凭据。
+	if action[0] == "tail" {
+		cfg, err := config.LoadForTail(*path, *envPath)
+		if err != nil {
+			return err
+		}
+		return tail(ctx, cfg.Log.Dir, stdout, time.Now, 200*time.Millisecond)
+	}
+	cfg, err := config.LoadForStatus(*path, *envPath)
 	if err != nil {
 		return err
-	}
-	if action[0] == "tail" {
-		return tail(ctx, cfg.Log.Dir, stdout, time.Now, 200*time.Millisecond)
 	}
 	probe, cancel := context.WithTimeout(ctx, time.Duration(cfg.Database.TimeoutSeconds)*time.Second)
 	defer cancel()

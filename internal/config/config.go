@@ -142,6 +142,46 @@ func LoadForMigrate(path, envPath string) (Config, error) {
 	return cfg, nil
 }
 
+// LoadForWatchdog 供 fishwatchdog 加载配置：看门狗只读心跳并执行重启命令，
+// 不连接数据库、不采集或发送，因此只校验 [watchdog] 自身；
+// DB 与平台凭据缺失不能挡住监控进程（N17）。
+func LoadForWatchdog(path, envPath string) (Config, error) {
+	cfg, err := load(path, envPath)
+	if err != nil {
+		return cfg, err
+	}
+	if err := cfg.Watchdog.Validate(); err != nil {
+		return cfg, fmt.Errorf("校验看门狗配置：%w", err)
+	}
+	return cfg, nil
+}
+
+// LoadForStatus 供 fishctl status 加载配置：只校验它实际使用的数据库与状态文件，
+// 不校验采集/发送通道、LLM 与B站凭据；这些能力缺凭据不应挡住只读诊断。
+func LoadForStatus(path, envPath string) (Config, error) {
+	cfg, err := load(path, envPath)
+	if err != nil {
+		return cfg, err
+	}
+	if err := cfg.validateStatus(); err != nil {
+		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
+	}
+	return cfg, nil
+}
+
+// LoadForTail 供 fishctl tail 加载配置：只校验日志目录，
+// 不连接数据库，也不校验任何通道或凭据。
+func LoadForTail(path, envPath string) (Config, error) {
+	cfg, err := load(path, envPath)
+	if err != nil {
+		return cfg, err
+	}
+	if err := cfg.validateTail(); err != nil {
+		return cfg, fmt.Errorf("校验基础设施配置：%w", err)
+	}
+	return cfg, nil
+}
+
 func load(path, envPath string) (Config, error) {
 	cfg := Config{
 		Database:  Database{DSNEnv: "FISH_DB_DSN", TimeoutSeconds: 5},
@@ -368,6 +408,32 @@ func (c Config) validateMigration() error {
 	}
 	if strings.TrimSpace(c.Log.Dir) == "" || strings.TrimSpace(c.Runtime.StateFile) == "" {
 		return errors.New("日志目录和状态文件不能为空")
+	}
+	return nil
+}
+
+// validateStatus 是 fishctl status 的最小校验：只检查它实际读取的
+// 数据库与状态文件，不校验采集、发送、LLM 或B站凭据。
+func (c Config) validateStatus() error {
+	if strings.TrimSpace(c.Database.DSNEnv) == "" || strings.TrimSpace(c.Database.DSN) == "" {
+		return errors.New("数据库环境变量未配置")
+	}
+	if c.Database.TimeoutSeconds < 1 || c.Database.TimeoutSeconds > 60 {
+		return errors.New("数据库超时必须为1至60秒")
+	}
+	if strings.TrimSpace(c.Runtime.StateFile) == "" {
+		return errors.New("状态文件不能为空")
+	}
+	if c.Runtime.StaleSeconds < 1 || c.Runtime.StaleSeconds > 3600 {
+		return errors.New("状态过期阈值必须在1至3600秒之间")
+	}
+	return nil
+}
+
+// validateTail 是 fishctl tail 的最小校验：只检查日志目录。
+func (c Config) validateTail() error {
+	if strings.TrimSpace(c.Log.Dir) == "" {
+		return errors.New("日志目录不能为空")
 	}
 	return nil
 }

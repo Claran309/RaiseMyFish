@@ -43,7 +43,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	cfg, err := config.Load(*path, *envPath)
+	// 看门狗只关心 [watchdog]；不连库、不采集/发送，平台凭据缺失不能挡住监控。
+	cfg, err := config.LoadForWatchdog(*path, *envPath)
 	if err != nil {
 		return fmt.Errorf("加载配置失败：%w", err)
 	}

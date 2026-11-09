@@ -308,3 +308,23 @@ func TestRunRoutesGiftCommand(t *testing.T) {
 		t.Fatalf("gift 路由未生效：%v", err)
 	}
 }
+
+// TestGiftSendRealRequiresCredential N17：只放宽诊断命令，真实发送仍严格校验。
+func TestGiftSendRealRequiresCredential(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	t.Setenv("FISH_BILI_COOKIE", "")
+	t.Setenv("FISH_BILI_COOKIE_FILE", "")
+	path := writeGiftConfig(t, "[gift]\nenabled=true\nreal=true\n")
+	called := false
+	factory := func(config.Gift, string) (giftSender, error) {
+		called = true
+		return &fakeGiftSender{}, nil
+	}
+	err := runGiftWith(context.Background(), path, "", []string{"send", "--room", "99"}, io.Discard, io.Discard, factory)
+	if err == nil || !strings.Contains(err.Error(), "凭据") {
+		t.Fatalf("真实送礼缺凭据应拒绝：%v", err)
+	}
+	if called {
+		t.Fatal("配置校验失败时不应装配 sender")
+	}
+}

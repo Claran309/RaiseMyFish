@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/infra"
 )
 
@@ -176,5 +177,124 @@ func TestRunStatusReportsUnreachableDatabaseSafely(t *testing.T) {
 	var connectionFailure net.Error
 	if !errors.As(err, &connectionFailure) {
 		t.Fatal("连接失败原因未保留")
+	}
+}
+
+// n17CredentialHeavyConfig 启用所有需要B站凭据的能力，模拟「只在 DB 存账号」的部署。
+func n17CredentialHeavyConfig() string {
+	return `[llm]
+enabled=true
+
+[llm.providers.local]
+type='openai'
+base_url='http://127.0.0.1:18080/v1'
+models=['m']
+
+[llm.routing]
+default='local:m'
+
+[channels.live]
+enabled=true
+
+[collector.live]
+room_id='1'
+
+[channels.comment]
+enabled=true
+
+[collector.comment]
+enabled=true
+
+[channels.dm]
+enabled=true
+
+[collector.dm]
+enabled=true
+
+[sender.dm]
+enabled=true
+
+[watch]
+enabled=true
+
+[gift]
+enabled=true
+real=true
+`
+}
+
+// prepareN17Env 固定「环境无 cookie」且 LLM 指向假端点。
+func prepareN17Env(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"FISH_BILI_COOKIE", "FISH_BILI_COOKIE_FILE", "FISH_BILI_SELF_ID"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("FISH_BILI_ROOM_ID", "1")
+	t.Setenv("FISH_LLM_KEY", "")
+	t.Setenv("FISH_LLM_BASE_URL", "http://127.0.0.1:18080/v1")
+	t.Setenv("FISH_LLM_MODEL", "m")
+}
+
+// TestRunStatusWithDBOnlyAccountsAndNoCookies N17：status 不能被发送/采集凭据挡住。
+func TestRunStatusWithDBOnlyAccountsAndNoCookies(t *testing.T) {
+	prepareN17Env(t)
+	t.Setenv("FISH_DB_DSN", "postgres://fish:private-secret@127.0.0.1:1/fish?connect_timeout=1")
+	dir := t.TempDir()
+	state := filepath.ToSlash(filepath.Join(dir, "status.json"))
+	t.Setenv("FISH_STATE_FILE", state)
+	body := n17CredentialHeavyConfig() +
+		"[db]\ntimeout_seconds=1\n" +
+		"[runtime]\nstate_file='" + state + "'\n"
+	path := filepath.Join(dir, "fishd.toml")
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 同一份配置走完整加载会因缺少B站凭据被拒，证明场景成立。
+	if _, err := config.Load(path, ""); err == nil || !strings.Contains(err.Error(), "凭据") {
+		t.Fatalf("完整加载应因缺少B站凭据失败，实际 %v", err)
+	}
+
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"--config", path, "--env-file", "", "status"}, &out, io.Discard)
+	if err == nil {
+		t.Fatal("数据库不可达时应报错")
+	}
+	if strings.Contains(err.Error(), "凭据") {
+		t.Fatalf("status 被平台凭据挡住：%v", err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"database_ready":false`)) {
+		t.Fatalf("缺少数据库失败摘要：%s", out.String())
+	}
+}
+
+// TestRunTailWithDBOnlyAccountsAndNoCookies N17：tail 只需要日志目录，连库都不需要。
+func TestRunTailWithDBOnlyAccountsAndNoCookies(t *testing.T) {
+	prepareN17Env(t)
+	t.Setenv("FISH_DB_DSN", "")
+	dir := t.TempDir()
+	t.Setenv("FISH_LOG_DIR", dir)
+	body := n17CredentialHeavyConfig() + "[log]\ndir='" + filepath.ToSlash(dir) + "'\n"
+	path := filepath.Join(dir, "fishd.toml")
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fishd-"+time.Now().Format("2006-01-02")+".log"), []byte("one\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var got bytes.Buffer
+	w := writeFunc(func(p []byte) (int, error) {
+		n, err := got.Write(p)
+		cancel()
+		return n, err
+	})
+	if err := run(ctx, []string{"--config", path, "--env-file", "", "tail"}, w, io.Discard); err != nil {
+		t.Fatalf("只有 DB 账号、环境无 cookie 时 tail 应能启动：%v", err)
+	}
+	if got.String() != "one\n" {
+		t.Fatalf("日志输出错误：%q", got.String())
 	}
 }
