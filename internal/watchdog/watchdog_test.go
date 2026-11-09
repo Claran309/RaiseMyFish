@@ -199,6 +199,77 @@ func TestCooldownSuppressesRepeatedRestart(t *testing.T) {
 	}
 }
 
+// TestCanceledContextSkipsKillAndRestart 父 ctx 已取消时不能先杀旧进程、
+// 更不能启动新进程（否则看门狗退出会把服务留在停止状态）。
+func TestCanceledContextSkipsKillAndRestart(t *testing.T) {
+	h := newHarness(t)
+	h.write(t, h.clock.Add(-5*time.Minute), 4321)
+	dog := h.newDog(t, 1, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res := dog.Check(ctx)
+	if res.Restarted || res.Reason != "上下文已取消，跳过检查" {
+		t.Fatalf("已取消的上下文应跳过检查：%+v", res)
+	}
+	if h.kills != 0 || h.attempts != 0 {
+		t.Fatalf("已取消时不应杀进程或执行重启：kills=%d attempts=%d", h.kills, h.attempts)
+	}
+
+	if res := dog.Check(nil); res.Restarted {
+		t.Fatalf("nil 上下文不应触发重启：%+v", res)
+	}
+	if h.kills != 0 || h.attempts != 0 {
+		t.Fatalf("nil 上下文不应杀进程或执行重启：kills=%d attempts=%d", h.kills, h.attempts)
+	}
+}
+
+// TestCancelDuringCheckSkipsKillAndRestart 检查中途被取消时也不能杀旧进程：
+// 否则看门狗退出后旧实例已死、新实例又不会启动。
+func TestCancelDuringCheckSkipsKillAndRestart(t *testing.T) {
+	h := newHarness(t)
+	h.write(t, h.clock.Add(-5*time.Minute), 4321)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dog, err := New(Options{
+		HeartbeatPath:      h.path,
+		StaleAfter:         2 * time.Minute,
+		UnhealthyThreshold: 1,
+		Cooldown:           time.Minute,
+		RestartCommand:     "restart-fishd",
+		// inspect 之后、杀旧进程之前取消上下文。
+		Now: func() time.Time {
+			cancel()
+			return h.clock
+		},
+		PIDAlive: func(int) bool { return h.alive },
+		ProcessStart: func(int) (time.Time, bool) {
+			return h.procStart, true
+		},
+		Kill: func(int) error {
+			h.kills++
+			return nil
+		},
+		Restart: func(context.Context, string) error {
+			h.attempts++
+			return nil
+		},
+		Log: zap.NewNop(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := dog.Check(ctx)
+	if res.Restarted || res.Reason != "上下文已取消，跳过重启" {
+		t.Fatalf("检查中途取消应跳过重启：%+v", res)
+	}
+	if h.kills != 0 || h.attempts != 0 {
+		t.Fatalf("检查中途取消不应杀进程或执行重启：kills=%d attempts=%d", h.kills, h.attempts)
+	}
+}
+
 // TestRestartFailureKeepsCooldown 重启命令失败也进入冷却，避免每次检查都打命令。
 func TestRestartFailureKeepsCooldown(t *testing.T) {
 	h := newHarness(t)
@@ -308,6 +379,12 @@ func TestNewValidates(t *testing.T) {
 	}
 	if dog.opts.Kill == nil || dog.opts.Restart == nil || dog.opts.PIDAlive == nil {
 		t.Error("进程操作默认实现未注入")
+	}
+	if dog.opts.RestartMode != RestartModeServiceCommand {
+		t.Errorf("未指定模式时应按 service-command，实际 %q", dog.opts.RestartMode)
+	}
+	if _, err := New(Options{HeartbeatPath: "x", RestartMode: "bogus", Log: zap.NewNop()}); err == nil {
+		t.Error("非法重启模式应报错")
 	}
 }
 

@@ -65,6 +65,7 @@ real=true
 [watchdog]
 enabled=true
 restart_command='echo restart'
+restart_mode='service-command'
 `
 }
 

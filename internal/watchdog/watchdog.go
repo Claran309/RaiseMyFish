@@ -59,10 +59,14 @@ type Options struct {
 	Cooldown time.Duration
 	// RestartCommand 是重启命令（如 systemctl restart fishd，或直接启动常驻 fishd）。
 	RestartCommand string
+	// RestartMode 决定 restart_command 的语义（见 RestartMode 常量）。
+	// 空值按 service-command 处理；fishwatchdog 的配置要求显式填写。
+	RestartMode RestartMode
 	// HistoryPath 是重启历史 JSONL 文件；空表示不落盘。
 	HistoryPath string
 	// RestartTimeout 是重启动作的观察上限（默认 60s）。
-	// 短命管理命令在此之内返回；常驻进程超过后按启动成功脱离，不再等待或终止。
+	// service-command 必须在此之内退出，否则终止并回收、按失败处理；
+	// managed-child 必须在此之内写出新心跳，否则同样终止并回收。
 	RestartTimeout time.Duration
 	// Now 可注入时钟。
 	Now func() time.Time
@@ -134,16 +138,29 @@ func New(o Options) (*Watchdog, error) {
 	if o.ProcessStart == nil {
 		o.ProcessStart = ProcessStartTime
 	}
+	mode, err := ParseRestartMode(string(o.RestartMode))
+	if err != nil {
+		return nil, err
+	}
+	o.RestartMode = mode
 	if o.Restart == nil {
 		o.Restart = func(ctx context.Context, command string) error {
-			return runCommand(ctx, command, o.Log)
+			return runCommand(ctx, o.RestartMode, command, o.HeartbeatPath, o.Log)
 		}
 	}
 	return &Watchdog{opts: o}, nil
 }
 
 // Check 做一次检查；必要时先杀旧进程再重启。
+//
+// 父上下文已取消时直接跳过：不能先杀掉旧进程、再因取消而拉不起新进程。
 func (w *Watchdog) Check(ctx context.Context) CheckResult {
+	if ctx == nil {
+		return CheckResult{Reason: "上下文为空，跳过检查"}
+	}
+	if ctx.Err() != nil {
+		return CheckResult{Reason: "上下文已取消，跳过检查"}
+	}
 	verdict, pid, startedAt, reason := w.inspect()
 	if verdict == VerdictHealthy {
 		w.consecutive = 0
@@ -186,6 +203,12 @@ func (w *Watchdog) Check(ctx context.Context) CheckResult {
 			zap.String("verdict", string(verdict)),
 			zap.Int("pid", pid),
 		)
+		return res
+	}
+
+	// 检查期间可能已被取消：此时不要再杀旧进程，否则会留下一个没人拉起的新实例。
+	if ctx.Err() != nil {
+		res.Reason = "上下文已取消，跳过重启"
 		return res
 	}
 

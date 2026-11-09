@@ -33,6 +33,7 @@ stale_seconds = 90
 unhealthy_threshold = 3
 cooldown_seconds = 600
 restart_command = "systemctl restart fishd"
+restart_mode = "service-command"
 heartbeat_path = "state/custom.heartbeat"
 `
 	cfg, err := loadWithScheduler(t, body)
@@ -43,6 +44,21 @@ heartbeat_path = "state/custom.heartbeat"
 	if !w.Enabled || w.IntervalSeconds != 30 || w.StaleSeconds != 90 || w.UnhealthyThreshold != 3 ||
 		w.CooldownSeconds != 600 || w.RestartCommand != "systemctl restart fishd" || w.HeartbeatPath != "state/custom.heartbeat" {
 		t.Errorf("看门狗配置不符：%+v", w)
+	}
+	if w.RestartMode != "service-command" {
+		t.Errorf("重启模式未保留：%q", w.RestartMode)
+	}
+}
+
+// TestWatchdogAcceptsManagedChildMode 直接拉起常驻进程的配置必须能通过校验。
+func TestWatchdogAcceptsManagedChildMode(t *testing.T) {
+	body := "[watchdog]\nenabled=true\nrestart_command='bin/fishd'\nrestart_mode='managed-child'\n"
+	cfg, err := loadWithScheduler(t, body)
+	if err != nil {
+		t.Fatalf("managed-child 配置应通过校验：%v", err)
+	}
+	if cfg.Watchdog.RestartMode != "managed-child" {
+		t.Errorf("重启模式 = %q，期望 managed-child", cfg.Watchdog.RestartMode)
 	}
 }
 
@@ -63,6 +79,8 @@ func TestWatchdogRejectsInvalid(t *testing.T) {
 		{"心跳路径为空", "[watchdog]\nenabled=true\nrestart_command='x'\nheartbeat_path=''\n", "heartbeat_path"},
 		{"心跳路径控制字符", "[watchdog]\nenabled=true\nrestart_command='x'\nheartbeat_path=\"a\\nb\"\n", "控制字符"},
 		{"缺重启命令", "[watchdog]\nenabled=true\n", "restart_command"},
+		{"缺重启模式", "[watchdog]\nenabled=true\nrestart_command='x'\n", "restart_mode"},
+		{"非法重启模式", "[watchdog]\nenabled=true\nrestart_command='x'\nrestart_mode='bogus'\n", "restart_mode"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

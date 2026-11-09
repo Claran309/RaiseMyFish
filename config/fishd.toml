@@ -352,5 +352,8 @@ interval_seconds = 60        # 检查间隔
 stale_seconds = 120          # 心跳超过这个时间没更新 → 冻结
 unhealthy_threshold = 2      # 连续异常多少次才重启
 cooldown_seconds = 300       # 重启后冷却，防风暴
-restart_command = "bin/fishd.exe --env-file .env"         # 短命管理命令（systemctl/脚本）或直接启动常驻 fishd 均可
+restart_command = "bin/fishd.exe --env-file .env"
+# service-command：restart_command 是短命管理命令（systemctl/脚本），超时未退出即失败；
+# managed-child：restart_command 直接拉起常驻 fishd，必须等到该子进程写出的新心跳。
+restart_mode = "managed-child"
 heartbeat_path = "state/fishd.heartbeat"

@@ -71,13 +71,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		UnhealthyThreshold: w.UnhealthyThreshold,
 		Cooldown:           time.Duration(w.CooldownSeconds) * time.Second,
 		RestartCommand:     w.RestartCommand,
+		RestartMode:        watchdog.RestartMode(w.RestartMode),
 		Log:                log,
 	})
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "看门狗启动：心跳 %s，间隔 %ds，阈值 %d，冷却 %ds\n",
-		w.HeartbeatPath, w.IntervalSeconds, w.UnhealthyThreshold, w.CooldownSeconds)
+	fmt.Fprintf(stdout, "看门狗启动：心跳 %s，间隔 %ds，阈值 %d，冷却 %ds，模式 %s\n",
+		w.HeartbeatPath, w.IntervalSeconds, w.UnhealthyThreshold, w.CooldownSeconds, w.RestartMode)
 	return dog.Run(ctx)
 }
 

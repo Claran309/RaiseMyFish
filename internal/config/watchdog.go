@@ -18,6 +18,9 @@ type Watchdog struct {
 	CooldownSeconds int `toml:"cooldown_seconds"`
 	// RestartCommand 是重启命令（如 systemctl restart fishd，或直接启动常驻 fishd）。
 	RestartCommand string `toml:"restart_command"`
+	// RestartMode 是命令模式：service-command（短命管理命令，超时即失败）
+	// 或 managed-child（直接拉起常驻进程，以子进程写出的新心跳确认就绪）。
+	RestartMode string `toml:"restart_mode"`
 	// HeartbeatPath 是心跳文件路径（默认 state/fishd.heartbeat）。
 	HeartbeatPath string `toml:"heartbeat_path"`
 	// HistoryPath 是重启历史 JSONL（默认 state/watchdog-history.jsonl）。
@@ -64,6 +67,11 @@ func (w Watchdog) Validate() error {
 	}
 	if strings.TrimSpace(w.RestartCommand) == "" {
 		return errors.New("看门狗启用需要 restart_command")
+	}
+	// 模式必须显式选择：service-command 超时会终止命令，managed-child 要求新心跳；
+	// 选错模式会误杀直接拉起的常驻进程，因此不提供静默默认。
+	if w.RestartMode != "service-command" && w.RestartMode != "managed-child" {
+		return errors.New("看门狗启用需要 restart_mode（service-command 或 managed-child）")
 	}
 	return nil
 }

@@ -54,6 +54,7 @@ func TestRunStartsAndStopsOnCancel(t *testing.T) {
 		"unhealthy_threshold=2\n" +
 		"cooldown_seconds=300\n" +
 		"restart_command='echo restart'\n" +
+		"restart_mode='service-command'\n" +
 		"heartbeat_path='" + heartbeat + "'\n"
 	path := writeWatchdogConfig(t, body)
 
@@ -124,6 +125,7 @@ real=true
 [watchdog]
 enabled=true
 restart_command='echo restart'
+restart_mode='service-command'
 heartbeat_path='` + heartbeat + `'
 `
 	path := writeWatchdogConfig(t, body)

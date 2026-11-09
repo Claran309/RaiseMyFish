@@ -273,6 +273,17 @@ docker run -d --name fishd --restart unless-stopped --env-file deployment/.env \
 
 不要叠加多个守护者。`fishwatchdog` 依赖 `state/fishd.heartbeat` 与 `[watchdog].restart_command`，与 systemd/Compose 二选一。
 
+`[watchdog].restart_mode` 必须显式选择（启用时必填）；观察窗口默认 60 秒：
+
+| 模式 | 适用命令 | 成功判据 | 超时处理 |
+|---|---|---|---|
+| `service-command` | `systemctl restart fishd`、启动脚本等短命管理命令 | 命令在看门狗观察窗口内退出，退出码为 0 | 视为失败：终止该命令并 `Wait` 回收，进入冷却 |
+| `managed-child` | 直接启动常驻进程，如 `bin/fishd --env-file .env` | 观察窗口内出现**该子进程 pid** 写出的新心跳（不能沿用启动前的旧心跳） | 视为失败：终止该子进程并 `Wait` 回收，进入冷却 |
+
+- 不要把「后台包装脚本」配成 `managed-child`：包装脚本退出后，看门狗拿不到子进程 pid，心跳不会被认可。启动脚本请用 `service-command`。
+- 父上下文已取消时看门狗不会再启动新命令；`managed-child` 在观察期内被取消时不会杀死可能已经健康的服务。
+- 两种模式都不再把「到观察超时仍在运行」当作成功，避免挂死的 `systemctl`/启动脚本在冷却后反复累积进程与 `Wait` goroutine。
+
 ## 7. 日志与备份
 
 | 数据 | 位置（本机） | 位置（Compose） | 保留 |
