@@ -7,6 +7,8 @@ package database
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -368,5 +370,114 @@ func TestViewerIdentityTiersRealPostgres(t *testing.T) {
 	}
 	if got.Candidates[0].Profile.UID != "5007" || got.Candidates[0].Tier != viewer.TierNear {
 		t.Fatalf("近似档位不符：%+v", got.Candidates[0])
+	}
+}
+
+// TestViewerUnknownUIDUnifiedNotFoundRealPostgres B3/N04：真实仓储下陌生 UID 是 not_found。
+//
+// 关键回归：GetProfile 过去只返回 store.ErrNotFound，而检索层识别的是
+// 独立的 ErrViewerNotFound，导致新观众精确 UID 未命中被包成工具错误。
+func TestViewerUnknownUIDUnifiedNotFoundRealPostgres(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	repo, err := NewViewerRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = repo.GetProfile(ctx, "999999")
+	if err == nil {
+		t.Fatal("未建档 UID 应返回错误")
+	}
+	if !errors.Is(err, store.ErrViewerNotFound) {
+		t.Errorf("仓储应返回 ErrViewerNotFound：%v", err)
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("同时应满足通用 ErrNotFound 契约：%v", err)
+	}
+
+	searcher, err := viewer.NewSearcher(repo, nil, viewer.SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := searcher.Find(ctx, "999999", 5)
+	if err != nil {
+		t.Fatalf("陌生 UID 查询不能变成错误：%v", err)
+	}
+	if got.Status != viewer.StatusNotFound || len(got.Candidates) != 0 {
+		t.Fatalf("陌生 UID 应为 not_found：%+v", got)
+	}
+}
+
+// TestViewerAliasFileInjectionRealPostgres B3/N04：真实仓储 + 别名文件，生产注入生效。
+func TestViewerAliasFileInjectionRealPostgres(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	repo, err := NewViewerRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	for _, profile := range []store.ViewerProfile{
+		{UID: "5105", Name: "弓长三益", Hits: 6, LastSeen: seen, RecentTexts: []string{"今晚也在"}},
+		{UID: "5106", Name: "真得", Hits: 4, LastSeen: seen, RecentTexts: []string{"打错了很正常"}},
+	} {
+		if err := repo.UpsertProfile(ctx, profile); err != nil {
+			t.Fatalf("写入档案 %s 失败：%v", profile.UID, err)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "viewer_aliases.yaml")
+	doc := `schema: fish-viewer-aliases/v1
+aliases:
+  - alias: 长弓三溢
+    uid: "5105"
+    status: confirmed
+  - alias: 长弓三亿
+    uid: "5105"
+    status: candidate
+phonetic_groups:
+  - words: ["贞德", "真得"]
+    status: confirmed
+`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatalf("写入别名文件失败：%v", err)
+	}
+	aliasFile, err := viewer.NewAliasFile(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	searcher, err := viewer.NewSearcher(repo, nil, viewer.SearchOptions{AliasSource: aliasFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := searcher.Find(ctx, "长弓三溢", 5)
+	if err != nil {
+		t.Fatalf("别名查询失败：%v", err)
+	}
+	if got.Status != viewer.StatusFound || len(got.Candidates) == 0 {
+		t.Fatalf("confirmed 别名应命中：%+v", got)
+	}
+	if got.Candidates[0].Profile.UID != "5105" || got.Candidates[0].Tier != viewer.TierAlias {
+		t.Fatalf("别名档位不符：%+v", got.Candidates[0])
+	}
+
+	got, err = searcher.Find(ctx, "长弓三亿", 5)
+	if err != nil {
+		t.Fatalf("候选别名查询失败：%v", err)
+	}
+	if got.Status != viewer.StatusNotFound {
+		t.Fatalf("candidate 别名不应生效：%+v", got)
+	}
+
+	got, err = searcher.Find(ctx, "贞德", 5)
+	if err != nil {
+		t.Fatalf("同音查询失败：%v", err)
+	}
+	if got.Status != viewer.StatusFound || len(got.Candidates) == 0 {
+		t.Fatalf("同音组应命中：%+v", got)
+	}
+	if got.Candidates[0].Profile.UID != "5106" || got.Candidates[0].Tier != viewer.TierNear ||
+		got.Candidates[0].Reason != "phonetic" {
+		t.Fatalf("同音档位不符：%+v", got.Candidates[0])
 	}
 }

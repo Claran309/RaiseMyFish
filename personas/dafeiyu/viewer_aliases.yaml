@@ -1,0 +1,25 @@
+# 观众别名与同音组（人工维护）。
+#
+# 来源：本文件随仓库发布，生产由 [viewer] alias_file 指向；
+# 确认状态：candidate 待确认（只留档）、confirmed 生效、rejected 负例（抑制该别名指向此人）；
+# 热更新：fishd 每次认人前比对文件 mtime/大小，改动无需重启；解析失败保留旧快照。
+# 格式说明见 docs/viewer-aliases.md。
+schema: fish-viewer-aliases/v1
+
+# 别名：alias 必须带 uid 或 name 之一（不能同时填）。
+# 同一别名可以指向多个人（会保留多候选，不自动合并）。
+aliases: []
+# 示例：
+# aliases:
+#   - alias: "长弓三溢"
+#     uid: "5005"
+#     kind: typo          # manual/nickname/historical/typo/phonetic
+#     status: confirmed
+
+# 同音组：只用于扩大 TierNear 候选（reason=phonetic），不产生别名档。
+# 组内至少 2 个词；只有 confirmed 组参与扩展。
+phonetic_groups: []
+# 示例：
+# phonetic_groups:
+#   - words: ["贞德", "真得"]
+#     status: confirmed

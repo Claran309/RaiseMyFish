@@ -13,10 +13,16 @@ type Viewer struct {
 	RecentReplies int `toml:"recent_replies"`
 	// RebuildIntervalSeconds 是重建节流间隔（默认 1 小时）。
 	RebuildIntervalSeconds int `toml:"rebuild_interval_seconds"`
+	// AliasFile 是人工维护的观众别名/同音组 YAML；文件变更在下次查询时生效。
+	// 空串表示不加载别名表（仍保留昵称/编辑距离/语义识别）。
+	AliasFile string `toml:"alias_file" json:"-"`
 }
 
 func defaultViewer() Viewer {
-	return Viewer{Enabled: true, MinHits: 2, RecentTexts: 15, RecentReplies: 10, RebuildIntervalSeconds: 3600}
+	return Viewer{
+		Enabled: true, MinHits: 2, RecentTexts: 15, RecentReplies: 10, RebuildIntervalSeconds: 3600,
+		AliasFile: "personas/dafeiyu/viewer_aliases.yaml",
+	}
 }
 
 // Validate 只检查区间；不检查库表是否存在。

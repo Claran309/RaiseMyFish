@@ -162,17 +162,8 @@ type namePoolSource interface {
 	TopViewers(ctx context.Context, limit int) ([]store.ViewerProfile, error)
 }
 
-// Alias 是一条人工维护的别名：同一个人可以被多个写法指向。
-//
-// 同一个别名可以对应多个人（不强制唯一），此时会保留多候选而不是二选一。
-type Alias struct {
-	// Alias 是别名原文（如「弓长三溢」「长弓三亿」）。
-	Alias string
-	// UID 非空时按 UID 归属；为空时按 Name 归属。
-	UID string
-	// Name 是归属人的当前昵称（UID 为空时使用）。
-	Name string
-}
+// Alias 与 AliasStatus 的定义见 aliases.go：别名必须带确认状态，
+// 只有 confirmed 参与认人；rejected 作为负例抑制同一别名指向。
 
 // SearchOptions 控制语义权重、阈值与身份扩展。
 type SearchOptions struct {
@@ -182,11 +173,13 @@ type SearchOptions struct {
 	MinSimilarity float64
 	// AmbiguityGap 是同档候选的定人分差；<=0 用默认值 defaultAmbiguityGap。
 	AmbiguityGap float64
-	// Aliases 是人工别名表（可空）。
+	// Aliases 是静态人工别名表（可空）；AliasSource 非 nil 时以它为准。
 	Aliases []Alias
-	// Phonetic 是可选的拼音扩展钩子：输入一个词，返回同音候选词。
-	// 为 nil 时只用编辑距离与子串近似（不引入拼音字典依赖）。
+	// Phonetic 是可选的静态拼音扩展钩子：输入一个词，返回同音候选词。
+	// AliasSource 非 nil 时以它的同音快照为准；两者都没有时只用编辑距离与子串近似。
 	Phonetic func(string) []string
+	// AliasSource 提供可热更新的别名/同音快照（生产传 AliasFile）。
+	AliasSource AliasSource
 	// MaxNameScan 是昵称池扫描上限；<=0 用默认值 defaultNameScan。
 	MaxNameScan int
 }
@@ -201,6 +194,7 @@ type Searcher struct {
 	ambiguityGap    float64
 	aliases         []Alias
 	phonetic        func(string) []string
+	aliasSource     AliasSource
 	maxNameScan     int
 }
 
@@ -236,6 +230,7 @@ func NewSearcher(source ProfileSource, embedder Embedder, opts SearchOptions) (*
 		ambiguityGap:    gap,
 		aliases:         opts.Aliases,
 		phonetic:        opts.Phonetic,
+		aliasSource:     opts.AliasSource,
 		maxNameScan:     scan,
 	}, nil
 }
@@ -278,6 +273,8 @@ func (s *Searcher) Find(ctx context.Context, query string, limit int) (Result, e
 	}
 
 	// 1) UID 精确：平台身份是最强证据，命中即定人，不再扩散候选。
+	// 未命中按「没找到」继续走词法：仓储统一返回 store.ErrViewerNotFound（包装 ErrNotFound），
+	// 两者都必须识别，不能把陌生 UID 变成工具错误。
 	if uid, ok := parseUID(text); ok {
 		profile, err := s.profileByUID(ctx, uid)
 		if err == nil {
@@ -287,13 +284,15 @@ func (s *Searcher) Find(ctx context.Context, query string, limit int) (Result, e
 				Reason:     "uid_exact",
 			}, nil
 		}
-		if !errors.Is(err, store.ErrViewerNotFound) && !errors.Is(err, store.ErrInvalid) {
+		if !isViewerNotFound(err) && !errors.Is(err, store.ErrInvalid) {
 			return Result{}, err
 		}
 	}
 
-	// 2) 词法身份解析（含别名与近似）。
-	candidates, err := s.lexicalCandidates(ctx, text, limit)
+	// 2) 词法身份解析（含别名与近似）。别名快照每次 Find 取一次，
+	// 热更新在两次查询之间生效，本轮内保持一致。
+	aliases := s.aliasIndex()
+	candidates, err := s.lexicalCandidates(ctx, text, limit, aliases)
 	if err != nil {
 		return Result{}, err
 	}
@@ -368,6 +367,33 @@ func (s *Searcher) profileByUID(ctx context.Context, uid string) (store.ViewerPr
 	return source.GetProfile(ctx, uid)
 }
 
+// isViewerNotFound 判断仓储是否表达「没有这个档案」。
+//
+// 生产仓储返回 ErrViewerNotFound（包装 ErrNotFound）；其他 ViewerRepo 实现
+// 按 store 契约返回 ErrNotFound 也必须识别。
+func isViewerNotFound(err error) bool {
+	return errors.Is(err, store.ErrViewerNotFound) || errors.Is(err, store.ErrNotFound)
+}
+
+// aliasIndex 返回本次认人要用的别名/同音快照。
+//
+// 生产走 AliasSource（文件热更新）；测试或调用方仍可直接传静态表/钩子。
+func (s *Searcher) aliasIndex() AliasIndex {
+	if s.aliasSource != nil {
+		return s.aliasSource.AliasIndex()
+	}
+	idx := AliasIndex{Phonetic: s.phonetic}
+	for _, a := range s.aliases {
+		switch a.Status {
+		case "", AliasConfirmed:
+			idx.Confirmed = append(idx.Confirmed, a)
+		case AliasRejected:
+			idx.Rejected = append(idx.Rejected, a)
+		}
+	}
+	return idx
+}
+
 // namePool 取活跃档案池；没有实现时返回 nil（跳过全量近似扫描）。
 //
 // 查询失败必须上抛：昵称池读不出来时，近似匹配就没有可信依据，
@@ -385,7 +411,7 @@ func (s *Searcher) namePool(ctx context.Context) ([]store.ViewerProfile, error) 
 }
 
 // lexicalCandidates 汇总词法与身份候选，按 uid 去重并保留最高档位。
-func (s *Searcher) lexicalCandidates(ctx context.Context, text string, limit int) (map[string]*Candidate, error) {
+func (s *Searcher) lexicalCandidates(ctx context.Context, text string, limit int, aliases AliasIndex) (map[string]*Candidate, error) {
 	candidates := make(map[string]*Candidate)
 	keys := keywordCandidates(text)
 	keys = append(keys, decorationVariants(text)...)
@@ -402,7 +428,7 @@ func (s *Searcher) lexicalCandidates(ctx context.Context, text string, limit int
 				if strings.TrimSpace(h.Profile.UID) == "" {
 					continue
 				}
-				tier, reason := s.identityTier(h.Profile, key, true)
+				tier, reason := s.identityTier(h.Profile, key, true, aliases)
 				consider(candidates, h, tier, reason)
 			}
 		}
@@ -422,7 +448,7 @@ func (s *Searcher) lexicalCandidates(ctx context.Context, text string, limit int
 		// keys 里的每个写法都可能是身份指代，取最高档位。
 		tier, reason := TierSemantic, ""
 		for _, key := range keys {
-			if t, r := s.identityTier(p, key, false); t > tier {
+			if t, r := s.identityTier(p, key, false, aliases); t > tier {
 				tier, reason = t, r
 			}
 		}
@@ -442,7 +468,7 @@ func (s *Searcher) lexicalCandidates(ctx context.Context, text string, limit int
 //
 // contentFallback=true 表示这条记录来自 SQL 关键词命中（至少要算内容档）；
 // false 表示来自昵称池扫描，没有理由就不要。
-func (s *Searcher) identityTier(p store.ViewerProfile, key string, contentFallback bool) (Tier, string) {
+func (s *Searcher) identityTier(p store.ViewerProfile, key string, contentFallback bool, aliases AliasIndex) (Tier, string) {
 	normKey := normalizeIdentity(key)
 	name := normalizeIdentity(p.Name)
 
@@ -450,13 +476,21 @@ func (s *Searcher) identityTier(p store.ViewerProfile, key string, contentFallba
 		if name != "" && name == normKey {
 			return TierName, "name_exact"
 		}
-		if s.aliasMatches(p, normKey) {
+		// 人工拒绝的「别名→此人」不再产生别名/近似/同音候选；
+		// 当前昵称精确命中仍然有效（那是本人现在的名字，不是猜测的关联）。
+		if rejectedPair(p, normKey, aliases.Rejected) {
+			if contentFallback {
+				return TierContent, "content"
+			}
+			return TierSemantic, ""
+		}
+		if aliasMatches(p, normKey, aliases.Confirmed) {
 			return TierAlias, "alias_exact"
 		}
 		if nearName(name, normKey) {
 			return TierNear, "near_name"
 		}
-		if s.phoneticMatches(p.Name, key) {
+		if phoneticMatches(p.Name, key, aliases) {
 			return TierNear, "phonetic"
 		}
 	}
@@ -468,10 +502,10 @@ func (s *Searcher) identityTier(p store.ViewerProfile, key string, contentFallba
 	return TierSemantic, ""
 }
 
-// aliasMatches 判断查询词是否是这条档案的别名。
-func (s *Searcher) aliasMatches(p store.ViewerProfile, normKey string) bool {
-	for _, a := range s.aliases {
-		if normalizeIdentity(a.Alias) != normKey || normKey == "" {
+// aliasMatches 判断查询词是否是这条档案的已确认别名。
+func aliasMatches(p store.ViewerProfile, normKey string, confirmed []Alias) bool {
+	for _, a := range confirmed {
+		if normKey == "" || normalizeIdentity(a.Alias) != normKey {
 			continue
 		}
 		if a.UID != "" && a.UID == p.UID {
@@ -484,13 +518,29 @@ func (s *Searcher) aliasMatches(p store.ViewerProfile, normKey string) bool {
 	return false
 }
 
-// phoneticMatches 走可选的拼音钩子；没有配置就明确不命中。
-func (s *Searcher) phoneticMatches(name, key string) bool {
-	if s.phonetic == nil {
+// rejectedPair 判断「查询词→这条档案」是否被人工拒绝过（负例）。
+func rejectedPair(p store.ViewerProfile, normKey string, rejected []Alias) bool {
+	for _, a := range rejected {
+		if normKey == "" || normalizeIdentity(a.Alias) != normKey {
+			continue
+		}
+		if a.UID != "" && a.UID == p.UID {
+			return true
+		}
+		if a.UID == "" && normalizeIdentity(a.Name) == normalizeIdentity(p.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// phoneticMatches 走同音组快照；没有数据就明确不命中。
+func phoneticMatches(name, key string, aliases AliasIndex) bool {
+	if aliases.Phonetic == nil {
 		return false
 	}
 	normName := normalizeIdentity(name)
-	for _, variant := range s.phonetic(key) {
+	for _, variant := range aliases.Phonetic(key) {
 		if v := normalizeIdentity(variant); v != "" && v == normName {
 			return true
 		}

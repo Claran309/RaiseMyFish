@@ -153,14 +153,31 @@ func buildToolbox(ctx context.Context, cfg config.Config, db *gorm.DB, log *zap.
 		if err != nil {
 			log.Warn("观众档案仓储装配失败，viewer_search 不注册",
 				zap.String("action", "mcp_viewer"), zap.Error(err))
-		} else if searcher, err := viewer.NewSearcher(repo, nil, viewer.SearchOptions{
-			Alpha:         cfg.Embedding.Alpha,
-			MinSimilarity: cfg.Embedding.MinSimilarity,
-		}); err != nil {
-			log.Warn("观众档案检索装配失败，viewer_search 不注册",
-				zap.String("action", "mcp_viewer"), zap.Error(err))
 		} else {
-			viewerSearch = searcher
+			var aliasSource viewer.AliasSource
+			if path := strings.TrimSpace(cfg.Viewer.AliasFile); path != "" {
+				source, aliasErr := viewer.NewAliasFile(path, func(err error) {
+					log.Warn("观众别名文件重载失败，继续使用旧快照",
+						zap.String("action", "mcp_viewer_alias"), zap.Error(err))
+				})
+				if aliasErr != nil {
+					log.Warn("观众别名文件未启用",
+						zap.String("action", "mcp_viewer_alias"), zap.Error(aliasErr))
+				} else {
+					aliasSource = source
+				}
+			}
+			searcher, err := viewer.NewSearcher(repo, nil, viewer.SearchOptions{
+				Alpha:         cfg.Embedding.Alpha,
+				MinSimilarity: cfg.Embedding.MinSimilarity,
+				AliasSource:   aliasSource,
+			})
+			if err != nil {
+				log.Warn("观众档案检索装配失败，viewer_search 不注册",
+					zap.String("action", "mcp_viewer"), zap.Error(err))
+			} else {
+				viewerSearch = searcher
+			}
 		}
 	}
 

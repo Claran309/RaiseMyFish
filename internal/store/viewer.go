@@ -7,7 +7,7 @@ package store
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -47,7 +47,7 @@ func (p ViewerProfile) Validate() error {
 type ViewerRepo interface {
 	// UpsertProfile 写入或更新一份档案（按 uid 覆盖）。
 	UpsertProfile(ctx context.Context, p ViewerProfile) error
-	// GetProfile 按 uid 读档案；不存在返回 ErrNotFound。
+	// GetProfile 按 uid 读档案；不存在返回 ErrViewerNotFound。
 	GetProfile(ctx context.Context, uid string) (ViewerProfile, error)
 	// TopViewers 按 hits 倒序取前 limit 个档案。
 	TopViewers(ctx context.Context, limit int) ([]ViewerProfile, error)
@@ -72,5 +72,9 @@ type ViewerRebuildStats struct {
 	Profiles int
 }
 
-// ErrViewerNotFound 用统一错误表达「没有这个档案」（陌生人）。
-var ErrViewerNotFound = errors.New("观众档案不存在")
+// ErrViewerNotFound 是观众档案统一的「不存在」错误（陌生人）。
+//
+// 它包装 ErrNotFound：按观众语义判断走 ErrViewerNotFound，
+// 按通用存储语义判断走 ErrNotFound，两者 errors.Is 都成立——
+// 不允许再出现「仓储返回一个、检索层识别另一个」的分裂契约。
+var ErrViewerNotFound = fmt.Errorf("观众档案不存在: %w", ErrNotFound)

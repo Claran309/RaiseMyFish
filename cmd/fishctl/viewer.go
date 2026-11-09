@@ -115,12 +115,24 @@ func runViewer(ctx context.Context, configPath, envPath string, args []string, o
 		if client != nil {
 			embedder = client
 		}
+		var aliasSource viewer.AliasSource
+		if path := strings.TrimSpace(cfg.Viewer.AliasFile); path != "" {
+			source, aliasErr := viewer.NewAliasFile(path, func(err error) {
+				fmt.Fprintf(stderr, "viewer search: 别名文件重载失败，继续使用旧快照：%v\n", err)
+			})
+			if aliasErr != nil {
+				fmt.Fprintf(stderr, "viewer search: 别名文件未启用：%v\n", aliasErr)
+			} else {
+				aliasSource = source
+			}
+		}
 		searcher, err := viewer.NewSearcher(repo, embedder, viewer.SearchOptions{
 			Alpha:         cfg.Embedding.Alpha,
 			MinSimilarity: cfg.Embedding.MinSimilarity,
 			OnSemanticError: func(err error) {
 				fmt.Fprintf(stderr, "viewer search: 语义检索不可用，已降级为关键词：%v\n", err)
 			},
+			AliasSource: aliasSource,
 		})
 		if err != nil {
 			return err

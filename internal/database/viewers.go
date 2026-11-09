@@ -92,7 +92,8 @@ ON CONFLICT (uid) DO UPDATE SET
 	return nil
 }
 
-// GetProfile 按 uid 读档案；陌生人返回 store.ErrNotFound。
+// GetProfile 按 uid 读档案；陌生人返回 store.ErrViewerNotFound
+// （errors.Is 同时匹配 store.ErrNotFound）。
 func (r *ViewerRepo) GetProfile(ctx context.Context, uid string) (store.ViewerProfile, error) {
 	if ctx == nil || strings.TrimSpace(uid) == "" {
 		return store.ViewerProfile{}, store.ErrInvalid
@@ -100,7 +101,7 @@ func (r *ViewerRepo) GetProfile(ctx context.Context, uid string) (store.ViewerPr
 	var row viewerRow
 	err := r.db.WithContext(ctx).Table("viewer_profiles").Where("uid = ?", uid).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return store.ViewerProfile{}, store.ErrNotFound
+		return store.ViewerProfile{}, store.ErrViewerNotFound
 	}
 	if err != nil {
 		return store.ViewerProfile{}, &safeError{"读取观众档案失败", err}

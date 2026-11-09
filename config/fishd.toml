@@ -324,6 +324,9 @@ min_hits = 2
 recent_texts = 15
 recent_replies = 10
 rebuild_interval_seconds = 3600
+# 人工维护的观众别名/同音组（YAML）；文件一改，下次查询即生效，无需重启。
+# 只有 status=confirmed 的条目参与认人；格式见 docs/viewer-aliases.md。
+alias_file = "personas/dafeiyu/viewer_aliases.yaml"
 
 # 私信通道（P1）：采集所有会话，不按白名单过滤；
 # 轮询私信会话 → 按 msg_id 去重 → 写事件（channel=dm、session=对方 mid）

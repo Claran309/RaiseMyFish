@@ -455,13 +455,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 		if embedClient != nil {
 			embedder = embedClient
 		}
-		searcher, err := viewer.NewSearcher(viewerStore, embedder, viewer.SearchOptions{
-			Alpha:         cfg.Embedding.Alpha,
-			MinSimilarity: cfg.Embedding.MinSimilarity,
-			OnSemanticError: func(err error) {
-				log.Warn("档案语义检索降级为关键词", zap.String("action", "viewer_semantic"), zap.Error(err))
-			},
-		})
+		searcher, err := buildViewerSearcher(cfg, viewerStore, embedder, log)
 		if err != nil {
 			log.Warn("档案检索装配失败，viewer_search 不注册", zap.String("action", "viewer_semantic"), zap.Error(err))
 		} else {
