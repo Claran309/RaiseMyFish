@@ -23,6 +23,10 @@ type fakeStore struct {
 	updateErr  error
 	updates    []checkUpdate
 	upsertCall int
+	// strictContext 为 true 时，SetActive/UpdateCheck 像真实驱动一样拒绝已过期 ctx。
+	// 用于证明验证失败后的记账使用的是独立有界 cleanup ctx。
+	strictContext bool
+	expiredCalls  []string
 }
 
 type checkUpdate struct {
@@ -101,7 +105,10 @@ func (f *fakeStore) Upsert(_ context.Context, a Account) (Account, error) {
 	return a, nil
 }
 
-func (f *fakeStore) SetActive(_ context.Context, id string) error {
+func (f *fakeStore) SetActive(ctx context.Context, id string) error {
+	if f.rejectExpired(ctx, "SetActive") {
+		return ctx.Err()
+	}
 	target, ok := f.accounts[id]
 	if !ok {
 		return ErrNotFound
@@ -112,14 +119,6 @@ func (f *fakeStore) SetActive(_ context.Context, id string) error {
 	}
 	target.IsActive = true
 	f.accounts[id] = target
-	return nil
-}
-
-func (f *fakeStore) ClearActive(_ context.Context) error {
-	for key, item := range f.accounts {
-		item.IsActive = false
-		f.accounts[key] = item
-	}
 	return nil
 }
 
@@ -136,7 +135,10 @@ func (f *fakeStore) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *fakeStore) UpdateCheck(_ context.Context, id, name, status string, at time.Time) error {
+func (f *fakeStore) UpdateCheck(ctx context.Context, id, name, status string, at time.Time) error {
+	if f.rejectExpired(ctx, "UpdateCheck") {
+		return ctx.Err()
+	}
 	if f.updateErr != nil {
 		return f.updateErr
 	}
@@ -150,6 +152,15 @@ func (f *fakeStore) UpdateCheck(_ context.Context, id, name, status string, at t
 	item.LastCheck = at
 	f.accounts[id] = item
 	return nil
+}
+
+// rejectExpired 模拟真实驱动对已取消/超时 ctx 的处理，并记录违规调用。
+func (f *fakeStore) rejectExpired(ctx context.Context, op string) bool {
+	if !f.strictContext || ctx == nil || ctx.Err() == nil {
+		return false
+	}
+	f.expiredCalls = append(f.expiredCalls, op)
+	return true
 }
 
 type fakeVerifier struct {
@@ -399,6 +410,11 @@ func TestActivateWaitsForInflightAndBlocksAdmission(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("切换未进入身份验证阶段")
 	}
+	// 先验证后提交：Verify 阻塞期间活跃账号必须仍是旧号。
+	active, ok, err := svc.Active(context.Background())
+	if err != nil || !ok || active.ID != "account-1" {
+		t.Fatalf("验证期间活跃账号被提前改写：%+v %v %v", active, ok, err)
+	}
 	select {
 	case <-blocked:
 		t.Fatal("验证未结束就放行了新准入")
@@ -417,7 +433,7 @@ func TestActivateWaitsForInflightAndBlocksAdmission(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("切换结束后新准入未被唤醒")
 	}
-	active, ok, err := svc.Active(context.Background())
+	active, ok, err = svc.Active(context.Background())
 	if err != nil || !ok || active.ID != "account-2" {
 		t.Fatalf("活跃账号不符：%+v %v %v", active, ok, err)
 	}
@@ -447,12 +463,14 @@ func TestActivateRejectsConcurrentSwitch(t *testing.T) {
 	}
 }
 
-// TestActivateVerifyFailureRollsBack 身份不一致/验证失败时回滚旧活跃账号。
-func TestActivateVerifyFailureRollsBack(t *testing.T) {
+// TestActivateVerifyFailureKeepsActive 身份不一致/验证失败时活跃账号保持不变。
+// 先验证后提交：失败路径从未写过活跃标志，因此不需要回滚，也不存在回滚失败。
+func TestActivateVerifyFailureKeepsActive(t *testing.T) {
 	t.Run("mismatch", func(t *testing.T) {
 		first := Account{ID: "account-1", MID: "1", Name: "一号", Cookie: dbCookie, Status: StatusActive, IsActive: true}
 		second := Account{ID: "account-2", MID: "2", Name: "二号", Cookie: dbCookie, Status: StatusActive}
 		store := newFakeStore(first, second)
+		store.strictContext = true
 		svc := newTestService(t, store, &fakeVerifier{info: Identity{MID: "99", Name: "别人"}}, "")
 
 		if err := svc.Activate(context.Background(), "account-2"); !errors.Is(err, ErrVerify) {
@@ -460,7 +478,10 @@ func TestActivateVerifyFailureRollsBack(t *testing.T) {
 		}
 		active, ok, err := svc.Active(context.Background())
 		if err != nil || !ok || active.ID != "account-1" {
-			t.Fatalf("应回滚到原活跃账号：%+v %v %v", active, ok, err)
+			t.Fatalf("活跃账号应保持原样：%+v %v %v", active, ok, err)
+		}
+		if store.accounts["account-2"].IsActive {
+			t.Errorf("验证失败的目标不应成为活跃账号：%+v", store.accounts["account-2"])
 		}
 		if store.accounts["account-2"].Status != StatusActive {
 			t.Errorf("非认证错误不应标记 invalid：%+v", store.accounts["account-2"])
@@ -475,6 +496,7 @@ func TestActivateVerifyFailureRollsBack(t *testing.T) {
 		first := Account{ID: "account-1", MID: "1", Name: "一号", Cookie: dbCookie, Status: StatusActive, IsActive: true}
 		second := Account{ID: "account-2", MID: "2", Name: "二号", Cookie: dbCookie, Status: StatusActive}
 		store := newFakeStore(first, second)
+		store.strictContext = true
 		svc := newTestService(t, store, &fakeVerifier{err: bili.ErrNotLoggedIn}, "")
 
 		if err := svc.Activate(context.Background(), "account-2"); !errors.Is(err, ErrVerify) {
@@ -482,15 +504,16 @@ func TestActivateVerifyFailureRollsBack(t *testing.T) {
 		}
 		active, ok, _ := svc.Active(context.Background())
 		if !ok || active.ID != "account-1" {
-			t.Fatalf("应回滚到原活跃账号：%+v %v", active, ok)
+			t.Fatalf("活跃账号应保持原样：%+v %v", active, ok)
 		}
 		if store.accounts["account-2"].Status != StatusInvalid {
 			t.Errorf("认证失败应标记 invalid：%+v", store.accounts["account-2"])
 		}
 	})
-	t.Run("no_previous_clears_active", func(t *testing.T) {
+	t.Run("no_previous_keeps_none", func(t *testing.T) {
 		target := Account{ID: "account-2", MID: "2", Name: "二号", Cookie: dbCookie, Status: StatusActive}
 		store := newFakeStore(target)
+		store.strictContext = true
 		svc := newTestService(t, store, &fakeVerifier{err: bili.ErrNotLoggedIn}, "")
 
 		if err := svc.Activate(context.Background(), "account-2"); !errors.Is(err, ErrVerify) {
@@ -498,9 +521,117 @@ func TestActivateVerifyFailureRollsBack(t *testing.T) {
 		}
 		active, ok, err := svc.Active(context.Background())
 		if err != nil || ok || active.ID != "" {
-			t.Fatalf("原本没有活跃账号时应清空：%+v %v %v", active, ok, err)
+			t.Fatalf("原本没有活跃账号时应保持没有：%+v %v %v", active, ok, err)
+		}
+		if store.accounts["account-2"].Status != StatusInvalid {
+			t.Errorf("认证失败应标记 invalid：%+v", store.accounts["account-2"])
 		}
 	})
+}
+
+// deadlineVerifier 一直等到 ctx 截止才返回，用于覆盖 Verify 耗尽切换预算的路径。
+type deadlineVerifier struct {
+	result  error
+	entered chan struct{}
+}
+
+func newDeadlineVerifier(result error) *deadlineVerifier {
+	return &deadlineVerifier{result: result, entered: make(chan struct{}, 1)}
+}
+
+func (d *deadlineVerifier) Verify(ctx context.Context, _ string) (Identity, error) {
+	select {
+	case d.entered <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	if d.result != nil {
+		return Identity{}, d.result
+	}
+	return Identity{}, ctx.Err()
+}
+
+// TestActivateVerifyDeadlineKeepsOldActive Verify 等到 context 截止时：
+// 切换报错、旧活跃账号保持、失败记账仍落库、准入恢复后解析到旧账号。
+func TestActivateVerifyDeadlineKeepsOldActive(t *testing.T) {
+	first := Account{ID: "account-1", MID: "1", Name: "一号", Cookie: dbCookie, Status: StatusActive, IsActive: true}
+	second := Account{ID: "account-2", MID: "2", Name: "二号", Cookie: dbCookie, Status: StatusActive}
+	store := newFakeStore(first, second)
+	store.strictContext = true
+	verify := newDeadlineVerifier(nil)
+	svc := newTestService(t, store, verify, "")
+	svc.switchTimeout = 120 * time.Millisecond
+
+	started := time.Now()
+	err := svc.Activate(context.Background(), "account-2")
+	elapsed := time.Since(started)
+
+	if !errors.Is(err, ErrVerify) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Verify 耗尽截止应返回 ErrVerify+DeadlineExceeded：%v", err)
+	}
+	if elapsed < svc.switchTimeout {
+		t.Fatalf("Verify 必须等到 context 截止才返回（实际 %v）", elapsed)
+	}
+	select {
+	case <-verify.entered:
+	default:
+		t.Fatal("Verify 未被调用")
+	}
+	active, ok, activeErr := svc.Active(context.Background())
+	if activeErr != nil || !ok || active.ID != "account-1" {
+		t.Fatalf("活跃账号应保持旧号：%+v %v %v", active, ok, activeErr)
+	}
+	if store.accounts["account-2"].IsActive {
+		t.Errorf("超时的目标不应成为活跃账号：%+v", store.accounts["account-2"])
+	}
+	if len(store.expiredCalls) != 0 {
+		t.Errorf("记账不应复用已过期 ctx：%v", store.expiredCalls)
+	}
+	if len(store.updates) != 1 {
+		t.Fatalf("失败记账应使用独立 cleanup ctx 落库：%+v", store.updates)
+	}
+	if last := store.updates[0]; last.id != "account-2" || last.status != StatusActive {
+		t.Errorf("超时不是认证错误，状态应保持原样：%+v", last)
+	}
+	release, err := svc.BeginOperation(context.Background())
+	if err != nil {
+		t.Fatalf("切换结束后准入未恢复：%v", err)
+	}
+	release()
+	cred, err := svc.Resolve(context.Background())
+	if err != nil || cred.AccountID != "account-1" {
+		t.Fatalf("准入恢复后凭据应仍是旧账号：%+v %v", cred, err)
+	}
+}
+
+// TestActivateVerifyDeadlineMarksInvalid Verify 等到截止后才报认证失败：
+// 状态标记 invalid，活跃账号仍保持不变。
+func TestActivateVerifyDeadlineMarksInvalid(t *testing.T) {
+	first := Account{ID: "account-1", MID: "1", Name: "一号", Cookie: dbCookie, Status: StatusActive, IsActive: true}
+	second := Account{ID: "account-2", MID: "2", Name: "二号", Cookie: dbCookie, Status: StatusActive}
+	store := newFakeStore(first, second)
+	store.strictContext = true
+	verify := newDeadlineVerifier(bili.ErrNotLoggedIn)
+	svc := newTestService(t, store, verify, "")
+	svc.switchTimeout = 120 * time.Millisecond
+
+	err := svc.Activate(context.Background(), "account-2")
+	if !errors.Is(err, ErrVerify) || !errors.Is(err, bili.ErrNotLoggedIn) {
+		t.Fatalf("应返回 ErrVerify+认证错误：%v", err)
+	}
+	active, ok, activeErr := svc.Active(context.Background())
+	if activeErr != nil || !ok || active.ID != "account-1" {
+		t.Fatalf("活跃账号应保持旧号：%+v %v %v", active, ok, activeErr)
+	}
+	if store.accounts["account-2"].Status != StatusInvalid {
+		t.Errorf("认证失败应在截止后仍被记账为 invalid：%+v", store.accounts["account-2"])
+	}
+	if store.accounts["account-2"].IsActive {
+		t.Errorf("超时的目标不应成为活跃账号：%+v", store.accounts["account-2"])
+	}
+	if len(store.expiredCalls) != 0 {
+		t.Errorf("记账不应复用已过期 ctx：%v", store.expiredCalls)
+	}
 }
 
 // TestActorByMIDStaysOnOldAccount 旧尝试按平台 UID 取凭据，绝不回落到当前活跃账号。

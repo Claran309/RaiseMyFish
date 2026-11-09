@@ -202,18 +202,6 @@ func (r *AccountRepo) SetActive(ctx context.Context, id string) error {
 	})
 }
 
-// ClearActive 清空全部活跃标记；切换验证失败且没有旧账号可回滚时使用。
-func (r *AccountRepo) ClearActive(ctx context.Context) error {
-	if ctx == nil {
-		return store.ErrInvalid
-	}
-	if err := r.db.WithContext(ctx).Exec(
-		"UPDATE accounts SET is_active = FALSE, updated_at = clock_timestamp() WHERE is_active").Error; err != nil {
-		return &safeError{"清空活跃账号失败", err}
-	}
-	return nil
-}
-
 // Delete 只删除非活跃账号；活跃账号返回 account.ErrActiveAccount。
 //
 // 判定必须和删除在同一条 SQL 里：调用方「先查 IsActive 再删」的写法在并发下

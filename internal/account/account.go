@@ -45,6 +45,14 @@ var (
 	ErrActiveAccount = errors.New("不能删除当前活跃账号")
 )
 
+const (
+	// defaultSwitchTimeout 是独占窗口总预算：等待在途 + 验证目标 + 提交活跃标志。
+	defaultSwitchTimeout = 30 * time.Second
+	// checkTimeout 是记录验证结果的独立预算。
+	// Verify 可能刚好耗尽切换上下文，失败记账不能复用同一个已过期 ctx。
+	checkTimeout = 5 * time.Second
+)
+
 // Account 是一个 B站账号；Cookie/CSRF 只在进程内部使用，不直接序列化。
 type Account struct {
 	ID        string
@@ -84,8 +92,6 @@ type Store interface {
 	// Upsert 按 mid 幂等写入；当前没有活跃账号时自动把该账号设为活跃。
 	Upsert(ctx context.Context, a Account) (Account, error)
 	SetActive(ctx context.Context, id string) error
-	// ClearActive 清空活跃标记（切换验证失败且无旧账号可回滚时使用）。
-	ClearActive(ctx context.Context) error
 	// Delete 只删非活跃账号；目标仍活跃时返回 ErrActiveAccount。
 	// 判定与删除必须在同一条件更新里完成，不能靠调用方先查后删。
 	Delete(ctx context.Context, id string) error
@@ -117,6 +123,8 @@ type Service struct {
 	envMID        string
 	now           func() time.Time
 	gate          *Gate
+	// switchTimeout 是独占窗口总预算；测试可覆盖为短值。
+	switchTimeout time.Duration
 }
 
 // NewService 装配账号服务；Store 与 Verifier 缺一不可。
@@ -136,6 +144,7 @@ func NewService(o Options) (*Service, error) {
 		envMID:        strings.TrimSpace(o.EnvMID),
 		now:           now,
 		gate:          &Gate{},
+		switchTimeout: defaultSwitchTimeout,
 	}, nil
 }
 
@@ -249,11 +258,14 @@ func (s *Service) Add(ctx context.Context, cookie, note string) (Account, error)
 	})
 }
 
-// Activate 切换活跃账号：暂停准入 → 等待在途操作结清 → 更新活跃标记 →
-// 用 Nav 确认新账号的实际身份 → 恢复准入。
+// Activate 切换活跃账号：暂停准入 → 等待在途操作结清 → 用 Nav 确认目标账号 →
+// 提交活跃标志 → 恢复准入。
 //
-// 验证失败会回滚到原活跃账号（原本没有活跃账号则清空），避免把未经验证的
-// 账号留给后续采集/发送。切换一旦开始就不跟随 HTTP 请求取消，防止半途而废。
+// 活跃标志只在验证通过后提交：验证期间（可能很慢）旧账号仍是活跃账号，
+// 任何超时或失败都不会把未验证的账号暴露给采集/发送。失败记账使用独立
+// 有界 cleanup ctx，Verify 耗尽切换预算后仍能落地状态；记账失败只影响
+// 状态展示，活跃账号不会被错误改写。切换一旦开始就不跟随 HTTP 请求取消，
+// 防止半途而废。
 func (s *Service) Activate(ctx context.Context, id string) error {
 	if s == nil {
 		return errors.New("账号服务不能为空")
@@ -265,7 +277,11 @@ func (s *Service) Activate(ctx context.Context, id string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	switchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	timeout := s.switchTimeout
+	if timeout <= 0 {
+		timeout = defaultSwitchTimeout
+	}
+	switchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()
 	return s.gate.Switch(switchCtx, func(switchCtx context.Context) error {
 		target, err := s.store.Get(switchCtx, id)
@@ -275,13 +291,6 @@ func (s *Service) Activate(ctx context.Context, id string) error {
 		cookie, err := bili.LoadCookie(target.Cookie, "")
 		if err != nil {
 			return fmt.Errorf("%w：%v", ErrInvalidCookie, err)
-		}
-		previous, hadActive, err := s.Active(switchCtx)
-		if err != nil {
-			return err
-		}
-		if err := s.store.SetActive(switchCtx, target.ID); err != nil {
-			return err
 		}
 		now := s.now().UTC()
 		identity, verifyErr := s.verifier.Verify(switchCtx, cookie)
@@ -293,17 +302,12 @@ func (s *Service) Activate(ctx context.Context, id string) error {
 			}
 		}
 		if verifyErr != nil {
-			rollbackErr := s.rollbackActive(switchCtx, previous, hadActive)
 			status := target.Status
 			if bili.IsAuthError(verifyErr) {
 				status = StatusInvalid
 			}
-			checkErr := s.store.UpdateCheck(switchCtx, target.ID, target.Name, status, now)
 			wrapped := fmt.Errorf("%w：%w", ErrVerify, verifyErr)
-			if rollbackErr != nil {
-				wrapped = errors.Join(wrapped, fmt.Errorf("回滚活跃账号失败：%w", rollbackErr))
-			}
-			if checkErr != nil {
+			if checkErr := s.recordCheck(switchCtx, target.ID, target.Name, status, now); checkErr != nil {
 				wrapped = errors.Join(wrapped, fmt.Errorf("记录账号验证状态失败：%w", checkErr))
 			}
 			return wrapped
@@ -314,16 +318,17 @@ func (s *Service) Activate(ctx context.Context, id string) error {
 		if err := s.store.UpdateCheck(switchCtx, target.ID, identity.Name, StatusActive, now); err != nil {
 			return err
 		}
-		return nil
+		// 活跃标志是最后一步提交：前面任何失败都不会改变当前活跃账号。
+		return s.store.SetActive(switchCtx, target.ID)
 	})
 }
 
-// rollbackActive 恢复切换前的活跃账号；原来没有活跃账号时清空标记。
-func (s *Service) rollbackActive(ctx context.Context, previous Account, hadActive bool) error {
-	if hadActive {
-		return s.store.SetActive(ctx, previous.ID)
-	}
-	return s.store.ClearActive(ctx)
+// recordCheck 用独立有界 cleanup ctx 记录验证结果。
+// Verify 可能正好把 switchCtx 耗到截止，记账不能复用同一个已过期 ctx。
+func (s *Service) recordCheck(ctx context.Context, id, name, status string, at time.Time) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), checkTimeout)
+	defer cancel()
+	return s.store.UpdateCheck(cleanupCtx, id, name, status, at)
 }
 
 // BeginOperation 取得一次采集/发送操作的准入；切换期间会阻塞。
