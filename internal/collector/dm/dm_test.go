@@ -1,6 +1,6 @@
 package dm
 
-// 本文件测私信采集：会话解析、未读过滤、msg_id 去重、配置校验、鉴权停止。
+// 本文件测私信采集：会话解析、未读过滤、完整事件身份去重（含接收账号）、配置校验、鉴权停止。
 
 import (
 	"context"
@@ -371,6 +371,48 @@ func TestRunToBusDoesNotCommitWhenPublishFails(t *testing.T) {
 type rawFetcher struct{ batch Batch }
 
 func (f *rawFetcher) Fetch(context.Context) (Batch, error) { return f.batch, nil }
+
+// sequenceFetcher 按调用顺序返回不同批次，用于同一 Collector 切号的场景。
+type sequenceFetcher struct {
+	batches []Batch
+	calls   int
+}
+
+func (f *sequenceFetcher) Fetch(context.Context) (Batch, error) {
+	if f.calls >= len(f.batches) {
+		return Batch{}, nil
+	}
+	b := f.batches[f.calls]
+	f.calls++
+	return b, nil
+}
+
+// TestCollectorSeenKeyIncludesRecvActor 同一 Collector 切换接收账号后，
+// 相同 peer/msg_id 属于不同事件，不能被进程内去重抑制。
+func TestCollectorSeenKeyIncludesRecvActor(t *testing.T) {
+	msg := Message{ID: "9001", PeerID: "2002", Text: "在吗", At: time.Unix(1700000000, 0)}
+	f := &sequenceFetcher{batches: []Batch{
+		{Messages: []Message{msg}, SelfID: "1001"},
+		{Messages: []Message{msg}, SelfID: "1002"},
+	}}
+	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
+	events := make(chan event.Event, 2)
+	for i := 0; i < 2; i++ {
+		if err := c.poll(context.Background(), events, nil); err != nil {
+			t.Fatalf("第 %d 轮失败：%v", i+1, err)
+		}
+	}
+	if len(events) != 2 {
+		t.Fatalf("切号后相同 msg_id 应产出两条事件，实际 %d", len(events))
+	}
+	a, b := <-events, <-events
+	if a.ID != "dm:1001:2002:9001" || b.ID != "dm:1002:2002:9001" {
+		t.Fatalf("seen key 未包含接收账号：A=%q B=%q", a.ID, b.ID)
+	}
+	if a.Session != "1001:2002" || b.Session != "1002:2002" {
+		t.Fatalf("会话未按账号隔离：A=%q B=%q", a.Session, b.Session)
+	}
+}
 
 // TestCollectorRejectsBatchWithoutRecvActor 批次没有接收账号时拒绝产出事件、不提交水位。
 func TestCollectorRejectsBatchWithoutRecvActor(t *testing.T) {

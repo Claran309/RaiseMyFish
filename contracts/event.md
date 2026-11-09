@@ -60,7 +60,7 @@ type Event struct {
 |---|---|
 | live | `live:{room_id}:{msg_id}` |
 | comment | `comment:{oid}:{rpid}` |
-| dm | `dm:{uid}:{msg_id}` |
+| dm | `dm:{recv_actor}:{peer_uid}:{msg_id}` |
 | qq | `qq:{bot_id}:{msg_id}` |
 
 - 入库：`INSERT ... ON CONFLICT (id) DO NOTHING`
@@ -68,6 +68,13 @@ type Event struct {
 - 抢占语义：`ClaimPending` 原子地把 `pending → queued`，返回的事件归本消费者所有
 - 消费者依据返回 Claim 的 Stage 分发，不再要求事件仍为 pending；只有 schedule 阶段执行首次过滤。禁止两个有效租约同时持有同一事件。
 - 禁止用自增 ID、时间+内容哈希做键
+
+### 2.1 私信复合会话与接收账号（N10）
+
+- `recv_actor` 是接收这条私信的账号 MID，`peer_uid` 是对话对方 UID；同一对方发给两个接收账号必须是两条 ID 与 Session 都不同的事件。
+- 私信 `Session = "{recv_actor}:{peer_uid}"`，并在 `Meta` 中写入 `{"recv_actor":"..."}`。Memory Scope、Task 与投递计划 Destination 均沿用该 Session，因此同一对方在两个接收账号下是两条完全隔离的私密会话。
+- 旧格式（`dm:{peer_uid}:{msg_id}`、Session 仅为 `peer_uid`、无 `recv_actor`）仍可读取；但发送侧缺少接收账号归属时不得改用当前活跃账号，必须冻结。
+- `Session` 与 `Meta.recv_actor` 明确不一致，或已有计划账号与事件明确接收账号不一致，都属归属冲突：即使已有计划也必须冻结，不得 arm/POST。发送侧细节见 `sender.md`。
 
 ## 3. 总线接口
 
@@ -168,6 +175,7 @@ out键为`live:out:{canonical_room}:{attempt_id}`，attempt_id为持久化随机
 ## 5. 顺序保证
 
 - 同一 `(Channel, Session)` 按 `At` 升序处理（scheduler 负责串行）
+- 私信 Session 已包含接收账号，因此同一对方与不同接收账号的会话可并行处理，不视为同一会话
 - 跨 session 可并行
 
 ## 6. 保留策略

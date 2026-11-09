@@ -1,7 +1,7 @@
 // Package dm 轮询 B站私信会话并把新消息写成事件（channel=dm）。
 //
 // 边界：
-//   - 只做「拉会话 → 解析 → 按 msg_id 去重 → 产出事件」，不调模型、不发回复；
+//   - 只做「拉会话 → 解析 → 按完整事件身份去重 → 产出事件」，不调模型、不发回复；
 //   - 鉴权类错误直接停采集（继续轮询只会白挨风控），其余错误等下一轮；
 //   - 事件 ID 固定 `dm:{接收账号}:{peer}:{msg_id}`，Session 固定
 //     `{接收账号}:{peer}`：同一对方发给两个账号是两条独立私密会话；
@@ -59,7 +59,7 @@ func (e *Error) Unwrap() error { return e.Cause }
 
 // Message 是一条规整后的私信。
 type Message struct {
-	// ID 是平台消息 id（去重键）。
+	// ID 是平台消息 id；进程内去重键还需拼上接收账号与对方，见 toEvent。
 	ID string
 	// PeerID 是对话对方的 uid；事件 Session 会再拼上接收账号。
 	PeerID string
@@ -220,7 +220,7 @@ func (c *Collector) poll(ctx context.Context, events chan<- event.Event, acks <-
 		return batch.Messages[i].ID < batch.Messages[j].ID
 	})
 	for _, m := range batch.Messages {
-		ev, id, ok := c.toEvent(m, now, self)
+		ev, seenKey, ok := c.toEvent(m, now, self)
 		if !ok {
 			continue
 		}
@@ -244,7 +244,7 @@ func (c *Collector) poll(ctx context.Context, events chan<- event.Event, acks <-
 			}
 		}
 		// 确认成功后才记已见并允许推进水位；未确认的消息下一轮重拉（事件 ID 幂等）。
-		c.markSeen(id)
+		c.markSeen(seenKey)
 		c.recordEvent(now)
 	}
 	if batch.Commit != nil {
@@ -255,7 +255,7 @@ func (c *Collector) poll(ctx context.Context, events chan<- event.Event, acks <-
 	return nil
 }
 
-// toEvent 校验并构造事件；返回原始消息 ID 供成功入总线后记已见。
+// toEvent 校验并构造事件；返回完整事件 ID 供成功确认后记已见。
 //
 // recvActor 是批次绑定的接收账号 MID，必须先在 poll 校验过。
 func (c *Collector) toEvent(m Message, now time.Time, recvActor string) (event.Event, string, bool) {
@@ -268,7 +268,8 @@ func (c *Collector) toEvent(m Message, now time.Time, recvActor string) (event.E
 	if len([]rune(text)) > maxTextRunes {
 		text = string([]rune(text)[:maxTextRunes])
 	}
-	if c.saw(id) {
+	eventID := "dm:" + recvActor + ":" + peer + ":" + id
+	if c.saw(eventID) {
 		return event.Event{}, "", false
 	}
 	at := m.At
@@ -281,7 +282,7 @@ func (c *Collector) toEvent(m Message, now time.Time, recvActor string) (event.E
 	}
 	meta, _ := json.Marshal(map[string]string{event.MetaRecvActor: recvActor})
 	return event.Event{
-		ID:       "dm:" + recvActor + ":" + peer + ":" + id,
+		ID:       eventID,
 		Channel:  event.ChDM,
 		Dir:      event.DirIn,
 		Private:  true,
@@ -292,7 +293,7 @@ func (c *Collector) toEvent(m Message, now time.Time, recvActor string) (event.E
 		At:       at,
 		Status:   event.StatusPending,
 		Meta:     meta,
-	}, id, true
+	}, eventID, true
 }
 
 // validMID 校验 B站 UID：纯数字且长度受限，才能安全拼进事件 ID/Session。
@@ -315,7 +316,7 @@ func (c *Collector) saw(id string) bool {
 	return ok
 }
 
-// markSeen 记录 msg_id。超过上限时整体重建（简易有界集）。
+// markSeen 记录完整事件 ID。超过上限时整体重建（简易有界集）。
 func (c *Collector) markSeen(id string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

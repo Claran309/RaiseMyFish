@@ -39,31 +39,45 @@ func SplitDMSession(session string) (recvActor, peer string, ok bool) {
 // Session 的复合键与 Meta 的 recv_actor 都写了接收账号；两者不一致说明事件
 // 归属已损坏，返回 false 让调用方冻结这条任务，而不是任选一个继续发送。
 func DMRecvActor(e Event) (string, bool) {
-	sessionActor := ""
-	if account, _, ok := SplitDMSession(e.Session); ok {
-		sessionActor = account
-	}
-	metaActor := ""
-	if len(e.Meta) > 0 {
-		var meta struct {
-			RecvActor string `json:"recv_actor"`
-		}
-		if json.Unmarshal(e.Meta, &meta) == nil {
-			metaActor = strings.TrimSpace(meta.RecvActor)
-			if !digits(metaActor) {
-				metaActor = ""
-			}
-		}
-	}
+	sessionActor, _, hasSession := SplitDMSession(e.Session)
+	metaActor, hasMeta := dmMetaRecvActor(e)
 	switch {
-	case metaActor != "" && sessionActor != "":
+	case hasMeta && hasSession:
 		return metaActor, metaActor == sessionActor
-	case metaActor != "":
+	case hasMeta:
 		return metaActor, true
-	case sessionActor != "":
+	case hasSession:
 		return sessionActor, true
 	}
 	return "", false
+}
+
+// DMRecvActorConflict 报告事件是否携带互相矛盾的接收账号。
+//
+// 只有 Session 复合键与 Meta.recv_actor 都给出合法账号且不一致时才算
+// 明确冲突；两者都缺失属于旧数据，单方缺失则按另一方归属，均不算冲突。
+func DMRecvActorConflict(e Event) bool {
+	sessionActor, _, hasSession := SplitDMSession(e.Session)
+	metaActor, hasMeta := dmMetaRecvActor(e)
+	return hasSession && hasMeta && sessionActor != metaActor
+}
+
+// dmMetaRecvActor 读取 Meta 里的合法接收账号；缺失或非法都视为没有。
+func dmMetaRecvActor(e Event) (string, bool) {
+	if len(e.Meta) == 0 {
+		return "", false
+	}
+	var meta struct {
+		RecvActor string `json:"recv_actor"`
+	}
+	if json.Unmarshal(e.Meta, &meta) != nil {
+		return "", false
+	}
+	actor := strings.TrimSpace(meta.RecvActor)
+	if !digits(actor) {
+		return "", false
+	}
+	return actor, true
 }
 
 // DMPeer 返回私信事件的对话对方 UID（收信人）。

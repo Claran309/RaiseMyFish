@@ -83,3 +83,11 @@ INSERT INTO send_log (event_id, channel, ok, verified, msg_id, error)
 - 实际POST令牌在Sender唯一扣取，x/time/rate预留和PG许可为同一发送额度，PG拒绝则退还本地预留；Verify不扣发送令牌。Scheduler桶仍只约束Task准入，不是平台发送账本。PG按账号锁，以许可最晚起始时间+10秒保守保护间隔，防止arm到实际POST间的延迟绕过间隔；同账号/房间/正文10秒防重，覆盖重启。
 - send_log和out由发送repository唯一写入；arm、结果、输入事件状态/阶段及释放租约同事务。attempt_id唯一，重复核验更新已有记录，不重复插账；memory只读。
 - 默认发送关闭，不接生产模型或真实平台。独立Sender/Node/PG组合不代表0.11真实房间验收。
+
+## 8. 私信接收账号归属（N10增量）
+
+- 私信发送只认事件持久化的接收账号：优先 `Meta.recv_actor`，其次复合 `Session = "{recv_actor}:{peer_uid}"`。首次建计划的 AccountID 必须是该账号，Destination 保持事件 Session；不得用当前活跃账号替代。
+- 已有计划按计划原账号恢复（`ActorByMID`），切号不改写；原账号凭据不可用时保持 ready 并返回 uncertain，不 arm、不 POST、不换号。
+- 旧数据兼容：事件无 `recv_actor` 且 Session 为裸 `peer_uid` 时，仅当已有计划存在才按计划账号继续；无计划则 dead 冻结，等待人工处理。
+- 明确归属冲突一律 dead 冻结，不 arm、不 POST：(a) 复合 Session 与 `Meta.recv_actor` 都给出接收账号且不一致；(b) 已有计划账号与事件明确接收账号不一致。冲突检查必须先于「已有计划优先」分支，Send 与 Resume 同规则。
+- 冲突冻结只改变终止判定，不改变其余投递状态机与恢复语义。

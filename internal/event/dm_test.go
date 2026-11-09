@@ -43,6 +43,28 @@ func TestDMRecvActor(t *testing.T) {
 	}
 }
 
+func TestDMRecvActorConflict(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ev   Event
+		want bool
+	}{
+		{"一致", Event{Session: DMSession("1001", "2002"), Meta: []byte(`{"recv_actor":"1001"}`)}, false},
+		{"明确冲突", Event{Session: DMSession("1001", "2002"), Meta: []byte(`{"recv_actor":"1002"}`)}, true},
+		{"仅Meta", Event{Meta: []byte(`{"recv_actor":"1003"}`)}, false},
+		{"仅复合Session", Event{Session: DMSession("1004", "2002")}, false},
+		{"旧裸Session", Event{Session: "2002"}, false},
+		{"非法Meta", Event{Session: DMSession("1005", "2002"), Meta: []byte(`{"recv_actor":"bad"}`)}, false},
+		{"无归属", Event{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DMRecvActorConflict(tc.ev); got != tc.want {
+				t.Fatalf("conflict=%v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDMPeer(t *testing.T) {
 	for _, tc := range []struct {
 		name string

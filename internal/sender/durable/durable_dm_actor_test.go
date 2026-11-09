@@ -193,6 +193,143 @@ func TestSendDMActorMismatchIsFrozen(t *testing.T) {
 	}
 }
 
+// TestResumeDMLegacyPlanStillAllowed 旧数据缺失归属但有计划 → 仍按计划原账号恢复。
+func TestResumeDMLegacyPlanStillAllowed(t *testing.T) {
+	repo := &fakeRepo{
+		planAccount: oldMID,
+		attempt:     sender.Attempt{ID: "attempt-1", Text: "原文", State: sender.StateReady},
+	}
+	inner := &fakeSender{result: sender.Result{OK: true, MsgID: "msg-4", Verified: true}}
+	actors := &fakeActors{
+		current: actor("account-new", newMID, newCookie),
+		byMID:   map[string]bili.Actor{oldMID: actor("account-old", oldMID, oldCookie)},
+	}
+	s := newSwitchSender(t, event.ChDM, repo, inner, actors)
+	c := dmLegacyClaim("20002")
+	c.Stage = event.StageDeliver
+
+	res, err := s.Resume(context.Background(), c)
+	if err != nil || !res.OK {
+		t.Fatalf("旧计划恢复失败：%+v %v", res, err)
+	}
+	if repo.loadKey.AccountID != oldMID || inner.actor == nil || inner.actor.MID != oldMID {
+		t.Fatalf("旧计划未按原账号恢复：key=%+v actor=%+v", repo.loadKey, inner.actor)
+	}
+	if actors.currentCalls != 0 {
+		t.Fatalf("旧计划恢复读取了当前活跃账号：%d", actors.currentCalls)
+	}
+}
+
+// TestSendDMConflictWithExistingPlanIsFrozen 验收：
+// Session=111:20002、Meta=222 时，即使已有计划也必须冻结，不 arm、不 POST。
+func TestSendDMConflictWithExistingPlanIsFrozen(t *testing.T) {
+	for _, planAccount := range []string{oldMID, newMID} {
+		t.Run("plan_"+planAccount, func(t *testing.T) {
+			repo := &fakeRepo{planAccount: planAccount}
+			inner := &fakeSender{result: sender.Result{OK: true}}
+			actors := &fakeActors{
+				current: actor("account-new", newMID, newCookie),
+				byMID: map[string]bili.Actor{
+					oldMID: actor("account-old", oldMID, oldCookie),
+					newMID: actor("account-new", newMID, newCookie),
+				},
+			}
+			s := newSwitchSender(t, event.ChDM, repo, inner, actors)
+			c := dmActorClaim(oldMID, "20002")
+			c.Event.Meta = []byte(`{"recv_actor":"222"}`)
+
+			_, err := s.Send(context.Background(), c, replyFor(c, "正文"))
+			if kindOf(t, err) != sender.KindDead {
+				t.Fatalf("kind=%s want dead", kindOf(t, err))
+			}
+			if repo.prepareCalls != 0 || repo.armCalls != 0 || inner.sends != 0 {
+				t.Fatalf("冲突事件仍落计划/arm/发送：prepare=%d arm=%d sends=%d", repo.prepareCalls, repo.armCalls, inner.sends)
+			}
+			if actors.currentCalls != 0 {
+				t.Fatalf("冲突事件回落了当前活跃账号：%d", actors.currentCalls)
+			}
+		})
+	}
+}
+
+// TestSendDMPlanAccountConflictIsFrozen 事件归属一致，但旧计划绑定了另一个账号 → 冻结。
+func TestSendDMPlanAccountConflictIsFrozen(t *testing.T) {
+	repo := &fakeRepo{planAccount: newMID}
+	inner := &fakeSender{result: sender.Result{OK: true}}
+	actors := &fakeActors{
+		current: actor("account-new", newMID, newCookie),
+		byMID: map[string]bili.Actor{
+			oldMID: actor("account-old", oldMID, oldCookie),
+			newMID: actor("account-new", newMID, newCookie),
+		},
+	}
+	s := newSwitchSender(t, event.ChDM, repo, inner, actors)
+	c := dmActorClaim(oldMID, "20002")
+
+	_, err := s.Send(context.Background(), c, replyFor(c, "正文"))
+	if kindOf(t, err) != sender.KindDead {
+		t.Fatalf("kind=%s want dead", kindOf(t, err))
+	}
+	if repo.prepareCalls != 0 || repo.armCalls != 0 || inner.sends != 0 {
+		t.Fatalf("计划与事件归属冲突仍发送：prepare=%d arm=%d sends=%d", repo.prepareCalls, repo.armCalls, inner.sends)
+	}
+	if actors.currentCalls != 0 || len(actors.byMIDCalls) != 0 {
+		t.Fatalf("冲突事件读取了账号：current=%d byMID=%v", actors.currentCalls, actors.byMIDCalls)
+	}
+}
+
+// TestResumeDMConflictWithExistingPlanIsFrozen Resume 也必须先冻结明确冲突，不进入核验/投递。
+func TestResumeDMConflictWithExistingPlanIsFrozen(t *testing.T) {
+	repo := &fakeRepo{
+		planAccount: oldMID,
+		attempt:     sender.Attempt{ID: "attempt-1", Text: "原文", State: sender.StateReady},
+	}
+	inner := &fakeSender{result: sender.Result{OK: true}}
+	actors := &fakeActors{
+		current: actor("account-new", newMID, newCookie),
+		byMID:   map[string]bili.Actor{oldMID: actor("account-old", oldMID, oldCookie)},
+	}
+	s := newSwitchSender(t, event.ChDM, repo, inner, actors)
+	c := dmActorClaim(oldMID, "20002")
+	c.Event.Meta = []byte(`{"recv_actor":"222"}`)
+	c.Stage = event.StageDeliver
+
+	_, err := s.Resume(context.Background(), c)
+	if kindOf(t, err) != sender.KindDead {
+		t.Fatalf("kind=%s want dead", kindOf(t, err))
+	}
+	if repo.loadCalls != 0 || repo.armCalls != 0 || inner.sends != 0 {
+		t.Fatalf("冲突事件仍恢复投递：load=%d arm=%d sends=%d", repo.loadCalls, repo.armCalls, inner.sends)
+	}
+	if actors.currentCalls != 0 || len(actors.byMIDCalls) != 0 {
+		t.Fatalf("冲突事件读取了账号：current=%d byMID=%v", actors.currentCalls, actors.byMIDCalls)
+	}
+}
+
+// TestResumeDMPlanAccountConflictIsFrozen 恢复时计划账号与事件明确归属不一致 → 冻结。
+func TestResumeDMPlanAccountConflictIsFrozen(t *testing.T) {
+	repo := &fakeRepo{
+		planAccount: newMID,
+		attempt:     sender.Attempt{ID: "attempt-1", Text: "原文", State: sender.StateReady},
+	}
+	inner := &fakeSender{result: sender.Result{OK: true}}
+	actors := &fakeActors{current: actor("account-new", newMID, newCookie)}
+	s := newSwitchSender(t, event.ChDM, repo, inner, actors)
+	c := dmActorClaim(oldMID, "20002")
+	c.Stage = event.StageDeliver
+
+	_, err := s.Resume(context.Background(), c)
+	if kindOf(t, err) != sender.KindDead {
+		t.Fatalf("kind=%s want dead", kindOf(t, err))
+	}
+	if repo.loadCalls != 0 || repo.armCalls != 0 || inner.sends != 0 {
+		t.Fatalf("计划与事件归属冲突仍恢复投递：load=%d arm=%d sends=%d", repo.loadCalls, repo.armCalls, inner.sends)
+	}
+	if actors.currentCalls != 0 || len(actors.byMIDCalls) != 0 {
+		t.Fatalf("冲突事件读取了账号：current=%d byMID=%v", actors.currentCalls, actors.byMIDCalls)
+	}
+}
+
 // TestResumeDMCompositeSessionAccepted 复合 Session 的已接受尝试只核验，不重发。
 func TestResumeDMCompositeSessionAccepted(t *testing.T) {
 	repo := &fakeRepo{

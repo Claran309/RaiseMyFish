@@ -82,6 +82,7 @@ func (s SharedState) Validate() error
 ## 2. Scope来源与一致性
 
 - Scope由可信装配/worker依据目标Event决定，不能从消息正文、模型输出或不受信任工具参数中取。Channel仅live/comment/dm/qq，Session非空；live/comment必须Private=false，dm必须true，qq允许两种。
+- 私信（N10）的 Session 固定为 `{接收账号MID}:{对方UID}`；同一对方发给两个接收账号属于不同私密会话，Recent/Records/Facts 不得跨复合 Session 混用。旧裸 Session（仅对方UID）只用于读取兼容，不得据此新建或合并会话。
 - Brain入参Task、Event及Context.Scope、SharedState.Scope必须在目标Channel/Session/Private上相符；Task没有Private时从Event取。Event与Task的EventID也要一致。错配返回错误且不调用Provider，不静默丢弃坏记录后继续。
 - 即使没有记忆，也要显式传 `Context{Scope: target}` 与 `SharedState{Scope: target}`；nil slice是正常空数据。零值Scope无效，不能用空上下文掩盖查询失败。
 - Reader查询失败必须返回error，不把失败当作「没有记忆」。0.6测试可注入空数据或fake Reader；生产接入真实Memory前不得宣称已经具备召回/隐私查询能力。

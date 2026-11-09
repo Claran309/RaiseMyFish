@@ -102,6 +102,10 @@ func (s *Sender) Send(ctx context.Context, c event.Claim, reply sender.Reply) (s
 	if err := s.checkClaim(c); err != nil {
 		return sender.Result{}, err
 	}
+	// 归属冲突必须在计划优先分支之前冻结：已有计划不能成为绕过检查的理由。
+	if s.dmAttributionConflict(c) {
+		return sender.Result{}, dmConflictError()
+	}
 	release, err := s.begin(ctx)
 	if err != nil {
 		return sender.Result{}, err
@@ -194,6 +198,9 @@ func (s *Sender) Resume(ctx context.Context, c event.Claim) (sender.Result, erro
 	if err := s.checkClaim(c); err != nil {
 		return sender.Result{}, err
 	}
+	if s.dmAttributionConflict(c) {
+		return sender.Result{}, dmConflictError()
+	}
 	release, err := s.begin(ctx)
 	if err != nil {
 		return sender.Result{}, err
@@ -219,6 +226,9 @@ func (s *Sender) Resume(ctx context.Context, c event.Claim) (sender.Result, erro
 	if !sender.ValidActor(planAccount) {
 		return sender.Result{}, &sender.Error{Kind: sender.KindDead, Cause: errors.New("投递计划缺少可归属账号，拒绝重发")}
 	}
+	if s.dmPlanConflict(c, planAccount) {
+		return sender.Result{}, dmConflictError()
+	}
 	attempt, err := s.repo.LoadPlan(ctx, c, s.keyFor(c, planAccount))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -238,7 +248,8 @@ func (s *Sender) Resume(ctx context.Context, c event.Claim) (sender.Result, erro
 // dmPlanAccount 选择私信计划的发送账号。
 //
 // 已有计划优先（旧任务按原 actor 处理）；首次建计划只认事件持久化的接收
-// 账号。事件缺少归属时明确冻结，绝不回落到当前活跃账号。
+// 账号。事件缺少归属时明确冻结，绝不回落到当前活跃账号；计划账号与事件
+// 明确归属不一致时同样冻结，不能借「已有计划」绕过冲突检查。
 func (s *Sender) dmPlanAccount(ctx context.Context, c event.Claim) (string, error) {
 	existing, planErr := s.repo.PlanAccount(ctx, c.Event.ID)
 	switch {
@@ -246,6 +257,9 @@ func (s *Sender) dmPlanAccount(ctx context.Context, c event.Claim) (string, erro
 		mid := strings.TrimSpace(existing)
 		if mid == "" {
 			return "", &sender.Error{Kind: sender.KindDead, Cause: errors.New("投递计划缺少可归属的发送账号")}
+		}
+		if s.dmPlanConflict(c, mid) {
+			return "", dmConflictError()
 		}
 		return mid, nil
 	case errors.Is(planErr, store.ErrNotFound):
@@ -269,6 +283,42 @@ func (s *Sender) dmPlanAccount(ctx context.Context, c event.Claim) (string, erro
 		return "", &sender.Error{Kind: sender.KindDead, Cause: errors.New("私信事件缺少接收账号归属，拒绝改用当前活跃账号")}
 	}
 	return recv, nil
+}
+
+// dmAttributionConflict 报告事件自身是否明确给出了互相矛盾的接收账号。
+func (s *Sender) dmAttributionConflict(c event.Claim) bool {
+	if s.channel != event.ChDM || !event.DMRecvActorConflict(c.Event) {
+		return false
+	}
+	s.log.Warn("私信事件接收账号归属冲突，拒绝发送",
+		zap.String("action", "planned_recv_actor_conflict"),
+		zap.String("event_id", c.Event.ID),
+		zap.String("ch", string(s.channel)),
+	)
+	return true
+}
+
+// dmPlanConflict 报告已绑定的计划账号是否与事件明确接收账号不一致。
+// 旧数据没有明确归属时返回 false，仍按计划原账号兼容处理。
+func (s *Sender) dmPlanConflict(c event.Claim, planAccount string) bool {
+	if s.channel != event.ChDM {
+		return false
+	}
+	recv, ok := event.DMRecvActor(c.Event)
+	if !ok || recv == "" || strings.TrimSpace(planAccount) == recv {
+		return false
+	}
+	s.log.Warn("投递计划账号与事件接收账号冲突，拒绝发送",
+		zap.String("action", "planned_recv_actor_plan_conflict"),
+		zap.String("event_id", c.Event.ID),
+		zap.String("ch", string(s.channel)),
+		zap.String("plan_account", planAccount),
+	)
+	return true
+}
+
+func dmConflictError() error {
+	return &sender.Error{Kind: sender.KindDead, Cause: errors.New("私信事件接收账号归属冲突，拒绝发送")}
 }
 
 // begin 取得本次发送的账号切换准入，直到计划记录结束才释放。
