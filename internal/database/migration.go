@@ -159,6 +159,11 @@ func Migrate(ctx context.Context, db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
+	// 扩展先落到稳定 schema 再迁移：随机 schema 下首次 CREATE EXTENSION
+	// 会把扩展留在随机 schema，其他 schema 找不到 vector 类型（D2/N16）。
+	if err := ensureVectorExtension(ctx, db); err != nil {
+		return &safeError{"初始化向量扩展失败", err}
+	}
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(current_database()), hashtext(current_schema() || ':migrate'))").Error; err != nil {
 			return err

@@ -116,11 +116,13 @@ func TestVectorRefreshAgainstRealPostgres(t *testing.T) {
 
 	emb := &fakeVectorEmbedder{}
 	r := &memoryEmbeddingRefresher{
-		memoryStore: memRepo,
-		viewerStore: vwRepo,
-		embedder:    emb,
-		batchSize:   32,
-		logger:      zap.NewNop(),
+		memoryStore:       memRepo,
+		viewerStore:       vwRepo,
+		embedder:          emb,
+		batchSize:         32,
+		memoryFingerprint: testMemoryFingerprint,
+		viewerFingerprint: testViewerFingerprint,
+		logger:            zap.NewNop(),
 	}
 
 	r.refreshOnce(ctx)
