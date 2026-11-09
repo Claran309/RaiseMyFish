@@ -1879,7 +1879,7 @@ func TestSimpleMessageSkipsReAct(t *testing.T) {
 	llm := &fakeReactLLM{}
 	factory, calls := newFakeReactFactory(t, llm)
 
-	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, nil, factory, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, snapshotTestPack(), map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, nil, factory, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -1913,7 +1913,7 @@ func TestComplexMessageUsesReAct(t *testing.T) {
 	}}
 	factory, calls := newFakeReactFactory(t, llm)
 
-	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, nil, factory, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, snapshotTestPack(), map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, nil, factory, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -1951,7 +1951,7 @@ func TestReactFailureFallsBackToSingleStep(t *testing.T) {
 	})
 	react := &reactRuntime{factory: factory, defaultReact: true}
 
-	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, nil, react, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, snapshotTestPack(), map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, nil, react, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -1977,7 +1977,7 @@ func TestDefaultReactUsesReActWithoutCueWords(t *testing.T) {
 	}}
 	runtime, calls := newFakeReactFactory(t, llm)
 
-	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, nil, runtime, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, snapshotTestPack(), map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, nil, runtime, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -2013,7 +2013,7 @@ func TestReactDoesNotCacheFinalAnswer(t *testing.T) {
 	}}
 	runtime, calls := newFakeReactFactory(t, llm)
 
-	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, persona.Pack{}, map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, nil, runtime, nil, zap.NewNop())
+	workers, err := buildConsumeWorkers(scheduler.ChannelPolicy{}, snapshotTestPack(), map[event.Channel]brain.Brain{event.ChLive: engine}, snd, bus, time.Second, nil, nil, nil, "", nil, nil, runtime, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}

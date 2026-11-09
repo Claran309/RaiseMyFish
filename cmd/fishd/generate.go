@@ -162,7 +162,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		var err error
 		reactText := ""
 		if deps.react != nil && deps.react.factory != nil && shouldUseReAct(ev.Text, deps.react.defaultReact) {
-			reactText, err = runReact(ctx, deps.react, scope, ev, input, deps.log)
+			reactText, err = runReact(ctx, deps.react, scope, ev, task, input, deps.log)
 			if err != nil {
 				// ReAct 是增强：失败就回落单步，不能把弹幕卡死
 				deps.log.Warn("ReAct 执行失败，回落单步生成",

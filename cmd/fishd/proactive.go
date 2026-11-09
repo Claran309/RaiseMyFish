@@ -134,6 +134,7 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 		RoomID:       cfg.Collector.Live.RoomID,
 		ReactTrigger: cfg.Proactive.ReactTrigger,
 		Builder:      builder,
+		Budget:       brain.Budget{MaxPromptTokens: cfg.LLM.MaxPromptTokens, KnowledgeBudgetPercent: cfg.Knowledge.BudgetPercent},
 		Logger:       logger,
 	})
 }

@@ -39,6 +39,8 @@ type reactFactory func(scope memory.Scope, fromID string) (*reasoning.Agent, err
 type reactRuntime struct {
 	factory      reactFactory
 	defaultReact bool
+	// budget 与单步 Brain 使用同一口径；runReact 通过 brain.Prepare 统一校验与裁剪。
+	budget brain.Budget
 }
 
 // shouldUseReAct 判断这条弹幕要不要走多步思考。
@@ -66,29 +68,31 @@ func shouldUseReAct(text string, defaultReact bool) bool {
 // 复用成品会带来跨人串答案和「纠正后照旧」两类错误（见 reactRuntime 注释）。
 //
 // 上下文与单步 Brain 同源：input 是 ContextBuilder 组装的统一快照，
-// 渲染成 Context 后进入 user 段，ReAct 因此能看到档案/双方对话/状态/长期设定。
-func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev event.Event, input brain.ContextInput, log *zap.Logger) (string, error) {
+// 经 brain.Prepare 完成与单步完全相同的校验/预算裁剪后进入 user 段。
+// 准备失败是明确停止：不再「渲染失败只带问题」继续，回落策略交给调用方。
+func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev event.Event, task brain.Task, input brain.ContextInput, log *zap.Logger) (string, error) {
 	if runtime == nil || runtime.factory == nil {
 		return "", nil
+	}
+	prepared, err := brain.Prepare(ctx, task, input, runtime.budget)
+	if err != nil {
+		return "", fmt.Errorf("准备 ReAct 生成输入失败：%w", err)
+	}
+	if prepared.Truncated {
+		log.Warn("ReAct 上下文超出预算已裁剪",
+			zap.String("action", "react_context"),
+			zap.String("event_id", ev.ID),
+		)
 	}
 	agent, err := runtime.factory(scope, ev.FromID)
 	if err != nil || agent == nil {
 		return "", err
 	}
-	contextText, cerr := brain.ContextText(ctx, input)
-	if cerr != nil {
-		// 快照渲染失败只降级为「不带上下文」，问题本身仍可作答
-		log.Warn("ReAct 上下文渲染失败，仅带问题执行",
-			zap.String("action", "react_context"),
-			zap.String("event_id", ev.ID),
-			zap.Error(cerr),
-		)
-	}
 	started := time.Now()
 	res, err := agent.Run(ctx, reasoning.Input{
-		System:   input.Persona.SystemPrompt(),
-		Context:  contextText,
-		Question: ev.Text,
+		System:   prepared.Messages[0].Content,
+		Context:  prepared.Context,
+		Question: prepared.Question,
 	})
 	elapsed := time.Since(started).Milliseconds()
 	log.Info("ReAct 执行完成",

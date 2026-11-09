@@ -87,8 +87,10 @@ type Options struct {
 	ReactTrigger string
 	// Builder 是统一上下文快照装配器；nil 时退回本包的最小召回（仅供测试/旧装配）。
 	Builder ContextBuilder
-	Logger  *zap.Logger
-	Now     func() time.Time
+	// Budget 是 ReAct 与单步 Brain 共用的生成预算；零值取默认 token 上限。
+	Budget brain.Budget
+	Logger *zap.Logger
+	Now    func() time.Time
 }
 
 // Result 描述本轮结果，便于日志与测试断言。
@@ -112,6 +114,7 @@ type Runner struct {
 	mem      memory.Reader
 	builder  ContextBuilder
 	react    ReactFactory
+	budget   brain.Budget
 	sender   Sender
 	room     string
 	trigger  string
@@ -168,6 +171,7 @@ func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack 
 		mem:            mem,
 		builder:        opts.Builder,
 		react:          react,
+		budget:         opts.Budget,
 		sender:         snd,
 		room:           opts.RoomID,
 		trigger:        trigger,
@@ -275,7 +279,7 @@ func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 // 与弹幕回复路径的降级策略保持一致。
 func (r *Runner) generate(ctx context.Context, scope memory.Scope, input brain.ContextInput, task brain.Task, visual string) (bool, string, error) {
 	if r.shouldUseReAct(visual) {
-		text, err := r.runReact(ctx, scope, input, visual)
+		text, err := r.runReact(ctx, scope, input, task)
 		if err == nil && strings.TrimSpace(text) != "" {
 			return true, text, nil
 		}
@@ -330,8 +334,19 @@ func (r *Runner) buildInput(ctx context.Context, ev event.Event, visual string) 
 	}
 }
 
-// runReact 调 ReAct 循环拿回复；上下文与单步 Brain 同源，预算与降级由 Agent 控制。
-func (r *Runner) runReact(ctx context.Context, scope memory.Scope, input brain.ContextInput, visual string) (string, error) {
+// runReact 调 ReAct 循环拿回复；输入经 brain.Prepare 完成与单步 Brain
+// 相同的校验/预算裁剪，画面只通过统一资料段的 <visual> 进入，
+// 不再把原始视觉文本拼进 Question。准备失败明确返回错误，由 generate 回落单步。
+func (r *Runner) runReact(ctx context.Context, scope memory.Scope, input brain.ContextInput, task brain.Task) (string, error) {
+	prepared, err := brain.Prepare(ctx, task, input, r.budget)
+	if err != nil {
+		return "", fmt.Errorf("准备主动弹幕 ReAct 输入失败：%w", err)
+	}
+	if prepared.Truncated {
+		r.log.Warn("主动弹幕 ReAct 上下文超出预算已裁剪",
+			zap.String("action", "proactive_react"),
+		)
+	}
 	agent, err := r.react(scope)
 	if err != nil {
 		return "", err
@@ -339,17 +354,10 @@ func (r *Runner) runReact(ctx context.Context, scope memory.Scope, input brain.C
 	if agent == nil {
 		return "", errors.New("ReAct 未装配")
 	}
-	contextText, cerr := brain.ContextText(ctx, input)
-	if cerr != nil {
-		r.log.Warn("主动弹幕上下文渲染失败，仅带画面执行",
-			zap.String("action", "proactive_react"),
-			zap.Error(cerr),
-		)
-	}
-	question := SyntheticEventText + "\n画面：" + visual
+	question := prepared.Question
 	res, err := agent.Run(ctx, reasoning.Input{
-		System:   input.Persona.SystemPrompt(),
-		Context:  contextText,
+		System:   prepared.Messages[0].Content,
+		Context:  prepared.Context,
 		Question: question,
 	})
 	r.log.Info("主动弹幕 ReAct 完成",

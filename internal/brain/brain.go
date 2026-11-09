@@ -111,19 +111,22 @@ func (b *OpenAI) Reply(ctx context.Context, task Task, in ContextInput) (Reply, 
 	case <-totalCtx.Done():
 		return Reply{}, contextFailure(totalCtx.Err())
 	}
-	if err := inputBounds(totalCtx, task, in); err != nil {
-		return Reply{}, err
-	}
-	if err := validateInput(task, in); err != nil {
-		return Reply{}, err
-	}
-	plan, err := buildPrompt(totalCtx, in, b.options.MaxPromptTokens, b.options.KnowledgeBudgetPercent)
+	prepared, err := Prepare(totalCtx, task, in, Budget{MaxPromptTokens: b.options.MaxPromptTokens, KnowledgeBudgetPercent: b.options.KnowledgeBudgetPercent})
 	if err != nil {
 		return Reply{}, err
 	}
-	messages := plan.Messages
+	messages := prepared.Messages
+	if prepared.Truncated {
+		b.logger.Info("生成输入超出预算已裁剪",
+			zap.String("event_id", task.EventID),
+			zap.String("ch", string(task.Channel)),
+			zap.String("session", task.Session),
+			zap.String("action", "prompt_budget"),
+			zap.Int("prompt_estimate", estimate(messages)),
+		)
+	}
 	zeroIn, zeroOut, zeroCost := 0, 0, 0.
-	meta := replyMeta{Provider: b.provider.Name(), Model: b.options.Model, InputTokens: &zeroIn, OutputTokens: &zeroOut, CostUSD: &zeroCost, Knowledge: plan.Knowledge}
+	meta := replyMeta{Provider: b.provider.Name(), Model: b.options.Model, InputTokens: &zeroIn, OutputTokens: &zeroOut, CostUSD: &zeroCost, Knowledge: prepared.knowledge}
 	emptyRetries := 0
 	for attempt := 1; attempt <= 3; attempt++ {
 		if err := pendingError(totalCtx); err != nil {

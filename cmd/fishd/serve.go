@@ -480,6 +480,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 		reactCfg = &reactRuntime{
 			factory:      react,
 			defaultReact: cfg.Reasoning.DefaultReact,
+			budget:       brain.Budget{MaxPromptTokens: cfg.LLM.MaxPromptTokens, KnowledgeBudgetPercent: cfg.Knowledge.BudgetPercent},
 		}
 	}
 	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log)

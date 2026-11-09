@@ -50,7 +50,7 @@ func (f *fakeViewerRepo) TopViewers(context.Context, int) ([]store.ViewerProfile
 	return nil, nil
 }
 
-// snapshotTestPack 是有场景口径的人格包：ContextText 需要能取到场景正文。
+// snapshotTestPack 是有场景口径的人格包：统一准备层需要能取到场景正文。
 func snapshotTestPack() persona.Pack {
 	return persona.Pack{
 		Meta:     persona.Meta{Name: "测试鱼", Version: "v1", Channels: []string{persona.ContextLive}},
@@ -339,13 +339,53 @@ func TestGenerateReactUsesSameContextSnapshot(t *testing.T) {
 		}
 	}
 
-	// 与单步 Brain 的 ContextText 完全同源：user 段以同一份快照开头。
+	// 与单步 Brain 的生成输入完全同源：同一份快照经 brain.Prepare
+	// 得到的资料段与 ReAct 的 Context 必须逐字节一致（含统一校验与预算）。
 	builder := newContextBuilder(snapshotTestPack(), mem, nil, viewers, newSoulCache(soulPath), func(time.Time) string { return stateText }, zap.NewNop())
-	wantText, err := brain.ContextText(context.Background(), builder.BuildContext(context.Background(), ev, "", false))
+	built := builder.BuildContext(context.Background(), ev, "", false)
+	task := brain.Task{ID: "task-" + ev.ID, EventID: ev.ID, Channel: ev.Channel, Session: ev.Session}
+	prepared, err := brain.Prepare(context.Background(), task, built, brain.DefaultBudget())
 	if err != nil {
-		t.Fatalf("渲染统一快照失败：%v", err)
+		t.Fatalf("准备统一生成输入失败：%v", err)
 	}
-	if !strings.HasPrefix(llm.user, strings.TrimSpace(wantText)) {
-		t.Errorf("ReAct 的 Context 与统一快照不同源：\nwant prefix:\n%s\ngot:\n%s", wantText, llm.user)
+	if !strings.HasPrefix(llm.user, strings.TrimSpace(prepared.Context)) {
+		t.Errorf("ReAct 的 Context 与统一快照不同源：\nwant prefix:\n%s\ngot:\n%s", prepared.Context, llm.user)
+	}
+}
+
+// TestRunReactRejectsBadInputBeforeFactory ReAct 与单步共用 Prepare 校验：
+// Scope 不一致或资料含 NUL 时直接停止，不创建 Agent、不调用模型。
+func TestRunReactRejectsBadInputBeforeFactory(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*brain.ContextInput)
+	}{
+		{"共享Scope私密", func(in *brain.ContextInput) { in.Shared.Scope.Private = true }},
+		{"画面NUL", func(in *brain.ContextInput) { in.Visual = "坏\x00片段" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			runtime := &reactRuntime{factory: func(memory.Scope, string) (*reasoning.Agent, error) {
+				calls++
+				return nil, errors.New("不应创建 Agent")
+			}, defaultReact: true}
+			ev := snapshotTestEvent("问题")
+			scope := memory.Scope{Channel: ev.Channel, Session: ev.Session}
+			input := brain.ContextInput{
+				Event:   ev,
+				Persona: snapshotTestPack(),
+				Memory:  memory.Context{Scope: scope},
+				Shared:  memory.SharedState{Scope: scope},
+			}
+			tc.mutate(&input)
+			task := brain.Task{ID: "task-" + ev.ID, EventID: ev.ID, Channel: ev.Channel, Session: ev.Session}
+			if _, err := runReact(context.Background(), runtime, scope, ev, task, input, zap.NewNop()); err == nil {
+				t.Fatal("非法输入未停止 ReAct")
+			}
+			if calls != 0 {
+				t.Fatalf("非法输入仍创建了 Agent：%d 次", calls)
+			}
+		})
 	}
 }

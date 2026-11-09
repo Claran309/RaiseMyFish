@@ -773,22 +773,24 @@ func TestRunOnceReactUsesUnifiedSnapshot(t *testing.T) {
 		"[当前状态] 你正在看房间 30308220 的直播",
 		"喜欢被摸头",
 		"你在直播间的场景",
-		"画面：" + f.vision.text,
+		"<visual>",
+		f.vision.text,
 	} {
 		if !strings.Contains(llm.user, want) {
 			t.Errorf("ReAct 上下文缺少 %q：\n%s", want, llm.user)
 		}
 	}
 
-	// 与 ContextBuilder 产出的快照同源：Context 段就是 ContextText 的渲染结果。
+	// 与 ContextBuilder 产出的快照同源：Context 段就是 brain.Prepare 的资料段。
 	built := builder.input
 	built.Event = builder.gotEvent
 	built.Visual = builder.gotVisual
-	wantText, err := brain.ContextText(context.Background(), built)
+	task := brain.Task{ID: built.Event.ID, EventID: built.Event.ID, Channel: built.Event.Channel, Session: built.Event.Session}
+	prepared, err := brain.Prepare(context.Background(), task, built, brain.DefaultBudget())
 	if err != nil {
-		t.Fatalf("渲染统一快照失败：%v", err)
+		t.Fatalf("准备统一生成输入失败：%v", err)
 	}
-	if !strings.HasPrefix(llm.user, strings.TrimSpace(wantText)) {
-		t.Errorf("主动 ReAct 与统一快照不同源：\nwant prefix:\n%s\ngot:\n%s", wantText, llm.user)
+	if !strings.HasPrefix(llm.user, strings.TrimSpace(prepared.Context)) {
+		t.Errorf("主动 ReAct 与统一快照不同源：\nwant prefix:\n%s\ngot:\n%s", prepared.Context, llm.user)
 	}
 }
