@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"RaiseMyFish/internal/brain/provider"
@@ -41,7 +42,7 @@ func pendingError(ctx context.Context) error {
 func inputBounds(ctx context.Context, task Task, in ContextInput) error {
 	const maxItems = 4096
 	const maxBytes = 4 << 20
-	items := len(in.Memory.Recent) + len(in.Memory.CrossChannel) + len(in.Memory.Records) + len(in.Shared.Facts)
+	items := len(in.Memory.Recent) + len(in.Memory.Focus) + len(in.Memory.CrossChannel) + len(in.Memory.Records) + len(in.Shared.Facts)
 	if in.Knowledge != nil {
 		items += len(in.Knowledge.Items)
 	}
@@ -72,12 +73,12 @@ func inputBounds(ctx context.Context, task Task, in ContextInput) error {
 			}
 		}
 	}
-	for _, group := range [][]memory.Message{in.Memory.Recent, in.Memory.CrossChannel} {
+	for _, group := range [][]memory.Message{in.Memory.Recent, in.Memory.Focus, in.Memory.CrossChannel} {
 		for _, m := range group {
 			if err := pendingError(ctx); err != nil {
 				return contextFailure(err)
 			}
-			bytes += len(m.EventID) + len(m.Session) + len(m.Text) + len(m.FromID) + len(m.FromName)
+			bytes += len(m.EventID) + len(m.Session) + len(m.Text) + len(m.FromID) + len(m.FromName) + len(m.ReplyTo)
 		}
 	}
 	for _, r := range in.Memory.Records {
@@ -243,12 +244,60 @@ func Prepare(ctx context.Context, task Task, in ContextInput, budget Budget) (Pr
 
 type contextSection struct {
 	Scene        string                `json:"scene"`
+	Current      currentEventSection   `json:"current_event"`
+	Snapshot     snapshotSection       `json:"snapshot"`
 	Shared       []memory.Fact         `json:"shared"`
 	Recent       []memory.Message      `json:"recent"`
+	Focus        []memory.Message      `json:"focus_turns"`
 	CrossChannel []memory.Message      `json:"cross_channel"`
 	Records      []memory.Record       `json:"records"`
 	Knowledge    []knowledgePromptItem `json:"knowledge,omitempty"`
 }
+
+// currentEventSection 是当前事件的显式身份块。
+//
+// 正文仍由 <event>（单步）或「弹幕：」（ReAct）单独承载，这里只放身份、
+// 引用关系与主体候选，避免同一段正文在两个位置重复占预算。
+type currentEventSection struct {
+	ID                string                    `json:"id"`
+	Channel           event.Channel             `json:"channel"`
+	Session           string                    `json:"session"`
+	At                time.Time                 `json:"at"`
+	Speaker           actorSection              `json:"speaker"`
+	ReplyTo           string                    `json:"reply_to,omitempty"`
+	ReplyTarget       *replyTargetSection       `json:"reply_target,omitempty"`
+	SubjectCandidates []subjectCandidateSection `json:"subject_candidates,omitempty"`
+}
+
+type actorSection struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+// replyTargetSection 是当前事件引用的人/消息。ID 是平台消息 ID（不是 UID）。
+type replyTargetSection struct {
+	EventID string `json:"event_id,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Kind    string `json:"kind"`
+}
+
+// subjectCandidateSection 只表达「可能是问题主体」，不是已确认身份。
+type subjectCandidateSection struct {
+	ID     string `json:"id,omitempty"`
+	Name   string `json:"name"`
+	Source string `json:"source"`
+}
+
+// snapshotSection 记录本轮资料视角与来源水位，便于区分「查不到」和「看到的是哪个版本」。
+type snapshotSection struct {
+	AsOf              time.Time `json:"as_of"`
+	SourceWatermark   string    `json:"source_watermark,omitempty"`
+	RecentUntil       string    `json:"recent_until,omitempty"`
+	FocusUntil        string    `json:"focus_until,omitempty"`
+	PersonaVersion    string    `json:"persona_version,omitempty"`
+	KnowledgeRevision string    `json:"knowledge_revision,omitempty"`
+}
+
 type eventSection struct {
 	ID       string        `json:"id"`
 	Channel  event.Channel `json:"channel"`
@@ -357,7 +406,15 @@ func buildContextSection(in ContextInput) (contextSection, error) {
 	if err != nil {
 		return contextSection{}, &Error{Kind: KindInput, Cause: err}
 	}
-	section := contextSection{Scene: scene, Shared: append([]memory.Fact(nil), in.Shared.Facts...), Recent: append([]memory.Message(nil), in.Memory.Recent...), CrossChannel: append([]memory.Message(nil), in.Memory.CrossChannel...), Records: append([]memory.Record(nil), in.Memory.Records...)}
+	section := contextSection{
+		Scene:        scene,
+		Current:      buildCurrentEvent(in.Event, in.Persona),
+		Shared:       append([]memory.Fact(nil), in.Shared.Facts...),
+		Recent:       append([]memory.Message(nil), in.Memory.Recent...),
+		Focus:        append([]memory.Message(nil), in.Memory.Focus...),
+		CrossChannel: append([]memory.Message(nil), in.Memory.CrossChannel...),
+		Records:      append([]memory.Record(nil), in.Memory.Records...),
+	}
 	sort.SliceStable(section.Records, func(i, j int) bool {
 		a, b := section.Records[i], section.Records[j]
 		if a.Importance != b.Importance {
@@ -374,6 +431,7 @@ func buildContextSection(in ContextInput) (contextSection, error) {
 		})
 	}
 	sortMessages(section.Recent)
+	sortMessages(section.Focus)
 	sortMessages(section.CrossChannel)
 	sort.SliceStable(section.Shared, func(i, j int) bool {
 		a, b := section.Shared[i], section.Shared[j]
@@ -385,7 +443,179 @@ func buildContextSection(in ContextInput) (contextSection, error) {
 		}
 		return a.SourceID < b.SourceID
 	})
+	section.Snapshot = buildSnapshot(in, section)
 	return section, nil
+}
+
+const (
+	maxSubjectCandidates = 5
+	maxCandidateRunes    = 16
+	candidateTrimCutset  = "，。！？、；：,.!?;:（）()[]【】…—－-“”\"' \t\r\n"
+)
+
+// structuredReplyTarget 与采集器写入 Meta 的结构化回复字段一致。
+type structuredReplyTarget struct {
+	ReplyToID   string `json:"reply_to_id"`
+	ReplyToName string `json:"reply_to_name"`
+}
+
+// buildCurrentEvent 显式给出当前事件的身份与引用关系。
+func buildCurrentEvent(e event.Event, p persona.Pack) currentEventSection {
+	var meta structuredReplyTarget
+	if len(e.Meta) > 0 {
+		_ = json.Unmarshal(e.Meta, &meta)
+	}
+	current := currentEventSection{
+		ID:      e.ID,
+		Channel: e.Channel,
+		Session: e.Session,
+		At:      e.At,
+		Speaker: actorSection{ID: e.FromID, Name: e.FromName},
+		ReplyTo: e.ReplyTo,
+	}
+	targetID := strings.TrimSpace(meta.ReplyToID)
+	if targetID == "" {
+		targetID = strings.TrimSpace(e.ReplyTo)
+	}
+	targetName := strings.TrimSpace(meta.ReplyToName)
+	if targetID != "" || targetName != "" {
+		kind := "unknown"
+		if targetName != "" {
+			kind = "other"
+			if self := selfName(p); self != "" && strings.EqualFold(targetName, self) {
+				kind = "self"
+			}
+		}
+		current.ReplyTarget = &replyTargetSection{EventID: targetID, Name: targetName, Kind: kind}
+	}
+	current.SubjectCandidates = subjectCandidates(e, targetName)
+	return current
+}
+
+func selfName(p persona.Pack) string {
+	if name := strings.TrimSpace(p.Meta.DisplayName); name != "" {
+		return name
+	}
+	return strings.TrimSpace(p.Meta.Name)
+}
+
+// subjectCandidates 只产生候选名单，供模型消歧；身份结论仍须查证。
+func subjectCandidates(e event.Event, replyName string) []subjectCandidateSection {
+	seen := make(map[string]bool, maxSubjectCandidates)
+	out := make([]subjectCandidateSection, 0, maxSubjectCandidates)
+	add := func(id, name, source string) {
+		name = strings.TrimSpace(name)
+		if name == "" || len(out) >= maxSubjectCandidates {
+			return
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, subjectCandidateSection{ID: strings.TrimSpace(id), Name: name, Source: source})
+	}
+	add(e.FromID, e.FromName, "speaker")
+	add("", replyName, "reply_target")
+	for _, name := range mentionedNames(e.Text) {
+		add("", name, "mention")
+	}
+	add("", questionedSubject(e.Text), "question")
+	return out
+}
+
+// mentionedNames 从正文提取 @昵称；只作为候选，不做身份匹配。
+func mentionedNames(text string) []string {
+	runes := []rune(text)
+	var names []string
+	for i := 0; i < len(runes); i++ {
+		if runes[i] != '@' && runes[i] != '＠' {
+			continue
+		}
+		start := i + 1
+		for start < len(runes) && unicode.IsSpace(runes[start]) {
+			start++
+		}
+		end := start
+		for end < len(runes) && end-start < maxCandidateRunes && !unicode.IsSpace(runes[end]) && !strings.ContainsRune(candidateTrimCutset, runes[end]) {
+			end++
+		}
+		if name := strings.Trim(string(runes[start:end]), candidateTrimCutset); name != "" {
+			names = append(names, name)
+		}
+		i = end - 1
+	}
+	return names
+}
+
+// questionedSubject 提取「X是谁」里的 X，代词不参与候选。
+func questionedSubject(text string) string {
+	idx := strings.Index(text, "是谁")
+	if idx <= 0 {
+		return ""
+	}
+	prefix := []rune(text[:idx])
+	if len(prefix) > maxCandidateRunes {
+		prefix = prefix[len(prefix)-maxCandidateRunes:]
+	}
+	name := strings.Trim(string(prefix), candidateTrimCutset)
+	if utf8.RuneCountInString(name) < 2 {
+		return ""
+	}
+	switch name {
+	case "你", "我", "他", "她", "它", "谁", "这个", "那个":
+		return ""
+	}
+	return name
+}
+
+// buildSnapshot 计算资料视角时间与各来源水位。
+func buildSnapshot(in ContextInput, section contextSection) snapshotSection {
+	snap := snapshotSection{AsOf: in.Event.At, PersonaVersion: in.Persona.Meta.Version}
+	if in.Knowledge != nil {
+		snap.KnowledgeRevision = in.Knowledge.Revision
+	}
+	recentAt, recentMark := latestMessageBoundary(section.Recent)
+	focusAt, focusMark := latestMessageBoundary(section.Focus)
+	crossAt, crossMark := latestMessageBoundary(section.CrossChannel)
+	snap.RecentUntil = recentMark
+	snap.FocusUntil = focusMark
+	latestAt, latestMark := in.Event.At, ""
+	consider := func(at time.Time, mark string) {
+		if mark == "" {
+			return
+		}
+		if latestMark == "" || at.After(latestAt) || (at.Equal(latestAt) && mark > latestMark) {
+			latestAt, latestMark = at, mark
+		}
+	}
+	consider(recentAt, recentMark)
+	consider(focusAt, focusMark)
+	consider(crossAt, crossMark)
+	if latestMark != "" {
+		snap.SourceWatermark = latestMark
+	}
+	if latestAt.After(snap.AsOf) {
+		snap.AsOf = latestAt
+	}
+	return snap
+}
+
+func latestMessageBoundary(messages []memory.Message) (time.Time, string) {
+	var at time.Time
+	id := ""
+	for _, m := range messages {
+		if m.At.IsZero() {
+			continue
+		}
+		if at.IsZero() || m.At.After(at) || (m.At.Equal(at) && m.EventID > id) {
+			at, id = m.At, m.EventID
+		}
+	}
+	if at.IsZero() || id == "" {
+		return time.Time{}, ""
+	}
+	return at, at.UTC().Format(time.RFC3339Nano) + "#" + id
 }
 
 func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent int) (promptPlan, error) {
@@ -463,7 +693,8 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 		}
 	}
 	// 按类别一次清空后，二分找能保留的最大前缀/后缀；不逐条全量重编码。
-	records, cross, recent, facts := section.Records, section.CrossChannel, section.Recent, section.Shared
+	// Focus 排在最后：本轮双方对话是最该保留的证据，房间流/跨频道/摘要先让位。
+	records, cross, recent, focus, facts := section.Records, section.CrossChannel, section.Recent, section.Focus, section.Shared
 	groups := []struct {
 		count int
 		keep  func(int)
@@ -472,6 +703,7 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 		{len(cross), func(n int) { section.CrossChannel = cross[len(cross)-n:] }},
 		{len(recent), func(n int) { section.Recent = recent[len(recent)-n:] }},
 		{len(facts), func(n int) { section.Shared = facts[len(facts)-n:] }},
+		{len(focus), func(n int) { section.Focus = focus[len(focus)-n:] }},
 	}
 	for _, group := range groups {
 		if group.count == 0 {

@@ -121,6 +121,103 @@ func (f *fakeQueryMemoryReader) RecallWithQuery(_ context.Context, scope memory.
 	return f.fakeMemoryReader.Recall(context.Background(), scope)
 }
 
+// fakeFocusMemoryReader 在普通召回之外实现 FocusReader，记录焦点查询参数。
+type fakeFocusMemoryReader struct {
+	*fakeMemoryReader
+
+	focus    []memory.Message
+	focusErr error
+
+	focusCalls int
+	gotFocus   memory.FocusQuery
+}
+
+func (f *fakeFocusMemoryReader) Focus(_ context.Context, q memory.FocusQuery) ([]memory.Message, error) {
+	f.focusCalls++
+	f.gotFocus = q
+	if f.focusErr != nil {
+		return nil, f.focusErr
+	}
+	return f.focus, nil
+}
+
+// TestBuildPassiveInputKeepsFocusTurnsWhenRoomSpams B1/N02 验收：
+// B 刷 30 条后 A 追问，模型输入仍明确本轮是 A，带原问题、鱼的回复与 reply_to。
+func TestBuildPassiveInputKeepsFocusTurnsWhenRoomSpams(t *testing.T) {
+	at := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	scope := memory.Scope{Channel: event.ChLive, Session: "30308220"}
+	spam := make([]memory.Message, 0, 30)
+	for i := 0; i < 30; i++ {
+		spam = append(spam, memory.Message{
+			EventID: fmt.Sprintf("live:30308220:b%02d", i), Channel: event.ChLive, Session: "30308220",
+			Dir: event.DirIn, FromID: "99", FromName: "插话的", Text: "B 插话",
+			At: at.Add(-time.Duration(30-i) * time.Second),
+		})
+	}
+	base := &fakeMemoryReader{
+		ctx:    memory.Context{Scope: scope, Recent: spam},
+		shared: memory.SharedState{Scope: scope},
+	}
+	mem := &fakeFocusMemoryReader{fakeMemoryReader: base, focus: []memory.Message{
+		{EventID: "live:30308220:9001", Channel: event.ChLive, Session: "30308220", Dir: event.DirIn, FromID: "42", FromName: "阿问", Text: "我是谁", At: at.Add(-2 * time.Minute)},
+		{EventID: "live:out:30308220:9001", Channel: event.ChLive, Session: "30308220", Dir: event.DirOut, FromID: "9", FromName: "本鱼", Text: "你是阿问", ReplyTo: "live:30308220:9001", At: at.Add(-90 * time.Second)},
+		{EventID: "live:30308220:9501", Channel: event.ChLive, Session: "30308220", Dir: event.DirIn, FromID: "42", FromName: "阿问", Text: "你还记得我刚才问的吗", At: at},
+	}}
+	builder := newContextBuilder(snapshotTestPack(), mem, nil, nil, nil, nil, zap.NewNop())
+
+	ev := snapshotTestEvent("你还记得我刚才问的吗")
+	ev.FromID = "42"
+	ev.FromName = "阿问"
+	ev.At = at
+	input, _ := buildPassiveInput(context.Background(), builder, ev)
+
+	if mem.focusCalls != 1 || mem.gotFocus.Speaker != "42" || mem.gotFocus.Scope != scope {
+		t.Fatalf("焦点查询参数不符：calls=%d query=%+v", mem.focusCalls, mem.gotFocus)
+	}
+	if len(input.Memory.Recent) != 30 || len(input.Memory.Focus) != 3 {
+		t.Fatalf("记忆段不符：recent=%d focus=%d", len(input.Memory.Recent), len(input.Memory.Focus))
+	}
+
+	task := brain.Task{ID: "task-" + ev.ID, EventID: ev.ID, Channel: ev.Channel, Session: ev.Session}
+	prepared, err := brain.Prepare(context.Background(), task, input, brain.DefaultBudget())
+	if err != nil {
+		t.Fatalf("准备生成输入失败：%v", err)
+	}
+	for _, want := range []string{
+		`"current_event"`,
+		`"speaker":{"id":"42","name":"阿问"}`,
+		`"focus_turns"`,
+		`"reply_to":"live:30308220:9001"`,
+		"我是谁",
+		"你是阿问",
+	} {
+		if !strings.Contains(prepared.Context, want) {
+			t.Errorf("模型输入缺少 %q：\n%s", want, prepared.Context)
+		}
+	}
+}
+
+// TestBuildPassiveInputFocusFailureDegradesOnlyFocus 焦点查询失败只降级该段，
+// 房间流与摘要保留，并在日志里留下可排查记录。
+func TestBuildPassiveInputFocusFailureDegradesOnlyFocus(t *testing.T) {
+	core, logs := observer.New(zap.WarnLevel)
+	base, recent := snapshotTestMemory()
+	mem := &fakeFocusMemoryReader{fakeMemoryReader: base, focusErr: errors.New("焦点查询炸了")}
+	builder := newContextBuilder(snapshotTestPack(), mem, nil, nil, nil, nil, zap.New(core))
+
+	input, _ := buildPassiveInput(context.Background(), builder, snapshotTestEvent("在吗"))
+
+	if len(input.Memory.Focus) != 0 {
+		t.Fatalf("焦点失败不应注入半份数据：%+v", input.Memory.Focus)
+	}
+	if len(input.Memory.Recent) != 1 || input.Memory.Recent[0].Text != recent.Text {
+		t.Fatalf("焦点失败不应连带丢失房间流：%+v", input.Memory.Recent)
+	}
+	if logs.FilterMessage("焦点对话召回失败，仅降级双方对话段").Len() != 1 {
+		t.Fatalf("焦点失败未记日志：%+v", logs.All())
+	}
+}
+
 // TestBuildPassiveInputPassesQuestionToQueryReader M11：当前事件正文要进入摘要选取路径。
 func TestBuildPassiveInputPassesQuestionToQueryReader(t *testing.T) {
 	base, recent := snapshotTestMemory()

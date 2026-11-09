@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/knowledge"
@@ -50,8 +51,9 @@ func TestKnowledgeDefaultDisabledAndTenPercentLimit(t *testing.T) {
 		}
 	}
 	task, in := fixture()
+	in.Event.At = time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
 	expected := `<context>
-{"scene":"场景","shared":null,"recent":null,"cross_channel":null,"records":null}
+{"scene":"场景","current_event":{"id":"live:room:1","channel":"live","session":"room","at":"2026-11-06T12:00:00Z","speaker":{}},"snapshot":{"as_of":"2026-11-06T12:00:00Z","persona_version":"v1"},"shared":null,"recent":null,"focus_turns":null,"cross_channel":null,"records":null}
 </context>
 <event>
 {"id":"live:room:1","channel":"live","session":"room","from_id":"","from_name":"","text":"问题内容"}
@@ -91,8 +93,10 @@ func TestKnowledgeOnlyInDataAndWholeItemSerializationBudget(t *testing.T) {
 	if !reflect.DeepEqual(a.CandidateIDs, []string{"escaped-long", "short"}) || !reflect.DeepEqual(a.IncludedIDs, []string{"short"}) || !reflect.DeepEqual(a.DroppedIDs, []string{"escaped-long"}) {
 		t.Fatalf("未整条跳过长条后保留短条：%+v", a)
 	}
+	// 基线保留同一份知识版本（快照元数据），只去掉候选条目：
+	// 这样 delta 仍精确等于知识投影序列化字节。
 	base := in
-	base.Knowledge = nil
+	base.Knowledge = &knowledge.Context{Scope: in.Knowledge.Scope, Revision: in.Knowledge.Revision}
 	baseline, err := buildMessages(context.Background(), base, 1000)
 	if err != nil {
 		t.Fatal(err)
@@ -253,13 +257,20 @@ func TestKnowledgeEmptyAndZeroPercentKeepFullPersona(t *testing.T) {
 func TestKnowledgeCannotEvictMemoryAndUsesRemainingBytes(t *testing.T) {
 	task, in := fixture()
 	in.Memory.Recent = []memory.Message{{EventID: "live:room:old", Channel: event.ChLive, Session: in.Event.Session, Dir: event.DirIn, At: in.Event.At, Text: "M"}}
-	base, err := buildMessages(context.Background(), in, 10000)
+	// 知识版本会进入快照固定段，基线必须带同一份版本元数据，
+	// 才能在「知识未选中」时与最终 prompt 逐字节比较。
+	baseIn := in
+	baseIn.Knowledge = &knowledge.Context{
+		Scope:    knowledge.Scope{Channel: in.Event.Channel, Session: in.Event.Session, Private: in.Event.Private},
+		Revision: strings.Repeat("a", 64),
+	}
+	base, err := buildMessages(context.Background(), baseIn, 10000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	const budget = 2000
 	in.Memory.Recent[0].Text += strings.Repeat("M", budget-estimate(base))
-	base, err = buildMessages(context.Background(), in, budget)
+	base, err = buildMessages(context.Background(), baseIn, budget)
 	if err != nil || estimate(base) != budget {
 		t.Fatal("未构造满额记忆基线")
 	}

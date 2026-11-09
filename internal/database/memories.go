@@ -25,6 +25,8 @@ const (
 	defaultRecordSubjectQuota = 3
 	// recordQueryTermLimit 限制一次相关性匹配使用的检索词数量。
 	recordQueryTermLimit = 8
+	// focusSpeakerMaxRunes 限制焦点查询的说话者标识长度，防止构造超长参数。
+	focusSpeakerMaxRunes = 128
 )
 
 // MemoryRepo 执行范围受限的持久化读写，不实现提炼/Reader编排。
@@ -37,6 +39,7 @@ var (
 	_ memory.FactSource        = (*MemoryRepo)(nil)
 	_ memory.RecordSource      = (*MemoryRepo)(nil)
 	_ memory.RecordQuerySource = (*MemoryRepo)(nil)
+	_ memory.FocusSource       = (*MemoryRepo)(nil)
 )
 
 // NewMemoryRepo 复用infra连接。
@@ -109,6 +112,66 @@ func (r *MemoryRepo) Recent(ctx context.Context, s memory.Scope, limit int) ([]m
 	// 即使旧数据被错误降密，也不允许DM公开行进入上下文。
 	query = query.Where("(channel <> 'dm' OR private)")
 	return recallMessages(query, s, limit, false)
+}
+
+// FocusMessages 取当前说话者的双方对话轮次，按 reply_to 把鱼的 out 回复配到入向问题上。
+//
+// 窗口与 Recent 完全独立：房间刷屏只影响现场流，不会把本轮对话挤出去。
+// 可见性口径与 Recent 一致（会话隔离、私密过滤、DM 不外泄），只返回已确认的 out。
+func (r *MemoryRepo) FocusMessages(ctx context.Context, q memory.FocusQuery) ([]memory.Message, error) {
+	if err := validateRecall(ctx, q.Scope, q.Limit); err != nil {
+		return nil, err
+	}
+	speaker := strings.TrimSpace(q.Speaker)
+	if speaker == "" || utf8.RuneCountInString(speaker) > focusSpeakerMaxRunes {
+		return nil, store.ErrInvalid
+	}
+	// 一半配额给入向问题，另一半留给配对回复；成对返回才不会只有问题没有回答。
+	inLimit := (q.Limit + 1) / 2
+	var messages []memory.Message
+	err := r.db.WithContext(ctx).Raw(`
+WITH focus_in AS (
+    SELECT id AS event_id,channel,session,dir,from_id,from_name,text,reply_to,private,at
+    FROM events
+    WHERE channel=? AND session=? AND dir='in' AND from_id=? AND `+eventVisibilitySQL(q.Scope, "")+`
+    ORDER BY at DESC, id DESC
+    LIMIT ?
+), focus_out AS (
+    SELECT o.id AS event_id,o.channel,o.session,o.dir,o.from_id,o.from_name,o.text,o.reply_to,o.private,o.at
+    FROM events o
+    JOIN focus_in i ON o.reply_to = i.event_id
+    WHERE o.dir='out' AND o.status='done' AND o.channel=? AND o.session=? AND `+eventVisibilitySQL(q.Scope, "o")+`
+)
+SELECT event_id,channel,session,dir,from_id,from_name,text,reply_to,private,at
+FROM (
+    SELECT * FROM (SELECT * FROM focus_in UNION ALL SELECT * FROM focus_out) merged
+    ORDER BY at DESC, event_id DESC
+    LIMIT ?
+) latest
+ORDER BY at ASC, event_id ASC`, q.Scope.Channel, q.Scope.Session, speaker, inLimit, q.Scope.Channel, q.Scope.Session, q.Limit).Scan(&messages).Error
+	if err != nil {
+		return nil, &safeError{"查询焦点对话失败", err}
+	}
+	if err := (memory.Context{Scope: q.Scope, Focus: messages}).Validate(); err != nil {
+		return nil, &safeError{"焦点对话存量数据无效", err}
+	}
+	return messages, nil
+}
+
+// eventVisibilitySQL 生成事件可见性条件；alias 用于 JOIN 中的另一张 events 表。
+func eventVisibilitySQL(s memory.Scope, alias string) string {
+	column := func(name string) string {
+		if alias == "" {
+			return name
+		}
+		return alias + "." + name
+	}
+	parts := make([]string, 0, 2)
+	if !s.Private {
+		parts = append(parts, "NOT "+column("private"))
+	}
+	parts = append(parts, "("+column("channel")+" <> 'dm' OR "+column("private")+")")
+	return strings.Join(parts, " AND ")
 }
 
 // CrossChannel 只读其他通道的公开消息。
@@ -828,7 +891,7 @@ func validateRecall(ctx context.Context, s memory.Scope, limit int) error {
 
 func recallMessages(query *gorm.DB, s memory.Scope, limit int, cross bool) ([]memory.Message, error) {
 	var messages []memory.Message
-	err := query.Select("id AS event_id,channel,session,dir,from_id,from_name,text,private,at").Order("at DESC, id DESC").Limit(limit).Find(&messages).Error
+	err := query.Select("id AS event_id,channel,session,dir,from_id,from_name,text,reply_to,private,at").Order("at DESC, id DESC").Limit(limit).Find(&messages).Error
 	if err != nil {
 		return nil, &safeError{"查询记忆事件失败", err}
 	}

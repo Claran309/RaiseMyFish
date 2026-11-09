@@ -72,6 +72,8 @@ func truncateRunes(text string, limit int) string {
 // formatViewerProfile 把档案压成 300-400 字的注入片段。
 //
 // 只带「说过多少次/回过多少次/最近几句」，不做价值判断，也不带 uid。
+// 两个列表是各自采样的历史样本，未经问答配对；本轮谁问了什么、
+// 鱼回了什么，以资料段的 focus_turns 为准。
 func formatViewerProfile(p store.ViewerProfile) string {
 	texts := p.RecentTexts
 	if len(texts) > 8 {
@@ -84,6 +86,7 @@ func formatViewerProfile(p store.ViewerProfile) string {
 	var sb strings.Builder
 	sb.WriteString("【对方档案 · 老熟人】\n")
 	fmt.Fprintf(&sb, "- 说过 %d 次 / 鱼回过 %d 次 / 最后出现 %s\n", p.Hits, p.Replies, p.LastSeen.Format("01-02"))
+	sb.WriteString("- 以下按时间采样、未配对问答；本轮配对见 focus_turns\n")
 	if len(texts) > 0 {
 		sb.WriteString("## 他说过的话（最近几条）\n")
 		for _, t := range texts {

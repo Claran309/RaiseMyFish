@@ -62,9 +62,12 @@ func brainStateSource(currentRoom func() string, watch config.Watch) func(time.T
 //
 //   - mem 为 nil（未装配）→ 返回只带 Scope 的空快照，不报错；
 //   - 有查询文本且 Reader 支持 → 摘要优先匹配当前问题，否则退回普通召回；
+//   - speaker 非空且 Reader 支持 → 额外读一组按 reply_to 配对的焦点轮次，
+//     与房间 Recent 分开取，热闹房间不会挤掉本轮对话；
 //   - 召回失败 → 降级为只带 Scope 的空快照 + 记日志，**不阻塞回复**；
+//   - 焦点轮次失败只降级焦点段，房间流与摘要仍保留；
 //   - 隐私：Scope 由事件派生，Reader 内部按 Scope 做隔离，这里不做任何越界拼装。
-func recallMemory(ctx context.Context, mem memory.Reader, scope memory.Scope, query string, log *zap.Logger) (memory.Context, memory.SharedState) {
+func recallMemory(ctx context.Context, mem memory.Reader, scope memory.Scope, query, speaker string, log *zap.Logger) (memory.Context, memory.SharedState) {
 	empty := memory.Context{Scope: scope}
 	emptyShared := memory.SharedState{Scope: scope}
 	if mem == nil {
@@ -83,6 +86,17 @@ func recallMemory(ctx context.Context, mem memory.Reader, scope memory.Scope, qu
 			zap.String("channel", string(scope.Channel)),
 			zap.Error(err))
 		return empty, emptyShared
+	}
+	if focus, ok := mem.(memory.FocusReader); ok && strings.TrimSpace(speaker) != "" {
+		turns, focusErr := focus.Focus(ctx, memory.FocusQuery{Scope: scope, Speaker: speaker})
+		if focusErr != nil {
+			log.Warn("焦点对话召回失败，仅降级双方对话段",
+				zap.String("action", "focus_recall"),
+				zap.String("channel", string(scope.Channel)),
+				zap.Error(focusErr))
+		} else {
+			recalled.Focus = turns
+		}
 	}
 	shared, err := mem.Shared(ctx, scope)
 	if err != nil {

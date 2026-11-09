@@ -19,16 +19,20 @@ type Scope struct {
 }
 
 // Message 是已过滤消息的最小投影，不包含平台Meta。
+//
+// ReplyTo 保存 out 事件指向的入向事件 ID：发送链路把它写成触发回复的输入事件，
+// 因而是「鱼这一句回的是哪一句」的持久证据，焦点轮次按它配对。
 type Message struct {
-	EventID  string
-	Channel  event.Channel
-	Session  string
-	Dir      event.Dir
-	FromID   string
-	FromName string
-	Text     string
-	Private  bool
-	At       time.Time
+	EventID  string        `json:"event_id"`
+	Channel  event.Channel `json:"channel"`
+	Session  string        `json:"session"`
+	Dir      event.Dir     `json:"dir"`
+	FromID   string        `json:"from_id,omitempty"`
+	FromName string        `json:"from_name,omitempty"`
+	Text     string        `json:"text"`
+	ReplyTo  string        `json:"reply_to,omitempty"`
+	Private  bool          `json:"private"`
+	At       time.Time     `json:"at"`
 }
 
 // Record 是已查询到当前有效记录的摘要投影。
@@ -56,9 +60,13 @@ type Fact struct {
 }
 
 // Context 是已按范围召回的数据快照。
+//
+// Recent 是房间现场；Focus 是按 reply_to 证据配对的双方对话轮次，
+// 有独立窗口，不会被热闹房间的 Recent 挤掉。
 type Context struct {
 	Scope        Scope
 	Recent       []Message
+	Focus        []Message
 	CrossChannel []Message
 	Records      []Record
 }
@@ -108,6 +116,11 @@ func (c Context) Validate() error {
 	for _, m := range c.Recent {
 		if !validMessage(m) || m.Channel != c.Scope.Channel || m.Session != c.Scope.Session || !allowed(c.Scope, m.Channel, m.Session, m.Private) {
 			return errors.New("Recent消息无效或越过目标范围")
+		}
+	}
+	for _, m := range c.Focus {
+		if !validMessage(m) || m.Channel != c.Scope.Channel || m.Session != c.Scope.Session || !allowed(c.Scope, m.Channel, m.Session, m.Private) {
+			return errors.New("Focus消息无效或越过目标范围")
 		}
 	}
 	for _, m := range c.CrossChannel {

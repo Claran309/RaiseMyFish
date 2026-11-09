@@ -35,6 +35,30 @@ type RecordQuerySource interface {
 	RecordsFor(ctx context.Context, scope Scope, query string, limit int) ([]Record, error)
 }
 
+// FocusQuery 是一次「双方对话焦点轮次」请求。
+//
+// Speaker 必须来自可信事件（FromID），不能取自模型输出或工具参数。
+type FocusQuery struct {
+	Scope   Scope
+	Speaker string
+	Limit   int
+}
+
+// FocusSource 是 RecordSource 的可选扩展：按当前说话者取双方对话轮次。
+//
+// 实现方必须在 SQL 层按 reply_to 配对鱼的回复，并完成范围与隐私过滤；
+// 本包只做窗口控制与 DTO 二次校验。
+type FocusSource interface {
+	FocusMessages(ctx context.Context, query FocusQuery) ([]Message, error)
+}
+
+// FocusReader 是 Reader 的可选扩展：读取按证据配对的焦点轮次。
+//
+// 未实现时上层退回「只有房间流」的既有行为，不把缺失当成错误。
+type FocusReader interface {
+	Focus(ctx context.Context, query FocusQuery) ([]Message, error)
+}
+
 // QueryReader 是 Reader 的可选扩展：把当前问题交给摘要选取。
 //
 // 隐私与范围过滤仍由 repository 的 SQL 负责；本接口只多传一个排序线索。
@@ -54,6 +78,7 @@ type FactSource interface {
 // 召回窗口默认值；limit 统一夹在 [1, maxReaderLimit]。
 const (
 	defaultRecentLimit  = 20
+	defaultFocusLimit   = 10
 	defaultCrossLimit   = 10
 	defaultRecordsLimit = 10
 	defaultFactsLimit   = 10
@@ -64,6 +89,9 @@ const (
 type ReaderOptions struct {
 	// RecentLimit 同会话最近消息条数，默认 20。
 	RecentLimit int
+	// FocusLimit 双方对话焦点轮次的消息条数上限，默认 10。
+	// 它与 Recent 分开取，房间刷屏不会把本轮对话挤出窗口。
+	FocusLimit int
 	// CrossLimit 跨通道公开消息条数，默认 10。
 	CrossLimit int
 	// RecordsLimit 记忆摘要条数，默认 10。
@@ -83,6 +111,7 @@ type AssembledReader struct {
 var (
 	_ Reader      = (*AssembledReader)(nil)
 	_ QueryReader = (*AssembledReader)(nil)
+	_ FocusReader = (*AssembledReader)(nil)
 )
 
 // NewReader 构造召回装配器。
@@ -98,6 +127,7 @@ func NewReader(source RecordSource, facts FactSource, opts ReaderOptions) (*Asse
 // normalizeReaderOptions 把零值补默认、把越界夹回合法区间。
 func normalizeReaderOptions(opts ReaderOptions) ReaderOptions {
 	opts.RecentLimit = clampLimit(opts.RecentLimit, defaultRecentLimit)
+	opts.FocusLimit = clampLimit(opts.FocusLimit, defaultFocusLimit)
 	opts.CrossLimit = clampLimit(opts.CrossLimit, defaultCrossLimit)
 	opts.RecordsLimit = clampLimit(opts.RecordsLimit, defaultRecordsLimit)
 	opts.FactsLimit = clampLimit(opts.FactsLimit, defaultFactsLimit)
@@ -160,6 +190,39 @@ func (r *AssembledReader) recall(ctx context.Context, scope Scope, query string)
 		return Context{}, fmt.Errorf("召回数据越界或无效：%w", err)
 	}
 	return data, nil
+}
+
+// Focus 读取当前说话者的双方对话轮次。
+//
+// 来源未实现 FocusSource 时返回 nil（既有来源不受影响）；查询失败必须返回错误，
+// 不能把「查询失败」伪装成「没有对话」。
+func (r *AssembledReader) Focus(ctx context.Context, query FocusQuery) ([]Message, error) {
+	if ctx == nil {
+		return nil, errors.New("ctx 不能为 nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := ValidateScope(query.Scope); err != nil {
+		return nil, err
+	}
+	speaker := strings.TrimSpace(query.Speaker)
+	if speaker == "" {
+		return nil, errors.New("焦点对话缺少说话者")
+	}
+	limit := clampLimit(query.Limit, r.opts.FocusLimit)
+	source, ok := r.source.(FocusSource)
+	if !ok {
+		return nil, nil
+	}
+	messages, err := source.FocusMessages(ctx, FocusQuery{Scope: query.Scope, Speaker: speaker, Limit: limit})
+	if err != nil {
+		return nil, fmt.Errorf("召回焦点对话失败：%w", err)
+	}
+	if err := (Context{Scope: query.Scope, Focus: messages}).Validate(); err != nil {
+		return nil, fmt.Errorf("焦点对话数据越界或无效：%w", err)
+	}
+	return messages, nil
 }
 
 // records 选择摘要来源：有查询词且来源支持时走 RecordsFor。

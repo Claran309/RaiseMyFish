@@ -163,3 +163,132 @@ func TestReaderRecallRealPostgres(t *testing.T) {
 		}
 	})
 }
+
+// TestFocusMessagesPairTurnsRealPostgres 验收 B1/N02：
+// A 问、鱼回、B 插 30 条、A 追问之后，Recent(20) 已挤掉 A 的原问题，
+// 但焦点窗口仍按 reply_to 给出「原问题 + 鱼的回复 + 本轮追问」。
+func TestFocusMessagesPairTurnsRealPostgres(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	events, err := NewEventRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memRepo, err := NewMemoryRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Now().UTC().Truncate(time.Microsecond)
+	insert := func(ev event.Event) {
+		t.Helper()
+		if _, err := events.Insert(ctx, ev); err != nil {
+			t.Fatalf("插入事件 %s 失败：%v", ev.ID, err)
+		}
+	}
+	liveScope := memory.Scope{Channel: event.ChLive, Session: "room"}
+	outEvent := func(id, replyTo string, status event.Status, at time.Time) event.Event {
+		return event.Event{
+			ID: id, Channel: event.ChLive, Dir: event.DirOut, Session: "room",
+			FromID: "9", FromName: "本鱼", Text: "鱼的回复 " + id, ReplyTo: replyTo,
+			At: at, Status: status,
+		}
+	}
+
+	// A 问 → 鱼回 → B 插 30 条 → A 追问。
+	insert(event.Event{ID: "live:room:q1", Channel: event.ChLive, Dir: event.DirIn, Session: "room", FromID: "uid-a", FromName: "阿问", Text: "第一问：我是谁", At: base, Status: event.StatusPending})
+	insert(outEvent("live:out:room:r1", "live:room:q1", event.StatusDone, base.Add(time.Second)))
+	// 未确认成功的出向不能成为配对证据。
+	insert(outEvent("live:out:room:r2", "live:room:q1", event.StatusRetry, base.Add(2*time.Second)))
+	for i := 0; i < 30; i++ {
+		insert(event.Event{
+			ID: "live:room:b" + string(rune('a'+i/10)) + string(rune('0'+i%10)), Channel: event.ChLive,
+			Dir: event.DirIn, Session: "room", FromID: "uid-b", FromName: "插话的",
+			Text: "B 插话", At: base.Add(time.Duration(3+i) * time.Second), Status: event.StatusPending,
+		})
+	}
+	insert(event.Event{ID: "live:room:q2", Channel: event.ChLive, Dir: event.DirIn, Session: "room", FromID: "uid-a", FromName: "阿问", Text: "第二问：还记得吗", At: base.Add(40 * time.Second), Status: event.StatusPending})
+
+	recent, err := memRepo.Recent(ctx, liveScope, 20)
+	if err != nil {
+		t.Fatalf("Recent 失败：%v", err)
+	}
+	containsMessage := func(rows []memory.Message, text string) bool {
+		for _, row := range rows {
+			if row.Text == text {
+				return true
+			}
+		}
+		return false
+	}
+	if containsMessage(recent, "第一问：我是谁") {
+		t.Fatalf("Recent(20) 本应挤掉 A 的原问题：%+v", recent)
+	}
+	if !containsMessage(recent, "第二问：还记得吗") {
+		t.Fatalf("Recent(20) 应包含本轮追问：%+v", recent)
+	}
+
+	focus, err := memRepo.FocusMessages(ctx, memory.FocusQuery{Scope: liveScope, Speaker: "  uid-a  ", Limit: 10})
+	if err != nil {
+		t.Fatalf("FocusMessages 失败：%v", err)
+	}
+	if len(focus) != 3 {
+		t.Fatalf("焦点轮次 = %d，期望 3（原问题/已确认回复/本轮追问）：%+v", len(focus), focus)
+	}
+	if focus[0].EventID != "live:room:q1" || focus[0].Text != "第一问：我是谁" {
+		t.Fatalf("原问题丢失：%+v", focus[0])
+	}
+	if focus[1].EventID != "live:out:room:r1" || focus[1].ReplyTo != "live:room:q1" || focus[1].Dir != event.DirOut {
+		t.Fatalf("鱼的回复或 reply_to 配对丢失：%+v", focus[1])
+	}
+	if focus[2].EventID != "live:room:q2" {
+		t.Fatalf("本轮追问不在焦点末尾：%+v", focus)
+	}
+	for _, m := range focus {
+		if m.Channel != event.ChLive || m.Session != "room" || m.Private {
+			t.Fatalf("焦点轮次越界：%+v", m)
+		}
+	}
+
+	// 只取该说话者：B 的插话不会混入 A 的焦点轮次。
+	other, err := memRepo.FocusMessages(ctx, memory.FocusQuery{Scope: liveScope, Speaker: "uid-b", Limit: 10})
+	if err != nil {
+		t.Fatalf("FocusMessages 失败：%v", err)
+	}
+	if len(other) != 5 {
+		t.Fatalf("limit=10 时入向配额应为 5，实际 %d：%+v", len(other), other)
+	}
+	for _, m := range other {
+		if m.FromID != "uid-b" || m.Text == "第一问：我是谁" {
+			t.Fatalf("焦点轮次混入其他说话者：%+v", m)
+		}
+	}
+
+	// 窗口上限生效：limit=2 → 只取最新 1 条入向，且没有可配对回复。
+	small, err := memRepo.FocusMessages(ctx, memory.FocusQuery{Scope: liveScope, Speaker: "uid-a", Limit: 2})
+	if err != nil {
+		t.Fatalf("FocusMessages 失败：%v", err)
+	}
+	if len(small) != 1 || small[0].EventID != "live:room:q2" {
+		t.Fatalf("limit=2 结果不符：%+v", small)
+	}
+
+	// DM 私密会话按同样规则配对，且只在本会话内可见。
+	dmScope := memory.Scope{Channel: event.ChDM, Session: "dm-a", Private: true}
+	insert(event.Event{ID: "dm:dm-a:q1", Channel: event.ChDM, Dir: event.DirIn, Session: "dm-a", FromID: "uid-a", FromName: "阿问", Text: "私信问题", Private: true, At: base.Add(50 * time.Second), Status: event.StatusPending})
+	insert(event.Event{ID: "dm:out:dm-a:r1", Channel: event.ChDM, Dir: event.DirOut, Session: "dm-a", FromID: "9", FromName: "本鱼", Text: "私信回复", Private: true, ReplyTo: "dm:dm-a:q1", At: base.Add(51 * time.Second), Status: event.StatusDone})
+	dmFocus, err := memRepo.FocusMessages(ctx, memory.FocusQuery{Scope: dmScope, Speaker: "uid-a", Limit: 10})
+	if err != nil {
+		t.Fatalf("DM FocusMessages 失败：%v", err)
+	}
+	if len(dmFocus) != 2 || dmFocus[1].ReplyTo != "dm:dm-a:q1" {
+		t.Fatalf("DM 焦点轮次不符：%+v", dmFocus)
+	}
+	for _, m := range dmFocus {
+		if !m.Private || m.Channel != event.ChDM || m.Session != "dm-a" {
+			t.Fatalf("DM 焦点轮次越界：%+v", m)
+		}
+	}
+	if _, err := memRepo.FocusMessages(ctx, memory.FocusQuery{Scope: liveScope, Speaker: "   ", Limit: 10}); err == nil {
+		t.Fatal("空 speaker 应报错")
+	}
+}
