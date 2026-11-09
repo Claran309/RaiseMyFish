@@ -118,17 +118,19 @@ function render() {
   var watchAvailable = watch.available !== false;
   // O09：running 只说明循环在，healthy 才说明最近一轮业务成功。
   var healthy = watch.healthy === true;
-  var pill = document.getElementById('watch-pill');
+  // 变量名不能叫 pill：函数内 var 提升会遮蔽上面同名的全局 pill() 助手，
+  // 导致前半段调用抛 TypeError（D1/N15）。
+  var watchPill = document.getElementById('watch-pill');
   if (!watchAvailable) {
-    pill.textContent = '未装配'; pill.className = 'pill';
+    watchPill.textContent = '未装配'; watchPill.className = 'pill';
   } else if (running && healthy) {
-    pill.textContent = '运行中'; pill.className = 'pill ok';
+    watchPill.textContent = '运行中'; watchPill.className = 'pill ok';
   } else if (running) {
-    pill.textContent = '运行中（业务失败）'; pill.className = 'pill bad';
+    watchPill.textContent = '运行中（业务失败）'; watchPill.className = 'pill bad';
   } else if (watch.enabled) {
-    pill.textContent = '已启用未运行'; pill.className = 'pill warn';
+    watchPill.textContent = '已启用未运行'; watchPill.className = 'pill warn';
   } else {
-    pill.textContent = '已停止'; pill.className = 'pill';
+    watchPill.textContent = '已停止'; watchPill.className = 'pill';
   }
   document.getElementById('watch-room').textContent = watch.room_id || '—';
   document.getElementById('watch-started').textContent = when(watch.started_at);
