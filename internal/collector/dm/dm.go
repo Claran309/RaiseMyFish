@@ -3,7 +3,9 @@
 // 边界：
 //   - 只做「拉会话 → 解析 → 按 msg_id 去重 → 产出事件」，不调模型、不发回复；
 //   - 鉴权类错误直接停采集（继续轮询只会白挨风控），其余错误等下一轮；
-//   - 事件 ID 固定 `dm:{peer}:{msg_id}`，保证幂等。
+//   - 事件 ID 固定 `dm:{接收账号}:{peer}:{msg_id}`，Session 固定
+//     `{接收账号}:{peer}`：同一对方发给两个账号是两条独立私密会话；
+//   - 接收账号同时写进事件 Meta（recv_actor），供发送侧按原账号建计划。
 package dm
 
 import (
@@ -59,7 +61,7 @@ func (e *Error) Unwrap() error { return e.Cause }
 type Message struct {
 	// ID 是平台消息 id（去重键）。
 	ID string
-	// PeerID 是对话对方的 uid（也是事件 Session）。
+	// PeerID 是对话对方的 uid；事件 Session 会再拼上接收账号。
 	PeerID string
 	// PeerName 是对方昵称。
 	PeerName string
@@ -75,7 +77,8 @@ type Message struct {
 // 仅有 channel 接收不算落库（StartAck 路径由桥逐条回执）。
 // 中途取消或确认失败则不提交，下一轮会重新拉取（事件 ID 幂等兜底可能重复）。
 // Close 释放账号切换准入：整批处理结束（成功/失败/取消）都必须调用一次。
-// AccountID/SelfID 是本次批次绑定的账号快照，整批 list/detail 只使用它。
+// AccountID/SelfID 是本次批次绑定的账号快照，整批 list/detail 只使用它；
+// 有消息时 SelfID 必须非空，否则拒绝产出归属不明的事件（宁可不采集）。
 type Batch struct {
 	Messages  []Message
 	Commit    func() error
@@ -203,6 +206,11 @@ func (c *Collector) poll(ctx context.Context, events chan<- event.Event, acks <-
 	if batch.Close != nil {
 		defer batch.Close()
 	}
+	self := strings.TrimSpace(batch.SelfID)
+	if len(batch.Messages) > 0 && !validMID(self) {
+		// 没有接收账号就无法把事件绑定到具体会话/账号；直接报错好过产出无主事件。
+		return &Error{Kind: KindInput, Cause: errors.New("私信批次缺少接收账号，拒绝产出归属不明的事件")}
+	}
 	now := c.opts.Now()
 	// 稳定顺序：按时间升序，保证下游看到的是会话顺序
 	sort.SliceStable(batch.Messages, func(i, j int) bool {
@@ -212,7 +220,7 @@ func (c *Collector) poll(ctx context.Context, events chan<- event.Event, acks <-
 		return batch.Messages[i].ID < batch.Messages[j].ID
 	})
 	for _, m := range batch.Messages {
-		ev, id, ok := c.toEvent(m, now)
+		ev, id, ok := c.toEvent(m, now, self)
 		if !ok {
 			continue
 		}
@@ -248,11 +256,13 @@ func (c *Collector) poll(ctx context.Context, events chan<- event.Event, acks <-
 }
 
 // toEvent 校验并构造事件；返回原始消息 ID 供成功入总线后记已见。
-func (c *Collector) toEvent(m Message, now time.Time) (event.Event, string, bool) {
+//
+// recvActor 是批次绑定的接收账号 MID，必须先在 poll 校验过。
+func (c *Collector) toEvent(m Message, now time.Time, recvActor string) (event.Event, string, bool) {
 	id := strings.TrimSpace(m.ID)
 	peer := strings.TrimSpace(m.PeerID)
 	text := strings.TrimSpace(m.Text)
-	if id == "" || peer == "" || text == "" {
+	if id == "" || peer == "" || text == "" || !validMID(peer) {
 		return event.Event{}, "", false
 	}
 	if len([]rune(text)) > maxTextRunes {
@@ -269,18 +279,33 @@ func (c *Collector) toEvent(m Message, now time.Time) (event.Event, string, bool
 	if name == "" {
 		name = peer
 	}
+	meta, _ := json.Marshal(map[string]string{event.MetaRecvActor: recvActor})
 	return event.Event{
-		ID:       "dm:" + peer + ":" + id,
+		ID:       "dm:" + recvActor + ":" + peer + ":" + id,
 		Channel:  event.ChDM,
 		Dir:      event.DirIn,
 		Private:  true,
-		Session:  peer,
+		Session:  event.DMSession(recvActor, peer),
 		FromID:   peer,
 		FromName: name,
 		Text:     text,
 		At:       at,
 		Status:   event.StatusPending,
+		Meta:     meta,
 	}, id, true
+}
+
+// validMID 校验 B站 UID：纯数字且长度受限，才能安全拼进事件 ID/Session。
+func validMID(value string) bool {
+	if value == "" || len(value) > 32 {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Collector) saw(id string) bool {

@@ -194,6 +194,31 @@ func TestDeliveryPlanCrashAfterPlanReusesOriginalText(t *testing.T) {
 	}
 }
 
+// TestDeliveryPlanDMActorSurvivesQueue 接收账号随事件落库，领取时仍能还原。
+func TestDeliveryPlanDMActorSurvivesQueue(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	id, session := "dm:10001:20002:903", "10001:20002"
+	b := makeBus(t, db)
+	ev := testEvent(id, event.ChDM, session, true, time.Now().UTC().Truncate(time.Microsecond))
+	ev.FromID = "20002"
+	ev.Meta = []byte(`{"recv_actor":"10001"}`)
+	if _, err := b.Publish(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	c := oneClaim(t, b, ctx)
+	if c.Event.Session != session {
+		t.Fatalf("领取后的 Session=%q want %q", c.Event.Session, session)
+	}
+	actor, ok := event.DMRecvActor(c.Event)
+	if !ok || actor != planAccount {
+		t.Fatalf("接收账号未随事件持久化：actor=%q ok=%v meta=%s", actor, ok, c.Event.Meta)
+	}
+	peer, ok := event.DMPeer(c.Event)
+	if !ok || peer != "20002" {
+		t.Fatalf("收信人解析=%q ok=%v", peer, ok)
+	}
+}
+
 // TestDeliveryPlanCrashAfterArmNeverReposts 对应窗口 2/3：请求可能已到平台。
 func TestDeliveryPlanCrashAfterArmNeverReposts(t *testing.T) {
 	db, ctx := repositoryDB(t)
@@ -371,6 +396,8 @@ func TestDeliveryPlanAcceptedWritesSendLogAndOut(t *testing.T) {
 	}{
 		{"comment", event.ChComment, "comment:321:654", "321", false},
 		{"dm", event.ChDM, "dm:20002:901", "20002", true},
+		// 新格式：Session/计划目标带接收账号，同一对方在不同账号下互相隔离。
+		{"dm_actor_scoped", event.ChDM, "dm:10001:20002:902", "10001:20002", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

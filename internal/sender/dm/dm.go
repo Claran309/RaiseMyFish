@@ -166,8 +166,8 @@ func Normalize(c event.Claim, p sender.Reply) (sender.Reply, error) {
 	if c.Lease.Owner == "" || c.Lease.Version < 1 || c.Event.Channel != event.ChDM || c.Event.Dir != event.DirIn || !c.Event.Private {
 		return sender.Reply{}, &Error{Kind: KindInput, Cause: errors.New("私信事件不匹配")}
 	}
-	mid := strings.TrimSpace(c.Event.Session)
-	if mid == "" || !isDigits(mid) {
+	mid, ok := event.DMPeer(c.Event)
+	if !ok || !isDigits(mid) {
 		return sender.Reply{}, &Error{Kind: KindInput, Cause: errors.New("私信缺少收信人")}
 	}
 	if p.Scope.Channel != c.Event.Channel || p.Scope.Session != c.Event.Session || !p.Scope.Private {
@@ -188,9 +188,9 @@ func (s *Sender) Send(ctx context.Context, claim event.Claim, reply sender.Reply
 	if ctx == nil {
 		return sender.Result{}, &Error{Kind: KindInput, Cause: errors.New("上下文不能为 nil")}
 	}
-	mid := strings.TrimSpace(claim.Event.Session)
-	if mid == "" {
-		mid = strings.TrimSpace(claim.Event.FromID)
+	mid, ok := event.DMPeer(claim.Event)
+	if !ok || !isDigits(mid) {
+		mid = ""
 	}
 	text := strings.TrimSpace(reply.Text)
 	if mid == "" || text == "" {

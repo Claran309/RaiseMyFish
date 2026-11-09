@@ -30,14 +30,16 @@ func actor(accountID, mid, cookie string) bili.Actor {
 
 // fakeActors 模拟「当前活跃账号已切到新号，但旧账号仍可取回凭据」。
 type fakeActors struct {
-	current    bili.Actor
-	currentErr error
-	byMID      map[string]bili.Actor
-	byMIDErr   error
-	byMIDCalls []string
+	current      bili.Actor
+	currentErr   error
+	currentCalls int
+	byMID        map[string]bili.Actor
+	byMIDErr     error
+	byMIDCalls   []string
 }
 
 func (f *fakeActors) CurrentActor(context.Context) (bili.Actor, error) {
+	f.currentCalls++
 	if f.currentErr != nil {
 		return bili.Actor{}, f.currentErr
 	}

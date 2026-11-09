@@ -93,7 +93,8 @@ func (s *Sender) Name() string { return s.inner.Name() + "-planned" }
 // Send 先绑定账号快照，再按「落计划 → arm → POST → 记录结果」执行。
 //
 // 账号快照在准入窗口内取一次；若该事件已经有旧计划，则沿用计划原账号，
-// 不允许同一份计划改由新活跃账号发送。
+// 不允许同一份计划改由新活跃账号发送。私信首次建计划只认事件持久化的
+// 接收账号（Meta.recv_actor / 复合 Session），归属缺失就冻结，不做猜测。
 func (s *Sender) Send(ctx context.Context, c event.Claim, reply sender.Reply) (sender.Result, error) {
 	if ctx == nil {
 		return sender.Result{}, &sender.Error{Kind: sender.KindInput, Cause: errors.New("上下文不能为 nil")}
@@ -121,35 +122,45 @@ func (s *Sender) Send(ctx context.Context, c event.Claim, reply sender.Reply) (s
 	planAccount := s.account
 	var current *bili.Actor
 	if s.actors != nil {
-		actor, actorErr := s.actors.CurrentActor(ctx)
-		if actorErr != nil {
-			s.log.Warn("读取当前发送账号失败，未发送",
-				zap.String("action", "planned_actor_unavailable"),
-				zap.String("event_id", c.Event.ID),
-				zap.String("ch", string(s.channel)),
-				zap.Error(actorErr),
-			)
-			return sender.Result{}, actorSendError(actorErr)
-		}
-		current = &actor
-		if mid := strings.TrimSpace(actor.MID); mid != "" {
-			planAccount = mid
-		}
-		existing, planErr := s.repo.PlanAccount(ctx, c.Event.ID)
-		switch {
-		case planErr == nil:
-			if mid := strings.TrimSpace(existing); mid != "" {
+		if s.channel == event.ChDM {
+			// 私信必须沿用接收这条消息的账号：当前活跃账号可能已经切走，
+			// 拿它建计划会把 A 收到的私信变成 B 的回复。
+			account, accountErr := s.dmPlanAccount(ctx, c)
+			if accountErr != nil {
+				return sender.Result{}, accountErr
+			}
+			planAccount = account
+		} else {
+			actor, actorErr := s.actors.CurrentActor(ctx)
+			if actorErr != nil {
+				s.log.Warn("读取当前发送账号失败，未发送",
+					zap.String("action", "planned_actor_unavailable"),
+					zap.String("event_id", c.Event.ID),
+					zap.String("ch", string(s.channel)),
+					zap.Error(actorErr),
+				)
+				return sender.Result{}, actorSendError(actorErr)
+			}
+			current = &actor
+			if mid := strings.TrimSpace(actor.MID); mid != "" {
 				planAccount = mid
 			}
-		case errors.Is(planErr, store.ErrNotFound):
-		default:
-			s.log.Warn("读取投递计划账号失败，未发送",
-				zap.String("action", "planned_account_lookup_failed"),
-				zap.String("event_id", c.Event.ID),
-				zap.String("ch", string(s.channel)),
-				zap.Error(planErr),
-			)
-			return sender.Result{}, &sender.Error{Kind: sender.KindRetry, Cause: planErr}
+			existing, planErr := s.repo.PlanAccount(ctx, c.Event.ID)
+			switch {
+			case planErr == nil:
+				if mid := strings.TrimSpace(existing); mid != "" {
+					planAccount = mid
+				}
+			case errors.Is(planErr, store.ErrNotFound):
+			default:
+				s.log.Warn("读取投递计划账号失败，未发送",
+					zap.String("action", "planned_account_lookup_failed"),
+					zap.String("event_id", c.Event.ID),
+					zap.String("ch", string(s.channel)),
+					zap.Error(planErr),
+				)
+				return sender.Result{}, &sender.Error{Kind: sender.KindRetry, Cause: planErr}
+			}
 		}
 	}
 	if !sender.ValidActor(planAccount) {
@@ -224,6 +235,42 @@ func (s *Sender) Resume(ctx context.Context, c event.Claim) (sender.Result, erro
 	return s.deliver(ctx, c, planAccount, attempt, c.Stage == event.StageDeliver, s.actorFor(planAccount, nil))
 }
 
+// dmPlanAccount 选择私信计划的发送账号。
+//
+// 已有计划优先（旧任务按原 actor 处理）；首次建计划只认事件持久化的接收
+// 账号。事件缺少归属时明确冻结，绝不回落到当前活跃账号。
+func (s *Sender) dmPlanAccount(ctx context.Context, c event.Claim) (string, error) {
+	existing, planErr := s.repo.PlanAccount(ctx, c.Event.ID)
+	switch {
+	case planErr == nil:
+		mid := strings.TrimSpace(existing)
+		if mid == "" {
+			return "", &sender.Error{Kind: sender.KindDead, Cause: errors.New("投递计划缺少可归属的发送账号")}
+		}
+		return mid, nil
+	case errors.Is(planErr, store.ErrNotFound):
+	default:
+		s.log.Warn("读取投递计划账号失败，未发送",
+			zap.String("action", "planned_account_lookup_failed"),
+			zap.String("event_id", c.Event.ID),
+			zap.String("ch", string(s.channel)),
+			zap.Error(planErr),
+		)
+		return "", &sender.Error{Kind: sender.KindRetry, Cause: planErr}
+	}
+	recv, ok := event.DMRecvActor(c.Event)
+	if !ok {
+		// 旧事件没有接收账号，不能猜成当前活跃账号；冻结等待人工处理。
+		s.log.Warn("私信事件缺少接收账号归属，拒绝改用当前活跃账号",
+			zap.String("action", "planned_recv_actor_missing"),
+			zap.String("event_id", c.Event.ID),
+			zap.String("ch", string(s.channel)),
+		)
+		return "", &sender.Error{Kind: sender.KindDead, Cause: errors.New("私信事件缺少接收账号归属，拒绝改用当前活跃账号")}
+	}
+	return recv, nil
+}
+
 // begin 取得本次发送的账号切换准入，直到计划记录结束才释放。
 func (s *Sender) begin(ctx context.Context) (func(), error) {
 	if s.admission == nil {
@@ -271,7 +318,17 @@ func actorSendError(err error) error {
 func (s *Sender) checkClaim(c event.Claim) error {
 	e := c.Event
 	if c.Lease.Owner == "" || c.Lease.Version < 1 || e.ID == "" || e.Channel != s.channel ||
-		e.Dir != event.DirIn || !sender.ValidActor(e.Session) || e.Private != (s.channel == event.ChDM) {
+		e.Dir != event.DirIn || e.Private != (s.channel == event.ChDM) {
+		return &sender.Error{Kind: sender.KindInput, Cause: errors.New("投递计划事件不匹配")}
+	}
+	// 私信 Session 是 "{接收账号}:{对方UID}"，旧数据只有对方 UID，两种都要认。
+	if s.channel == event.ChDM {
+		if _, ok := event.DMPeer(e); !ok {
+			return &sender.Error{Kind: sender.KindInput, Cause: errors.New("投递计划事件不匹配")}
+		}
+		return nil
+	}
+	if !sender.ValidActor(e.Session) {
 		return &sender.Error{Kind: sender.KindInput, Cause: errors.New("投递计划事件不匹配")}
 	}
 	return nil

@@ -93,10 +93,22 @@ func (p deliveryPlanRow) attempt(a deliveryAttemptRow) sender.Attempt {
 }
 
 func validPlanKey(key store.PlanKey) bool {
-	if key.Channel != event.ChComment && key.Channel != event.ChDM {
+	if !sender.ValidActor(key.AccountID) {
 		return false
 	}
-	return sender.ValidActor(key.AccountID) && sender.ValidActor(key.Destination)
+	switch key.Channel {
+	case event.ChComment:
+		return sender.ValidActor(key.Destination)
+	case event.ChDM:
+		// Destination 就是事件 Session：新格式 "{接收账号}:{对方UID}"，
+		// 旧数据只有对方 UID，两种都要能恢复。
+		if sender.ValidActor(key.Destination) {
+			return true
+		}
+		_, _, ok := event.SplitDMSession(key.Destination)
+		return ok
+	}
+	return false
 }
 
 func validPlanText(text string) bool {

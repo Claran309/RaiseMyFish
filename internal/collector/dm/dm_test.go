@@ -18,6 +18,7 @@ type fakeFetcher struct {
 	batches [][]Message
 	errs    []error
 	calls   int
+	selfID  string
 }
 
 func (f *fakeFetcher) Fetch(context.Context) (Batch, error) {
@@ -27,7 +28,11 @@ func (f *fakeFetcher) Fetch(context.Context) (Batch, error) {
 		return Batch{}, f.errs[i]
 	}
 	if i < len(f.batches) {
-		return Batch{Messages: f.batches[i]}, nil
+		self := f.selfID
+		if self == "" {
+			self = "3747"
+		}
+		return Batch{Messages: f.batches[i], SelfID: self}, nil
 	}
 	return Batch{}, nil
 }
@@ -105,14 +110,18 @@ func TestCollectorDedupByMsgID(t *testing.T) {
 		t.Fatalf("应只产出一条事件，实际 %d", len(events))
 	}
 	ev := <-events
-	if ev.Channel != event.ChDM || ev.Dir != event.DirIn || ev.Session != "2002" || !ev.Private {
+	if ev.Channel != event.ChDM || ev.Dir != event.DirIn || ev.Session != "3747:2002" || !ev.Private {
 		t.Errorf("事件字段不符：%+v", ev)
 	}
-	if ev.ID != "dm:2002:9001" {
+	if ev.ID != "dm:3747:2002:9001" {
 		t.Errorf("事件 ID 不符：%q", ev.ID)
 	}
 	if ev.FromID != "2002" || ev.FromName != "熟客乙" {
 		t.Errorf("主体不符：%+v", ev)
+	}
+	actor, ok := event.DMRecvActor(ev)
+	if !ok || actor != "3747" {
+		t.Errorf("接收账号未持久化：actor=%q ok=%v meta=%s", actor, ok, ev.Meta)
 	}
 }
 
@@ -183,6 +192,7 @@ func TestCollectorCommitsAfterEmission(t *testing.T) {
 	f := &commitFetcher{batch: Batch{
 		Messages: []Message{{ID: "1", PeerID: "2", Text: "hi", At: time.Now()}},
 		Commit:   func() error { committed++; return nil },
+		SelfID:   "3747",
 	}}
 	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
 	events := make(chan event.Event, 1)
@@ -245,6 +255,7 @@ func TestCollectorWaitsForPersistentAckBeforeCommit(t *testing.T) {
 	f := &commitFetcher{batch: Batch{
 		Messages: []Message{{ID: "1", PeerID: "2", Text: "hi", At: time.Now()}},
 		Commit:   func() error { committed.Add(1); return nil },
+		SelfID:   "3747",
 	}}
 	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
 	events := make(chan event.Event)
@@ -277,6 +288,7 @@ func TestCollectorNoCommitWhenAckFails(t *testing.T) {
 	f := &commitFetcher{batch: Batch{
 		Messages: []Message{{ID: "1", PeerID: "2", Text: "hi", At: time.Now()}},
 		Commit:   func() error { committed.Add(1); return nil },
+		SelfID:   "3747",
 	}}
 	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
 	events := make(chan event.Event)
@@ -333,6 +345,7 @@ func TestRunToBusDoesNotCommitWhenPublishFails(t *testing.T) {
 	f := &commitFetcher{batch: Batch{
 		Messages: []Message{{ID: "9001", PeerID: "2002", Text: "fixture", At: time.Unix(1700000000, 0)}},
 		Commit:   func() error { committed.Add(1); return nil },
+		SelfID:   "3747",
 	}}
 	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
 	pub := &blockingFailPublisher{entered: make(chan struct{}), release: make(chan struct{})}
@@ -354,12 +367,76 @@ func TestRunToBusDoesNotCommitWhenPublishFails(t *testing.T) {
 	}
 }
 
+// rawFetcher 原样返回 Batch，用于构造缺字段的批次。
+type rawFetcher struct{ batch Batch }
+
+func (f *rawFetcher) Fetch(context.Context) (Batch, error) { return f.batch, nil }
+
+// TestCollectorRejectsBatchWithoutRecvActor 批次没有接收账号时拒绝产出事件、不提交水位。
+func TestCollectorRejectsBatchWithoutRecvActor(t *testing.T) {
+	committed := 0
+	f := &rawFetcher{batch: Batch{
+		Messages: []Message{{ID: "1", PeerID: "2", Text: "hi", At: time.Now()}},
+		Commit:   func() error { committed++; return nil },
+	}}
+	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
+	events := make(chan event.Event, 1)
+	err := c.poll(context.Background(), events, nil)
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Kind != KindInput {
+		t.Fatalf("应返回输入错误：%v", err)
+	}
+	if len(events) != 0 || committed != 0 {
+		t.Fatalf("归属不明的批次产生了事件或提交：events=%d commit=%d", len(events), committed)
+	}
+}
+
+// TestCollectorSeparatesAccountsForSamePeer 同一对方发给两个接收账号 → 事件 ID 与会话分开。
+func TestCollectorSeparatesAccountsForSamePeer(t *testing.T) {
+	msg := Message{ID: "9001", PeerID: "2002", PeerName: "对方", Text: "在吗", At: time.Unix(1700000000, 0)}
+	collect := func(self string) event.Event {
+		t.Helper()
+		f := &fakeFetcher{batches: [][]Message{{msg}}, selfID: self}
+		c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
+		events := make(chan event.Event, 1)
+		if err := c.poll(context.Background(), events, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("应产出一条事件，实际 %d", len(events))
+		}
+		return <-events
+	}
+	a := collect("1001")
+	b := collect("1002")
+	if a.ID == b.ID || a.Session == b.Session {
+		t.Fatalf("两个接收账号的事件未分开：A=%s/%s B=%s/%s", a.ID, a.Session, b.ID, b.Session)
+	}
+	if a.Session != "1001:2002" || b.Session != "1002:2002" {
+		t.Fatalf("会话键不符：A=%q B=%q", a.Session, b.Session)
+	}
+	// Generate 直接用事件 Session 构造 Memory.Scope，两条私密会话因此天然隔离。
+	if a.Session == event.DMSession("1001", "1002") {
+		t.Fatal("会话键把接收账号与对方UID拼反了")
+	}
+	for self, ev := range map[string]event.Event{"1001": a, "1002": b} {
+		actor, ok := event.DMRecvActor(ev)
+		if !ok || actor != self {
+			t.Errorf("%s 的接收账号=%q ok=%v meta=%s", self, actor, ok, ev.Meta)
+		}
+		if ev.FromID != "2002" {
+			t.Errorf("%s 的主体应是对方：%+v", self, ev)
+		}
+	}
+}
+
 // TestRunToBusCommitsAfterPublishSucceeds 发布成功路径：每条事件确认后才提交一次水位。
 func TestRunToBusCommitsAfterPublishSucceeds(t *testing.T) {
 	var committed atomic.Int32
 	f := &commitFetcher{batch: Batch{
 		Messages: []Message{{ID: "9001", PeerID: "2002", Text: "fixture", At: time.Unix(1700000000, 0)}},
 		Commit:   func() error { committed.Add(1); return nil },
+		SelfID:   "3747",
 	}}
 	c, _ := New(f, Options{Interval: 10 * time.Second, Log: zap.NewNop()})
 	pub := &countingPublisher{}

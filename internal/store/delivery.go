@@ -16,6 +16,10 @@ type DeliveryRepo interface {
 }
 
 // PlanKey 标识一份非直播投递计划：通道、发送账号与目标。
+//
+// Destination 取事件 Session：评论是会话对象 UID；私信是
+// "{接收账号}:{对方UID}"（旧数据只有对方 UID），用复合键保证不同接收账号
+// 的同一对方会话互不混用。
 type PlanKey struct {
 	Channel     event.Channel
 	AccountID   string

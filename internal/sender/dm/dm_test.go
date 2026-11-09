@@ -12,6 +12,7 @@ import (
 
 	"RaiseMyFish/internal/bili"
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/sender"
 )
 
@@ -72,6 +73,37 @@ func newAllFollowersSender(t *testing.T, clock *time.Time) (*Sender, *fakeTransp
 
 func claimFor(peer string) event.Claim {
 	return event.Claim{Event: event.Event{ID: "dm:" + peer + ":1", Channel: event.ChDM, Dir: event.DirIn, Session: peer, FromID: peer, Text: "在吗"}}
+}
+
+// compositeClaimFor 是新格式私信事件：Session 带接收账号，对方 UID 仍是收信人。
+func compositeClaimFor(recv, peer string) event.Claim {
+	return event.Claim{
+		Event: event.Event{
+			ID: "dm:" + recv + ":" + peer + ":1", Channel: event.ChDM, Dir: event.DirIn,
+			Session: event.DMSession(recv, peer), FromID: peer, Text: "在吗", Private: true,
+		},
+		Lease: event.Lease{Owner: "worker-1", Version: 1},
+	}
+}
+
+// TestSendCompositeSessionUsesPeerAsRecipient 复合 Session 不影响收信人解析。
+func TestSendCompositeSessionUsesPeerAsRecipient(t *testing.T) {
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	s, tr := newAllFollowersSender(t, &now)
+	c := compositeClaimFor("1001", "2002")
+	if _, err := s.Send(context.Background(), c, sender.Reply{Text: "你好"}); err != nil {
+		t.Fatalf("发送失败：%v", err)
+	}
+	if tr.lastID != "2002" || tr.lastTxt != "你好" {
+		t.Fatalf("收信人解析错误：mid=%q text=%q", tr.lastID, tr.lastTxt)
+	}
+	normalized, err := Normalize(c, sender.Reply{
+		Text:  " 你好 ",
+		Scope: memory.Scope{Channel: event.ChDM, Session: c.Event.Session, Private: true},
+	})
+	if err != nil || normalized.Text != "你好" {
+		t.Fatalf("Normalize=%+v %v", normalized, err)
+	}
 }
 
 // TestSendWhitelistBlocked 非白名单直接拒绝，不查关系不发送。
