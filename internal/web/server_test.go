@@ -175,12 +175,14 @@ func newTestServer(t *testing.T, repo store.WebRepo) *Server {
 	return s
 }
 
-// TestStatusJSON 断言概览字段齐全。
+// TestStatusJSON 断言概览字段齐全；费用按已计价/未知拆分。
 func TestStatusJSON(t *testing.T) {
+	known := 0.42
 	repo := &fakeRepo{status: store.WebStatus{
 		EventsTotal: 10, EventsPending: 3, MemoryTotal: 5,
 		MemoryByKind: map[string]int64{"fact": 4, "preference": 1},
-		SendTotal:    8, SendFailed: 1, CostUSD: 0.42,
+		SendTotal:    8, SendFailed: 1,
+		KnownCostUSD: &known, UnknownCalls: 1, TotalCalls: 5, Coverage: 0.8,
 		GeneratedAt: time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC),
 	}}
 	srv := newTestServer(t, repo)
@@ -194,13 +196,40 @@ func TestStatusJSON(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("响应不是 JSON：%v", err)
 	}
-	for _, k := range []string{"events_total", "events_pending", "memory_total", "memory_by_kind", "send_total", "send_failed", "cost_usd", "generated_at"} {
+	for _, k := range []string{"events_total", "events_pending", "memory_total", "memory_by_kind", "send_total", "send_failed", "known_cost", "unknown_calls", "total_calls", "coverage", "generated_at"} {
 		if _, ok := body[k]; !ok {
 			t.Errorf("缺少字段 %s", k)
 		}
 	}
-	if body["events_total"].(float64) != 10 || body["cost_usd"].(float64) != 0.42 {
+	if _, ok := body["cost_usd"]; ok {
+		t.Error("旧 cost_usd 字段会掩盖未知费用，不应再返回")
+	}
+	if body["events_total"].(float64) != 10 || body["known_cost"].(float64) != 0.42 ||
+		body["unknown_calls"].(float64) != 1 || body["total_calls"].(float64) != 5 ||
+		body["coverage"].(float64) != 0.8 {
 		t.Errorf("数值不符：%+v", body)
+	}
+}
+
+// TestStatusJSONUnknownCost N18：没有已计价调用时 known_cost 必须是 JSON null，
+// 并由 total_calls 区分空账本与全未知。
+func TestStatusJSONUnknownCost(t *testing.T) {
+	repo := &fakeRepo{status: store.WebStatus{UnknownCalls: 2, TotalCalls: 2}}
+	srv := newTestServer(t, repo)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, readReq("/api/status"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("响应不是 JSON：%v", err)
+	}
+	if v, ok := body["known_cost"]; !ok || v != nil {
+		t.Fatalf("全未知时 known_cost 应为 JSON null，实际 %v（存在=%v）", v, ok)
+	}
+	if body["unknown_calls"].(float64) != 2 || body["total_calls"].(float64) != 2 || body["coverage"].(float64) != 0 {
+		t.Errorf("未知费用计数不符：%+v", body)
 	}
 }
 
@@ -397,19 +426,37 @@ func TestPagesRender(t *testing.T) {
 	}
 }
 
-// TestIndexCostShowsUnknown O08：费用未知（API 给 null）时页面显示「未知」，不能显示成 0。
+// TestIndexCostRendersFourStates N18：费用卡片必须区分空账本、真实零、
+// 全未知与混合。混合账本只能标「已知费用」并按覆盖率说明，不能称累计费用。
 //
-// 视觉调用的 usage 记 unknown 时 CostUSD 是 nil；如果页面用 (x||0) 降级，
-// 「不知道花了多少」就会被误读成「一分没花」。
-func TestIndexCostShowsUnknown(t *testing.T) {
+// 真实 PG + API 的字段值由 database 包的集成测试覆盖；这里保护页面分支与
+// 文案不被改回 (x||0) 的降级写法。
+func TestIndexCostRendersFourStates(t *testing.T) {
 	srv := newTestServer(t, &fakeRepo{})
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, readReq("/"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("首页状态码 = %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "d.cost_usd == null ? '未知'") {
-		t.Fatal("首页费用卡片未区分「未知」与 0")
+	body := rec.Body.String()
+	for _, want := range []string{
+		"function costCard(d)",
+		"total === 0",
+		"'账本暂无调用'",
+		"d.known_cost == null",
+		"次调用均未计价",
+		"'已计价 ' + known + '/' + total",
+		"'已知费用($)'",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("首页费用卡片缺少四态分支：%q", want)
+		}
+	}
+	if strings.Contains(body, "'累计费用($)'") {
+		t.Error("混合账本不能把已知部分标成累计费用")
+	}
+	if strings.Contains(body, "d.cost_usd") {
+		t.Error("页面不应再读取已移除的 cost_usd 字段")
 	}
 }
 

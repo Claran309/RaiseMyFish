@@ -11,6 +11,10 @@ import (
 )
 
 // WebStatus 是概览页需要的聚合数字。
+//
+// 费用拆成「已计价 / 未知」：llm_usage.cost_usd 可为 NULL（未配置报价），
+// 不能把 NULL 当 0。KnownCostUSD 为 nil 表示没有任何已计价调用；
+// Coverage 是已计价调用占比，TotalCalls 为 0（空账本）时按 0 处理。
 type WebStatus struct {
 	EventsTotal   int64
 	EventsPending int64
@@ -18,7 +22,10 @@ type WebStatus struct {
 	MemoryByKind  map[string]int64
 	SendTotal     int64
 	SendFailed    int64
-	CostUSD       float64
+	KnownCostUSD  *float64
+	UnknownCalls  int64
+	TotalCalls    int64
+	Coverage      float64
 	GeneratedAt   time.Time
 }
 
@@ -109,7 +116,7 @@ type WebEmbeddingStatus struct {
 
 // WebRepo 是面板的数据访问口。
 type WebRepo interface {
-	// Status 汇总计数与累计费用。
+	// Status 汇总计数与费用（区分已计价与未知）。
 	Status(ctx context.Context) (WebStatus, error)
 	// EmbeddingStatus 汇总知识/记忆/档案的向量入库进度。
 	EmbeddingStatus(ctx context.Context) (WebEmbeddingStatus, error)

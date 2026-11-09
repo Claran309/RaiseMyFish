@@ -86,7 +86,7 @@ func TestVisionUsageReachesPanelStats(t *testing.T) {
 		t.Fatalf("费用不符：%v", row.CostUSD)
 	}
 
-	// 面板费用总览（/api/status 的 cost_usd 就是它）。
+	// 面板费用总览同样按 SUM(llm_usage.cost_usd) 统计（/api/status 的已知费用）。
 	counts, err := stats.Counts(ctx, start, end)
 	if err != nil {
 		t.Fatalf("统计失败：%v", err)

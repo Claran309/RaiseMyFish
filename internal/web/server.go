@@ -262,6 +262,10 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleStatus 返回概览数字。
+//
+// 费用拆成 known_cost / unknown_calls / total_calls / coverage：
+// known_cost 为 null 表示没有任何已计价调用，不能用 0 代替；
+// 混合账本里的 known_cost 只是已知部分，不能当成累计费用展示。
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "只支持 GET")
@@ -279,7 +283,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"memory_by_kind": st.MemoryByKind,
 		"send_total":     st.SendTotal,
 		"send_failed":    st.SendFailed,
-		"cost_usd":       st.CostUSD,
+		"known_cost":     st.KnownCostUSD,
+		"unknown_calls":  st.UnknownCalls,
+		"total_calls":    st.TotalCalls,
+		"coverage":       st.Coverage,
 		"generated_at":   st.GeneratedAt.UTC().Format(time.RFC3339),
 	})
 }

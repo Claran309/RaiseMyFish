@@ -25,7 +25,7 @@ func NewWebRepo(db *gorm.DB) (*WebRepo, error) {
 	return &WebRepo{db: db}, nil
 }
 
-// Status 汇总计数与累计费用。
+// Status 汇总计数与费用（区分已计价与未知）。
 func (r *WebRepo) Status(ctx context.Context) (store.WebStatus, error) {
 	if ctx == nil {
 		return store.WebStatus{}, store.ErrInvalid
@@ -75,13 +75,27 @@ func (r *WebRepo) Status(ctx context.Context) (store.WebStatus, error) {
 		return store.WebStatus{}, &safeError{"统计发送失败", err}
 	}
 	st.SendTotal, st.SendFailed = send.SendTotal, send.SendFailed
-	var cost struct {
-		CostUSD float64
+	// 保留 SUM 的 NULL 语义：全无报价时 known_cost 为 nil，不能 COALESCE 成 0。
+	// 同时统计总条数与未知条数，调用方才能区分空账本、真实零、全未知与混合。
+	var usage struct {
+		KnownCost    *float64
+		UnknownCalls int64
+		TotalCalls   int64
 	}
-	if err := r.db.WithContext(ctx).Raw("SELECT COALESCE(sum(cost_usd),0) AS cost_usd FROM llm_usage").Scan(&cost).Error; err != nil {
+	if err := r.db.WithContext(ctx).Raw(
+		`SELECT sum(cost_usd) AS known_cost,
+		        count(*) FILTER (WHERE cost_usd IS NULL) AS unknown_calls,
+		        count(*) AS total_calls
+		   FROM llm_usage`,
+	).Scan(&usage).Error; err != nil {
 		return store.WebStatus{}, &safeError{"统计费用失败", err}
 	}
-	st.CostUSD = cost.CostUSD
+	st.KnownCostUSD = usage.KnownCost
+	st.UnknownCalls = usage.UnknownCalls
+	st.TotalCalls = usage.TotalCalls
+	if usage.TotalCalls > 0 {
+		st.Coverage = float64(usage.TotalCalls-usage.UnknownCalls) / float64(usage.TotalCalls)
+	}
 	st.GeneratedAt = time.Now().UTC()
 	return st, nil
 }
