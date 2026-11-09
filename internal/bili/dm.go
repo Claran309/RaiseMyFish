@@ -279,7 +279,19 @@ func (c *Client) SendMessage(ctx context.Context, mid, text string) (string, err
 	if err := c.send(ctx, cred, "dm_send", http.MethodPost, c.vc+"/web_im/v1/web_im/send_msg", form, &data); err != nil {
 		return "", err
 	}
-	return rawJSONID(data.MsgKey), nil
+	// code=0 只说明平台明确接受；缺/零/非法 msg_key 是「接受但未验证」，
+	// 交给上层按缺稳定回执处理，不能在这里伪造一个回执。
+	return stableMsgID(data.MsgKey), nil
+}
+
+// stableMsgID 提取可核验的 msg_key：必须是纯数字且非零。
+// 缺失、对象、空串、全零都不算稳定回执。
+func stableMsgID(raw json.RawMessage) string {
+	id := rawJSONID(raw)
+	if !isDigits(id) || strings.Trim(id, "0") == "" {
+		return ""
+	}
+	return id
 }
 
 // RelationAttribute 查关注关系：6=互关，2=已关注，0=未关注。

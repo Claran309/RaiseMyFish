@@ -430,7 +430,8 @@ func (r *PlannedRepo) ArmPlan(ctx context.Context, c event.Claim, key store.Plan
 // planAuditAccepted 写评论/私信成功投递的审计事实。
 //
 // 正文取计划快照（平台实际收到的文字），平台ID进 send_log.msg_id；
-// out 事件只在 done 时进入记忆的「已发言」历史。
+// 只有验收到稳定回执才算「已发言」：未验证的接受事实让 out 保持 retry，
+// 不把「可能发出」写成 done。
 func planAuditAccepted(tx *gorm.DB, p deliveryPlanRow, a deliveryAttemptRow) error {
 	at := a.CreatedAt
 	atKind := "local_attempt"
@@ -442,6 +443,7 @@ func planAuditAccepted(tx *gorm.DB, p deliveryPlanRow, a deliveryAttemptRow) err
 	if a.Verified {
 		evidence = "platform_receipt"
 	}
+	outStatus := event.StatusDone
 	meta, err := json.Marshal(map[string]any{
 		"attempt_id": a.ID,
 		"input_id":   p.EventID,
@@ -454,13 +456,24 @@ func planAuditAccepted(tx *gorm.DB, p deliveryPlanRow, a deliveryAttemptRow) err
 	if err != nil {
 		return err
 	}
+	if !a.Verified {
+		outStatus = event.StatusRetry
+		var fields map[string]any
+		if err := json.Unmarshal(meta, &fields); err != nil {
+			return err
+		}
+		fields["unknown_manual"] = true
+		if meta, err = json.Marshal(fields); err != nil {
+			return err
+		}
+	}
 	if err := tx.Exec(`INSERT INTO send_log(event_id,channel,ok,verified,msg_id,error,at,attempt_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET event_id=excluded.event_id,channel=excluded.channel,ok=excluded.ok,verified=excluded.verified,msg_id=excluded.msg_id,error=excluded.error,at=excluded.at`,
 		p.EventID, p.Channel, a.OK, a.Verified, a.MsgID, a.ErrorKind, at, a.ID).Error; err != nil {
 		return err
 	}
 	outID := p.Channel + ":out:" + p.Destination + ":" + a.ID
 	return tx.Exec(`INSERT INTO events(id,channel,dir,session,from_id,text,private,reply_to,at,status,meta,stage) VALUES(?,?,?,?,?,?,?,?,?,?,?,'verify') ON CONFLICT(id) DO UPDATE SET status=excluded.status,meta=excluded.meta,at=excluded.at,status_changed_at=CASE WHEN events.status<>excluded.status THEN clock_timestamp() ELSE events.status_changed_at END`,
-		outID, p.Channel, event.DirOut, p.Destination, p.AccountID, p.Text, p.Channel == string(event.ChDM), p.EventID, at, event.StatusDone, string(meta)).Error
+		outID, p.Channel, event.DirOut, p.Destination, p.AccountID, p.Text, p.Channel == string(event.ChDM), p.EventID, at, outStatus, string(meta)).Error
 }
 
 // planSettleAccepted 在同一事务里结清输入事件。
@@ -468,9 +481,29 @@ func planAuditAccepted(tx *gorm.DB, p deliveryPlanRow, a deliveryAttemptRow) err
 // POST 期间租约可能刚好过期：审计事实仍要落库，输入交给恢复流程补结算，
 // 不能用过期租约强行改写别人的行。
 func planSettleAccepted(tx *gorm.DB, c event.Claim, p deliveryPlanRow) error {
+	return planSettleInput(tx, c, p, event.StatusDone)
+}
+
+// planSettleUnconfirmed 结清「平台明确接受但缺稳定回执」的输入事件：
+// dead 停止自动处理，不冒充 done，也不交回重投，核对留给人工。
+func planSettleUnconfirmed(tx *gorm.DB, c event.Claim, p deliveryPlanRow) error {
+	return planSettleInput(tx, c, p, event.StatusDead)
+}
+
+func planSettleInput(tx *gorm.DB, c event.Claim, p deliveryPlanRow, status event.Status) error {
 	return tx.Exec(`UPDATE events SET status=?,stage=?,retry_at=NULL,status_changed_at=clock_timestamp(),lease_owner=NULL,lease_until=NULL,lease_version=lease_version+1 WHERE id=? AND lease_owner=? AND lease_version=? AND lease_until>clock_timestamp() AND status IN (?,?,?)`,
-		event.StatusDone, event.StageVerify, p.EventID, c.Lease.Owner, c.Lease.Version,
+		status, event.StageVerify, p.EventID, c.Lease.Owner, c.Lease.Version,
 		event.StatusQueued, event.StatusReplying, event.StatusSent).Error
+}
+
+// planReceiptStable 判断已落库回执是否足以支撑 done。
+// 与 durable 的上层判定同口径：空白、全零、含 NUL 都不算稳定回执。
+func planReceiptStable(id string) bool {
+	id = strings.TrimSpace(id)
+	if strings.ContainsRune(id, 0) {
+		return false
+	}
+	return strings.Trim(id, "0") != ""
 }
 
 // RecordPlan 记录一次平台调用结果；已知成功不会被后续结果覆盖。
@@ -513,10 +546,27 @@ func (r *PlannedRepo) RecordPlan(ctx context.Context, c event.Claim, key store.P
 			return err
 		}
 		if a.State == sender.StateAccepted {
+			// 旧数据可能把「平台接受」记成了已验证：没有稳定回执就纠正为未验证，
+			// 结清保持人工核对，不冒充 done。
+			if a.Verified && !planReceiptStable(a.MsgID) {
+				a.Verified = false
+				if a.ErrorKind == "" {
+					a.ErrorKind = "unconfirmed"
+				}
+				if err := tx.Table("delivery_attempts").Where("id=?", a.ID).Updates(map[string]any{
+					"verified": false, "error_kind": a.ErrorKind,
+				}).Error; err != nil {
+					return err
+				}
+			}
 			if err := planAuditAccepted(tx, p, a); err != nil {
 				return err
 			}
-			if err := planSettleAccepted(tx, c, p); err != nil {
+			if a.Verified {
+				if err := planSettleAccepted(tx, c, p); err != nil {
+					return err
+				}
+			} else if err := planSettleUnconfirmed(tx, c, p); err != nil {
 				return err
 			}
 			out = p.attempt(a)
@@ -532,6 +582,13 @@ func (r *PlannedRepo) RecordPlan(ctx context.Context, c event.Claim, key store.P
 		case sender.StateDead, sender.StateSkipped, sender.StateManual:
 			out = p.attempt(a)
 			return nil
+		}
+		if outcome.State == sender.StateAccepted && !planReceiptStable(outcome.MsgID) {
+			// 平台接受但没有稳定回执：Verified 不能成立，落库前统一纠正。
+			outcome.Verified = false
+			if outcome.ErrorKind == "" {
+				outcome.ErrorKind = "unconfirmed"
+			}
 		}
 		var ok *bool
 		value := outcome.OK
@@ -560,7 +617,11 @@ func (r *PlannedRepo) RecordPlan(ctx context.Context, c event.Claim, key store.P
 			if err := planAuditAccepted(tx, p, a); err != nil {
 				return err
 			}
-			if err := planSettleAccepted(tx, c, p); err != nil {
+			if a.Verified {
+				if err := planSettleAccepted(tx, c, p); err != nil {
+					return err
+				}
+			} else if err := planSettleUnconfirmed(tx, c, p); err != nil {
 				return err
 			}
 		}

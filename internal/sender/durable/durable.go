@@ -391,8 +391,13 @@ func (s *Sender) keyFor(c event.Claim, account string) store.PlanKey {
 func (s *Sender) deliver(ctx context.Context, c event.Claim, planAccount string, a sender.Attempt, allowPost bool, postActor func(context.Context) (bili.Actor, error)) (sender.Result, error) {
 	switch a.State {
 	case sender.StateAccepted:
-		// 平台已接受就是这条通道能拿到的最强证据；重复恢复只会再次返回同一事实。
-		return sender.Result{OK: true, MsgID: a.MsgID, Verified: true}, nil
+		if a.Verified && stableReceipt(a.MsgID) {
+			// 平台接受且有稳定回执：恢复只会再次返回同一事实。
+			return sender.Result{OK: true, MsgID: a.MsgID, Verified: true}, nil
+		}
+		// 平台明确接受但缺稳定回执（含旧数据伪造的 Verified）：不冒充完成，也不再重投。
+		// 旧数据输入还没结清时交给上层按不确定停止。
+		return sender.Result{OK: true, MsgID: a.MsgID, Error: "unconfirmed"}, &sender.Error{Kind: sender.KindUncertain, Cause: errors.New("平台已接受但缺少稳定回执")}
 	case sender.StateArmed, sender.StateUnknown:
 		s.log.Warn("投递结果未知，恢复只核验不重发",
 			zap.String("action", "planned_unknown_no_repost"),
@@ -478,6 +483,10 @@ func (s *Sender) deliver(ctx context.Context, c event.Claim, planAccount string,
 	}
 	switch outcome.State {
 	case sender.StateAccepted:
+		if !outcome.Verified {
+			// 计划事务已把输入结清为 dead（不伪造 done）：返回已结清的「接受但未验证」。
+			return sender.Result{OK: true, MsgID: outcome.MsgID, Error: "unconfirmed"}, &sender.Error{Kind: sender.KindUncertain, Settled: true, Cause: errors.New("平台已接受但缺少稳定回执")}
+		}
 		return sender.Result{OK: true, MsgID: outcome.MsgID, Verified: true}, nil
 	case sender.StateNotPosted:
 		s.log.Warn("投递被明确拒绝，可安全重试",
@@ -514,7 +523,17 @@ func (s *Sender) deliver(ctx context.Context, c event.Claim, planAccount string,
 
 func (s *Sender) classify(err error, result sender.Result) store.PlanOutcome {
 	if result.OK {
-		return store.PlanOutcome{State: sender.StateAccepted, OK: true, Verified: true, MsgID: strings.TrimSpace(result.MsgID)}
+		msgID := strings.TrimSpace(result.MsgID)
+		// 保留下层证据：下层说未验证就不能升级；没有稳定非零ID也不算已验证。
+		verified := result.Verified && stableReceipt(msgID)
+		if !stableReceipt(msgID) {
+			msgID = ""
+		}
+		outcome := store.PlanOutcome{State: sender.StateAccepted, OK: true, Verified: verified, MsgID: msgID}
+		if !verified {
+			outcome.ErrorKind = "unconfirmed"
+		}
+		return outcome
 	}
 	if err == nil {
 		return store.PlanOutcome{State: sender.StateUnknown, ErrorKind: "protocol"}
@@ -533,6 +552,16 @@ func (s *Sender) classify(err error, result sender.Result) store.PlanOutcome {
 	default:
 		return store.PlanOutcome{State: sender.StateUnknown, ErrorKind: code}
 	}
+}
+
+// stableReceipt 判断回执ID能否支撑 Verified：空、全零、含 NUL 都不算。
+// 具体ID格式由通道层保证，这里只拒绝明显不能作为核验凭证的值。
+func stableReceipt(id string) bool {
+	id = strings.TrimSpace(id)
+	if strings.ContainsRune(id, 0) {
+		return false
+	}
+	return strings.Trim(id, "0") != ""
 }
 
 // trustedNotPosted 判断一次失败能否断言「平台没有收到」。

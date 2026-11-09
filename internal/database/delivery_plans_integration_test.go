@@ -554,3 +554,150 @@ func TestDeliveryPlanAccountingIsAtomic(t *testing.T) {
 		t.Fatalf("输入被半套记账改写=%+v owner=%v version=%d", row, row.Owner, row.Version)
 	}
 }
+
+// TestDeliveryPlanAcceptedWithoutReceiptIsUnconfirmed 平台接受到但没有稳定回执：
+// 记 accepted/verified=0，send_log ok=1 verified=0 且 msg_id 为空，out 保持 retry
+// 并标 unknown_manual，输入 dead（不是 done）；恢复只返回同一事实，不重投。
+func TestDeliveryPlanAcceptedWithoutReceiptIsUnconfirmed(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	ch, id, session := event.ChComment, "comment:777:888", "777"
+	c := planFixture(t, db, ctx, id, ch, session, false)
+	_, snd, post := planSetup(t, db, ch)
+	post.result = sender.Result{OK: true}
+
+	res, err := snd.Send(ctx, c, planReply(ch, session, false, "平台已收但无回执"))
+	if err == nil || planKind(t, err) != sender.KindUncertain || !sender.Handled(err) {
+		t.Fatalf("投递=%+v err=%v", res, err)
+	}
+	if !res.OK || res.Verified {
+		t.Fatalf("结果=%+v", res)
+	}
+	if post.sends != 1 {
+		t.Fatalf("POST 次数=%d", post.sends)
+	}
+	p, a := planCurrent(t, db, id)
+	if p.State != sender.StateAccepted || a.State != sender.StateAccepted ||
+		a.Verified || a.MsgID != "" || a.ErrorKind != "unconfirmed" {
+		t.Fatalf("计划/尝试=%+v/%+v", p, a)
+	}
+
+	// 输入结清为 dead：平台可能已收下，不能重投，也不冒充 done。
+	var row queueRow
+	if err := db.Table("events").Where("id=?", id).Take(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Event.Status != event.StatusDead || row.Stage != event.StageVerify ||
+		row.Owner != nil || row.Version != c.Lease.Version+1 {
+		t.Fatalf("输入结算=%+v owner=%v version=%d", row, row.Owner, row.Version)
+	}
+
+	var logRow struct {
+		OK        bool
+		Verified  bool
+		MsgID     string `gorm:"column:msg_id"`
+		Error     string
+		AttemptID string `gorm:"column:attempt_id"`
+	}
+	if err := db.Table("send_log").Where("attempt_id=?", a.ID).Take(&logRow).Error; err != nil {
+		t.Fatalf("缺少 send_log：%v", err)
+	}
+	if !logRow.OK || logRow.Verified || logRow.MsgID != "" || logRow.Error != "unconfirmed" {
+		t.Fatalf("send_log=%+v", logRow)
+	}
+
+	outID := string(ch) + ":out:" + session + ":" + a.ID
+	var out struct {
+		Status string
+		Meta   json.RawMessage
+	}
+	if err := db.Table("events").Where("id=?", outID).Take(&out).Error; err != nil {
+		t.Fatalf("缺少 out 事件：%v", err)
+	}
+	if out.Status != string(event.StatusRetry) {
+		t.Fatalf("out 状态=%s want retry", out.Status)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(out.Meta, &meta); err != nil || meta["unknown_manual"] != true || meta["verified"] != false || meta["outcome"] != string(sender.StateAccepted) {
+		t.Fatalf("out meta=%s %v", out.Meta, err)
+	}
+
+	// 模拟旧数据窗口：尝试已 accepted 但输入还没结清、租约仍在。
+	// 恢复必须只按「接受但未验证」停止，不再 POST。
+	if err := db.Table("events").Where("id=?", id).Updates(map[string]any{
+		"status": event.StatusReplying, "stage": event.StageVerify,
+		"lease_owner": c.Lease.Owner, "lease_version": c.Lease.Version,
+		"lease_until": time.Now().UTC().Add(time.Minute),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	res, err = snd.Resume(ctx, c)
+	if err == nil || planKind(t, err) != sender.KindUncertain {
+		t.Fatalf("恢复 err=%v", err)
+	}
+	if !res.OK || res.Verified || post.sends != 1 {
+		t.Fatalf("恢复 res=%+v sends=%d", res, post.sends)
+	}
+}
+
+// TestDeliveryPlanForgedVerifiedIsCorrected 数据层不信任调用方给的 Verified：
+// 没有稳定回执时落库即纠正为未验证，输入 dead 而不是 done；
+// 重复记录走已接受分支，同样不会把未验证事实升级成 done。
+func TestDeliveryPlanForgedVerifiedIsCorrected(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	ch, id, session := event.ChComment, "comment:666:777", "666"
+	c := planFixture(t, db, ctx, id, ch, session, false)
+	repo, _, _ := planSetup(t, db, ch)
+	key := planKey(ch, session)
+
+	a, err := repo.PreparePlan(ctx, c, key, "原文")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ArmPlan(ctx, c, key, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RecordPlan(ctx, c, key, a.ID, store.PlanOutcome{State: sender.StateAccepted, OK: true, Verified: true}); err != nil {
+		t.Fatal(err)
+	}
+	_, got := planCurrent(t, db, id)
+	if got.State != sender.StateAccepted || got.Verified || got.MsgID != "" || got.ErrorKind != "unconfirmed" {
+		t.Fatalf("伪造 Verified 未纠正：%+v", got)
+	}
+	var row queueRow
+	if err := db.Table("events").Where("id=?", id).Take(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Event.Status != event.StatusDead || row.Owner != nil || row.Version != c.Lease.Version+1 {
+		t.Fatalf("输入结算=%+v owner=%v version=%d", row, row.Owner, row.Version)
+	}
+
+	outID := string(ch) + ":out:" + session + ":" + a.ID
+	var out struct {
+		Status string
+	}
+	if err := db.Table("events").Where("id=?", outID).Take(&out).Error; err != nil {
+		t.Fatalf("缺少 out 事件：%v", err)
+	}
+	if out.Status != string(event.StatusRetry) {
+		t.Fatalf("out 状态=%s want retry", out.Status)
+	}
+
+	// 重复记录：已接受分支不再结清、不重复递增租约，也不改写 out。
+	if _, err := repo.RecordPlan(ctx, c, key, a.ID, store.PlanOutcome{State: sender.StateAccepted, OK: true, Verified: true}); err != nil {
+		t.Fatal(err)
+	}
+	var logs, outs int64
+	if err := db.Table("send_log").Where("attempt_id=?", a.ID).Count(&logs).Error; err != nil || logs != 1 {
+		t.Fatalf("send_log 行数=%d %v", logs, err)
+	}
+	if err := db.Table("events").Where("id=?", outID).Count(&outs).Error; err != nil || outs != 1 {
+		t.Fatalf("out 行数=%d %v", outs, err)
+	}
+	var version int64
+	if err := db.Table("events").Select("lease_version").Where("id=?", id).Scan(&version).Error; err != nil || version != c.Lease.Version+1 {
+		t.Fatalf("重复记录改写了租约：%d %v", version, err)
+	}
+	if err := db.Table("events").Where("id=?", outID).Take(&out).Error; err != nil || out.Status != string(event.StatusRetry) {
+		t.Fatalf("重复记录改写 out：%s %v", out.Status, err)
+	}
+}

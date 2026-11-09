@@ -387,10 +387,26 @@ func (c *Client) PostDynamic(ctx context.Context, text string) error {
 }
 
 // envelope 是 B站统一响应壳。
+//
+// Code 保留原始JSON：只用 int 会把「缺失/null/字符串」与真正的 code=0
+// 混为同一零值，HTTP200 空对象会被误判成功。
 type envelope struct {
-	Code    int             `json:"code"`
+	Code    json.RawMessage `json:"code"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data"`
+}
+
+// ParseEnvelopeCode 解析平台响应码，只认 JSON 整数。
+// 缺失、null、字符串、浮点等一律无效；调用方必须按未知处理，不能当成功。
+func ParseEnvelopeCode(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	return int(n), true
 }
 
 // do 解析当前凭据后发一次请求；永不重试。
@@ -446,8 +462,12 @@ func (c *Client) send(ctx context.Context, cred credential, op, method, endpoint
 	if err := json.Unmarshal(payload, &env); err != nil {
 		return &Error{Op: op, Cause: errors.New("响应不是合法JSON")}
 	}
-	if env.Code != 0 {
-		return &Error{Op: op, Code: env.Code}
+	code, ok := ParseEnvelopeCode(env.Code)
+	if !ok {
+		return &Error{Op: op, Cause: errors.New("响应缺少有效code")}
+	}
+	if code != 0 {
+		return &Error{Op: op, Code: code}
 	}
 	if out != nil && len(env.Data) > 0 {
 		if err := json.Unmarshal(env.Data, out); err != nil {

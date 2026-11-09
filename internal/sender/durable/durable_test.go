@@ -437,6 +437,85 @@ func TestResumeOnlyVerifiesKnownPlan(t *testing.T) {
 	})
 }
 
+// TestSendAcceptedWithoutStableReceiptIsUnconfirmed 平台接受但缺稳定回执：
+// 保留 accepted 事实与下层证据，不升级 Verified、不伪造完成；
+// 返回已结清的 uncertain，让上层按不确定停止。
+func TestSendAcceptedWithoutStableReceiptIsUnconfirmed(t *testing.T) {
+	cases := []struct {
+		name string
+		res  sender.Result
+	}{
+		{"空回执", sender.Result{OK: true, Verified: true}},
+		{"零回执", sender.Result{OK: true, MsgID: "000", Verified: true}},
+		{"下层未验证", sender.Result{OK: true, MsgID: "98765"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeRepo{}
+			inner := &fakeSender{result: tc.res}
+			s := newTestSender(t, event.ChComment, repo, inner)
+			c := commentClaim()
+			res, err := s.Send(context.Background(), c, replyFor(c, "正文"))
+			if inner.sends != 1 {
+				t.Fatalf("POST 次数=%d", inner.sends)
+			}
+			if !res.OK || res.Verified {
+				t.Fatalf("结果=%+v", res)
+			}
+			if kindOf(t, err) != sender.KindUncertain || !sender.Handled(err) {
+				t.Fatalf("kind=%s handled=%v", kindOf(t, err), sender.Handled(err))
+			}
+			if repo.recordCalls != 1 || repo.armCalls != 1 {
+				t.Fatalf("record=%d arm=%d", repo.recordCalls, repo.armCalls)
+			}
+			if repo.recorded == nil || repo.recorded.State != sender.StateAccepted || repo.recorded.Verified ||
+				repo.recorded.ErrorKind != "unconfirmed" || repo.recorded.MsgID == "000" {
+				t.Fatalf("记录=%+v", repo.recorded)
+			}
+			if tc.name == "空回执" || tc.name == "零回执" {
+				if repo.recorded.MsgID != "" {
+					t.Fatalf("不稳定回执仍被保留：%q", repo.recorded.MsgID)
+				}
+			}
+		})
+	}
+}
+
+// TestResumeAcceptedWithoutStableReceiptStops 未验证的 accepted（含旧数据
+// 伪造的 Verified）恢复只按不确定停止：不重投、不冒充完成、不标记已结清。
+func TestResumeAcceptedWithoutStableReceiptStops(t *testing.T) {
+	cases := []struct {
+		name    string
+		attempt sender.Attempt
+	}{
+		{"缺回执", sender.Attempt{ID: "attempt-1", State: sender.StateAccepted, Verified: true}},
+		{"零回执", sender.Attempt{ID: "attempt-1", State: sender.StateAccepted, MsgID: "0", Verified: true}},
+		{"下层未验证", sender.Attempt{ID: "attempt-1", State: sender.StateAccepted, MsgID: "98765"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeRepo{attempt: tc.attempt}
+			inner := &fakeSender{}
+			s := newTestSender(t, event.ChComment, repo, inner)
+			c := commentClaim()
+			c.Stage = event.StageVerify
+			res, err := s.Resume(context.Background(), c)
+			if !res.OK || res.Verified {
+				t.Fatalf("结果=%+v", res)
+			}
+			if kindOf(t, err) != sender.KindUncertain {
+				t.Fatalf("kind=%s want uncertain", kindOf(t, err))
+			}
+			if sender.Handled(err) {
+				t.Fatal("恢复核验未落盘，不能标记已结清")
+			}
+			if inner.sends != 0 || repo.armCalls != 0 {
+				t.Fatalf("未验证 accepted 被重新投递：sends=%d arm=%d", inner.sends, repo.armCalls)
+			}
+		})
+	}
+}
+
 // TestDmAmbiguousRetryIsUnknown：私信的网络/超时 retry 没有 RetryAt，
 // 不能断言平台没收到，必须按未知处理。
 func TestDmAmbiguousRetryIsUnknown(t *testing.T) {

@@ -278,7 +278,7 @@ func TestSendCurrentActorUnavailable(t *testing.T) {
 // TestSendPlanAccountFromDBOverridesCurrent 数据库里的旧计划账号优先于当前活跃账号。
 func TestSendPlanAccountFromDBOverridesCurrent(t *testing.T) {
 	repo := &fakeRepo{planAccount: " " + oldMID + " "}
-	inner := &fakeSender{result: sender.Result{OK: true, MsgID: "rpid-4"}}
+	inner := &fakeSender{result: sender.Result{OK: true, MsgID: "rpid-4", Verified: true}}
 	actors := &fakeActors{
 		current: actor("account-new", newMID, newCookie),
 		byMID:   map[string]bili.Actor{oldMID: actor("account-old", oldMID, oldCookie)},

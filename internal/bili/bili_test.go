@@ -271,3 +271,29 @@ func TestHTTPStatusAndNetworkErrors(t *testing.T) {
 		t.Error("网络错误应报错")
 	}
 }
+
+// TestParseEnvelopeCode 只认 JSON 整数：缺失/null/字符串/浮点都不能当 code=0。
+func TestParseEnvelopeCode(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		code int
+		ok   bool
+	}{
+		{"零", `0`, 0, true},
+		{"负数", `-352`, -352, true},
+		{"缺失", ``, 0, false},
+		{"null", `null`, 0, false},
+		{"字符串", `"0"`, 0, false},
+		{"浮点", `0.0`, 0, false},
+		{"布尔", `false`, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, ok := ParseEnvelopeCode(json.RawMessage(tc.raw))
+			if code != tc.code || ok != tc.ok {
+				t.Fatalf("code=%d ok=%v want %d/%v", code, ok, tc.code, tc.ok)
+			}
+		})
+	}
+}

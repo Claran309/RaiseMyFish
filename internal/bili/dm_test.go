@@ -374,6 +374,45 @@ func TestDMSessionsPageLegacyHasMore(t *testing.T) {
 	}
 }
 
+// TestSendMessageAcceptanceMatrix 区分「平台明确接受」与「已验证」：
+// 空白对象/缺 code/null/字符串/浮点一律错误；缺 data、空/零/非法 msg_key
+// 表示平台接受但没有稳定回执（msgID 为空、无错误）；正常回执原样返回。
+func TestSendMessageAcceptanceMatrix(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantErr bool
+		wantID  string
+	}{
+		{"空白对象", `{}`, true, ""},
+		{"缺code", `{"data":{"msg_key":"777888"}}`, true, ""},
+		{"code为null", `{"code":null,"data":{"msg_key":"777888"}}`, true, ""},
+		{"code为字符串", `{"code":"0","data":{"msg_key":"777888"}}`, true, ""},
+		{"code为浮点", `{"code":0.0,"data":{"msg_key":"777888"}}`, true, ""},
+		{"缺data", `{"code":0}`, false, ""},
+		{"空msg_key", `{"code":0,"data":{"msg_key":""}}`, false, ""},
+		{"零msg_key", `{"code":0,"data":{"msg_key":"0"}}`, false, ""},
+		{"数字零msg_key", `{"code":0,"data":{"msg_key":0}}`, false, ""},
+		{"非数字msg_key", `{"code":0,"data":{"msg_key":"mk-1"}}`, false, ""},
+		{"正常回执", `{"code":0,"data":{"msg_key":"777888"}}`, false, "777888"},
+		{"数字回执", `{"code":0,"data":{"msg_key":777888}}`, false, "777888"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			})
+			msgID, err := c.SendMessage(context.Background(), "313591854", "你好")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err=%v wantErr=%v", err, tc.wantErr)
+			}
+			if msgID != tc.wantID {
+				t.Fatalf("msgID=%q want %q", msgID, tc.wantID)
+			}
+		})
+	}
+}
+
 // TestDMSessionMessagesPagePrefersPageExtrema 响应 min/max 若是整会话范围，
 // 以本页实际消息的极值为准，避免游标过早停住。
 func TestDMSessionMessagesPagePrefersPageExtrema(t *testing.T) {

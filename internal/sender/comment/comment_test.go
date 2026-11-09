@@ -328,6 +328,12 @@ func TestSendErrorClassification(t *testing.T) {
 		{"HTTP服务端", 0, http.StatusInternalServerError, "", sender.KindUncertain},
 		{"响应非JSON", 0, 0, "not-json", sender.KindUncertain},
 		{"成功但无rpid", 0, 0, `{"code":0,"data":{}}`, sender.KindUncertain},
+		{"缺data", 0, 0, `{"code":0}`, sender.KindUncertain},
+		{"空白对象", 0, 0, `{}`, sender.KindUncertain},
+		{"缺code", 0, 0, `{"data":{"rpid":98765}}`, sender.KindUncertain},
+		{"code为null", 0, 0, `{"code":null,"data":{"rpid":98765}}`, sender.KindUncertain},
+		{"code为字符串", 0, 0, `{"code":"0","data":{"rpid":98765}}`, sender.KindUncertain},
+		{"code为浮点", 0, 0, `{"code":0.0,"data":{"rpid":98765}}`, sender.KindUncertain},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

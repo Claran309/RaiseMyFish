@@ -344,8 +344,8 @@ func (s *Service) post(ctx context.Context, cookie, csrf, oid, rpid, root, text 
 		return sender.Result{Error: "unknown_manual"}, &sender.Error{Kind: sender.KindUncertain}
 	}
 	var env struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
+		Code    json.RawMessage `json:"code"`
+		Message string          `json:"message"`
 		Data    struct {
 			Rpid    platformID `json:"rpid"`
 			RpidStr platformID `json:"rpid_str"`
@@ -354,9 +354,14 @@ func (s *Service) post(ctx context.Context, cookie, csrf, oid, rpid, root, text 
 	if err := json.Unmarshal(body, &env); err != nil {
 		return sender.Result{Error: "unknown_manual"}, &sender.Error{Kind: sender.KindUncertain}
 	}
-	if env.Code != 0 {
-		kind, code := codeFailure(env.Code, env.Message)
-		return sender.Result{Error: code}, kind
+	// 缺 code/null/字符串都不能按零值成功处理，否则 rpid 再正常也证明不了平台接受。
+	code, ok := bili.ParseEnvelopeCode(env.Code)
+	if !ok {
+		return sender.Result{Error: "unknown_manual"}, &sender.Error{Kind: sender.KindUncertain, Cause: errors.New("评论响应缺少有效code")}
+	}
+	if code != 0 {
+		kind, failure := codeFailure(code, env.Message)
+		return sender.Result{Error: failure}, kind
 	}
 	rpidOut := string(env.Data.Rpid)
 	if rpidOut == "" {
