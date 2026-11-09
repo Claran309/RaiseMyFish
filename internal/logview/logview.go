@@ -25,6 +25,12 @@ import (
 const (
 	// maxReadBytes 是单次 Recent 从每个日志文件最多读的尾部字节数。
 	maxReadBytes = 2 << 20
+	// tailChunkBytes 是 Tail 单次读取上限：慢消费追赶按固定块读，避免一次分配整个积压。
+	tailChunkBytes = 32 << 10
+	// tailMaxLineBytes 是单行（含未换行的 pending）上限；超过则丢弃到下一个换行后恢复。
+	tailMaxLineBytes = 64 << 10
+	// tailChunksPerTick 限制每轮最多读取的块数，避免超大积压长时间占住一次轮询。
+	tailChunksPerTick = 32
 	// maxMessageRunes/maxFieldRunes 是展示截断上限。
 	maxMessageRunes = 400
 	maxFieldRunes   = 200
@@ -109,6 +115,10 @@ func (s *Source) Recent(q Query) ([]Entry, error) {
 // 旧实现每轮 os.ReadFile 整个日志——即使没有新行也在全量分配，
 // 大日志（几十 MB）会让面板 SSE 请求持续吃内存。现在无新增时零读取。
 //
+// 有界读取（N20）：新增内容按 tailChunkBytes 固定块读取，每轮最多 tailChunksPerTick 块；
+// 单行 pending 上限 tailMaxLineBytes，超限行丢弃到下一个换行后继续解析后续行。
+// 这样无换行大行与慢消费积压都不会造成无界分配，追赶也会分多轮完成。
+//
 // 轮转处理：
 //   - 跨天：换成新日期的文件，从头读；
 //   - 替换（inode 变了，如重命名+新建）：从头读；
@@ -142,6 +152,8 @@ func (s *Source) Tail(ctx context.Context, fn func(Entry) error) error {
 		lastInfo, offset = info, info.Size()
 	}
 	var pending []byte
+	var skipping bool
+pollLoop:
 	for {
 		select {
 		case <-ctx.Done():
@@ -150,7 +162,7 @@ func (s *Source) Tail(ctx context.Context, fn func(Entry) error) error {
 			next := s.pathFor(s.now())
 			if next != path {
 				// 跨天轮转：新文件从头读。
-				path, offset, pending, lastInfo = next, 0, nil, nil
+				path, offset, pending, skipping, lastInfo = next, 0, nil, false, nil
 			}
 			info, err := os.Stat(path)
 			if err != nil {
@@ -161,43 +173,98 @@ func (s *Source) Tail(ctx context.Context, fn func(Entry) error) error {
 			}
 			// 文件被替换（重命名 + 新建同名文件）：inode 变化。
 			if lastInfo != nil && !os.SameFile(lastInfo, info) {
-				offset, pending = 0, nil
+				offset, pending, skipping = 0, nil, false
 			}
 			lastInfo = info
 			if info.Size() < offset {
 				// 文件被截断：从头再来。
-				offset, pending = 0, nil
+				offset, pending, skipping = 0, nil, false
 			}
-			if info.Size() == offset {
+			remaining := info.Size() - offset
+			if remaining == 0 {
 				// 无新增：不读、不分配。
 				continue
 			}
-			chunk, err := read(path, offset, info.Size()-offset)
-			if err != nil {
-				if errors.Is(err, os.ErrNotExist) {
-					continue
+			for chunks := 0; remaining > 0 && chunks < tailChunksPerTick; chunks++ {
+				length := remaining
+				if length > tailChunkBytes {
+					length = tailChunkBytes
 				}
-				return fmt.Errorf("读取日志失败：%w", err)
-			}
-			offset += int64(len(chunk))
-			pending = append(pending, chunk...)
-			for {
-				index := bytes.IndexByte(pending, '\n')
-				if index < 0 {
+				chunk, err := read(path, offset, length)
+				if err != nil {
+					if errors.Is(err, os.ErrNotExist) {
+						// 读取期间轮转走了：下一轮按 Stat 重新定位。
+						continue pollLoop
+					}
+					return fmt.Errorf("读取日志失败：%w", err)
+				}
+				if len(chunk) == 0 {
+					// 读取期间文件被截断/替换：本轮先停，下一轮按 Stat 重新定位。
 					break
 				}
-				line := pending[:index]
-				pending = pending[index+1:]
-				entry, ok := parseLine(line)
-				if !ok {
-					continue
-				}
-				if err := fn(entry); err != nil {
+				offset += int64(len(chunk))
+				remaining -= int64(len(chunk))
+				pending, skipping, err = feedLines(chunk, pending, skipping, fn)
+				if err != nil {
 					return err
+				}
+				if remaining > 0 {
+					// 大积压分多轮处理；每块之间给取消留出机会。
+					select {
+					case <-ctx.Done():
+						return nil
+					default:
+					}
 				}
 			}
 		}
 	}
+}
+
+// feedLines 把新读到的 chunk 接到 pending 后面逐行回调。
+//
+// pending 只保存「尚未遇到换行」的半行；超过 tailMaxLineBytes 时丢弃并进入 skipping，
+// 一直丢到下一个换行为止，再恢复解析后续行。这里选择静默跳过而不是注入合成日志，
+// 避免把非 fishd 产生的内容混进面板流。
+func feedLines(chunk, pending []byte, skipping bool, fn func(Entry) error) ([]byte, bool, error) {
+	for len(chunk) > 0 {
+		if skipping {
+			index := bytes.IndexByte(chunk, '\n')
+			if index < 0 {
+				return nil, true, nil
+			}
+			chunk = chunk[index+1:]
+			skipping = false
+			continue
+		}
+		index := bytes.IndexByte(chunk, '\n')
+		if index < 0 {
+			if len(pending)+len(chunk) > tailMaxLineBytes {
+				return nil, true, nil
+			}
+			return append(pending, chunk...), false, nil
+		}
+		if len(pending)+index > tailMaxLineBytes {
+			// 超限行已经在当前块内结束：整行丢弃，从下一行恢复。
+			pending = nil
+			chunk = chunk[index+1:]
+			continue
+		}
+		var line []byte
+		if len(pending) == 0 {
+			line = chunk[:index]
+		} else {
+			line = append(pending, chunk[:index]...)
+			pending = nil
+		}
+		chunk = chunk[index+1:]
+		if entry, ok := parseLine(line); ok {
+			if err := fn(entry); err != nil {
+				return pending, skipping, err
+			}
+		}
+	}
+	return pending, skipping, nil
 }
 
 // Match 判断一条日志是否命中 Query。
