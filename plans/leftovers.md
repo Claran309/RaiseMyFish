@@ -139,6 +139,9 @@
 | 73 | **ReAct degraded=parse** | 私信/弹幕 ReAct 执行完成 degraded=true（degrade_reason=parse）——模型输出没按 JSON 格式（action=final 解析失败）→ 降级单步，回复质量变差。修：prompt 强化格式要求（必须输出合法 JSON），降级时也用正常文本兜底。 | ⏳ 待修 |
 | 74 | **planned_unknown 验证过严** | 私信发送后验证 unknown → 停止不重试（防重复），但实际已发送成功（bili-cli 可见回复）。可放宽验证或记录「已发送（未确认）」。 | ⏳ 待议 |
 
+
+| 75 | **评论自动发现 412 风控** | space_videos/space_dynamics 返回 HTTP 412（B站风控）→ 评论自动发现失败，仅轮询手动列表（manual_videos=0）→ 评论区看不到。需修 WBI/频率/或改手动视频列表。 | ⏳ 待修 |
+
 ## ⚪ 远期 / 阶段任务
 
 | # | 项 | 阶段 | 状态 | 说明 |
