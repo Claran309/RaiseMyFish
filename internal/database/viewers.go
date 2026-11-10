@@ -252,17 +252,41 @@ func (r *ViewerRepo) ActiveViewers(ctx context.Context, q store.ViewerSummaryQue
 	if backfill < 1 {
 		return out, nil
 	}
+	fresh, err := r.backfillViewerRows(ctx, q, backfill)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, fresh...), nil
+}
+
+// BackfillViewers 只返回从未侧写过的观众，供面板显式分批回填（M03）。
+//
+// 与定时轮共用同一套建档与退避条件，区别只有：不混入更新路径，
+// 数量直接由 q.Limit 指定（1..500），不受定时轮的 BackfillLimit 限制。
+func (r *ViewerRepo) BackfillViewers(ctx context.Context, q store.ViewerSummaryQuery) ([]store.ViewerProfile, error) {
+	if ctx == nil {
+		return nil, store.ErrInvalid
+	}
+	if err := q.Validate(); err != nil {
+		return nil, err
+	}
+	return r.backfillViewerRows(ctx, q, q.Limit)
+}
+
+// backfillViewerRows 选「从未侧写过」的观众：按 hits 倒序先试熟人。
+func (r *ViewerRepo) backfillViewerRows(ctx context.Context, q store.ViewerSummaryQuery, limit int) ([]store.ViewerProfile, error) {
 	var fresh []viewerRow
-	err = r.db.WithContext(ctx).Table("viewer_profiles").
+	err := r.db.WithContext(ctx).Table("viewer_profiles").
 		Where("(last_seen >= ? OR hits >= ?)", q.Since.UTC(), q.MinHits).
 		Where("summary_updated_at IS NULL").
 		Where("(profile_summary_next_retry_at IS NULL OR profile_summary_next_retry_at <= ?)", q.Now.UTC()).
 		Where("(profile_summary_next_retry_at IS NOT NULL OR summary_attempted_at IS NULL OR summary_attempted_at < last_seen)").
 		Order("hits DESC, last_seen DESC, uid ASC").
-		Limit(backfill).Find(&fresh).Error
+		Limit(limit).Find(&fresh).Error
 	if err != nil {
 		return nil, &safeError{"读取首次回填观众失败", err}
 	}
+	out := make([]store.ViewerProfile, 0, len(fresh))
 	for _, row := range fresh {
 		p, err := row.profile()
 		if err != nil {

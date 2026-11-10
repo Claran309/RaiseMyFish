@@ -33,6 +33,7 @@ const (
 // viewerSummaryWorker 是侧写循环依赖的最小能力，便于装配测试注入。
 type viewerSummaryWorker interface {
 	RunOnce(context.Context) (viewer.SummaryStats, error)
+	RunBackfill(context.Context, int) (viewer.SummaryStats, error)
 }
 
 // viewerKnowledgeAdapter 把知识写入器适配成 viewer.SummaryKnowledge。
@@ -248,24 +249,26 @@ func startViewerSummaryLoop(ctx context.Context, worker viewerSummaryWorker, int
 }
 
 // runViewerSummary 立即跑一轮，之后按 interval 循环；单轮失败只记日志，等下轮重试。
+// 面板手动回填走同一循环串行执行，避免与定时轮并发调用模型。
 func runViewerSummary(ctx context.Context, worker viewerSummaryWorker, interval time.Duration, freeze viewerSummaryFreeze, state *viewerSummaryRuntime, logger *zap.Logger) {
-	runOnce := func() {
+	// allowed 统一检查冻结：冻结只停写，不清理已生成的侧写（R07）。
+	allowed := func() bool {
 		frozen, reason, err := freeze.frozen()
 		if err != nil {
 			logger.Warn("读取记忆冻结状态失败，观众侧写本轮跳过",
 				zap.String("action", viewerSummaryAction), zap.Error(err))
-			return
+			return false
 		}
 		if frozen {
 			logger.Info("记忆已冻结，观众侧写本轮跳过",
 				zap.String("action", viewerSummaryAction), zap.String("reason", reason))
-			return
+			return false
 		}
-		if state != nil && state.Paused() {
-			logger.Info("观众侧写已暂停，本轮跳过", zap.String("action", viewerSummaryAction))
-			return
-		}
-		stats, err := worker.RunOnce(ctx)
+		return true
+	}
+	// run 统一执行一轮并记录运行快照与日志；extra 用于标注回填等触发方式。
+	run := func(execute func() (viewer.SummaryStats, error), extra ...zap.Field) {
+		stats, err := execute()
 		if state != nil {
 			state.record(stats, err, time.Now())
 		}
@@ -288,6 +291,7 @@ func runViewerSummary(ctx context.Context, worker viewerSummaryWorker, interval 
 			zap.Int("projection_failed", stats.ProjectionFailed),
 			zap.Int("pending_jobs", stats.PendingJobs),
 		}
+		fields = append(fields, extra...)
 		if err != nil {
 			if ctx.Err() == nil {
 				logger.Error("观众侧写本轮有失败", append(fields, zap.Error(err))...)
@@ -296,16 +300,44 @@ func runViewerSummary(ctx context.Context, worker viewerSummaryWorker, interval 
 		}
 		logger.Info("观众侧写完成", fields...)
 	}
+	runOnce := func() {
+		if !allowed() {
+			return
+		}
+		if state != nil && state.Paused() {
+			logger.Info("观众侧写已暂停，本轮跳过", zap.String("action", viewerSummaryAction))
+			return
+		}
+		run(func() (viewer.SummaryStats, error) { return worker.RunOnce(ctx) }, zap.String("trigger", "scheduled"))
+	}
+	runBackfill := func(limit int) {
+		if state != nil {
+			state.beginBackfill()
+			defer state.finishBackfill()
+		}
+		// 手动回填忽略暂停（显式操作），但冻结仍然优先：冻结期间不写任何派生内容。
+		if !allowed() {
+			return
+		}
+		run(func() (viewer.SummaryStats, error) { return worker.RunBackfill(ctx, limit) },
+			zap.String("trigger", "backfill"), zap.Int("requested", limit))
+	}
 	runOnce()
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var backfill <-chan int
+	if state != nil {
+		backfill = state.BackfillRequests()
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			runOnce()
+		case limit := <-backfill:
+			runBackfill(limit)
 		}
 	}
 }

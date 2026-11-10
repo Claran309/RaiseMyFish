@@ -838,10 +838,13 @@ func TestViewerSummaryPanelOps(t *testing.T) {
 	if err := viewers.SaveProfileSummary(ctx, summaryWriteFrom(t, ctx, events, "6101", "侧写观众", "性格：话痨", at)); err != nil {
 		t.Fatal(err)
 	}
+	// 退避时间锚定真实墙钟：RequeueSummary 用 clock_timestamp() 写入，
+	// 固定历史时刻会让「已重建」被查询 Now 误过滤。
+	wall := time.Now().UTC()
 	fallback := summaryWriteFrom(t, ctx, events, "6102", "侧写观众", "（模型未生成侧写，仅统计）", at.Add(time.Minute))
 	fallback.Fallback = true
 	fallback.Failures = 1
-	fallback.NextRetryAt = at.Add(10 * time.Minute)
+	fallback.NextRetryAt = wall.Add(2 * time.Hour)
 	fallback.Record.Confidence = 0.4
 	if err := viewers.SaveProfileSummary(ctx, fallback); err != nil {
 		t.Fatal(err)
@@ -866,7 +869,7 @@ func TestViewerSummaryPanelOps(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidates, err := viewers.ActiveViewers(ctx, store.ViewerSummaryQuery{
-		Since: base.Add(-24 * time.Hour), Now: at.Add(2 * time.Minute), MinHits: 2,
+		Since: base.Add(-24 * time.Hour), Now: wall.Add(time.Hour), MinHits: 2,
 		MinNewMessages: 3, Limit: 10, BackfillLimit: 0,
 	})
 	if err != nil {
@@ -916,5 +919,66 @@ func TestViewerSummaryPanelOps(t *testing.T) {
 	}
 	if err := viewers.RequeueSummary(ctx, "no-such"); !errors.Is(err, store.ErrViewerNotFound) {
 		t.Fatalf("未知观众重建应 NotFound：%v", err)
+	}
+}
+
+// TestViewerSummaryBackfillViewers 手动回填只选从未侧写、未在退避期的观众，
+// 按 hits 倒序，并严格按请求人数截断（M03）。
+func TestViewerSummaryBackfillViewers(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	events, err := NewEventRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewers, err := NewViewerRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	seedSummaryViewer(t, events, "7001", base)
+	seedViewerEvent(t, events, "s:7001-3", "7001", "侧写观众", "in", "第三句", "", base.Add(2*time.Minute))
+	seedSummaryViewer(t, events, "7002", base)
+	seedSummaryViewer(t, events, "7003", base)
+	seedSummaryViewer(t, events, "7004", base)
+	if _, err := viewers.RebuildProfiles(ctx, store.ViewerRebuildOptions{MinHits: 2, RecentTexts: 15, RecentReplies: 10}); err != nil {
+		t.Fatal(err)
+	}
+	// 7004 已有侧写（更新路径候选），7003 补偿未到期。
+	if err := db.WithContext(ctx).Exec("UPDATE viewer_profiles SET summary_updated_at=?, profile_summary='已有侧写', summary_attempted_at=? WHERE uid='7004'", base, base).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.WithContext(ctx).Exec("UPDATE viewer_profiles SET profile_summary_next_retry_at=? WHERE uid='7003'", base.Add(2*time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	query := store.ViewerSummaryQuery{
+		Since: base.Add(-24 * time.Hour), Now: base.Add(30 * time.Minute),
+		MinHits: 2, MinNewMessages: 1, Limit: 10, BackfillLimit: 10,
+	}
+	got, err := viewers.BackfillViewers(ctx, query)
+	if err != nil {
+		t.Fatalf("回填候选查询失败：%v", err)
+	}
+	if len(got) != 2 || got[0].UID != "7001" || got[1].UID != "7002" {
+		t.Fatalf("回填候选不符：%+v", got)
+	}
+	for _, profile := range got {
+		if profile.ProfileSummary != "" {
+			t.Fatalf("回填候选不应包含已有侧写：%+v", profile)
+		}
+	}
+
+	query.Limit = 1
+	got, err = viewers.BackfillViewers(ctx, query)
+	if err != nil {
+		t.Fatalf("限量回填失败：%v", err)
+	}
+	if len(got) != 1 || got[0].UID != "7001" {
+		t.Fatalf("限量回填不符：%+v", got)
+	}
+
+	query.Limit = 0
+	if _, err := viewers.BackfillViewers(ctx, query); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("limit=0 应拒绝：%v", err)
 	}
 }

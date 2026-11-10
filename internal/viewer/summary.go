@@ -42,6 +42,8 @@ const (
 	summaryRecentLimit = 20
 	// summaryMaxPerRun 是单轮最多侧写多少位观众，控制模型费用（R09 小批试跑）。
 	summaryMaxPerRun = 10
+	// summaryBackfillMaxRequest 是面板单次手动回填的人数上限（M03）。
+	summaryBackfillMaxRequest = 500
 	// summaryBackfillLimit 是单轮首次回填名额；0 表示不回填新人。
 	summaryBackfillLimit = 2
 	// summaryMinNewMessages 是重写已有侧写所需的新增公开消息条数（R06/R09）。
@@ -101,6 +103,8 @@ type SummaryEventSource interface {
 type SummaryStore interface {
 	// ActiveViewers 返回本轮待侧写的档案（新消息量达标/补偿到期/首次回填）。
 	ActiveViewers(ctx context.Context, q store.ViewerSummaryQuery) ([]store.ViewerProfile, error)
+	// BackfillViewers 只返回从未侧写过的档案，供面板手动分批回填。
+	BackfillViewers(ctx context.Context, q store.ViewerSummaryQuery) ([]store.ViewerProfile, error)
 	// ExpireProfileSummaryRecent 清掉过期近期层并同步记忆与投影任务。
 	ExpireProfileSummaryRecent(ctx context.Context, now time.Time) ([]string, error)
 	// ForegroundBusy 判断近期是否有前台回复正在生成（后台让路用）。
@@ -352,6 +356,58 @@ func (s *Summarizer) RunOnce(ctx context.Context) (SummaryStats, error) {
 // summaryDayStart 返回 UTC 当日零点；日预算按 UTC 日切分，便于与库内时间直接比较。
 func summaryDayStart(now time.Time) time.Time {
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// RunBackfill 立即对「从未侧写过」的观众做一轮有界回填（M03）。
+//
+// 这是显式人工操作：不受定时轮的 BackfillLimit 与日预算限制，
+// 但人数仍限制在 1..500，并保留前台繁忙让路，避免和直播回复抢模型。
+// 只处理首次侧写，不混入更新路径；撤回/过期/投影补投仍由定时轮负责。
+func (s *Summarizer) RunBackfill(ctx context.Context, limit int) (SummaryStats, error) {
+	var stats SummaryStats
+	if ctx == nil {
+		return stats, errors.New("ctx 不能为 nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return stats, err
+	}
+	if limit < 1 || limit > summaryBackfillMaxRequest {
+		return stats, fmt.Errorf("观众侧写回填人数必须在1至%d之间", summaryBackfillMaxRequest)
+	}
+	now := s.opts.Now().UTC()
+	candidates, err := s.store.BackfillViewers(ctx, store.ViewerSummaryQuery{
+		Since:          now.Add(-s.opts.Window),
+		Now:            now,
+		MinHits:        s.opts.MinHits,
+		MinNewMessages: s.opts.MinNewMessages,
+		Limit:          limit,
+		BackfillLimit:  limit,
+	})
+	if err != nil {
+		return stats, fmt.Errorf("读取待回填观众失败：%w", err)
+	}
+	stats.Candidates = len(candidates)
+	var failures []error
+	for i, profile := range candidates {
+		if err := ctx.Err(); err != nil {
+			return stats, err
+		}
+		busy, err := s.store.ForegroundBusy(ctx, now.Add(-summaryForegroundWindow))
+		if err != nil {
+			failures = append(failures, fmt.Errorf("检查前台回复忙碌状态失败：%w", err))
+			stats.BusySkipped = len(candidates) - i
+			break
+		}
+		if busy {
+			stats.BusySkipped = len(candidates) - i
+			break
+		}
+		if err := s.summarizeOne(ctx, profile, now, &stats); err != nil {
+			stats.Failed++
+			failures = append(failures, err)
+		}
+	}
+	return stats, errors.Join(failures...)
 }
 
 // runProjections 处理到期的知识投影任务；失败只推迟重试，不重新生成侧写。
