@@ -286,7 +286,7 @@ worker_timeout_ms = 30000
 brain = "default"
 rate_per_minute = 6
 burst = 2
-daily_quota = 200
+daily_quota = 10000 # 测试期放宽（原200，接近满导致 retry 到次日）
 cooldown_ms = 10000
 min_runes = 2
 # 只回复 @ 鱼的弹幕；未 @ 的在 schedule 阶段直接 skipped，不调 LLM。

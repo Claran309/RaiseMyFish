@@ -50,7 +50,12 @@ func buildSchedulerOptions(c *config.Scheduler) scheduler.Options {
 	o.RetryDelay = time.Duration(c.RetryDelayMS) * time.Millisecond
 	o.OperationTimeout = time.Duration(c.OperationTimeoutMS) * time.Millisecond
 	o.WorkerTimeout = time.Duration(c.WorkerTimeoutMS) * time.Millisecond
-	o.Location = time.UTC
+	// 配额窗口按本地时区（北京 00:00 重置）；加载失败回退 UTC。
+	if loc, locErr := time.LoadLocation("Asia/Shanghai"); locErr == nil {
+		o.Location = loc
+	} else {
+		o.Location = time.UTC
+	}
 
 	o.Channels = make(map[event.Channel]scheduler.ChannelPolicy, len(c.Channels))
 	for ch, p := range c.Channels {
