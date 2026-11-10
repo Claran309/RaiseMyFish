@@ -34,12 +34,13 @@ type MemoryRepo struct{ db *gorm.DB }
 
 // 编译期断言：事实查询同时满足 store 与 memory 两侧的窄接口。
 var (
-	_ store.MemoryRepo         = (*MemoryRepo)(nil)
-	_ store.FactSource         = (*MemoryRepo)(nil)
-	_ memory.FactSource        = (*MemoryRepo)(nil)
-	_ memory.RecordSource      = (*MemoryRepo)(nil)
-	_ memory.RecordQuerySource = (*MemoryRepo)(nil)
-	_ memory.FocusSource       = (*MemoryRepo)(nil)
+	_ store.MemoryRepo          = (*MemoryRepo)(nil)
+	_ store.FactSource          = (*MemoryRepo)(nil)
+	_ memory.ViewerRecordSource = (*MemoryRepo)(nil)
+	_ memory.FactSource         = (*MemoryRepo)(nil)
+	_ memory.RecordSource       = (*MemoryRepo)(nil)
+	_ memory.RecordQuerySource  = (*MemoryRepo)(nil)
+	_ memory.FocusSource        = (*MemoryRepo)(nil)
 )
 
 // NewMemoryRepo 复用infra连接。
@@ -887,6 +888,34 @@ func (r *MemoryRepo) SoulCandidates(ctx context.Context, minImportance float64, 
 		})
 	}
 	return out, nil
+}
+
+// ViewerRecords 读取与某观众相关的有效记忆（当前发言者主动注入用）。
+//
+// 关系口径：from_id=观众（关于他/他的话），或 subject=viewer 且 asserted_by=观众
+// （他自己的自述）。观众侧写（viewer_profile）由档案段单独注入，这里排除避免重复。
+// 可见性沿用 memoryScopeQuery：公开视角只读公开记录，私密记录只在同一会话可见。
+func (r *MemoryRepo) ViewerRecords(ctx context.Context, q memory.ViewerRecordQuery) ([]memory.Record, error) {
+	uid := strings.TrimSpace(q.UID)
+	if uid == "" || utf8.RuneCountInString(uid) > focusSpeakerMaxRunes {
+		return nil, store.ErrInvalid
+	}
+	if err := validateRecall(ctx, q.Scope, q.Limit); err != nil {
+		return nil, err
+	}
+	query := memoryScopeQuery(r.db.WithContext(ctx), q.Scope).
+		Where("kind <> ?", "viewer_profile").
+		Where("(from_id = ? OR (subject = ? AND asserted_by_id = ?))", uid, memory.SoulSubjectViewer, uid)
+	var rows []memoryRecordRow
+	err := query.
+		Select("id, channel, session, summary, importance, confidence, private, valid_from, to_json(event_ids) AS ids").
+		Order("valid_from DESC, importance DESC, id ASC").
+		Limit(q.Limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, &safeError{"查询观众相关记忆失败", err}
+	}
+	return memoryRows(rows)
 }
 
 // FactsByViewer 按观众 uid 查公开事实（认人用），新的在前。

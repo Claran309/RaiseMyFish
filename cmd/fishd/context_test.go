@@ -27,12 +27,23 @@ import (
 )
 
 // fakeViewerRepo 记录 GetProfile 的 uid 并返回可控结果。
+//
+// profiles 非 nil 时按 uid 取档案，未知 uid 视为陌生人；
+// 否则统一返回 profile/err（老用例的简单口径）。
 type fakeViewerRepo struct {
-	profile store.ViewerProfile
-	err     error
+	profile  store.ViewerProfile
+	profiles map[string]store.ViewerProfile
+	err      error
+	errs     map[string]error
+
+	top    []store.ViewerProfile
+	topErr error
 
 	gotUID string
 	calls  int
+
+	topCalls    int
+	gotTopLimit int
 }
 
 func (f *fakeViewerRepo) UpsertProfile(context.Context, store.ViewerProfile) error { return nil }
@@ -40,14 +51,31 @@ func (f *fakeViewerRepo) UpsertProfile(context.Context, store.ViewerProfile) err
 func (f *fakeViewerRepo) GetProfile(_ context.Context, uid string) (store.ViewerProfile, error) {
 	f.calls++
 	f.gotUID = uid
+	if err := f.errs[uid]; err != nil {
+		return store.ViewerProfile{}, err
+	}
+	if f.profiles != nil {
+		if p, ok := f.profiles[uid]; ok {
+			return p, nil
+		}
+		return store.ViewerProfile{}, store.ErrViewerNotFound
+	}
 	if f.err != nil {
 		return store.ViewerProfile{}, f.err
 	}
 	return f.profile, nil
 }
 
-func (f *fakeViewerRepo) TopViewers(context.Context, int) ([]store.ViewerProfile, error) {
-	return nil, nil
+func (f *fakeViewerRepo) TopViewers(_ context.Context, limit int) ([]store.ViewerProfile, error) {
+	f.topCalls++
+	f.gotTopLimit = limit
+	if f.topErr != nil {
+		return nil, f.topErr
+	}
+	if limit > 0 && len(f.top) > limit {
+		return f.top[:limit], nil
+	}
+	return f.top, nil
 }
 
 // snapshotTestPack 是有场景口径的人格包：统一准备层需要能取到场景正文。
@@ -279,7 +307,7 @@ func TestViewerProfileLookupSeparatesNotFoundAndFailure(t *testing.T) {
 			viewers := &fakeViewerRepo{profile: profile, err: tc.err}
 			builder := newContextBuilder(snapshotTestPack(), nil, nil, viewers, nil, nil, zap.New(core))
 
-			got := builder.viewerText(context.Background(), snapshotTestEvent("在吗"))
+			got := builder.viewerText(context.Background(), brain.ContextInput{Event: snapshotTestEvent("在吗")})
 
 			if viewers.calls != 1 || viewers.gotUID != "42" {
 				t.Fatalf("GetProfile 调用 = %d，uid=%q", viewers.calls, viewers.gotUID)

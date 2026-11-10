@@ -291,3 +291,38 @@ func TestSubjectCandidatesIncludeCheckName(t *testing.T) {
 	}
 	t.Fatalf("候选名单缺少回忆核查昵称：%+v", current.Candidates)
 }
+
+// TestResolveQuestionTargetMatchesPrepare 生成前的预取解析与 Prepare 同口径：
+// 房间候选给出 UID；回复目标只有昵称时 UID 为空；普通聊天返回 nil。
+func TestResolveQuestionTargetMatchesPrepare(t *testing.T) {
+	base := time.Date(2026, 11, 10, 12, 0, 0, 0, time.Local)
+
+	_, in := fixture()
+	in.Event.Text = "贞德是谁"
+	in.Memory.Focus = []memory.Message{inboundFrom("live:room:j1", "7001", "贞德", "来了", base)}
+	target := ResolveQuestionTarget(in)
+	if target == nil || target.Kind != SubjectRoomCandidate || target.UID != "7001" || target.Name != "贞德" {
+		t.Fatalf("房间候选预取不符：%+v", target)
+	}
+
+	_, in = fixture()
+	in.Event.Text = "贞德是谁"
+	in.Event.Meta = json.RawMessage(`{"reply_to_id":"live:room:j2","reply_to_name":"贞德"}`)
+	target = ResolveQuestionTarget(in)
+	if target == nil || target.Kind != SubjectRoomCandidate || target.UID != "" || target.Name != "贞德" {
+		t.Fatalf("回复目标预取不符：%+v", target)
+	}
+
+	_, in = fixture()
+	in.Event.Text = "今天吃什么"
+	if target := ResolveQuestionTarget(in); target != nil {
+		t.Fatalf("普通聊天不应有主体：%+v", target)
+	}
+
+	_, in = fixture()
+	in.Event.Text = "我是谁"
+	target = ResolveQuestionTarget(in)
+	if target == nil || target.Kind != SubjectSpeaker {
+		t.Fatalf("问发言人自己应判 speaker：%+v", target)
+	}
+}

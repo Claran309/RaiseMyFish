@@ -67,6 +67,24 @@ type QueryReader interface {
 	RecallWithQuery(ctx context.Context, scope Scope, query string) (Context, error)
 }
 
+// ViewerRecordQuery 是一次「跟某观众相关」的记录召回请求（主动注入用）。
+//
+// UID 必须来自可信事件的 FromID，不能取自模型输出或工具参数。
+type ViewerRecordQuery struct {
+	Scope Scope
+	UID   string
+	Limit int
+}
+
+// ViewerRecordSource 是 Reader 的可选扩展：按观众读取相关记录。
+//
+// 实现方必须在 SQL 层完成关系口径（from_id=观众，或 subject=viewer 且
+// asserted_by=观众）与范围/隐私过滤；本包只做校验与转发，未实现时上层
+// 退回「不注入」而不是报错。
+type ViewerRecordSource interface {
+	ViewerRecords(ctx context.Context, query ViewerRecordQuery) ([]Record, error)
+}
+
 // FactSource 是可选的共享事实来源。
 //
 // 既有 MemoryRepo 没有事实查询方法，所以这里做成可注入：没有实现就先不接，
@@ -109,9 +127,10 @@ type AssembledReader struct {
 
 // 编译期断言：装配结果必须满足 Brain 依赖的 Reader 接口。
 var (
-	_ Reader      = (*AssembledReader)(nil)
-	_ QueryReader = (*AssembledReader)(nil)
-	_ FocusReader = (*AssembledReader)(nil)
+	_ Reader             = (*AssembledReader)(nil)
+	_ QueryReader        = (*AssembledReader)(nil)
+	_ FocusReader        = (*AssembledReader)(nil)
+	_ ViewerRecordSource = (*AssembledReader)(nil)
 )
 
 // NewReader 构造召回装配器。
@@ -223,6 +242,39 @@ func (r *AssembledReader) Focus(ctx context.Context, query FocusQuery) ([]Messag
 		return nil, fmt.Errorf("焦点对话数据越界或无效：%w", err)
 	}
 	return messages, nil
+}
+
+// ViewerRecords 读取当前观众的相关记忆（名称/摘要/时间），供 prompt 主动注入。
+//
+// 来源未实现 ViewerRecordSource 时返回 nil：这是可选能力，缺失不等于故障。
+// 查询失败必须返回错误，由上层决定只降级记忆段。
+func (r *AssembledReader) ViewerRecords(ctx context.Context, query ViewerRecordQuery) ([]Record, error) {
+	if ctx == nil {
+		return nil, errors.New("ctx 不能为 nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := ValidateScope(query.Scope); err != nil {
+		return nil, err
+	}
+	uid := strings.TrimSpace(query.UID)
+	if uid == "" {
+		return nil, errors.New("观众相关记忆缺少 UID")
+	}
+	source, ok := r.source.(ViewerRecordSource)
+	if !ok {
+		return nil, nil
+	}
+	limit := clampLimit(query.Limit, defaultRecordsLimit)
+	records, err := source.ViewerRecords(ctx, ViewerRecordQuery{Scope: query.Scope, UID: uid, Limit: limit})
+	if err != nil {
+		return nil, fmt.Errorf("召回观众相关记忆失败：%w", err)
+	}
+	if err := (Context{Scope: query.Scope, Records: records}).Validate(); err != nil {
+		return nil, fmt.Errorf("观众相关记忆数据越界或无效：%w", err)
+	}
+	return records, nil
 }
 
 // records 选择摘要来源：有查询词且来源支持时走 RecordsFor。

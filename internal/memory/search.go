@@ -127,9 +127,10 @@ type HybridSearcher struct {
 }
 
 var (
-	_ Reader      = (*HybridSearcher)(nil)
-	_ QueryReader = (*HybridSearcher)(nil)
-	_ FocusReader = (*HybridSearcher)(nil)
+	_ Reader             = (*HybridSearcher)(nil)
+	_ QueryReader        = (*HybridSearcher)(nil)
+	_ FocusReader        = (*HybridSearcher)(nil)
+	_ ViewerRecordSource = (*HybridSearcher)(nil)
 )
 
 // NewHybridSearcher 构造混合检索；embedder 允许为 nil（纯关键词）。
@@ -179,6 +180,14 @@ func (h *HybridSearcher) RecallWithQuery(ctx context.Context, scope Scope, query
 func (h *HybridSearcher) Focus(ctx context.Context, query FocusQuery) ([]Message, error) {
 	if reader, ok := h.base.(FocusReader); ok {
 		return reader.Focus(ctx, query)
+	}
+	return nil, nil
+}
+
+// ViewerRecords 原样转发观众相关记忆查询；底层不支持时返回空。
+func (h *HybridSearcher) ViewerRecords(ctx context.Context, query ViewerRecordQuery) ([]Record, error) {
+	if reader, ok := h.base.(ViewerRecordSource); ok {
+		return reader.ViewerRecords(ctx, query)
 	}
 	return nil, nil
 }

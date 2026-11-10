@@ -80,6 +80,20 @@ const viewerSummaryInjectRunes = 160
 // 两个列表是各自采样的历史样本，未经问答配对；本轮谁问了什么、
 // 鱼回了什么，以资料段的 focus_turns 为准。
 func formatViewerProfile(p store.ViewerProfile) string {
+	return formatNamedViewerProfile("【对方档案 · 老熟人】", p, 400)
+}
+
+// formatTargetProfile 渲染「甲问乙」里乙的档案，姓名只作展示、不代表身份结论。
+func formatTargetProfile(name string, p store.ViewerProfile) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = strings.TrimSpace(p.Name)
+	}
+	return formatNamedViewerProfile("【被问到的观众 · "+truncateRunes(name, 20)+"】", p, 200)
+}
+
+// formatNamedViewerProfile 是档案片段的共用渲染：只替换首行标题与总长上限。
+func formatNamedViewerProfile(header string, p store.ViewerProfile, maxRunes int) string {
 	summary := compactViewerSummary(p.ProfileSummary, viewerSummaryInjectRunes)
 	textLimit, replyLimit := 8, 4
 	if summary != "" {
@@ -95,7 +109,7 @@ func formatViewerProfile(p store.ViewerProfile) string {
 		replies = replies[:replyLimit]
 	}
 	var sb strings.Builder
-	sb.WriteString("【对方档案 · 老熟人】\n")
+	sb.WriteString(header + "\n")
 	fmt.Fprintf(&sb, "- 说过 %d 次 / 鱼回过 %d 次 / 最后出现 %s\n", p.Hits, p.Replies, p.LastSeen.Format("01-02"))
 	if summary != "" {
 		sb.WriteString("- 侧写：" + summary + "\n")
@@ -113,7 +127,7 @@ func formatViewerProfile(p store.ViewerProfile) string {
 			sb.WriteString("- " + truncateRunes(t, 30) + "\n")
 		}
 	}
-	return truncateRunes(sb.String(), 400)
+	return truncateRunes(sb.String(), maxRunes)
 }
 
 // compactViewerSummary 把侧写折叠成一行并截断；空侧写返回空串（不显示侧写行）。

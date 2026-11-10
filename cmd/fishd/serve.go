@@ -102,7 +102,19 @@ func resolveRoutes(policies map[event.Channel]scheduler.ChannelPolicy, routes ma
 //
 // Generate / Deliver / Verify 三个 handler 都必须设置：scheduler.launch 按 claim 的 stage 分派，
 // 任一为 nil 都会在对应阶段裸奔调用。
-func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, viewers store.ViewerRepo, soulPath string, pres *presence.Table, state func(time.Time) string, react *reactRuntime, channels *channelSet, log *zap.Logger) (scheduler.Workers, error) {
+// consumeOption 是消费链的可选依赖；不传时保持既有行为（测试装配无需改动）。
+type consumeOption func(*consumeOptions)
+
+type consumeOptions struct {
+	viewerFinder profileFinder
+}
+
+// withViewerFinder 注入「按昵称查观众档案」能力，用于甲问乙时预取乙档案。
+func withViewerFinder(finder profileFinder) consumeOption {
+	return func(o *consumeOptions) { o.viewerFinder = finder }
+}
+
+func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, viewers store.ViewerRepo, soulPath string, pres *presence.Table, state func(time.Time) string, react *reactRuntime, channels *channelSet, log *zap.Logger, opts ...consumeOption) (scheduler.Workers, error) {
 	if snd == nil {
 		return scheduler.Workers{}, errors.New("发送器不能为 nil")
 	}
@@ -118,9 +130,16 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 	if log == nil {
 		return scheduler.Workers{}, errors.New("日志器不能为 nil")
 	}
+	var extra consumeOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&extra)
+		}
+	}
 
 	// 统一上下文快照：被动回复与主动弹幕共用同一套资料装配规则。
 	builder := newContextBuilder(pack, mem, know, viewers, newSoulCache(soulPath), state, log)
+	builder.finder = extra.viewerFinder
 	generate := generateHandler(generateDeps{
 		live:       live,
 		brains:     byChannel,
@@ -490,7 +509,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 			finalReserve: time.Duration(cfg.LLM.AttemptTimeoutMS) * time.Millisecond,
 		}
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log)
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch))
 	if err != nil {
 		return nil, nil, nil, err
 	}

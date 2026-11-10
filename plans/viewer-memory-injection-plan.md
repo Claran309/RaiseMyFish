@@ -41,3 +41,29 @@
 
 - prompt 变大 → 用预算裁剪（≤400 字 Viewer 段 + 预算系统）
 - 隐私：只注入公开记忆（viewer 可见性条件）
+
+## 完成状态（2026-11-10）
+
+- [x] **P01 问题主体预取**：`brain.ResolveQuestionTarget` 复用 `buildQuestionSubject`，
+  只做纯解析（不查库），供 `cmd/fishd` 在组装快照时定位「甲问乙」的乙。
+- [x] **P02 Viewer 段优先级注入（≤400 字）**：`contextBuilder.viewerText` 按
+  「当前观众档案（≤220）> 相关记忆（≤6 条）> 最近 7 天（≤4 条）> 乙档案（≤200）> 房间名单（≤5 条）」
+  逐段填充；放不下的低优先级整段丢弃，乙档案在剩余 ≥40 字时按剩余预算截断。
+  `buildConsumeWorkers` 增加可选依赖 `withViewerFinder`，生产装配传入 `viewerSearch`。
+- [x] **P03 注入测试与 7 案例验收**：
+  - `cmd/fishd/viewer_inject_test.go`：乙按 UID/昵称/歧义/自身/无证据/查不到、名单直播限定与去重、400 字裁剪；
+  - `cmd/fishd/viewer_memory_test.go`：7 案例走真实 `brain.New(fake Provider)` + `buildConsumeWorkers`，
+    断言最终 prompt 里的档案/记忆/乙档案/名单；相关段与时间窗段并存的口径单独覆盖；
+  - `cmd/fishd/context_test.go`：保留陌生人 vs 读取失败的区分。
+- [x] **P04 门禁**：`gofmt`、`go build ./...`、`go vet ./...`、`go test ./...`、
+  `go test -race ./cmd/fishd ./internal/brain` 全绿。
+
+### 未做项 / 边界
+
+- 名单只按 `TopViewers`（发言次数倒序，`hits DESC, last_seen DESC`）；没有新增
+  「仅最近 7 天活跃」的仓储查询，名单抬头如实标注「按发言次数」。
+- 乙只在 `room_candidate` 时预取；`unresolved`（如「鲁迅是谁」）不查观众库，
+  避免把公众人物/虚构角色误当观众（工具仍可手动 viewer_search）。
+- 乙按昵称找回只接受 `viewer.StatusFound`；歧义/查不到一律不注入。
+- 主动弹幕路径没有 finder（无「提问者」），但同样享受当前档案/记忆/名单注入。
+- 本批不改 contracts、不碰调度/发送；未执行 git。

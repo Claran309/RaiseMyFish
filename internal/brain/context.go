@@ -538,36 +538,48 @@ type structuredReplyTarget struct {
 // buildCurrentEvent 显式给出当前事件的身份、引用关系与问题主体分类。
 func buildCurrentEvent(in ContextInput) currentEventSection {
 	e := in.Event
+	target := replyTargetOf(in)
+	current := currentEventSection{
+		ID:          e.ID,
+		Channel:     e.Channel,
+		Session:     e.Session,
+		At:          e.At,
+		Speaker:     actorSection{ID: e.FromID, Name: e.FromName},
+		ReplyTo:     e.ReplyTo,
+		ReplyTarget: target,
+	}
+	targetName := ""
+	if target != nil {
+		targetName = target.Name
+	}
+	current.SubjectCandidates = subjectCandidates(e, targetName)
+	current.QuestionSubject = buildQuestionSubject(in, current)
+	return current
+}
+
+// replyTargetOf 从事件 Meta 或 ReplyTo 解析被回复的人；无引用时返回 nil。
+func replyTargetOf(in ContextInput) *replyTargetSection {
+	e := in.Event
 	var meta structuredReplyTarget
 	if len(e.Meta) > 0 {
 		_ = json.Unmarshal(e.Meta, &meta)
-	}
-	current := currentEventSection{
-		ID:      e.ID,
-		Channel: e.Channel,
-		Session: e.Session,
-		At:      e.At,
-		Speaker: actorSection{ID: e.FromID, Name: e.FromName},
-		ReplyTo: e.ReplyTo,
 	}
 	targetID := strings.TrimSpace(meta.ReplyToID)
 	if targetID == "" {
 		targetID = strings.TrimSpace(e.ReplyTo)
 	}
 	targetName := strings.TrimSpace(meta.ReplyToName)
-	if targetID != "" || targetName != "" {
-		kind := "unknown"
-		if targetName != "" {
-			kind = "other"
-			if self := selfName(in.Persona); self != "" && strings.EqualFold(targetName, self) {
-				kind = "self"
-			}
-		}
-		current.ReplyTarget = &replyTargetSection{EventID: targetID, Name: targetName, Kind: kind}
+	if targetID == "" && targetName == "" {
+		return nil
 	}
-	current.SubjectCandidates = subjectCandidates(e, targetName)
-	current.QuestionSubject = buildQuestionSubject(in, current)
-	return current
+	kind := "unknown"
+	if targetName != "" {
+		kind = "other"
+		if self := selfName(in.Persona); self != "" && strings.EqualFold(targetName, self) {
+			kind = "self"
+		}
+	}
+	return &replyTargetSection{EventID: targetID, Name: targetName, Kind: kind}
 }
 
 func selfName(p persona.Pack) string {

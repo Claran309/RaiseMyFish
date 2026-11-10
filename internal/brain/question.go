@@ -29,6 +29,37 @@ const (
 	SubjectUnresolved    = "unresolved"
 )
 
+// QuestionTarget 是问题主体在「生成前」的预取视图，不含身份结论。
+//
+// 上层（cmd/fishd）据此在组装快照时预取「甲问乙」里乙的档案；
+// 与 Prepare 的 question_subject 用同一套解析，避免提示和注入两套口径。
+type QuestionTarget struct {
+	Kind  string
+	Name  string
+	UID   string
+	Check bool
+}
+
+// ResolveQuestionTarget 解析当前问题的主体；不是身份查询时返回 nil。
+//
+// 只做纯解析，不查库：UID 仅在昵称命中本轮可见参与者时给出，
+// 其余情况由调用方按昵称检索档案。
+func ResolveQuestionTarget(in ContextInput) *QuestionTarget {
+	current := currentEventSection{ReplyTarget: replyTargetOf(in)}
+	subject := buildQuestionSubject(in, current)
+	if subject == nil {
+		return nil
+	}
+	target := &QuestionTarget{Kind: subject.Kind, Name: subject.Text, Check: subject.Check}
+	if subject.Match != nil {
+		if name := strings.TrimSpace(subject.Match.Name); name != "" {
+			target.Name = name
+		}
+		target.UID = strings.TrimSpace(subject.Match.ID)
+	}
+	return target
+}
+
 // questionSubjectSection 是当前事件的问题主体分类，不是身份结论。
 type questionSubjectSection struct {
 	Text  string               `json:"text"`
