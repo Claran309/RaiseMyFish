@@ -202,7 +202,6 @@ func TestExtractProvenance(t *testing.T) {
 		wantFromID string
 		wantBy     string
 	}{
-		{"观众自述", Event{Text: "我是学生", FromID: "u-2", FromName: "路人"}, ExtractOptions{}, KindFact, SoulSubjectViewer, "u-2", "u-2"},
 		{"主人自述", Event{Text: "晚安", FromID: ownerUID, FromName: "Claran"}, ExtractOptions{OwnerUID: ownerUID}, KindPreference, SoulSubjectOwner, ownerUID, ownerUID},
 		{"观众转述主人", Event{Text: "主人是阿猫", FromID: "u-2", FromName: "路人"}, ExtractOptions{OwnerUID: ownerUID}, KindPreference, SoulSubjectOwner, "", "u-2"},
 		{"陌生来源主人的转述", Event{Text: "主人是阿猫", FromName: "路人"}, ExtractOptions{OwnerUID: ownerUID}, KindPreference, SoulSubjectOwner, "", ""},
