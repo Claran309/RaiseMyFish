@@ -17,7 +17,15 @@ import (
 
 func dmClient(t *testing.T, h http.HandlerFunc) *Client {
 	t.Helper()
-	srv := httptest.NewServer(h)
+	// 消息接口需要 WBI 签名：统一在 mock 里应答 nav，各用例不用重复处理。
+	wrapped := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/x/web-interface/nav" {
+			_, _ = w.Write([]byte(`{"code":0,"data":{"wbi_img":{"img_url":"https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
+			return
+		}
+		h(w, r)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(wrapped))
 	t.Cleanup(srv.Close)
 	c, err := New(Options{
 		APIRoot: srv.URL, LiveRoot: srv.URL, VCRoot: srv.URL,
@@ -65,11 +73,13 @@ func TestDMSessionsParses(t *testing.T) {
 func TestDMSessionsUnwrapsContent(t *testing.T) {
 	c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/x/web-interface/nav":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"wbi_img":{"img_url":"https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
 		case "/session_svr/v1/session_svr/get_sessions":
 			_, _ = w.Write([]byte(`{"code":0,"data":{"session_list":[
 				{"talker_id":"2002","last_msg":{"msg_key":"9001","sender_uid":"2002","content":"{\"content\":\"在吗\"}","timestamp":1700000000}}
 			]}}`))
-		case "/session_svr/v1/session_svr/get_session_msgs":
+		case "/svr_sync/v1/svr_sync/fetch_session_msgs":
 			_, _ = w.Write([]byte(`{"code":0,"data":{"messages":[
 				{"msg_key":"9001","sender_uid":"2002","content":"{\"content\":\"在吗\"}","timestamp":1700000000}
 			]}}`))
@@ -116,7 +126,7 @@ func TestDMSessionMessagesParses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("拉详情失败：%v", err)
 	}
-	if path != "/session_svr/v1/session_svr/get_session_msgs" {
+	if path != "/svr_sync/v1/svr_sync/fetch_session_msgs" {
 		t.Errorf("路径不符：%s", path)
 	}
 	if talker != "2002" || sessionType != "1" || size != "50" {
@@ -287,7 +297,7 @@ func TestDMSessionMessagesPageCursor(t *testing.T) {
 	c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
 		talker = r.URL.Query().Get("talker_id")
 		size = r.URL.Query().Get("size")
-		endSeqno = r.URL.Query().Get("end_seqno")
+		endSeqno = r.URL.Query().Get("begin_seqno")
 		_, _ = w.Write([]byte(`{"code":0,"data":{"messages":[
 			{"msg_key":"11","msg_seqno":11,"sender_uid":"2002","content":"{\"content\":\"最新\"}","timestamp":1700000011},
 			{"msg_key":"10","msg_seqno":10,"sender_uid":"2002","content":"{\"type\":1}","timestamp":1700000010},
@@ -299,7 +309,7 @@ func TestDMSessionMessagesPageCursor(t *testing.T) {
 		t.Fatalf("拉详情失败：%v", err)
 	}
 	if talker != "2002" || size != "2" || endSeqno != "12" {
-		t.Errorf("分页参数不符：talker=%s size=%s end_seqno=%s", talker, size, endSeqno)
+		t.Errorf("分页参数不符：talker=%s size=%s begin_seqno=%s", talker, size, endSeqno)
 	}
 	if page.Count != 3 {
 		t.Errorf("原始条数 = %d，期望 3", page.Count)
