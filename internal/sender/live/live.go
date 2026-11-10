@@ -93,6 +93,9 @@ func (s *Service) Send(ctx context.Context, c event.Claim, p sender.Reply) (send
 		return sender.Result{}, err
 	}
 	a.ReplyMID, a.ReplyName = replyTarget(c.Event, a.Text, s.options.SelfID)
+	if a.ReplyMID != "" {
+		a.Text = stripMentionPrefix(a.Text, a.ReplyName)
+	}
 	return s.process(ctx, c, a)
 }
 func (s *Service) Resume(ctx context.Context, c event.Claim) (sender.Result, error) {
@@ -107,6 +110,9 @@ func (s *Service) Resume(ctx context.Context, c event.Claim) (sender.Result, err
 		return sender.Result{}, err
 	}
 	a.ReplyMID, a.ReplyName = replyTarget(c.Event, a.Text, s.options.SelfID)
+	if a.ReplyMID != "" {
+		a.Text = stripMentionPrefix(a.Text, a.ReplyName)
+	}
 	return s.process(ctx, c, a)
 }
 
@@ -140,6 +146,28 @@ func mentionsName(text, name string) bool {
 		}
 	}
 	return false
+}
+
+// stripMentionPrefix 去掉正文开头的「@昵称」前缀。
+//
+// 结构化 @（reply_mid）由平台渲染高亮，正文再带 @昵称会出现双重 @；
+// 因此发送前在有结构化目标时剥离文本前缀。剥空时保留原文，避免发出空弹幕。
+func stripMentionPrefix(text, name string) string {
+	name = usableReplyName(name)
+	if name == "" || !mentionsName(text, name) {
+		return text
+	}
+	trimmed := strings.TrimLeftFunc(text, unicode.IsSpace)
+	for _, marker := range []string{"@", "＠"} {
+		if rest, ok := strings.CutPrefix(trimmed, marker); ok {
+			rest = strings.TrimSpace(rest[len(name):])
+			if rest != "" {
+				return rest
+			}
+			return text
+		}
+	}
+	return text
 }
 
 // replyTarget 从事件Meta与已带@前缀的正文反推结构化@目标。

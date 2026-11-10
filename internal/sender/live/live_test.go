@@ -315,3 +315,20 @@ func TestVerifyTimeoutClassified(t *testing.T) {
 		t.Errorf("超时后重新投递了：posted=%d", f.posted)
 	}
 }
+
+// TestStripMentionPrefixWhenStructuredMention 验证结构化@与文本@不重复。
+func TestStripMentionPrefixWhenStructuredMention(t *testing.T) {
+	cases := []struct{ text, name, want string }{
+		{"@Claran309 你好呀", "Claran309", "你好呀"},
+		{"＠Claran309  在吗  ", "Claran309", "在吗"},
+		{"你好呀", "Claran309", "你好呀"},
+		{"@Claran309", "Claran309", "@Claran309"}, // 剥空保留原文
+		{"@Claran3099 你好", "Claran309", "@Claran3099 你好"}, // 不误剥相似昵称
+		{"@Claran309 你好", "", "@Claran309 你好"}, // 无昵称不剥
+	}
+	for _, tc := range cases {
+		if got := stripMentionPrefix(tc.text, tc.name); got != tc.want {
+			t.Errorf("stripMentionPrefix(%q, %q) = %q, 期望 %q", tc.text, tc.name, got, tc.want)
+		}
+	}
+}
