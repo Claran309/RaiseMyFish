@@ -29,7 +29,7 @@ enabled = false
 
 # 启用live前需明确房间与自身UID；Cookie仅从环境或显式文件读取。
 [collector.live]
-room_id = "1992099976"
+room_id = "30308220"
 self_id = "3747574135655903"
 node_path = "node"
 script_path = "tools/bili-whale/danmaku-await.mjs"
@@ -77,7 +77,7 @@ enabled = true
 persona_dir = "personas/dafeiyu"
 # 现人格 soul+live 场景约 8KB，已接近契约默认 8192；再叠加 Presence 状态行会触发 budget 错误。
 # 这里是 prompt 估算上限，不是输入校验放宽；生产留出状态行与部分 samples/rules 的余量。
-max_prompt_tokens = 32768 # 加大：上下文超16256频繁裁剪/回落
+max_prompt_tokens = 65536 # 拉高：64k 模型上限内，Recent 不再被裁
 max_reply_tokens = 128
 attempt_timeout_ms = 10000
 total_timeout_ms = 40000
@@ -194,8 +194,8 @@ allow_side_effect_tools = false
 [watch]
 enabled = false
 # 状态注入：告诉 Brain 此刻在看谁的直播；Presence 有 watching 时以实时房间为准。
-current_room = "1992099976" # 当前观看的直播间；留空则不注入配置兜底
-streamer_name = "娇娇" # 主播名；留空则只报房间号
+current_room = "30308220" # 当前观看的直播间；留空则不注入配置兜底
+streamer_name = "Claran309" # 主播名；留空则只报房间号
 source = "stream"
 interval_seconds = 600 # 直播采集运行期间，每隔多少秒看一次
 seconds = 10
