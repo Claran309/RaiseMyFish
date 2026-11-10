@@ -446,7 +446,7 @@ func TestIndexCostRendersFourStates(t *testing.T) {
 		"d.known_cost == null",
 		"次调用均未计价",
 		"'已计价 ' + known + '/' + total",
-		"'已知费用($)'",
+		"'已知费用(¥)'",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("首页费用卡片缺少四态分支：%q", want)
