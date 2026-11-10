@@ -46,10 +46,25 @@ type LLM interface {
 }
 
 // LLMExtractPrompt 是固定的提炼提示词。
-const LLMExtractPrompt = `你是记忆提炼器。读一条直播弹幕和最近上下文，判断这条弹幕里是否包含"值得长期记住的事实"（对方说的关于自己的事、做出的承诺、明确偏好）。
+const LLMExtractPrompt = `你是记忆提炼器。读一条直播弹幕和最近上下文，判断这条弹幕里是否包含"值得长期记住且以后还能用的稳定信息"。
+
+【该记】（高门槛，必须满足）：
+1. 明确的稳定偏好：「我喜欢/讨厌 X」「我爱吃 X」「常玩 X」
+2. 真实的身份/关系自述：职业、所在地、和主播的关系（但「我是梁文峰」这种反差玩笑不算）
+3. 明确承诺：「明天给你带 X」「答应过 X」
+4. 长期有效的习惯/事实：「每天早上 X 点起」「养了两只猫」
+
+【不该记】（一律 archive=false）：
+- 玩笑、钓鱼、整活、玩梗（「我是梁文峰」「按 alt+f4」「我是盲人」）
+- 恶搞/挑衅/命令（「主播我命令你 X」「展示 alt+f4」）
+- 情绪废话/反问/感叹（「那我想被不骂呢」「怎么会这样」）
+- 一次性闲聊、当时说的话、无信息量的附和
+- 对主播的临时要求/起哄
+
 只输出一行 JSON，不要多余文字：
 {"archive": true/false, "records":[{"kind":"fact|promise|preference|first_seen","title":"不超过60字","summary":"不超过200字","importance":0.0-1.0}], "confidence":0.0-1.0}
-没有值得记的就输出 {"archive": false, "records": [], "confidence": 0.0}。`
+没有值得记的就输出 {"archive": false, "records": [], "confidence": 0.0}。
+注意：confidence 只在「确定是稳定真实的」时给 >=0.7，否则 archive=false。`
 
 // LLMExtractOptions 是 LLM 提炼器的参数。
 type LLMExtractOptions struct {
