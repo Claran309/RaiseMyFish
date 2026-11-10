@@ -313,6 +313,11 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 	}
 	now := s.clock.Now()
 	if c.Stage == event.StageSchedule {
+		// 积压超时：事件从发生到准入超过 MaxEventAge（默认 60 秒）直接丢弃，
+		// 过期弹幕不再回复（避免拖慢直播节奏）。
+		if s.options.MaxEventAge > 0 && !c.Event.At.IsZero() && now.Sub(c.Event.At) > s.options.MaxEventAge {
+			return s.skip(ctx, c)
+		}
 		// 未 @ 鱼的 live 弹幕在准入前跳过：这是唯一合法的 queued→skipped 阶段，
 		// 放在这里也保证不进 Admit、不生成 Task、不调用模型。
 		if noiseReason(c.Event, policy.ChannelPolicy) != "" || mentionMiss(c.Event, policy.ChannelPolicy) || s.repeats[repetition(c.Event)].After(now) {

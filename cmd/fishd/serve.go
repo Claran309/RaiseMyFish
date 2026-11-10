@@ -50,6 +50,10 @@ func buildSchedulerOptions(c *config.Scheduler) scheduler.Options {
 	o.RetryDelay = time.Duration(c.RetryDelayMS) * time.Millisecond
 	o.OperationTimeout = time.Duration(c.OperationTimeoutMS) * time.Millisecond
 	o.WorkerTimeout = time.Duration(c.WorkerTimeoutMS) * time.Millisecond
+	// 积压超时：从配置读（秒），0 表示不限制；默认 60 秒。
+	if c.MaxEventAgeSeconds > 0 {
+		o.MaxEventAge = time.Duration(c.MaxEventAgeSeconds) * time.Second
+	}
 	// 配额窗口按本地时区（北京 00:00 重置）；加载失败回退 UTC。
 	if loc, locErr := time.LoadLocation("Asia/Shanghai"); locErr == nil {
 		o.Location = loc

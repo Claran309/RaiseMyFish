@@ -279,6 +279,7 @@ max_pending = 64
 claim_batch = 8
 poll_interval_ms = 500
 retry_delay_ms = 5000
+max_event_age_seconds = 60 # 积压超过多少秒直接丢弃（不回复过期弹幕）；0=不限制
 operation_timeout_ms = 10000
 worker_timeout_ms = 30000
 

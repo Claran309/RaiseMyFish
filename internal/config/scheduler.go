@@ -22,6 +22,8 @@ type Scheduler struct {
 	ClaimBatch         int                             `toml:"claim_batch"`
 	PollIntervalMS     int                             `toml:"poll_interval_ms"`
 	RetryDelayMS       int                             `toml:"retry_delay_ms"`
+	// MaxEventAgeSeconds 是积压上限（秒）；超过则丢弃，0 表示不限制。
+	MaxEventAgeSeconds int                             `toml:"max_event_age_seconds"`
 	OperationTimeoutMS int                             `toml:"operation_timeout_ms"`
 	WorkerTimeoutMS    int                             `toml:"worker_timeout_ms"`
 	Channels           map[event.Channel]ChannelPolicy `toml:"channels"`

@@ -52,6 +52,8 @@ type Options struct {
 	RetryDelay       time.Duration
 	OperationTimeout time.Duration
 	WorkerTimeout    time.Duration
+	// MaxEventAge 是事件从发生到准入的最大允许积压；超过则丢弃（skip），0 表示不限制。
+	MaxEventAge     time.Duration
 	Location         *time.Location
 	Clock            Clock
 	Channels         map[event.Channel]ChannelPolicy
