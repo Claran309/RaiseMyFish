@@ -117,6 +117,11 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取LLM账本元数据迁移：%w", err)
 	}
 	usageCallMetaHash := sha256.Sum256(usageCallMeta)
+	viewerProfileSummary, err := migrations.Files.ReadFile("0017_viewer_profile_summary.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取观众侧写迁移：%w", err)
+	}
+	viewerProfileSummaryHash := sha256.Sum256(viewerProfileSummary)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -134,6 +139,7 @@ func migrationSteps() ([]migrationStep, error) {
 		{14, string(embeddingIndexState), hex.EncodeToString(embeddingIndexStateHash[:])},
 		{15, string(knowledgeEmbeddingIndexState), hex.EncodeToString(knowledgeEmbeddingIndexStateHash[:])},
 		{16, string(usageCallMeta), hex.EncodeToString(usageCallMetaHash[:])},
+		{17, string(viewerProfileSummary), hex.EncodeToString(viewerProfileSummaryHash[:])},
 	}, nil
 }
 
@@ -259,6 +265,9 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	}
 	if err := db.Exec("SELECT identity_embedding,identity_embedding_hash,identity_embedding_source_hash,identity_embedding_fingerprint,identity_embedding_updated_at,facts_embedding,facts_embedding_hash,facts_embedding_source_hash,facts_embedding_fingerprint,facts_embedding_updated_at,interaction_embedding,interaction_embedding_hash,interaction_embedding_source_hash,interaction_embedding_fingerprint,interaction_embedding_updated_at FROM " + table("viewer_profiles") + " LIMIT 0").Error; err != nil {
 		return &safeError{"档案向量字段不完整", err}
+	}
+	if err := db.Exec("SELECT profile_summary,summary_updated_at FROM " + table("viewer_profiles") + " LIMIT 0").Error; err != nil {
+		return &safeError{"观众侧写字段不完整", err}
 	}
 	if err := db.Exec("SELECT id,mid,name,cookie,csrf,status,last_check,note,is_active FROM " + table("accounts") + " LIMIT 0").Error; err != nil {
 		return &safeError{"账号管理表不完整", err}

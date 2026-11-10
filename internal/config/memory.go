@@ -28,6 +28,9 @@ type Memory struct {
 	SoulMaxEntries int `toml:"soul_max_entries"`
 	// SoulPath 是 soul-memories.md 路径；留空时从 LLM.PersonaDir 派生。
 	SoulPath string `toml:"soul_path"`
+	// ViewerSummaryIntervalSeconds 是观众侧写定时任务的间隔（默认每小时）。
+	// 0 表示关闭该任务；启用时范围 60-86400 秒。侧写只读公开非 DM 弹幕。
+	ViewerSummaryIntervalSeconds int `toml:"viewer_summary_interval_seconds"`
 	// OwnerUID 是主人的可信平台 UID：只有发言人 UID 与之相等才算主人自述，
 	// 也才可能提升为长期设定。昵称可被改名冒充，不参与身份判定。
 	OwnerUID string `toml:"owner_uid"`
@@ -36,7 +39,7 @@ type Memory struct {
 }
 
 func defaultMemory() Memory {
-	return Memory{Enabled: true, IntervalSeconds: 300, LLMExtract: true, LLMExtractMaxPerHour: 30, SoulEnabled: true, SoulMaxEntries: 20}
+	return Memory{Enabled: true, IntervalSeconds: 300, LLMExtract: true, LLMExtractMaxPerHour: 30, SoulEnabled: true, SoulMaxEntries: 20, ViewerSummaryIntervalSeconds: 3600}
 }
 
 // deriveSoulPath 在未显式配置 soul_path 时跟随人格包：
@@ -69,6 +72,9 @@ func (m Memory) Validate() error {
 	}
 	if strings.ContainsAny(m.OwnerName, "\r\n\x00") {
 		return errors.New("记忆 owner_name 不能包含控制字符")
+	}
+	if m.ViewerSummaryIntervalSeconds != 0 && (m.ViewerSummaryIntervalSeconds < 60 || m.ViewerSummaryIntervalSeconds > 86400) {
+		return errors.New("观众侧写间隔必须为0（关闭）或60至86400秒")
 	}
 	if m.SoulEnabled {
 		if m.SoulMaxEntries < 1 || m.SoulMaxEntries > 100 {

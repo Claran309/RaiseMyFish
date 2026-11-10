@@ -28,6 +28,10 @@ type ViewerProfile struct {
 	RecentTexts []string
 	// RecentReplies 是鱼最近回过的话（新的在前）。
 	RecentReplies []string
+	// ProfileSummary 是 LLM 侧写：性格/偏好/口头禅/关系/最近话题；空表示尚未生成。
+	ProfileSummary string
+	// SummaryUpdatedAt 是侧写最近写入时间；零值表示从未生成过。
+	SummaryUpdatedAt time.Time
 	// UpdatedAt 是档案写入时间。
 	UpdatedAt time.Time
 }

@@ -48,7 +48,7 @@ func (r MemoryRecord) Validate() error {
 		return fmt.Errorf("记忆基本字段错误：%w", ErrInvalid)
 	}
 	switch r.Kind {
-	case "talk", "preference", "promise", "fact", "summary", "note":
+	case "talk", "preference", "promise", "fact", "summary", "note", "viewer_profile":
 	default:
 		return fmt.Errorf("记忆类型错误：%w", ErrInvalid)
 	}

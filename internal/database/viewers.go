@@ -11,9 +11,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
+	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/store"
 	"gorm.io/gorm"
 )
@@ -30,20 +32,25 @@ func NewViewerRepo(db *gorm.DB) (*ViewerRepo, error) {
 }
 
 type viewerRow struct {
-	UID           string
-	Name          string
-	Hits          int
-	Replies       int
-	LastSeen      time.Time
-	RecentTexts   []byte
-	RecentReplies []byte
-	UpdatedAt     time.Time
+	UID              string
+	Name             string
+	Hits             int
+	Replies          int
+	LastSeen         time.Time
+	RecentTexts      []byte
+	RecentReplies    []byte
+	ProfileSummary   string
+	SummaryUpdatedAt *time.Time
+	UpdatedAt        time.Time
 }
 
 func (r viewerRow) profile() (store.ViewerProfile, error) {
 	p := store.ViewerProfile{
 		UID: r.UID, Name: r.Name, Hits: r.Hits, Replies: r.Replies,
-		LastSeen: r.LastSeen, UpdatedAt: r.UpdatedAt,
+		LastSeen: r.LastSeen, ProfileSummary: r.ProfileSummary, UpdatedAt: r.UpdatedAt,
+	}
+	if r.SummaryUpdatedAt != nil {
+		p.SummaryUpdatedAt = *r.SummaryUpdatedAt
 	}
 	if err := decodeStrings(r.RecentTexts, &p.RecentTexts); err != nil {
 		return store.ViewerProfile{}, &safeError{"解析观众发言失败", err}
@@ -148,6 +155,102 @@ func (r *ViewerRepo) ActiveSince(ctx context.Context, since time.Time) (bool, er
 		return false, &safeError{"检查直播活跃度失败", err}
 	}
 	return exists, nil
+}
+
+// ActiveViewers 返回本轮该做侧写的观众档案。
+//
+// 口径与旧家建档一致：since 之后有公开发言，或累计说过 minHits 句。
+// 只挑「从未侧写」或「侧写之后又有新发言」的档案，避免每小时重复为同一份
+// 旧发言付费；按侧写时间最旧优先，保证失败的档案下次仍能轮到。
+func (r *ViewerRepo) ActiveViewers(ctx context.Context, since time.Time, minHits, limit int) ([]store.ViewerProfile, error) {
+	if ctx == nil || since.IsZero() || minHits < 1 || limit < 1 || limit > 500 {
+		return nil, store.ErrInvalid
+	}
+	var rows []viewerRow
+	err := r.db.WithContext(ctx).Table("viewer_profiles").
+		Where("(last_seen >= ? OR hits >= ?)", since.UTC(), minHits).
+		Where("(summary_updated_at IS NULL OR summary_updated_at < last_seen)").
+		Order("summary_updated_at ASC NULLS FIRST, last_seen DESC, uid ASC").
+		Limit(limit).Find(&rows).Error
+	if err != nil {
+		return nil, &safeError{"读取待侧写观众失败", err}
+	}
+	out := make([]store.ViewerProfile, 0, len(rows))
+	for _, row := range rows {
+		p, err := row.profile()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// SaveProfileSummary 在同一个事务里写入档案侧写与对应的记忆记录。
+//
+// 记忆记录用稳定 ID 覆盖同一观众的旧摘要；冲突更新只允许 viewer_profile → viewer_profile，
+// 不会误改其他 kind 的同 ID 行。记录身份（private/subject/asserted_by）在这里再核一遍，
+// 避免调用方把私密或错主体数据写进公开侧写。
+func (r *ViewerRepo) SaveProfileSummary(ctx context.Context, uid, summary string, at time.Time, record store.MemoryRecord) error {
+	if ctx == nil || strings.TrimSpace(uid) == "" || strings.TrimSpace(summary) == "" || at.IsZero() {
+		return store.ErrInvalid
+	}
+	if err := record.Validate(); err != nil {
+		return err
+	}
+	if record.Kind != "viewer_profile" || record.Private || record.Subject != memory.SoulSubjectViewer ||
+		record.FromID != uid || record.AssertedByID != uid {
+		return store.ErrInvalid
+	}
+	ids, err := json.Marshal(record.EventIDs)
+	if err != nil {
+		return store.ErrInvalid
+	}
+	at = at.UTC()
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Exec("UPDATE viewer_profiles SET profile_summary=?, summary_updated_at=? WHERE uid=?", summary, at, uid)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return fmt.Errorf("观众档案不存在: %w", store.ErrViewerNotFound)
+		}
+		res = tx.Exec(`INSERT INTO memory_records
+(id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name,asserted_by_id,asserted_by_name,subject)
+VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''))
+ON CONFLICT (id) DO UPDATE SET
+  source = EXCLUDED.source,
+  title = EXCLUDED.title,
+  summary = EXCLUDED.summary,
+  body = EXCLUDED.body,
+  importance = EXCLUDED.importance,
+  confidence = EXCLUDED.confidence,
+  valid_from = EXCLUDED.valid_from,
+  event_ids = EXCLUDED.event_ids,
+  from_id = COALESCE(EXCLUDED.from_id, memory_records.from_id),
+  from_name = COALESCE(EXCLUDED.from_name, memory_records.from_name),
+  asserted_by_id = COALESCE(EXCLUDED.asserted_by_id, memory_records.asserted_by_id),
+  asserted_by_name = COALESCE(EXCLUDED.asserted_by_name, memory_records.asserted_by_name),
+  subject = COALESCE(EXCLUDED.subject, memory_records.subject)
+WHERE memory_records.kind = 'viewer_profile'
+  AND EXCLUDED.kind = 'viewer_profile'
+  AND memory_records.private = EXCLUDED.private`,
+			record.ID, record.Source, record.Kind, record.Title, record.Summary, record.Body,
+			record.Importance, record.Confidence, record.Private, record.Channel, record.Session,
+			record.ValidFrom, string(ids), record.FromID, record.FromName,
+			record.AssertedByID, record.AssertedByName, record.Subject)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return errors.New("观众侧写记忆未写入：标识冲突或记录不可覆盖")
+		}
+		return nil
+	})
+	if err != nil {
+		return &safeError{"保存观众侧写失败", err}
+	}
+	return nil
 }
 
 // RebuildProfiles 从公开事件全量重算档案（幂等：ON CONFLICT 覆盖）。

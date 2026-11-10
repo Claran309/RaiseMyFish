@@ -161,6 +161,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	// 记忆/档案向量：同一套增量语义，节奏独立（默认 5 分钟）。
 	stopMemoryEmbedding := startMemoryEmbeddingRefresh(ctx, cfg, resources.DB, logger)
 	defer stopMemoryEmbedding()
+	// 观众侧写：默认每小时总结近期活跃观众的公开弹幕（LLM 失败回落统计）。
+	stopViewerSummary := startViewerSummary(ctx, cfg, resources.DB, knowledgeRuntime, logger)
+	defer stopViewerSummary()
 	stopHeartbeatLike := startHeartbeatLike(ctx, cfg, logger)
 	defer stopHeartbeatLike()
 	logger.Info("Brain装配检查完成，未消费事件", zap.String("action", "brain_setup"), zap.Int("routes", len(routes)))

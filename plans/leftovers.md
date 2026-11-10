@@ -115,8 +115,8 @@
 
 | # | 项 | 说明 | 状态 |
 |---|---|---|---|
-| 63 | **观众侧写定时总结** | 定时（如每小时/每天）用 LLM 总结观众弹幕 → 观众侧写（性格/偏好/口头禅/关系）→ 写入 viewer_profiles 新字段 + memory_records（kind=viewer_profile）+ knowledge（观众条目） | ⏳ 待派 |
-| 64 | 观众侧写进知识库 | 侧写作为 knowledge 条目（visibility=public，可被 RAG 召回）| ⏳ 待派 |
+| 63 | **观众侧写定时总结** | 定时（如每小时/每天）用 LLM 总结观众弹幕 → 观众侧写（性格/偏好/口头禅/关系）→ 写入 viewer_profiles 新字段 + memory_records（kind=viewer_profile）+ knowledge（观众条目） | 🟡 已交付待验收（0017 + 每小时定时 + LLM失败统计降级 + prompt注入） |
+| 64 | 观众侧写进知识库 | 侧写作为 knowledge 条目（visibility=public，可被 RAG 召回）| 🟡 已交付待验收（viewers.md viewer-auto-*，usage 参与 embedding） |
 | 65 | 观众移动数据校验 | 迁移校验脚本修正（all-memory 计数口径） | ✅ 已做（实际 24=24） |
 
 ## ⚪ 远期 / 阶段任务

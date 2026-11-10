@@ -70,23 +70,36 @@ func truncateRunes(text string, limit int) string {
 	return string(runes[:limit])
 }
 
+// viewerSummaryInjectRunes 限制注入的侧写长度：档案总长仍是 400 字，
+// 侧写只占其中一小段，避免挤掉本轮真正相关的 recent_texts。
+const viewerSummaryInjectRunes = 160
+
 // formatViewerProfile 把档案压成 300-400 字的注入片段。
 //
-// 只带「说过多少次/回过多少次/最近几句」，不做价值判断，也不带 uid。
+// 只带「说过多少次/回过多少次/最近几句」与一段简短侧写，不做价值判断，也不带 uid。
 // 两个列表是各自采样的历史样本，未经问答配对；本轮谁问了什么、
 // 鱼回了什么，以资料段的 focus_turns 为准。
 func formatViewerProfile(p store.ViewerProfile) string {
+	summary := compactViewerSummary(p.ProfileSummary, viewerSummaryInjectRunes)
+	textLimit, replyLimit := 8, 4
+	if summary != "" {
+		// 有侧写时少放原始样本：侧写已经是这些样本的浓缩，重复占字数没有收益。
+		textLimit, replyLimit = 5, 3
+	}
 	texts := p.RecentTexts
-	if len(texts) > 8 {
-		texts = texts[:8]
+	if len(texts) > textLimit {
+		texts = texts[:textLimit]
 	}
 	replies := p.RecentReplies
-	if len(replies) > 4 {
-		replies = replies[:4]
+	if len(replies) > replyLimit {
+		replies = replies[:replyLimit]
 	}
 	var sb strings.Builder
 	sb.WriteString("【对方档案 · 老熟人】\n")
 	fmt.Fprintf(&sb, "- 说过 %d 次 / 鱼回过 %d 次 / 最后出现 %s\n", p.Hits, p.Replies, p.LastSeen.Format("01-02"))
+	if summary != "" {
+		sb.WriteString("- 侧写：" + summary + "\n")
+	}
 	sb.WriteString("- 以下按时间采样、未配对问答；本轮配对见 focus_turns\n")
 	if len(texts) > 0 {
 		sb.WriteString("## 他说过的话（最近几条）\n")
@@ -101,6 +114,11 @@ func formatViewerProfile(p store.ViewerProfile) string {
 		}
 	}
 	return truncateRunes(sb.String(), 400)
+}
+
+// compactViewerSummary 把侧写折叠成一行并截断；空侧写返回空串（不显示侧写行）。
+func compactViewerSummary(raw string, limit int) string {
+	return truncateRunes(strings.Join(strings.Fields(raw), " "), limit)
 }
 
 // generateDeps 是 Generate handler 的只读依赖投影。

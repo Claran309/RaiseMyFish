@@ -485,15 +485,17 @@ func saveMemeDoc(path string, doc diskFile) error {
 	if len(data) > maxFileBytes {
 		return errors.New("梗白学习文件超过单文件上限")
 	}
-	return writeMemeFile(path, data)
+	return writeKnowledgeFile(path, data)
 }
 
-func writeMemeFile(path string, data []byte) error {
+// writeKnowledgeFile 是知识文件的公共原子写：同目录临时文件 + Sync + Rename，
+// 写失败时旧文件保持不变。梗白学习与观众侧写共用。
+func writeKnowledgeFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return fmt.Errorf("创建梗白目录：%w", err)
+		return fmt.Errorf("创建知识目录：%w", err)
 	}
-	tmp, err := os.CreateTemp(dir, ".learned-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".knowledge-*.tmp")
 	if err != nil {
 		return fmt.Errorf("创建临时文件：%w", err)
 	}
@@ -511,7 +513,7 @@ func writeMemeFile(path string, data []byte) error {
 		return fmt.Errorf("关闭临时文件：%w", err)
 	}
 	if err := os.Rename(name, path); err != nil {
-		return fmt.Errorf("替换梗白学习文件：%w", err)
+		return fmt.Errorf("替换知识文件：%w", err)
 	}
 	return nil
 }
