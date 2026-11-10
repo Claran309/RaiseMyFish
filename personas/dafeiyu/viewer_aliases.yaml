@@ -8,7 +8,13 @@ schema: fish-viewer-aliases/v1
 
 # 别名：alias 必须带 uid 或 name 之一（不能同时填）。
 # 同一别名可以指向多个人（会保留多候选，不自动合并）。
-aliases: []
+aliases:
+  - alias: "仙主"
+    name: "终南仙主"
+    status: confirmed
+  - alias: "终南"
+    name: "终南仙主"
+    status: confirmed
 # 示例：
 # aliases:
 #   - alias: "长弓三溢"
