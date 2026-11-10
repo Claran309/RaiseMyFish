@@ -153,6 +153,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if checkBrain {
 		return printBrainDiagnostic(*brainRoute, routes, pack, stdout)
 	}
+	giftGate := &atomic.Bool{}
+	giftGate.Store(cfg.Gift.Enabled)
 	// 记忆提炼是增强能力：初始化失败只记日志并降级，不阻塞采集/消费主链路。
 	stopMemory := startMemoryExtractor(ctx, cfg, resources.DB, knowledgeRuntime, logger)
 	defer stopMemory()
@@ -167,6 +169,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	defer stopViewerSummary()
 	stopHeartbeatLike := startHeartbeatLike(ctx, cfg, logger)
 	defer stopHeartbeatLike()
+	// 主动定时送礼：每 interval_seconds 给白名单房间送一朵花（受门控/配额/白名单约束）。
+	proactiveGiftSender, giftErr := buildGiftSender(cfg)
+	if giftErr != nil {
+		logger.Warn("主动送礼装配失败，已停用", zap.String("action", "proactive_gift"), zap.Error(giftErr))
+	}
+	stopProactiveGift := startProactiveGift(ctx, cfg, proactiveGiftSender, giftGate.Load, logger)
+	defer stopProactiveGift()
 	logger.Info("Brain装配检查完成，未消费事件", zap.String("action", "brain_setup"), zap.Int("routes", len(routes)))
 	logger.Info("知识装配检查完成，未接入事件消费", zap.String("action", "knowledge_setup"), zap.Bool("enabled", knowledgeRuntime.Diagnostic.Enabled), zap.Bool("assembled", knowledgeRuntime.Diagnostic.Assembled), zap.Int("entries", knowledgeRuntime.Diagnostic.Entries), zap.String("revision", knowledgeRuntime.Diagnostic.Revision))
 	check := func(parent context.Context) error {
@@ -195,8 +204,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	}
 
 	// 送礼开关由控制面热更新，ReAct 副作用每次调用都读最新值。
-	giftGate := &atomic.Bool{}
-	giftGate.Store(cfg.Gift.Enabled)
 	// 副作用限频是进程级的：消费循环与主动弹幕的每个工具箱共用这一份，
 	// 否则每个事件新建工具箱会各自清零，follow/like/dm 可被跨事件绕过。
 	sideLimiter := reasoning.NewSideEffectLimiter()
