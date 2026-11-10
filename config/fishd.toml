@@ -29,7 +29,7 @@ enabled = false
 
 # 启用live前需明确房间与自身UID；Cookie仅从环境或显式文件读取。
 [collector.live]
-room_id = "30308220"
+room_id = "1992099976"
 self_id = "3747574135655903"
 node_path = "node"
 script_path = "tools/bili-whale/danmaku-await.mjs"
@@ -194,8 +194,8 @@ allow_side_effect_tools = false
 [watch]
 enabled = false
 # 状态注入：告诉 Brain 此刻在看谁的直播；Presence 有 watching 时以实时房间为准。
-current_room = "30308220" # 当前观看的直播间；留空则不注入配置兜底
-streamer_name = "Claran309" # 主播名；留空则只报房间号
+current_room = "1992099976" # 当前观看的直播间；留空则不注入配置兜底
+streamer_name = "娇娇" # 主播名；留空则只报房间号
 source = "stream"
 interval_seconds = 600 # 直播采集运行期间，每隔多少秒看一次
 seconds = 10
@@ -218,7 +218,7 @@ llm_route = "default"
 #      → 四态（comment/ask/react/stay_silent）→ 语义去重 → 发送。
 # 画面与用户对话都没变化时保持安静；发送失败不算“已经说过”。
 enabled = true
-interval_seconds = 20
+interval_seconds = 80
 send_gap_seconds = 30 # 两次主动发送的最小间隔；间隔内跳过（reason=gap）
 # 画面里出现「要查事实」的线索时先走 ReAct 多步查证，否则单步；false 则永远单步。
 use_react = true
@@ -296,7 +296,7 @@ reply_only_mention = true
 # 被结构化 @（回复目标是自己）时，回复前缀带「@对方昵称 」；正文含前缀截到 40 rune。
 reply_mention_back = true
 max_reply_runes = 40
-self_names = ["大肥鱼", "Claranの大肥鱼", "魔鱼魔鱼吃白饭饭饭饭"]
+self_names = ["大肥鱼", "肥鱼", "Claranの大肥鱼", "魔鱼魔鱼吃白饭饭饭饭"]
 self_ids = ["3747574135655903"]
 
 # 评论回复的调度策略：启用 [collector.comment]/[sender.comment] 时必须同时配置，
