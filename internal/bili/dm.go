@@ -157,9 +157,15 @@ func (c *Client) DMSessionMessagesPage(ctx context.Context, talkerID string, siz
 	params.Set("session_type", "1")
 	params.Set("size", strconv.Itoa(size))
 	if endSeqno != "" {
-		params.Set("end_seqno", endSeqno)
+		// 新版接口用 begin_seqno 指定起点（旧 end_seqno 已随旧路径 404）。
+		params.Set("begin_seqno", endSeqno)
 	}
-	endpoint := c.vc + "/session_svr/v1/session_svr/get_session_msgs?" + params.Encode()
+	// B站 2025 私信消息接口迁移：session_svr/get_session_msgs → svr_sync/fetch_session_msgs，
+	// 需要 WBI 签名（旧路径返回 HTTP 404）。
+	endpoint, err := c.signWBI(ctx, "dm_msgs", c.vc+"/svr_sync/v1/svr_sync/fetch_session_msgs", params)
+	if err != nil {
+		return DMMessagePage{}, err
+	}
 	var data struct {
 		Messages []struct {
 			MsgKey    json.RawMessage `json:"msg_key"`
