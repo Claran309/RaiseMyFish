@@ -10,6 +10,7 @@ package web
 //   - 列表统一截断正文，响应里不出现任何凭据/完整 prompt。
 
 import (
+	"net/http/pprof"
 	"context"
 	"embed"
 	"encoding/json"
@@ -157,6 +158,13 @@ func ValidateAddr(addr string) error {
 // 所有路由（含页面）都套 guard：读写都要过 Host 校验，写请求还要过来源/令牌/Content-Type。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	// 诊断：pprof 端点（仅回环监听；GET 要求 Host 合法）。
+	mux.HandleFunc("/debug/pprof/goroutine", s.guard(func(w http.ResponseWriter, r *http.Request) {
+		pprof.Handler("goroutine").ServeHTTP(w, r)
+	}))
+	mux.HandleFunc("/debug/pprof/heap", s.guard(func(w http.ResponseWriter, r *http.Request) {
+		pprof.Handler("heap").ServeHTTP(w, r)
+	}))
 	mux.HandleFunc("/api/token", s.guard(s.handleToken))
 	mux.HandleFunc("/api/status", s.guard(s.handleStatus))
 	mux.HandleFunc("/api/embedding/status", s.guard(s.handleEmbeddingStatus))
