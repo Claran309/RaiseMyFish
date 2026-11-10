@@ -92,8 +92,6 @@ type BiliFetcher struct {
 	lastAccount    string
 	// msgBlocked 记录消息接口不可用（如 404）的会话退避截止时间；避免每轮重试全部会话。
 	msgBlocked map[string]time.Time
-	// msgBlockedAll 是接口级全局退避：一个会话确认接口 404 后整批暂停，不再逐个试探刷屏。
-	msgBlockedAll time.Time
 }
 
 // Fetch 实现 Fetcher；返回的 Batch.Commit 需要在整批事件获得持久化确认后调用，
@@ -104,10 +102,6 @@ type BiliFetcher struct {
 func (f *BiliFetcher) Fetch(ctx context.Context) (Batch, error) {
 	if f.client == nil {
 		return Batch{}, &Error{Kind: KindAuth, Cause: bili.ErrNoCredential}
-	}
-	// 消息接口全局退避中：整批跳过（下轮再试），不逐个 peer 刷 404。
-	if f.messagesBlockedAll() {
-		return Batch{}, nil
 	}
 	release, err := f.begin(ctx)
 	if err != nil {
@@ -209,7 +203,6 @@ func (f *BiliFetcher) msgBlockedUntil(peer string) bool {
 }
 
 // blockMessages 给会话的消息接口设退避，避免 404 时每轮重试全部会话。
-// 接口级不可用（404）同时设置全局退避：整批暂停，不再逐个 peer 试探刷日志。
 func (f *BiliFetcher) blockMessages(peer string, d time.Duration) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -217,14 +210,6 @@ func (f *BiliFetcher) blockMessages(peer string, d time.Duration) {
 		f.msgBlocked = make(map[string]time.Time)
 	}
 	f.msgBlocked[peer] = time.Now().Add(d)
-	f.msgBlockedAll = time.Now().Add(d)
-}
-
-// messagesBlockedAll 判断消息接口是否处于全局退避。
-func (f *BiliFetcher) messagesBlockedAll() bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return time.Now().Before(f.msgBlockedAll)
 }
 
 // isNotFound 判断错误是否为 HTTP 404（消息接口不可用）。
