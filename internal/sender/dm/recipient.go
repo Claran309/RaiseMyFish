@@ -5,10 +5,11 @@ package dm
 // 语义：
 //   - 键 = 发送账号（B站 MID）+ UTC 日期；每个账号每天最多 1 个收信人；
 //   - 预占在 POST 前原子写入：进程内 mutex + O_EXCL 锁文件 + 临时文件 rename；
-//   - 明确未发出（白名单/限频/互关/鉴权拒绝）才释放；结果未知或重试保留，
-//     宁可少发给另一个收信人，也不能绕过每日限制；
-//   - 发送成功记 committed，之后并发的失败尝试不能再释放当天名额；
-//   - 跨天自动重置；旧格式 {date, peer} 继续可读（视为无 actor 的单账号记录）。
+//   - 每笔发送尝试持有独立令牌，只有令牌持有者能在「明确未发出」后释放自己的预占；
+//   - 预占状态 pending / unknown / committed：unknown（POST 结果未知）与 committed
+//     粘住当天名额，后续失败尝试不能释放；
+//   - 跨天自动重置；旧格式 {date, peer} 与 v2 {peers, committed} 继续可读，
+//     无令牌的旧记录按 unknown 处理（无法确认是否已送达，不可随意释放）。
 
 import (
 	"encoding/json"
@@ -31,6 +32,16 @@ const (
 // errRecipientLocked 表示同一 actor 当天已锁定给另一个收信人。
 var errRecipientLocked = errors.New("今天已锁定收信人")
 
+// recipientVersion 是当前落盘结构版本。
+const recipientVersion = 3
+
+// 预占状态。
+const (
+	reservationPending   = "pending"
+	reservationUnknown   = "unknown"
+	reservationCommitted = "committed"
+)
+
 // recipientState 是落盘结构。
 type recipientState struct {
 	Version int `json:"version,omitempty"`
@@ -38,10 +49,44 @@ type recipientState struct {
 	Date string `json:"date"`
 	// Peer 是旧格式/无 actor 场景下的收信人，保留以兼容既有状态文件。
 	Peer string `json:"peer,omitempty"`
-	// Peers 是 actor(MID) → 当天收信人。
+	// Peers 是 actor(MID) → 当天收信人，是 Reservations 的可读镜像。
 	Peers map[string]string `json:"peers,omitempty"`
-	// Committed 是已成功发送的 actor → 收信人；成功后不允许再释放当天名额。
+	// Committed 是已成功发送的 actor → 收信人，是 Reservations 的可读镜像。
 	Committed map[string]string `json:"committed,omitempty"`
+	// Reservations 是 actor → 预占记录；状态与尝试令牌以这里为准。
+	Reservations map[string]reservationState `json:"reservations,omitempty"`
+}
+
+// reservationState 是单个 actor 当天的预占。
+//
+// Attempts 记录仍可释放的尝试令牌；只有令牌在列表里的尝试才能释放预占。
+// unknown/committed 不保留令牌，任何失败尝试都无法解除。
+type reservationState struct {
+	Peer     string   `json:"peer"`
+	State    string   `json:"state"`
+	Attempts []string `json:"attempts,omitempty"`
+}
+
+// withAttempt 登记一笔在途尝试（同令牌重复登记保持幂等）。
+func (r reservationState) withAttempt(token string) reservationState {
+	for _, existing := range r.Attempts {
+		if existing == token {
+			return r
+		}
+	}
+	r.Attempts = append(r.Attempts, token)
+	return r
+}
+
+// removeAttempt 只删除本尝试的令牌；返回是否确实由本令牌持有。
+func (r *reservationState) removeAttempt(token string) bool {
+	for i, existing := range r.Attempts {
+		if existing == token {
+			r.Attempts = append(r.Attempts[:i], r.Attempts[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // RecipientStore 是当日收信人的持久化存储。
@@ -91,12 +136,14 @@ func (s *RecipientStore) loadLocked() (recipientState, error) {
 // Reserve 原子预占当天收信人：同一 actor 换人立即拒绝，同人放行。
 //
 // 预占必须发生在 POST 之前；写入失败返回错误，调用方不得继续发送。
-func (s *RecipientStore) Reserve(day, actor, peer string) error {
+// attempt 是本次发送尝试的令牌，只有它能释放本次预占。
+func (s *RecipientStore) Reserve(day, actor, peer, attempt string) error {
 	day, actor, peer = strings.TrimSpace(day), strings.TrimSpace(actor), strings.TrimSpace(peer)
+	attempt = strings.TrimSpace(attempt)
 	if s == nil || s.path == "" {
 		return errors.New("收信人状态存储未初始化")
 	}
-	if day == "" || peer == "" {
+	if day == "" || peer == "" || attempt == "" {
 		return errors.New("收信人预占参数无效")
 	}
 	s.mu.Lock()
@@ -112,9 +159,23 @@ func (s *RecipientStore) Reserve(day, actor, peer string) error {
 		return err
 	}
 	st = st.forDay(day)
-	if existing := st.Peers[actor]; existing != "" && existing != peer {
+	rec, ok := st.Reservations[actor]
+	if ok && rec.Peer != peer {
 		return &Error{Kind: KindInput, Cause: errRecipientLocked}
 	}
+	if !ok {
+		rec = reservationState{Peer: peer, State: reservationPending}
+	}
+	switch rec.State {
+	case reservationPending:
+		rec = rec.withAttempt(attempt)
+	case reservationUnknown, reservationCommitted:
+		// unknown/committed 不可释放；同人可继续尝试，但不登记可释放令牌。
+	default:
+		rec.State = reservationUnknown
+		rec.Attempts = nil
+	}
+	st.Reservations[actor] = rec
 	st.Peers[actor] = peer
 	if actor == "" {
 		st.Peer = peer
@@ -125,13 +186,55 @@ func (s *RecipientStore) Reserve(day, actor, peer string) error {
 	return nil
 }
 
-// Commit 在发送成功后锁定当天名额；写盘失败由调用方按「已发但状态不确定」处理。
-func (s *RecipientStore) Commit(day, actor, peer string) error {
+// MarkUnknown 把本尝试结算为「结果未知（可能已送达）」。
+//
+// 即使预占记录缺失也补写 unknown：宁可占住当天名额，也不能让后续失败尝试释放。
+func (s *RecipientStore) MarkUnknown(day, actor, peer, attempt string) {
 	day, actor, peer = strings.TrimSpace(day), strings.TrimSpace(actor), strings.TrimSpace(peer)
+	attempt = strings.TrimSpace(attempt)
+	if s == nil || s.path == "" || day == "" || peer == "" || attempt == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := s.lock()
+	if err != nil {
+		return
+	}
+	defer unlock()
+
+	st, err := s.loadLocked()
+	if err != nil || st.Date != day {
+		return
+	}
+	st = st.forDay(day)
+	rec, ok := st.Reservations[actor]
+	if ok && rec.Peer != peer {
+		return
+	}
+	if !ok {
+		rec = reservationState{Peer: peer}
+	}
+	if rec.State != reservationCommitted {
+		rec.State = reservationUnknown
+		rec.Attempts = nil
+	}
+	st.Reservations[actor] = rec
+	st.Peers[actor] = peer
+	if actor == "" {
+		st.Peer = peer
+	}
+	_ = s.saveLocked(st)
+}
+
+// Commit 在发送成功后锁定当天名额；写盘失败由调用方按「已发但状态不确定」处理。
+func (s *RecipientStore) Commit(day, actor, peer, attempt string) error {
+	day, actor, peer = strings.TrimSpace(day), strings.TrimSpace(actor), strings.TrimSpace(peer)
+	attempt = strings.TrimSpace(attempt)
 	if s == nil || s.path == "" {
 		return errors.New("收信人状态存储未初始化")
 	}
-	if day == "" || peer == "" {
+	if day == "" || peer == "" || attempt == "" {
 		return errors.New("收信人提交参数无效")
 	}
 	s.mu.Lock()
@@ -151,6 +254,7 @@ func (s *RecipientStore) Commit(day, actor, peer string) error {
 		return nil
 	}
 	st = st.forDay(day)
+	st.Reservations[actor] = reservationState{Peer: peer, State: reservationCommitted}
 	st.Peers[actor] = peer
 	if actor == "" {
 		st.Peer = peer
@@ -162,12 +266,14 @@ func (s *RecipientStore) Commit(day, actor, peer string) error {
 	return nil
 }
 
-// Release 只释放本 actor 仍持有且尚未成功发送的预占。
+// Release 只释放本尝试明确未发出 POST 的预占。
 //
-// 写盘失败时保留占用：宁可少发给另一个收信人，也不能绕过每日限制。
-func (s *RecipientStore) Release(day, actor, peer string) {
+// 只有 pending 状态、且令牌仍登记在案的尝试才能释放；unknown/committed
+// 与其它在途尝试的令牌都不受影响。写盘失败时保留占用（宁可少发）。
+func (s *RecipientStore) Release(day, actor, peer, attempt string) {
 	day, actor, peer = strings.TrimSpace(day), strings.TrimSpace(actor), strings.TrimSpace(peer)
-	if s == nil || s.path == "" || day == "" || peer == "" {
+	attempt = strings.TrimSpace(attempt)
+	if s == nil || s.path == "" || day == "" || peer == "" || attempt == "" {
 		return
 	}
 	s.mu.Lock()
@@ -182,12 +288,20 @@ func (s *RecipientStore) Release(day, actor, peer string) {
 	if err != nil || st.Date != day {
 		return
 	}
-	if st.Committed[actor] == peer {
+	rec, ok := st.Reservations[actor]
+	if !ok || rec.Peer != peer || rec.State != reservationPending {
 		return
 	}
-	if st.Peers[actor] != peer {
+	if !rec.removeAttempt(attempt) {
+		// 不是本尝试登记的令牌：可能是结果未知的旧尝试，绝不释放。
 		return
 	}
+	if len(rec.Attempts) > 0 {
+		st.Reservations[actor] = rec
+		_ = s.saveLocked(st)
+		return
+	}
+	delete(st.Reservations, actor)
 	delete(st.Peers, actor)
 	if actor == "" {
 		st.Peer = ""
@@ -211,12 +325,15 @@ func (s *RecipientStore) Save(st recipientState) error {
 }
 
 func (s *RecipientStore) saveLocked(st recipientState) error {
-	st.Version = 2
+	st.Version = recipientVersion
 	if st.Peers == nil {
 		st.Peers = map[string]string{}
 	}
 	if st.Committed == nil {
 		st.Committed = map[string]string{}
+	}
+	if st.Reservations == nil {
+		st.Reservations = map[string]reservationState{}
 	}
 	payload, err := json.Marshal(st)
 	if err != nil {
@@ -298,7 +415,9 @@ func removeRecipientLock(path string) {
 	}
 }
 
-// normalizeRecipient 补齐映射并把旧格式的单条记录并入无 actor 槽位。
+// normalizeRecipient 补齐映射、把旧格式并入 Reservations，并同步镜像字段。
+//
+// 没有令牌的旧记录无法确认是否已送达，一律按 unknown 处理（不可随意释放）。
 func normalizeRecipient(st recipientState) recipientState {
 	if st.Peers == nil {
 		st.Peers = map[string]string{}
@@ -306,9 +425,62 @@ func normalizeRecipient(st recipientState) recipientState {
 	if st.Committed == nil {
 		st.Committed = map[string]string{}
 	}
+	if st.Reservations == nil {
+		st.Reservations = map[string]reservationState{}
+	}
 	if st.Peer != "" {
 		if _, ok := st.Peers[""]; !ok {
 			st.Peers[""] = st.Peer
+		}
+	}
+	// 旧 peers 记录没有令牌：按 unknown 迁移，避免升级后被失败尝试释放。
+	for actor, peer := range st.Peers {
+		if peer == "" {
+			continue
+		}
+		if _, ok := st.Reservations[actor]; !ok {
+			st.Reservations[actor] = reservationState{Peer: peer, State: reservationUnknown}
+		}
+	}
+	// committed 优先：旧字段与 reservations 冲突时按已发送处理。
+	for actor, peer := range st.Committed {
+		if peer == "" {
+			continue
+		}
+		st.Reservations[actor] = reservationState{Peer: peer, State: reservationCommitted}
+		st.Peers[actor] = peer
+	}
+	for actor, rec := range st.Reservations {
+		rec.Peer = strings.TrimSpace(rec.Peer)
+		switch rec.State {
+		case reservationPending:
+		case reservationUnknown, reservationCommitted:
+			rec.Attempts = nil
+		default:
+			// 未知状态按最保守的 unknown 处理，不保留可释放令牌。
+			rec.State = reservationUnknown
+			rec.Attempts = nil
+		}
+		if rec.Peer == "" {
+			delete(st.Reservations, actor)
+			continue
+		}
+		st.Reservations[actor] = rec
+		st.Peers[actor] = rec.Peer
+		if rec.State == reservationCommitted {
+			st.Committed[actor] = rec.Peer
+		} else {
+			delete(st.Committed, actor)
+		}
+	}
+	for actor := range st.Peers {
+		if _, ok := st.Reservations[actor]; !ok {
+			delete(st.Peers, actor)
+		}
+	}
+	for actor := range st.Committed {
+		if _, ok := st.Reservations[actor]; !ok {
+			delete(st.Committed, actor)
 		}
 	}
 	return st
@@ -317,21 +489,16 @@ func normalizeRecipient(st recipientState) recipientState {
 // forDay 跨天重置；同一天补齐缺失字段。
 func (st recipientState) forDay(day string) recipientState {
 	if st.Date != day {
-		return recipientState{Version: 2, Date: day, Peers: map[string]string{}, Committed: map[string]string{}}
-	}
-	st.Version = 2
-	if st.Peers == nil {
-		st.Peers = map[string]string{}
-	}
-	if st.Committed == nil {
-		st.Committed = map[string]string{}
-	}
-	if st.Peer != "" {
-		if _, ok := st.Peers[""]; !ok {
-			st.Peers[""] = st.Peer
+		return recipientState{
+			Version:      recipientVersion,
+			Date:         day,
+			Peers:        map[string]string{},
+			Committed:    map[string]string{},
+			Reservations: map[string]reservationState{},
 		}
 	}
-	return st
+	st.Version = recipientVersion
+	return normalizeRecipient(st)
 }
 
 // dayKey 返回 UTC 日期键。

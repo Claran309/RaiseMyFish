@@ -4,9 +4,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
+	"sync"
 	"time"
 
 	"RaiseMyFish/internal/brain"
@@ -43,6 +45,9 @@ type reactRuntime struct {
 	defaultReact bool
 	// budget 与单步 Brain 使用同一口径；runReact 通过 brain.Prepare 统一校验与裁剪。
 	budget brain.Budget
+	// outputReserve 是从 prompt 预算里给模型输出预留的字节数（与 MaxReplyTokens 同口径）。
+	// 实际请求预算 = budget.MaxPromptTokens - outputReserve。
+	outputReserve int
 	// finalReserve 是从本轮预算里给「最终正文」留的时间：准备（读取/召回/
 	// embedding/Prepare）与 ReAct 工具都在父 deadline 减预留的 prepCtx 内跑，
 	// 即使 ReAct 把准备段耗光，回落单步生成仍有时间。
@@ -108,9 +113,88 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 	if runtime == nil || runtime.factory == nil {
 		return reasoning.Result{}, nil
 	}
-	prepared, err := brain.Prepare(ctx, task, input, runtime.budget)
-	if err != nil {
-		return reasoning.Result{}, fmt.Errorf("准备 ReAct 生成输入失败：%w", err)
+	maxPrompt := runtime.budget.MaxPromptTokens
+	if maxPrompt <= 0 {
+		maxPrompt = brain.DefaultBudget().MaxPromptTokens
+	}
+	outputReserve := runtime.outputReserve
+	if outputReserve < 0 {
+		outputReserve = 0
+	}
+	// 实际请求预算：配置的 prompt 上限再给模型输出留出空间。
+	promptLimit := maxPrompt - outputReserve
+	if promptLimit <= 0 {
+		log.Warn("ReAct 提示预算不足，本轮不调用模型",
+			zap.String("action", "react_budget"),
+			zap.String("event_id", ev.ID),
+			zap.Int("max_prompt_tokens", maxPrompt),
+			zap.Int("output_reserve", outputReserve),
+		)
+		return reasoning.Result{Degraded: true, Reason: reasoning.DegradeBudget}, nil
+	}
+	limit := promptLimit
+	var (
+		prepared           brain.Prepared
+		agent              *reasoning.Agent
+		reactIn            reasoning.Input
+		knowledgePreloaded bool
+	)
+	for attempt := 1; attempt <= reactBudgetAttempts; attempt++ {
+		var err error
+		prepared, err = brain.Prepare(ctx, task, input, brain.Budget{
+			MaxPromptTokens:        limit,
+			KnowledgeBudgetPercent: runtime.budget.KnowledgeBudgetPercent,
+		})
+		if err != nil {
+			if isBrainBudgetError(err) {
+				log.Warn("ReAct 上下文装不进预留预算，回落单步",
+					zap.String("action", "react_budget"),
+					zap.String("event_id", ev.ID),
+					zap.Int("prepare_limit", limit),
+					zap.Int("prompt_limit", promptLimit),
+					zap.Error(err),
+				)
+				return reasoning.Result{Degraded: true, Reason: reasoning.DegradeBudget}, nil
+			}
+			return reasoning.Result{}, fmt.Errorf("准备 ReAct 生成输入失败：%w", err)
+		}
+		// 知识已注入资料段 → 不再注册 knowledge_search，避免同一轮重复召回；
+		// 零命中（IncludedIDs 为空）时保留工具，模型可以换关键词主动查。
+		knowledgePreloaded = prepared.KnowledgeInjected()
+		agent, err = runtime.factory(scope, ev.FromID, knowledgePreloaded)
+		if err != nil || agent == nil {
+			return reasoning.Result{}, err
+		}
+		reactIn = reasoning.Input{
+			System:       prepared.Messages[0].Content,
+			Context:      prepared.Context,
+			Question:     prepared.Question,
+			PromptBudget: promptLimit,
+		}
+		// Prepare 只算了人格与资料段；这里补上工具协议、消息框架与最坏观察预留。
+		base := agent.Estimate(reactIn)
+		reserve := agent.ObservationReserve()
+		if base+reserve <= promptLimit || (attempt == reactBudgetAttempts && base <= promptLimit) {
+			break
+		}
+		// 下一轮把 Prepare 收紧到「固定追加部分 + 最坏观察」也装得下的上限。
+		extra := base - prepared.Estimate
+		next := promptLimit - extra - reserve
+		if next >= limit {
+			next = limit - minReActPrepareBytes
+		}
+		if next < minReActPrepareBytes {
+			log.Warn("ReAct 预留工具协议/观察后预算不足，回落单步",
+				zap.String("action", "react_budget"),
+				zap.String("event_id", ev.ID),
+				zap.Int("prepare_limit", limit),
+				zap.Int("prompt_limit", promptLimit),
+				zap.Int("prompt_base_estimate", base),
+				zap.Int("observation_reserve", reserve),
+			)
+			return reasoning.Result{Degraded: true, Reason: reasoning.DegradeBudget}, nil
+		}
+		limit = next
 	}
 	if prepared.Truncated {
 		log.Warn("ReAct 上下文超出预算已裁剪",
@@ -118,19 +202,8 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 			zap.String("event_id", ev.ID),
 		)
 	}
-	// 知识已注入资料段 → 不再注册 knowledge_search，避免同一轮重复召回；
-	// 零命中（IncludedIDs 为空）时保留工具，模型可以换关键词主动查。
-	knowledgePreloaded := prepared.KnowledgeInjected()
-	agent, err := runtime.factory(scope, ev.FromID, knowledgePreloaded)
-	if err != nil || agent == nil {
-		return reasoning.Result{}, err
-	}
 	started := time.Now()
-	res, err := agent.Run(ctx, reasoning.Input{
-		System:   prepared.Messages[0].Content,
-		Context:  prepared.Context,
-		Question: prepared.Question,
-	})
+	res, err := agent.Run(ctx, reactIn)
 	elapsed := time.Since(started).Milliseconds()
 	log.Info("ReAct 执行完成",
 		zap.String("action", "react"),
@@ -142,11 +215,49 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 		zap.Bool("degraded", res.Degraded),
 		zap.String("degrade_reason", res.Reason),
 		zap.Int64("latency_ms", elapsed),
+		zap.String("estimator", provider.EstimatorVersion),
+		zap.Int("prepared_estimate", prepared.Estimate),
+		zap.Int("prompt_limit", promptLimit),
+		zap.Int("output_reserve", outputReserve),
+		zap.Int("prompt_bytes", res.PromptBytes),
 	)
-	if err != nil {
-		return res, err
+	logReActUsage(log, ev, agent)
+	return res, err
+}
+
+// reactBudgetAttempts 是「Prepare → 计算实际请求 → 收紧再 Prepare」的最大轮数。
+// 正常一轮就够；只有工具协议/观察预留把 Prepare 顶出预算时才需要重来。
+const reactBudgetAttempts = 3
+
+// minReActPrepareBytes 是继续收紧 Prepare 的下限；再小连人格与当前问题都放不下。
+const minReActPrepareBytes = 512
+
+// isBrainBudgetError 判断是否为明确的预算错误（可安全回落，不算执行故障）。
+func isBrainBudgetError(err error) bool {
+	var budgetErr *brain.Error
+	return errors.As(err, &budgetErr) && budgetErr.Kind == brain.KindBudget
+}
+
+// logReActUsage 记录服务端返回的真实用量；未知字段只标 known=false，不编造 0。
+func logReActUsage(log *zap.Logger, ev event.Event, agent *reasoning.Agent) {
+	usage, ok := agent.Usage()
+	if !ok {
+		return
 	}
-	return res, nil
+	fields := []zap.Field{
+		zap.String("action", "react_usage_summary"),
+		zap.String("event_id", ev.ID),
+		zap.Int("calls", usage.Calls),
+		zap.Bool("input_tokens_known", usage.InputKnown),
+		zap.Bool("output_tokens_known", usage.OutputKnown),
+	}
+	if usage.InputKnown {
+		fields = append(fields, zap.Int("input_tokens", usage.InputTokens))
+	}
+	if usage.OutputKnown {
+		fields = append(fields, zap.Int("output_tokens", usage.OutputTokens))
+	}
+	log.Info("ReAct 实际用量", fields...)
 }
 
 // buildReasonerFactory 装配 ReAct：模型走主路由，工具走记忆/知识/状态/历史。
@@ -294,10 +405,23 @@ type reasoningModel struct {
 }
 
 // providerLLM 把 provider.Provider 适配成 reasoning.LLM，并在每次调用后记账。
+//
+// 每个事件派生一个实例，因此累计的 usage 就是本轮 ReAct 的真实用量；
+// 预算日志用它对照「保守字节估计」，不把估计值冒充服务端 usage。
 type providerLLM struct {
 	blueprint *reasoningModel
 	channel   event.Channel
 	log       *zap.Logger
+
+	mu    sync.Mutex
+	usage reasoning.Usage
+}
+
+// Usage 返回本轮累计的真实用量（服务端未给统计的字段由 Known 标记）。
+func (p *providerLLM) Usage() reasoning.Usage {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.usage
 }
 
 func (p *providerLLM) Complete(ctx context.Context, system, user string) (string, error) {
@@ -320,6 +444,17 @@ func (p *providerLLM) Complete(ctx context.Context, system, user string) (string
 //
 // 记账失败只记日志、绝不上抛：ReAct 是增强能力，不能因为账本写不进去就让弹幕收不到回复。
 func (p *providerLLM) record(ctx context.Context, at time.Time, resp provider.Response, callErr error) {
+	p.mu.Lock()
+	p.usage.Calls++
+	if n := validTokens(resp.Usage.InputTokens); n != nil {
+		p.usage.InputTokens += *n
+		p.usage.InputKnown = true
+	}
+	if n := validTokens(resp.Usage.OutputTokens); n != nil {
+		p.usage.OutputTokens += *n
+		p.usage.OutputKnown = true
+	}
+	p.mu.Unlock()
 	if p.blueprint.usage == nil {
 		return
 	}

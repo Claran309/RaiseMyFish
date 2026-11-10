@@ -12,6 +12,8 @@ package dm
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"sync"
@@ -83,11 +85,9 @@ type Sender struct {
 
 	store *RecipientStore
 
-	mu        sync.Mutex
-	lastSent  map[string]time.Time
-	backoffs  map[string]backoffState
-	holds     map[reservationKey]int
-	confirmed map[reservationKey]bool
+	mu       sync.Mutex
+	lastSent map[string]time.Time
+	backoffs map[string]backoffState
 }
 
 // backoffState 记录某收信人被平台限流后的下次可发时间与连续失败次数。
@@ -131,10 +131,8 @@ func New(t Transporter, r Relation, o Options) (*Sender, error) {
 	s := &Sender{
 		transport: t, relation: r, allFollowers: o.AllFollowers,
 		allowed: allowed, rate: rate, now: now,
-		lastSent:  make(map[string]time.Time),
-		backoffs:  make(map[string]backoffState),
-		holds:     make(map[reservationKey]int),
-		confirmed: make(map[reservationKey]bool),
+		lastSent: make(map[string]time.Time),
+		backoffs: make(map[string]backoffState),
 	}
 	if o.AllFollowers {
 		return s, nil
@@ -205,30 +203,36 @@ func (s *Sender) Send(ctx context.Context, claim event.Claim, reply sender.Reply
 	}
 
 	// 日切快照：预占、释放、提交必须落在同一天，不能跨午夜各算各的。
-	day, actor := "", ""
+	day, actor, attempt := "", "", ""
 	if !s.allFollowers {
 		day, actor = dayKey(s.now()), actorKey(ctx)
 		// 1. 白名单
 		if !s.allowedMID(mid) {
 			return sender.Result{}, &Error{Kind: KindInput, Cause: errors.New("收信人不在私信白名单")}
 		}
+		// 每笔尝试一个独立令牌：只有它能释放本次写入的预占。
+		token, tokenErr := newAttemptToken()
+		if tokenErr != nil {
+			return sender.Result{}, tokenErr
+		}
+		attempt = token
 		// 2. 当日收信人原子预占（必须先于任何 POST）
-		if err := s.reserveRecipient(day, actor, mid); err != nil {
+		if err := s.reserveRecipient(day, actor, mid, attempt); err != nil {
 			return sender.Result{}, err
 		}
 		// 3. 限频
 		if err := s.checkRate(mid); err != nil {
-			s.releaseRecipient(day, actor, mid)
+			s.releaseRecipient(day, actor, mid, attempt)
 			return sender.Result{}, err
 		}
 		// 4. 互关检查
 		attribute, err := s.relation.Attribute(ctx, mid)
 		if err != nil {
-			s.releaseRecipient(day, actor, mid)
+			s.releaseRecipient(day, actor, mid, attempt)
 			return sender.Result{}, &Error{Kind: KindRetry, Cause: errors.New("关注关系查询失败")}
 		}
 		if attribute != mutualAttribute {
-			s.releaseRecipient(day, actor, mid)
+			s.releaseRecipient(day, actor, mid, attempt)
 			return sender.Result{}, &Error{Kind: KindInput, Cause: errors.New("与收信人不是互关，拒绝发送")}
 		}
 	}
@@ -236,12 +240,12 @@ func (s *Sender) Send(ctx context.Context, claim event.Claim, reply sender.Reply
 	msgID, err := s.transport.SendDM(ctx, mid, text)
 	if err != nil {
 		classified := classify(err)
-		// 只有明确未发送的拒绝才释放当天名额；retry/unknown 可能已送达平台。
+		// 只有明确未发送的拒绝才释放本尝试的预占；retry/unknown 可能已送达平台。
 		if !s.allFollowers {
 			if definitelyNotSent(classified) {
-				s.releaseRecipient(day, actor, mid)
+				s.releaseRecipient(day, actor, mid, attempt)
 			} else {
-				s.retainRecipient(day, actor, mid)
+				s.retainRecipient(day, actor, mid, attempt)
 			}
 		}
 		var typed *Error
@@ -256,7 +260,7 @@ func (s *Sender) Send(ctx context.Context, claim event.Claim, reply sender.Reply
 	}
 	s.markSent(mid)
 	// 预占已写盘；成功发送写 committed，防止并发的失败尝试误释放名额。
-	if err := s.commitRecipient(day, actor, mid); err != nil {
+	if err := s.commitRecipient(day, actor, mid, attempt); err != nil {
 		return sender.Result{OK: true, MsgID: msgID, Verified: msgID != ""}, &Error{Kind: KindUncertain, Cause: errors.New("私信已发出但收信人状态未落盘")}
 	}
 	return sender.Result{OK: true, MsgID: msgID, Verified: msgID != ""}, nil
@@ -294,91 +298,41 @@ func (s *Sender) SetAllowedMIDs(mids []string) error {
 	return nil
 }
 
-// reservationKey 标识一笔在途发送持有的预占。
-type reservationKey struct {
-	day   string
-	actor string
-	peer  string
+// newAttemptToken 生成一笔发送尝试的令牌（进程间唯一）。
+func newAttemptToken() (string, error) {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", &Error{Kind: KindRetry, Cause: errors.New("生成私信预占令牌失败")}
+	}
+	return hex.EncodeToString(buf[:]), nil
 }
 
 // reserveRecipient 在 POST 前原子预占 actor/day 名额：换人就拒绝，同人放行。
-func (s *Sender) reserveRecipient(day, actor, mid string) error {
-	if err := s.store.Reserve(day, actor, mid); err != nil {
+func (s *Sender) reserveRecipient(day, actor, mid, attempt string) error {
+	if err := s.store.Reserve(day, actor, mid, attempt); err != nil {
 		var typed *Error
 		if errors.As(err, &typed) {
 			return err
 		}
 		return &Error{Kind: KindRetry, Cause: err}
 	}
-	s.holdReservation(day, actor, mid)
 	return nil
 }
 
-// releaseRecipient 只用于明确未发出 POST 的失败。
-//
-// 同一 peer 可能有多笔并发尝试：还有在途持有时先不删落盘预占，
-// 否则失败方会把仍在发送的预占让给另一个收信人。
-func (s *Sender) releaseRecipient(day, actor, mid string) {
-	key := reservationKey{day: day, actor: actor, peer: mid}
-	s.mu.Lock()
-	if n := s.holds[key]; n > 1 {
-		s.holds[key] = n - 1
-		s.mu.Unlock()
-		return
-	}
-	delete(s.holds, key)
-	confirmed := s.confirmed[key]
-	s.mu.Unlock()
-	if confirmed {
-		// 已经成功发送（即使落盘失败）；不能释放当天名额。
-		return
-	}
-	s.store.Release(day, actor, mid)
+// releaseRecipient 只释放本尝试明确未发出 POST 的预占；
+// unknown/committed 与其它在途尝试的令牌都不受影响。
+func (s *Sender) releaseRecipient(day, actor, mid, attempt string) {
+	s.store.Release(day, actor, mid, attempt)
 }
 
-// retainRecipient 结算在途计数，但保留落盘预占（结果未知或可能已送达）。
-func (s *Sender) retainRecipient(day, actor, mid string) {
-	key := reservationKey{day: day, actor: actor, peer: mid}
-	s.mu.Lock()
-	if n := s.holds[key]; n > 1 {
-		s.holds[key] = n - 1
-	} else {
-		delete(s.holds, key)
-	}
-	s.mu.Unlock()
+// retainRecipient 把本尝试结算为 unknown：结果可能已送达，当天名额不再释放。
+func (s *Sender) retainRecipient(day, actor, mid, attempt string) {
+	s.store.MarkUnknown(day, actor, mid, attempt)
 }
 
 // commitRecipient 在发送成功后锁定当天名额。
-func (s *Sender) commitRecipient(day, actor, mid string) error {
-	key := reservationKey{day: day, actor: actor, peer: mid}
-	err := s.store.Commit(day, actor, mid)
-	s.mu.Lock()
-	s.confirmed[key] = true
-	if n := s.holds[key]; n > 1 {
-		s.holds[key] = n - 1
-	} else {
-		delete(s.holds, key)
-	}
-	s.mu.Unlock()
-	return err
-}
-
-// holdReservation 记录一笔在途发送，并清掉前一天的内存标记。
-func (s *Sender) holdReservation(day, actor, mid string) {
-	key := reservationKey{day: day, actor: actor, peer: mid}
-	s.mu.Lock()
-	for stale := range s.holds {
-		if stale.day != day {
-			delete(s.holds, stale)
-		}
-	}
-	for stale := range s.confirmed {
-		if stale.day != day {
-			delete(s.confirmed, stale)
-		}
-	}
-	s.holds[key]++
-	s.mu.Unlock()
+func (s *Sender) commitRecipient(day, actor, mid, attempt string) error {
+	return s.store.Commit(day, actor, mid, attempt)
 }
 
 // actorKey 返回本次发送的账号身份（B站 MID）。

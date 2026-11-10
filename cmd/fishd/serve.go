@@ -480,6 +480,8 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 			factory:      react,
 			defaultReact: cfg.Reasoning.DefaultReact,
 			budget:       brain.Budget{MaxPromptTokens: cfg.LLM.MaxPromptTokens, KnowledgeBudgetPercent: cfg.Knowledge.BudgetPercent},
+			// 输出预留与 MaxReplyTokens 同口径：ReAct 实际请求 = 配置预算 - 输出预留。
+			outputReserve: cfg.LLM.MaxReplyTokens,
 			// 最终正文预留与单次模型尝试同一口径：准备/工具跑完后仍有至少一次尝试的时间。
 			finalReserve: time.Duration(cfg.LLM.AttemptTimeoutMS) * time.Millisecond,
 		}

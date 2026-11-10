@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"RaiseMyFish/internal/brain/provider"
 	"go.uber.org/zap"
 )
 
@@ -26,12 +28,21 @@ const (
 	DegradeParse    = "parse"
 	DegradeLLMError = "llm_error"
 	DegradeEmpty    = "empty"
+	// DegradeBudget 表示连「当前问题 + 资料」都装不进调用预算，本轮不发模型请求。
+	DegradeBudget = "budget"
 )
 
 // 证据复用上限：回落单步时只带最近几条工具结果，避免多轮查证撑爆 prompt。
 const (
 	maxEvidenceItems     = 6
 	maxEvidenceArgsRunes = 200
+	// maxObservationArgsRunes 是观察行里工具参数的最大长度（与 Run 的 clip 一致）。
+	maxObservationArgsRunes = 60
+	// observationHeader 是观察段固定开头；预算是按最坏情况预留的，必须计入。
+	observationHeader = "已经查到：\n"
+	// observationReserveLines 是 Prepare 阶段预留的整条观察数：
+	// 至少保证第一次查证的结果能原样带进下一轮；更多观察由调用前裁剪兜底。
+	observationReserveLines = 1
 )
 
 // appendEvidence 追加一条证据并只保留最近几条。
@@ -68,6 +79,24 @@ type Input struct {
 	Context string
 	// Question 是这次要回答的事件正文。
 	Question string
+	// PromptBudget 是单次模型调用的保守字节上限（含消息框架）；0 表示不限制。
+	// 每次实际调用前都按它裁剪观察段，超限时从最旧的整条观察开始丢，
+	// 当前问题与 Context（含本轮焦点）不参与裁剪。
+	PromptBudget int
+}
+
+// Usage 是底层模型调用累计的实际用量；Known* 分别表示服务端是否给出对应统计。
+type Usage struct {
+	Calls        int
+	InputTokens  int
+	OutputTokens int
+	InputKnown   bool
+	OutputKnown  bool
+}
+
+// UsageReporter 由能累计服务端用量的 LLM 实现；不实现时调用方只能记估计值。
+type UsageReporter interface {
+	Usage() Usage
 }
 
 // Step 是模型返回的一步决策。
@@ -103,6 +132,9 @@ type Result struct {
 	Degraded bool
 	// Reason 是降级原因，取自 Degrade* 常量。
 	Reason string
+	// PromptBytes 是最后一次实际模型调用的保守字节估计（预算口径见 provider.EstimatorVersion）。
+	// 预算不足未发起调用时为 0。
+	PromptBytes int
 }
 
 // Agent 是 ReAct 执行器。
@@ -159,7 +191,13 @@ func (a *Agent) Run(ctx context.Context, in Input) (Result, error) {
 		if runCtx.Err() != nil {
 			return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeTimeout)
 		}
-		out, err := a.llm.Complete(runCtx, a.systemPrompt(in), a.userPrompt(in, observations))
+		// 每次实际调用前统一按预算裁剪：观察按整条证据丢，问题与资料段不动。
+		system, user, kept, ok := a.fitPrompt(a.systemPrompt(in), in, observations)
+		if !ok {
+			return budgetResult(evidence, used, steps), nil
+		}
+		observations = kept
+		out, err := a.llm.Complete(runCtx, system, user)
 		steps++
 		if err != nil {
 			if runCtx.Err() != nil {
@@ -179,7 +217,7 @@ func (a *Agent) Run(ctx context.Context, in Input) (Result, error) {
 				// 说 final 却没给可用正文：走降级，绝不把内部内容当回复
 				return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeEmpty)
 			}
-			return Result{Text: text, Steps: steps, Tools: used, Evidence: evidence}, nil
+			return Result{Text: text, Steps: steps, Tools: used, Evidence: evidence, PromptBytes: promptBytes(system, user)}, nil
 		}
 
 		// action 是工具名：执行并把结果回填进下一轮
@@ -192,10 +230,76 @@ func (a *Agent) Run(ctx context.Context, in Input) (Result, error) {
 			evidence = appendEvidence(evidence, Evidence{Tool: decision.Action, Args: clip(decision.Args, maxEvidenceArgsRunes), Result: observed})
 		}
 		used = append(used, decision.Action)
-		observations = append(observations, fmt.Sprintf("%s(%s) → %s", decision.Action, clip(decision.Args, 60), clip(out2, maxObservationRunes)))
+		observations = append(observations, fmt.Sprintf("%s(%s) → %s", decision.Action, clip(decision.Args, maxObservationArgsRunes), clip(out2, maxObservationRunes)))
 	}
 
 	return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeSteps)
+}
+
+// budgetResult 表示预算不足、本轮没发模型请求：调用方看到空正文会回落单步。
+func budgetResult(evidence []Evidence, used []string, steps int) Result {
+	return Result{Steps: steps, Tools: used, Evidence: evidence, Degraded: true, Reason: DegradeBudget}
+}
+
+// promptBytes 按 provider.EstimatorVersion 口径估算一次调用的 prompt 大小。
+func promptBytes(system, user string) int {
+	return provider.EstimateMessages([]provider.Message{{Role: "system", Content: system}, {Role: "user", Content: user}})
+}
+
+// Estimate 估算一次无观察调用的 prompt 字节数（首步基准）。
+//
+// 调用方先 Prepare，再用它与 ObservationReserve 判断：
+// Prepare 的预算结果之外，还有多少固定开销必须提前留出来。
+func (a *Agent) Estimate(in Input) int {
+	return promptBytes(a.systemPrompt(in), a.userPrompt(in, nil))
+}
+
+// ObservationReserve 是 Prepare 之外必须提前留出的观察段字节数。
+//
+// 每个工具步最多追加一行「工具名(参数) → 结果」：参数 60 字符、结果 400 字符，
+// 都按 UTF-8 最坏 4 字节/字符计。这里预留一条整观察（第一次查证用），
+// 更多观察由每次调用前的 fitPrompt 按证据单元从旧到新裁剪兜底。
+func (a *Agent) ObservationReserve() int {
+	maxName := 0
+	for _, name := range a.tools.Names() {
+		if len(name) > maxName {
+			maxName = len(name)
+		}
+	}
+	line := len("- ") + maxName + len("(") + maxObservationArgsRunes*utf8.UTFMax + len("…") +
+		len(") → ") + maxObservationRunes*utf8.UTFMax + len("…") + len("\n")
+	return len(observationHeader) + observationReserveLines*line
+}
+
+// fitPrompt 按调用预算裁剪观察段：从最旧的一条整条丢，绝不切半条证据。
+//
+// 当前问题与 Context（含本轮焦点）不参与裁剪；连它们都放不下时返回 ok=false，
+// 本轮不发模型请求，由调用方回落单步。
+func (a *Agent) fitPrompt(system string, in Input, observations []string) (string, string, []string, bool) {
+	if in.PromptBudget <= 0 {
+		return system, a.userPrompt(in, observations), observations, true
+	}
+	for {
+		user := a.userPrompt(in, observations)
+		if promptBytes(system, user) <= in.PromptBudget {
+			return system, user, observations, true
+		}
+		if len(observations) == 0 {
+			return system, user, nil, false
+		}
+		observations = observations[1:]
+	}
+}
+
+// Usage 返回底层模型调用累计的真实用量；LLM 不支持累计时为 ok=false。
+//
+// 预算日志用它区分「估计值」与「服务端实际 usage」，两者不能混为一谈。
+func (a *Agent) Usage() (Usage, bool) {
+	reporter, ok := a.llm.(UsageReporter)
+	if !ok {
+		return Usage{}, false
+	}
+	return reporter.Usage(), true
 }
 
 // degrade 用已有观察再要一次回复；预算已耗尽则直接返回空，交给调用方回落。
@@ -208,8 +312,15 @@ func (a *Agent) degrade(ctx context.Context, in Input, observations []string, ev
 	}
 
 	system := a.systemPrompt(in) + "\n现在不要再调用工具，直接给出最终回复。"
-	out, err := a.llm.Complete(ctx, system, a.userPrompt(in, observations))
+	system, user, _, ok := a.fitPrompt(system, in, observations)
+	if !ok {
+		// 连降级 prompt 都装不进预算：不发请求，交给调用方回落单步
+		result.Reason = DegradeBudget
+		return result, nil
+	}
+	out, err := a.llm.Complete(ctx, system, user)
 	result.Steps = steps + 1
+	result.PromptBytes = promptBytes(system, user)
 	if err != nil {
 		// 降级本身失败不向上抛：调用方会回落单步生成，这里报错只会多一条噪音
 		return result, nil //nolint:nilerr // 有意吞掉：降级失败交给调用方兜底
@@ -267,7 +378,7 @@ func (a *Agent) systemPrompt(in Input) string {
 	sb.WriteString("你在回答一条直播弹幕。需要事实就先查，查到够了再回答。\n")
 	sb.WriteString("「XX 是谁」不一定是在问观众：先看 current_event.question_subject 的 kind，别一律查观众，也别一律解释成本鱼自己。\n")
 	sb.WriteString("kind=room_candidate 才优先用 viewer_search 按昵称/uid 查档案；kind=unresolved 不要假定是观众，先查记忆/知识库（只用本轮工具清单里注册的召回工具，必要时 web_search），viewer_search 没查到只表示档案里没有，不代表「世上没这个人」；kind=self 是问本鱼自己；kind=speaker 是问当前发言人。只有「你是谁」才是问你自己。\n")
-	sb.WriteString("context 里有 corrections 时，先承认纠正，再按纠正后的归属回答；superseded_event_ids 里的旧回复和 retracted_record_ids 里的摘要已失效，不得复用。\n")
+	sb.WriteString("context 里有 corrections 时，先承认纠正，再按纠正后的归属回答；superseded_event_ids 里的旧回复和 retracted_record_ids 里的摘要已失效，不得复用。disputed=true 表示还没定位到具体旧内容，不要据此否定该人的历史发言或最近回复。\n")
 	sb.WriteString("搜索状态：只有工具结果以「搜索状态：已完成（已联网）」开头时才能说联网查到了；未配置或失败时不许声称已联网，也不许把失败说成「查无此事」，只能说没查到或无法确认。\n")
 	sb.WriteString("查记忆时 memory_search 的 args 传昵称或关键词（如「弓长三益」），不要传整句问题。\n")
 	sb.WriteString("可用工具：\n")

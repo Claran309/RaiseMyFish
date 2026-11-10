@@ -18,8 +18,6 @@ import (
 	"RaiseMyFish/internal/persona"
 )
 
-const messageOverhead = 64
-
 // maxVisualRunes 是画面描述的长度上限：它是上下文不是弹幕，但也不能无限长。
 const maxVisualRunes = 2000
 
@@ -236,6 +234,9 @@ type Prepared struct {
 	Context   string
 	Question  string
 	Truncated bool
+	// Estimate 是 Messages 按 provider.EstimatorVersion 口径的保守字节估计。
+	// ReAct 需要在此基础上追加工具协议与观察，用它判断还剩多少预算。
+	Estimate  int
 	knowledge *knowledgeBudgetAudit
 }
 
@@ -262,7 +263,7 @@ func Prepare(ctx context.Context, task Task, in ContextInput, budget Budget) (Pr
 	if err != nil {
 		return Prepared{}, err
 	}
-	return Prepared{Messages: plan.Messages, Context: plan.Context, Question: encodePromptText(in.Event.Text), Truncated: plan.Truncated, knowledge: plan.Knowledge}, nil
+	return Prepared{Messages: plan.Messages, Context: plan.Context, Question: encodePromptText(in.Event.Text), Truncated: plan.Truncated, Estimate: estimate(plan.Messages), knowledge: plan.Knowledge}, nil
 }
 
 // KnowledgeInjected 表示本次 Prepare 已把知识条目写进资料段。
@@ -352,12 +353,10 @@ type eventSection struct {
 	Text     string        `json:"text"`
 }
 
+// estimate 统一委托给 provider 包：单步与 ReAct 必须共用同一口径，
+// 否则「Prepare 通过但实际请求超预算」会再次出现。
 func estimate(messages []provider.Message) int {
-	n := messageOverhead
-	for _, m := range messages {
-		n += len(m.Content)
-	}
-	return n
+	return provider.EstimateMessages(messages)
 }
 
 func buildMessages(ctx context.Context, in ContextInput, limit int) ([]provider.Message, error) {
@@ -454,7 +453,7 @@ func contextHints(section contextSection) string {
 		}
 	}
 	if len(section.Corrections) > 0 {
-		hints = append(hints, "corrections 是已经发生的纠正：先承认纠正，再按纠正后的归属回答；superseded_event_ids 里的旧回复和 retracted_record_ids 里的摘要已失效，不能复用。")
+		hints = append(hints, "corrections 是已经发生的纠正：先承认纠正，再按纠正后的归属回答；superseded_event_ids 里的旧回复和 retracted_record_ids 里的摘要已失效，不能复用。disputed=true 表示还没定位到具体旧内容，不要据此否定该人的历史发言或最近回复。")
 	}
 	return strings.Join(hints, "")
 }

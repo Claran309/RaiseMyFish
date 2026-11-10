@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"RaiseMyFish/internal/event"
@@ -25,7 +26,6 @@ const (
 	maxCorrectionTextRunes  = 120
 	maxCorrectionEvidence   = 2
 	maxCorrectionQuoteRunes = 100
-	maxSupersededEvents     = 4
 )
 
 // correctionSection 是一条已发生的纠正。
@@ -43,7 +43,10 @@ type correctionSection struct {
 	RetractedRecordIDs []string                    `json:"retracted_record_ids,omitempty"`
 	RetractedFactKeys  []string                    `json:"retracted_fact_keys,omitempty"`
 	OriginalEvidence   []correctionEvidenceSection `json:"original_evidence,omitempty"`
-	Note               string                      `json:"note,omitempty"`
+	// Disputed 表示有人提出纠正，但本轮没有足够证据定位具体被纠正的旧内容。
+	// 此时不撤任何事件/摘要/事实，来源保持原样。
+	Disputed bool   `json:"disputed,omitempty"`
+	Note     string `json:"note,omitempty"`
 }
 
 // attributionSection 是纠正里的「谁说的」归属。
@@ -110,10 +113,17 @@ func buildCorrection(corr memory.Message, in ContextInput, all []memory.Message)
 		entry.Claimed = &attributionSection{ID: claimed.ID, Name: claimed.Name}
 		entry.OriginalEvidence = originalEvidenceFor(corr, claimed, all)
 	}
-	entry.SupersededEventIDs = supersededEvents(corr, denied, all)
-	if entry.Claimed != nil {
+	superseded, disputed := supersededEvents(corr, denied, claimed, entry.OriginalEvidence, all)
+	entry.SupersededEventIDs = superseded
+	entry.Disputed = disputed
+	switch {
+	case disputed:
+		// 找不到「具体是哪句」就不撤：保留来源，避免把一个人的其他正确发言
+		// 或房间最近一条无关回复一起否定。
+		entry.Note = "有人提出纠正，但本轮没有足够证据定位具体被纠正的旧内容；保留来源事件、摘要与事实，只承认存在争议，不要否定该人的其他发言。"
+	case entry.Claimed != nil:
 		entry.Note = "已纠正：更正人否认该说法，正确归属是「" + entry.Claimed.Name + "」；被纠正的旧回复与派生摘要已失效，回答先承认纠正，再按正确归属说。"
-	} else {
+	default:
 		entry.Note = "已纠正：更正人否认或更正了旧说法；被纠正的旧回复与派生摘要已失效，回答先承认纠正，并说明归属不确定。"
 	}
 	return entry
@@ -300,41 +310,253 @@ func originalEvidenceFor(corr memory.Message, claimed actorSection, all []memory
 	return out
 }
 
-// supersededEvents 找被纠正的旧回复：
-//   - 回复过被否认发言的出向事件（reply_to 证据）；
-//   - 纠正前最近一条已发出的出向事件（通常就是错误归属的那句）。
-func supersededEvents(corr memory.Message, denied actorSection, all []memory.Message) []string {
-	deniedIDs := make(map[string]bool)
-	for _, m := range all {
-		if m.Dir == event.DirIn && !m.At.After(corr.At) && sameAttribution(denied, actorSection{ID: m.FromID, Name: m.FromName}) {
-			deniedIDs[m.EventID] = true
+// supersededEvents 定位被纠正的具体旧回复。
+//
+// 证据优先级：
+//  1. 纠正消息显式引用（reply_to）到的出向回复；
+//  2. 与「被纠正命题」有词面重叠、且在文本上把该发言归给被否认人的出向回复。
+//
+// 找不到足够证据时返回 disputed=true，调用方不撤任何来源。
+// 不再按「被否认人的全部历史」或「房间最近一条回复」批量猜测。
+func supersededEvents(corr memory.Message, denied, claimed actorSection, evidence []correctionEvidenceSection, all []memory.Message) ([]string, bool) {
+	if target := referencedOut(corr, all); target != nil {
+		return []string{target.EventID}, false
+	}
+	anchors := propositionAnchors(corr, denied, claimed, evidence, all)
+	if len(anchors) == 0 {
+		return nil, true
+	}
+	candidates := attributionCandidates(corr, denied, all)
+	if len(candidates) == 0 {
+		return nil, true
+	}
+	names := []string{denied.Name, claimed.Name}
+	best, bestOverlap := -1, 0
+	// candidates 按时间升序；倒序扫描且只在严格更大时替换，平手保留最新一条。
+	for i := len(candidates) - 1; i >= 0; i-- {
+		if overlap := propositionOverlap(candidates[i].Text, anchors, names...); overlap > bestOverlap {
+			best, bestOverlap = i, overlap
 		}
 	}
-	var out []string
-	seen := make(map[string]bool, maxSupersededEvents)
-	add := func(id string) {
-		if id == "" || seen[id] || len(out) >= maxSupersededEvents {
-			return
-		}
-		seen[id] = true
-		out = append(out, id)
+	if best < 0 {
+		return nil, true
 	}
-	for _, m := range all {
-		if m.Dir != event.DirOut || m.At.After(corr.At) {
+	return []string{candidates[best].EventID}, false
+}
+
+// referencedOut 返回纠正消息显式引用到的出向回复；引用入向或不存在的消息时返回 nil。
+func referencedOut(corr memory.Message, all []memory.Message) *memory.Message {
+	ref := findMessage(corr.ReplyTo, all)
+	if ref == nil || ref.EventID == corr.EventID || ref.Dir != event.DirOut || ref.At.After(corr.At) || strings.TrimSpace(ref.Text) == "" {
+		return nil
+	}
+	return ref
+}
+
+// findMessage 按事件 ID 在当前可见窗口里查找消息。
+func findMessage(id string, all []memory.Message) *memory.Message {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	for i := range all {
+		if all[i].EventID == id {
+			return &all[i]
+		}
+	}
+	return nil
+}
+
+// propositionAnchors 收集能定位「被纠正的那句话」的命题词元：
+// 引用到的入向原话、正确归属人的原始证据、纠正句里剩下的具体内容。
+func propositionAnchors(corr memory.Message, denied, claimed actorSection, evidence []correctionEvidenceSection, all []memory.Message) map[string]bool {
+	names := []string{denied.Name, claimed.Name}
+	anchors := make(map[string]bool)
+	add := func(text string) {
+		for gram := range propositionGrams(text, names...) {
+			anchors[gram] = true
+		}
+	}
+	if ref := findMessage(corr.ReplyTo, all); ref != nil && ref.EventID != corr.EventID &&
+		ref.Dir == event.DirIn && !ref.At.After(corr.At) {
+		add(ref.Text)
+	}
+	for _, e := range evidence {
+		add(e.Text)
+	}
+	add(corr.Text)
+	return anchors
+}
+
+// propositionNoise 是会污染「具体命题」比对的纠正用语/代词/语气词。
+// 按长词优先排列，避免先删短词把长词拆碎。
+var propositionNoise = []string{
+	"不是我说的", "不是我说", "我没说过", "我没讲过",
+	"我记错了", "你记错了", "记错了", "搞错了", "弄错了",
+	"你说错了", "你讲错了", "别乱说",
+	"那句", "这句", "这个", "那个",
+	"说过", "说的", "刚才", "到底", "究竟",
+	"我们", "你们", "他们", "她们",
+	"不是", "说", "讲", "问",
+	"我", "你", "他", "她", "它",
+	"是", "的", "了", "吗", "呢", "啊", "吧", "呀", "嘛", "哦", "噢",
+}
+
+// propositionStopGrams 是几乎不携带具体命题的二字组合。
+var propositionStopGrams = map[string]bool{
+	"什么": true, "怎么": true, "就是": true, "这个": true, "那个": true,
+	"一个": true, "可以": true, "知道": true, "觉得": true, "现在": true,
+	"刚才": true, "还是": true, "已经": true, "没有": true, "我们": true,
+	"你们": true, "他们": true, "她们": true, "哈哈": true, "嘿嘿": true,
+	"好的": true, "好吧": true, "真的": true, "其实": true, "因为": true,
+	"所以": true, "但是": true, "然后": true, "如果": true,
+}
+
+// propositionGrams 把一句话压成内容二元组；过短或全是噪声时返回空集。
+func propositionGrams(text string, names ...string) map[string]bool {
+	cleaned := normalizeProposition(text, names...)
+	runes := []rune(cleaned)
+	if len(runes) < 2 {
+		return nil
+	}
+	grams := make(map[string]bool, len(runes)-1)
+	for i := 0; i+1 < len(runes); i++ {
+		gram := string(runes[i : i+2])
+		if propositionStopGrams[gram] {
 			continue
 		}
-		if m.ReplyTo != "" && deniedIDs[m.ReplyTo] {
-			add(m.EventID)
+		grams[gram] = true
+	}
+	return grams
+}
+
+// normalizeProposition 去掉标点、纠正用语、参与人昵称与语气词。
+func normalizeProposition(text string, names ...string) string {
+	text = strings.ToLower(text)
+	var b strings.Builder
+	for _, r := range text {
+		if unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	cleaned := b.String()
+	for _, noise := range propositionNoise {
+		cleaned = strings.ReplaceAll(cleaned, noise, "")
+	}
+	for _, name := range names {
+		if name = strings.ToLower(strings.TrimSpace(name)); name != "" {
+			cleaned = strings.ReplaceAll(cleaned, name, "")
 		}
 	}
-	for i := len(all) - 1; i >= 0; i-- {
-		m := all[i]
-		if m.Dir == event.DirOut && !m.At.After(corr.At) && strings.TrimSpace(m.Text) != "" {
-			add(m.EventID)
-			break
+	return cleaned
+}
+
+// attributionCandidates 找出在纠正之前、文本上把发言归给被否认人的出向回复。
+func attributionCandidates(corr memory.Message, denied actorSection, all []memory.Message) []memory.Message {
+	inbound := make(map[string]memory.Message, len(all))
+	for _, m := range all {
+		if m.Dir == event.DirIn {
+			inbound[m.EventID] = m
+		}
+	}
+	var out []memory.Message
+	for _, m := range all {
+		if m.Dir != event.DirOut || m.EventID == corr.EventID || m.At.After(corr.At) || strings.TrimSpace(m.Text) == "" {
+			continue
+		}
+		if attributesSpeechTo(m, denied, inbound) {
+			out = append(out, m)
 		}
 	}
 	return out
+}
+
+// speechAttributionMarkers 表示消息在转述/评价某人的发言。
+var speechAttributionMarkers = []string{"说", "讲", "问", "提", "称", "表示", "回答", "回复"}
+
+// attributesSpeechTo 判断一条出向消息是否把某句话归给 actor。
+//
+// 二手转述（「你说…」）必须同时满足：该回复确实在回应 actor 的入向消息；
+// 否则「你说」指的是别人，不能算到 actor 头上。
+func attributesSpeechTo(m memory.Message, actor actorSection, inbound map[string]memory.Message) bool {
+	text := strings.TrimSpace(m.Text)
+	if !containsAny(text, speechAttributionMarkers) {
+		return false
+	}
+	if ref, ok := inbound[m.ReplyTo]; ok && sameAttribution(actor, actorSection{ID: ref.FromID, Name: ref.FromName}) {
+		if containsAny(text, []string{"你说", "你讲", "你问", "你刚", "你又"}) {
+			return true
+		}
+	}
+	return actor.Name != "" && mentionsName(text, actor.Name)
+}
+
+// containsAny 判断文本是否包含任一标记。
+func containsAny(text string, markers []string) bool {
+	for _, marker := range markers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// mentionsName 判断文本是否提到某个昵称；ASCII 昵称按词边界匹配，避免 B 命中 B站。
+func mentionsName(text, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	if isASCIIWord(name) {
+		lowerText, lowerName := strings.ToLower(text), strings.ToLower(name)
+		for start := 0; start+len(lowerName) <= len(lowerText); {
+			pos := strings.Index(lowerText[start:], lowerName)
+			if pos < 0 {
+				return false
+			}
+			pos += start
+			end := pos + len(lowerName)
+			if (pos == 0 || !isWordByte(lowerText[pos-1])) && (end == len(lowerText) || !isWordByte(lowerText[end])) {
+				return true
+			}
+			start = end
+		}
+		return false
+	}
+	return strings.Contains(text, name) || strings.Contains(strings.ToLower(text), strings.ToLower(name))
+}
+
+// isASCIIWord 判断昵称是否由 ASCII 字母/数字/下划线/连字符组成。
+func isASCIIWord(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if !isWordByte(s[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// isWordByte 判断字节是否属于 ASCII 单词字符。
+func isWordByte(c byte) bool {
+	return c == '_' || c == '-' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// propositionOverlap 统计候选回复与命题锚点共享的内容二元组数量。
+func propositionOverlap(text string, anchors map[string]bool, names ...string) int {
+	if len(anchors) == 0 {
+		return 0
+	}
+	overlap := 0
+	for gram := range propositionGrams(text, names...) {
+		if anchors[gram] {
+			overlap++
+		}
+	}
+	return overlap
 }
 
 // retractedRecords 找由失效事件派生的摘要 ID。

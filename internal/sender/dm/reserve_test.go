@@ -1,7 +1,8 @@
 package dm
 
 // 本文件测 S10 每日收信人预占：并发不同 peer 只有 1 个通过、明确失败释放、
-// 未知保留、成功后不可释放、actor 隔离与跨天重置。
+// 未知保留、成功后不可释放、actor 隔离与跨天重置；
+// F05 起每笔尝试持有独立令牌，失败只能释放自己的明确未消费预占。
 
 import (
 	"context"
@@ -46,11 +47,12 @@ func TestRecipientStoreReserveIsAtomic(t *testing.T) {
 	var ok, locked, other atomic.Int32
 	for i := 0; i < workers; i++ {
 		peer := fmt.Sprintf("%d", 9000+i)
+		attempt := fmt.Sprintf("attempt-%d", i)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-start
-			switch err := store.Reserve("2026-11-06", "111", peer); {
+			switch err := store.Reserve("2026-11-06", "111", peer, attempt); {
 			case err == nil:
 				ok.Add(1)
 			case errors.Is(err, errRecipientLocked):
@@ -83,19 +85,19 @@ func TestRecipientStoreReleaseOnlyBeforeCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	const day = "2026-11-06"
-	if err := store.Reserve(day, "111", "1001"); err != nil {
+	if err := store.Reserve(day, "111", "1001", "attempt-1"); err != nil {
 		t.Fatal(err)
 	}
-	store.Release(day, "111", "1001")
-	if err := store.Reserve(day, "111", "1002"); err != nil {
+	store.Release(day, "111", "1001", "attempt-1")
+	if err := store.Reserve(day, "111", "1002", "attempt-2"); err != nil {
 		t.Fatalf("释放后应允许换人：%v", err)
 	}
-	if err := store.Commit(day, "111", "1002"); err != nil {
+	if err := store.Commit(day, "111", "1002", "attempt-2"); err != nil {
 		t.Fatal(err)
 	}
 	// 成功发送后，并发的失败尝试不能再把当天名额让给另一个人。
-	store.Release(day, "111", "1002")
-	if err := store.Reserve(day, "111", "1003"); !errors.Is(err, errRecipientLocked) {
+	store.Release(day, "111", "1002", "attempt-2")
+	if err := store.Reserve(day, "111", "1003", "attempt-3"); !errors.Is(err, errRecipientLocked) {
 		t.Fatalf("已提交的预占不应被释放：%v", err)
 	}
 	st, err := store.Load()
@@ -113,16 +115,16 @@ func TestRecipientStoreDayReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Reserve("2026-11-06", "111", "1001"); err != nil {
+	if err := store.Reserve("2026-11-06", "111", "1001", "attempt-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Commit("2026-11-06", "111", "1001"); err != nil {
+	if err := store.Commit("2026-11-06", "111", "1001", "attempt-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Reserve("2026-11-06", "111", "1002"); !errors.Is(err, errRecipientLocked) {
+	if err := store.Reserve("2026-11-06", "111", "1002", "attempt-2"); !errors.Is(err, errRecipientLocked) {
 		t.Fatalf("同日换人应拒绝：%v", err)
 	}
-	if err := store.Reserve("2026-11-07", "111", "1002"); err != nil {
+	if err := store.Reserve("2026-11-07", "111", "1002", "attempt-2"); err != nil {
 		t.Fatalf("跨天应允许换人：%v", err)
 	}
 	st, err := store.Load()
@@ -140,13 +142,13 @@ func TestRecipientStoreCommitOldDayDoesNotClobber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Reserve("2026-11-06", "111", "1001"); err != nil {
+	if err := store.Reserve("2026-11-06", "111", "1001", "attempt-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Reserve("2026-11-07", "111", "1002"); err != nil {
+	if err := store.Reserve("2026-11-07", "111", "1002", "attempt-2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Commit("2026-11-06", "111", "1001"); err != nil {
+	if err := store.Commit("2026-11-06", "111", "1001", "attempt-1"); err != nil {
 		t.Fatalf("旧日提交不应报错：%v", err)
 	}
 	st, err := store.Load()
@@ -168,10 +170,10 @@ func TestRecipientStoreReadsLegacyFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Reserve("2026-11-06", "", "1002"); !errors.Is(err, errRecipientLocked) {
+	if err := store.Reserve("2026-11-06", "", "1002", "attempt-1"); !errors.Is(err, errRecipientLocked) {
 		t.Fatalf("旧格式应视为已锁定：%v", err)
 	}
-	if err := store.Reserve("2026-11-06", "", "1001"); err != nil {
+	if err := store.Reserve("2026-11-06", "", "1001", "attempt-2"); err != nil {
 		t.Fatalf("旧格式同人应放行：%v", err)
 	}
 }
@@ -416,6 +418,153 @@ func TestRecipientPerActor(t *testing.T) {
 	restarted, tr2, _ := newReserveSender(t, path, []string{"1001", "1002", "1003"}, &now)
 	if _, err := restarted.Send(actorA, claimFor("1003"), sender.Reply{Text: "重启后换人"}); err == nil {
 		t.Fatal("重启后账号 A 同日换人应拒绝")
+	}
+	if tr2.sent != 0 {
+		t.Fatalf("重启后拒绝不应发送：%d", tr2.sent)
+	}
+}
+
+// TestRecipientStoreUnknownCannotBeReleased unknown 只能被成功后提交覆盖：
+// 同人的新尝试或旧令牌的失败都不能释放当天名额。
+func TestRecipientStoreUnknownCannotBeReleased(t *testing.T) {
+	store, err := NewRecipientStore(filepath.Join(t.TempDir(), "dm-recipient.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const day = "2026-11-06"
+	if err := store.Reserve(day, "111", "1001", "attempt-1"); err != nil {
+		t.Fatal(err)
+	}
+	store.MarkUnknown(day, "111", "1001", "attempt-1")
+
+	// 同人重试放行，但失败只能结算自己的令牌。
+	if err := store.Reserve(day, "111", "1001", "attempt-2"); err != nil {
+		t.Fatalf("同人重试应放行：%v", err)
+	}
+	store.Release(day, "111", "1001", "attempt-2")
+	// 已被 unknown 吸收的旧令牌同样无效。
+	store.Release(day, "111", "1001", "attempt-1")
+
+	if err := store.Reserve(day, "111", "1002", "attempt-3"); !errors.Is(err, errRecipientLocked) {
+		t.Fatalf("unknown 预占被失败尝试释放：%v", err)
+	}
+	st, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := st.Reservations["111"]; rec.State != reservationUnknown || rec.Peer != "1001" || len(rec.Attempts) != 0 {
+		t.Fatalf("unknown 预占状态不符：%+v", rec)
+	}
+}
+
+// TestRecipientStoreAttemptOwnership 两个存储实例共享状态文件（模拟多进程）：
+// 只有令牌持有者能释放；别人失败后预占仍在。
+func TestRecipientStoreAttemptOwnership(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dm-recipient.json")
+	owner, err := NewRecipientStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := NewRecipientStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const day = "2026-11-06"
+	if err := owner.Reserve(day, "111", "1001", "a-token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Reserve(day, "111", "1001", "b-token"); err != nil {
+		t.Fatalf("同人并发应放行：%v", err)
+	}
+	// B 明确失败：只删自己的令牌，A 的预占仍在。
+	other.Release(day, "111", "1001", "b-token")
+	if err := other.Reserve(day, "111", "1002", "b-token-2"); !errors.Is(err, errRecipientLocked) {
+		t.Fatalf("在途预占被别的尝试释放：%v", err)
+	}
+	// A 也明确失败后，名额才释放。
+	owner.Release(day, "111", "1001", "a-token")
+	if err := other.Reserve(day, "111", "1002", "b-token-2"); err != nil {
+		t.Fatalf("全部尝试明确失败后应允许换人：%v", err)
+	}
+}
+
+// TestRecipientStoreInterleavedAttemptsKeepSlot 同人两笔尝试交替结算：
+// 失败 + unknown 之后，迟到的释放不能把名额让给另一个人。
+func TestRecipientStoreInterleavedAttemptsKeepSlot(t *testing.T) {
+	store, err := NewRecipientStore(filepath.Join(t.TempDir(), "dm-recipient.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const day = "2026-11-06"
+	if err := store.Reserve(day, "111", "1001", "attempt-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Reserve(day, "111", "1001", "attempt-2"); err != nil {
+		t.Fatal(err)
+	}
+	store.Release(day, "111", "1001", "attempt-1")     // 明确失败方先结算
+	store.MarkUnknown(day, "111", "1001", "attempt-2") // 另一笔结果未知
+	store.Release(day, "111", "1001", "attempt-2")     // 迟到的释放不能解除 unknown
+	if err := store.Reserve(day, "111", "1002", "attempt-3"); !errors.Is(err, errRecipientLocked) {
+		t.Fatalf("unknown 结算后名额不应释放：%v", err)
+	}
+}
+
+// TestRecipientUnknownNotFreedBySamePeerPreflightFailure 回归 F05：
+// unknown 之后同 peer 的预检失败（互关查询）不得把名额释放给另一个收信人。
+func TestRecipientUnknownNotFreedBySamePeerPreflightFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dm-recipient.json")
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	s, tr, rel := newReserveSender(t, path, []string{"1001", "1002"}, &now)
+	tr.err = errors.New("unknown boom")
+
+	if _, err := s.Send(context.Background(), claimFor("1001"), sender.Reply{Text: "可能已送达"}); err == nil {
+		t.Fatal("传输失败应报错")
+	}
+	tr.err = nil
+	rel.err = errors.New("relation down")
+	if _, err := s.Send(context.Background(), claimFor("1001"), sender.Reply{Text: "同人预检失败"}); err == nil {
+		t.Fatal("关系查询失败应报错")
+	}
+	rel.err = nil
+	if _, err := s.Send(context.Background(), claimFor("1002"), sender.Reply{Text: "换人"}); err == nil {
+		t.Fatal("unknown 预占被同人失败释放")
+	}
+	if tr.sent != 1 {
+		t.Fatalf("只应有首次 POST，实际 %d", tr.sent)
+	}
+	store, err := NewRecipientStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Peers[""] != "1001" {
+		t.Fatalf("unknown 收信人未保留：%+v", st)
+	}
+}
+
+// TestRecipientUnknownSurvivesRestart 重启后从状态文件读回的 unknown 预占
+// 同样不能被失败尝试释放。
+func TestRecipientUnknownSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dm-recipient.json")
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	first, tr1, _ := newReserveSender(t, path, []string{"1001", "1002"}, &now)
+	tr1.err = errors.New("unknown boom")
+	if _, err := first.Send(context.Background(), claimFor("1001"), sender.Reply{Text: "可能已送达"}); err == nil {
+		t.Fatal("传输失败应报错")
+	}
+
+	restarted, tr2, rel2 := newReserveSender(t, path, []string{"1001", "1002"}, &now)
+	rel2.err = errors.New("relation down")
+	if _, err := restarted.Send(context.Background(), claimFor("1001"), sender.Reply{Text: "重启后同人失败"}); err == nil {
+		t.Fatal("关系查询失败应报错")
+	}
+	rel2.err = nil
+	if _, err := restarted.Send(context.Background(), claimFor("1002"), sender.Reply{Text: "换人"}); err == nil {
+		t.Fatal("重启后 unknown 预占仍应锁定当天收信人")
 	}
 	if tr2.sent != 0 {
 		t.Fatalf("重启后拒绝不应发送：%d", tr2.sent)

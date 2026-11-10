@@ -75,19 +75,25 @@ func insertMemoryRecord(ctx context.Context, db *gorm.DB, m store.MemoryRecord) 
 	}
 	// 数组通过JSON参数转TEXT[]，避免拼接事件ID，也不引入另一套PG驱动。
 	//
-	// 冲突更新的四道闸门（缺一不可）：
+	// 冲突更新的闸门：
 	//  1. 新旧都必须是 fact（非事实类仍保持按事件幂等）；
-	//  2. private/channel/session 必须完全一致，公共行与 DM-A、DM-B 互不覆盖；
-	//  3. 新记录的 valid_from 必须更晚，逆序补提炼的旧事件不能盖掉新事实；
-	//  4. 摘要确实变化才更新，重复提炼保持幂等。
-	// valid_from 取 EXCLUDED 的事件时间而不是 now()：否则「更新时间」会顶替
-	// 「事实发生时间」，让第 3 道的先后比较失真。
+	//  2. private 必须一致，公共行与 DM-A、DM-B 互不覆盖；
+	//  3. 私密行仍要求 channel/session 完全一致；公开行的规范事实键
+	//     （public + UID + 标题）跨公开来源共享，允许直播→评论、跨房间修订，
+	//     并把行范围更新到新来源；
+	//  4. 新记录的 valid_from 必须更晚，逆序补提炼的旧事件不能盖掉新事实；
+	//  5. 摘要确实变化才更新，重复提炼保持幂等。
+	// 修订时 event_ids/valid_from 取 EXCLUDED，保留新来源事件与逻辑时间；
+	// subject 用 COALESCE 保留已有主体。valid_from 取 EXCLUDED 的事件时间而不是
+	// now()：否则「更新时间」会顶替「事实发生时间」，让第 4 道的先后比较失真。
 	result := db.WithContext(ctx).Exec(`INSERT INTO memory_records
 (id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name,asserted_by_id,asserted_by_name,subject)
 VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''))
 ON CONFLICT (id) DO UPDATE SET
   summary    = EXCLUDED.summary,
   confidence = EXCLUDED.confidence,
+  channel    = COALESCE(EXCLUDED.channel, memory_records.channel),
+  session    = COALESCE(EXCLUDED.session, memory_records.session),
   valid_from = EXCLUDED.valid_from,
   event_ids  = EXCLUDED.event_ids,
   from_id    = COALESCE(EXCLUDED.from_id, memory_records.from_id),
@@ -98,8 +104,13 @@ ON CONFLICT (id) DO UPDATE SET
 WHERE memory_records.kind = 'fact'
   AND EXCLUDED.kind = 'fact'
   AND memory_records.private = EXCLUDED.private
-  AND COALESCE(memory_records.channel,'') = COALESCE(EXCLUDED.channel,'')
-  AND COALESCE(memory_records.session,'') = COALESCE(EXCLUDED.session,'')
+  AND (
+      NOT memory_records.private
+      OR (
+          COALESCE(memory_records.channel,'') = COALESCE(EXCLUDED.channel,'')
+          AND COALESCE(memory_records.session,'') = COALESCE(EXCLUDED.session,'')
+      )
+  )
   AND EXCLUDED.valid_from > memory_records.valid_from
   AND memory_records.summary IS DISTINCT FROM EXCLUDED.summary`, m.ID, m.Source, m.Kind, m.Title, m.Summary, m.Body, m.Importance, m.Confidence, m.Private, m.Channel, m.Session, m.ValidFrom, string(ids), m.FromID, m.FromName, m.AssertedByID, m.AssertedByName, m.Subject)
 	if result.Error != nil {

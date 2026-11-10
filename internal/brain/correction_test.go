@@ -24,7 +24,8 @@ type correctionView struct {
 		Text    string                    `json:"text"`
 		Speaker struct{ ID, Name string } `json:"speaker"`
 	} `json:"original_evidence"`
-	Note string `json:"note"`
+	Disputed bool   `json:"disputed"`
+	Note     string `json:"note"`
 }
 
 func correctionFixture(t *testing.T) (ContextInput, time.Time) {
@@ -145,5 +146,172 @@ func TestCorrectionNotTriggeredByPlainNegation(t *testing.T) {
 	raw, _ := preparedContext(t, in)
 	if raw["corrections"] != nil {
 		t.Fatal("普通否定不应产生 corrections")
+	}
+}
+
+// parseCorrections 解析生成输入里的 corrections 段。
+func parseCorrections(t *testing.T, raw map[string]json.RawMessage) []correctionView {
+	t.Helper()
+	if raw["corrections"] == nil {
+		return nil
+	}
+	var corrections []correctionView
+	if err := json.Unmarshal(raw["corrections"], &corrections); err != nil {
+		t.Fatalf("corrections 解析失败：%v", err)
+	}
+	return corrections
+}
+
+// TestCorrectionSameSpeakerMultipleTopics 同一个人有多个话题时，只撤被纠正的那条回复，
+// 不能把她更早的正确回复一起否定。
+func TestCorrectionSameSpeakerMultipleTopics(t *testing.T) {
+	in, base := correctionFixture(t)
+	in.Memory.Focus = append([]memory.Message{
+		inboundFrom("live:room:a0", "1001", "A", "我住在北京", base.Add(-2*time.Minute)),
+		{EventID: "live:room:r0", Channel: event.ChLive, Session: "room", Dir: event.DirOut,
+			Text: "你说你住在北京啊", ReplyTo: "live:room:a0", At: base.Add(-90 * time.Second)},
+	}, in.Memory.Focus...)
+
+	raw, _ := preparedContext(t, in)
+	corrections := parseCorrections(t, raw)
+	if len(corrections) != 1 {
+		t.Fatalf("纠正条数 = %d，期望 1：%+v", len(corrections), corrections)
+	}
+	entry := corrections[0]
+	if len(entry.SupersededEventIDs) != 1 || entry.SupersededEventIDs[0] != "live:room:r1" {
+		t.Fatalf("只应撤被纠正的 r1，实际 %+v", entry.SupersededEventIDs)
+	}
+	for _, kept := range []string{"live:room:r0"} {
+		for _, id := range entry.SupersededEventIDs {
+			if id == kept {
+				t.Fatalf("同人的其他话题回复被误撤：%+v", entry.SupersededEventIDs)
+			}
+		}
+	}
+	if entry.Disputed {
+		t.Fatalf("有明确目标证据时不应标 disputed：%+v", entry)
+	}
+}
+
+// TestCorrectionIgnoresInterjection 房间里的插话与鱼的无关回复不能被顺手撤回。
+func TestCorrectionIgnoresInterjection(t *testing.T) {
+	in, base := correctionFixture(t)
+	in.Memory.Focus = append(in.Memory.Focus,
+		inboundFrom("live:room:b2", "2002", "B", "哈哈哈", base.Add(100*time.Second)),
+		memory.Message{EventID: "live:room:r2", Channel: event.ChLive, Session: "room", Dir: event.DirOut,
+			Text: "笑什么", ReplyTo: "live:room:b2", At: base.Add(110 * time.Second)},
+	)
+
+	raw, _ := preparedContext(t, in)
+	corrections := parseCorrections(t, raw)
+	if len(corrections) != 1 {
+		t.Fatalf("纠正条数 = %d，期望 1：%+v", len(corrections), corrections)
+	}
+	entry := corrections[0]
+	if len(entry.SupersededEventIDs) != 1 || entry.SupersededEventIDs[0] != "live:room:r1" {
+		t.Fatalf("B 插话后的无关回复不应被撤：%+v", entry.SupersededEventIDs)
+	}
+	if entry.Disputed {
+		t.Fatalf("有明确目标证据时不应标 disputed：%+v", entry)
+	}
+}
+
+// TestCorrectionWithoutTargetEvidenceMarksDisputed 没有引用、也没有可核对命题时，
+// 只标记 disputed，旧回复/摘要/事实全部保留。
+func TestCorrectionWithoutTargetEvidenceMarksDisputed(t *testing.T) {
+	in, _ := correctionFixture(t)
+	in.Memory.Focus[3].Text = "那句不是我说的"
+
+	raw, _ := preparedContext(t, in)
+	corrections := parseCorrections(t, raw)
+	if len(corrections) != 1 {
+		t.Fatalf("纠正条数 = %d，期望 1：%+v", len(corrections), corrections)
+	}
+	entry := corrections[0]
+	if !entry.Disputed {
+		t.Fatalf("无目标证据时应标 disputed：%+v", entry)
+	}
+	if len(entry.SupersededEventIDs) != 0 || len(entry.RetractedRecordIDs) != 0 || len(entry.RetractedFactKeys) != 0 {
+		t.Fatalf("disputed 时不得撤任何来源：%+v", entry)
+	}
+	if !strings.Contains(entry.Note, "没有足够证据") || !strings.Contains(entry.Note, "保留") {
+		t.Fatalf("disputed 说明不完整：%s", entry.Note)
+	}
+	var records []memory.Record
+	if err := json.Unmarshal(raw["records"], &records); err != nil {
+		t.Fatalf("records 解析失败：%v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("disputed 时摘要不应被撤回：%+v", records)
+	}
+	var facts []memory.Fact
+	if err := json.Unmarshal(raw["shared"], &facts); err != nil {
+		t.Fatalf("shared 解析失败：%v", err)
+	}
+	if len(facts) != 2 {
+		t.Fatalf("disputed 时事实不应被撤回：%+v", facts)
+	}
+}
+
+// TestCorrectionPrankWithoutEvidenceDoesNotRetract 第三方无证据的「恶搞纠正」
+// 不能把被点名者的历史回复撤掉。
+func TestCorrectionPrankWithoutEvidenceDoesNotRetract(t *testing.T) {
+	in, base := correctionFixture(t)
+	in.Event.ID = "live:room:c2"
+	in.Event.FromID = "3003"
+	in.Event.FromName = "C"
+	in.Event.Text = "不是A说的，是C说的"
+	in.Event.At = base.Add(2 * time.Minute)
+	in.Memory.Focus = []memory.Message{
+		inboundFrom("live:room:a0", "1001", "A", "我住在北京", base.Add(-2*time.Minute)),
+		{EventID: "live:room:r0", Channel: event.ChLive, Session: "room", Dir: event.DirOut,
+			Text: "你说你住在北京啊", ReplyTo: "live:room:a0", At: base.Add(-90 * time.Second)},
+		inboundFrom("live:room:c2", "3003", "C", "不是A说的，是C说的", base.Add(2*time.Minute)),
+	}
+
+	raw, _ := preparedContext(t, in)
+	corrections := parseCorrections(t, raw)
+	if len(corrections) != 1 {
+		t.Fatalf("纠正条数 = %d，期望 1：%+v", len(corrections), corrections)
+	}
+	entry := corrections[0]
+	if !entry.Disputed {
+		t.Fatalf("无证据的纠正应标 disputed：%+v", entry)
+	}
+	if len(entry.SupersededEventIDs) != 0 {
+		t.Fatalf("恶搞纠正不能撤回历史回复：%+v", entry.SupersededEventIDs)
+	}
+	if len(entry.RetractedRecordIDs) != 0 || len(entry.RetractedFactKeys) != 0 {
+		t.Fatalf("恶搞纠正不能撤回摘要/事实：%+v", entry)
+	}
+}
+
+// TestCorrectionExplicitQuoteRetractsReferencedReply 用户明确引用某条回复时，
+// 只撤被引用的那一条，即使它与正确归属人的证据没有词面重叠。
+func TestCorrectionExplicitQuoteRetractsReferencedReply(t *testing.T) {
+	in, base := correctionFixture(t)
+	in.Memory.Focus = append([]memory.Message{
+		inboundFrom("live:room:a0", "1001", "A", "我住在北京", base.Add(-2*time.Minute)),
+		{EventID: "live:room:r0", Channel: event.ChLive, Session: "room", Dir: event.DirOut,
+			Text: "你说你住在北京啊", ReplyTo: "live:room:a0", At: base.Add(-90 * time.Second)},
+	}, in.Memory.Focus...)
+	// 纠正直接引用 r0：「这句不是我说的，是B说的」。
+	for i := range in.Memory.Focus {
+		if in.Memory.Focus[i].EventID == "live:room:a2" {
+			in.Memory.Focus[i].ReplyTo = "live:room:r0"
+		}
+	}
+
+	raw, _ := preparedContext(t, in)
+	corrections := parseCorrections(t, raw)
+	if len(corrections) != 1 {
+		t.Fatalf("纠正条数 = %d，期望 1：%+v", len(corrections), corrections)
+	}
+	entry := corrections[0]
+	if len(entry.SupersededEventIDs) != 1 || entry.SupersededEventIDs[0] != "live:room:r0" {
+		t.Fatalf("显式引用应只撤被引用的 r0：%+v", entry.SupersededEventIDs)
+	}
+	if entry.Disputed {
+		t.Fatalf("有显式引用时不应标 disputed：%+v", entry)
 	}
 }

@@ -287,3 +287,156 @@ func TestWorkerBackfillDoesNotOverwriteNewerFact(t *testing.T) {
 		t.Fatalf("valid_from = %v，期望 %v", rows[0].ValidFrom, newer.At)
 	}
 }
+
+// factRecordForTest 造一条共享主键的事实记录，来源范围由调用方指定。
+func factRecordForTest(id string, ch event.Channel, session string, private bool, summary, eventID string, at time.Time, subject string) store.MemoryRecord {
+	return store.MemoryRecord{
+		Record: memory.Record{
+			ID: id, Channel: ch, Session: session, Private: private, Summary: summary,
+			Importance: 0.6, Confidence: 0.85, EventIDs: []string{eventID}, ValidFrom: at,
+		},
+		Source: "persona", Kind: "fact", Title: "事实：学业阶段",
+		FromID: "2002", FromName: "熟客乙", Subject: subject,
+	}
+}
+
+// findMemoryRecord 按主键从运维列表里取回记录。
+func findMemoryRecord(t *testing.T, ctx context.Context, repo *MemoryRepo, id string) store.MemoryRecord {
+	t.Helper()
+	rows, err := repo.ListRecords(ctx, memoryRecordLimitMax)
+	if err != nil {
+		t.Fatalf("读取记忆记录失败：%v", err)
+	}
+	for _, row := range rows {
+		if row.ID == id {
+			return row
+		}
+	}
+	t.Fatalf("记录 %s 不存在", id)
+	return store.MemoryRecord{}
+}
+
+// TestPublicFactRevisionCrossesPublicSources 公开规范事实可跨公开来源修订：
+// live→comment、跨房间都更新到新来源，并保留新来源事件/逻辑时间/主体；
+// 旧事件晚到仍被拒绝。
+func TestPublicFactRevisionCrossesPublicSources(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	repo, err := NewMemoryRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Microsecond)
+	id := "fact:public:2002:sharedhash"
+	insert := func(m store.MemoryRecord, want bool) {
+		t.Helper()
+		ok, err := repo.InsertRecord(ctx, m)
+		if err != nil {
+			t.Fatalf("写入 %s/%s 报错：%v", m.Channel, m.Session, err)
+		}
+		if ok != want {
+			t.Fatalf("写入 %s/%s 返回 %v，期望 %v", m.Channel, m.Session, ok, want)
+		}
+	}
+
+	insert(factRecordForTest(id, event.ChLive, "room", false, "我是大二学生", "live:room:fact2", base, memory.SoulSubjectViewer), true)
+	insert(factRecordForTest(id, event.ChComment, "oid-777", false, "我是大三学生", "comment:oid-777:fact2", base.Add(time.Hour), memory.SoulSubjectViewer), true)
+
+	got := findMemoryRecord(t, ctx, repo, id)
+	if got.Summary != "我是大三学生" || got.Channel != event.ChComment || got.Session != "oid-777" {
+		t.Fatalf("公开事实未按新来源修订：%+v", got)
+	}
+	if len(got.EventIDs) != 1 || got.EventIDs[0] != "comment:oid-777:fact2" {
+		t.Fatalf("修订未保留新来源事件：%+v", got.EventIDs)
+	}
+	if !got.ValidFrom.Equal(base.Add(time.Hour)) {
+		t.Fatalf("逻辑时间未更新：%v", got.ValidFrom)
+	}
+	if got.FromID != "2002" || got.Subject != memory.SoulSubjectViewer {
+		t.Fatalf("主体/身份丢失：%+v", got)
+	}
+
+	// 跨房间继续修订
+	insert(factRecordForTest(id, event.ChLive, "room-2", false, "我是大四学生", "live:room-2:fact2", base.Add(2*time.Hour), memory.SoulSubjectViewer), true)
+	got = findMemoryRecord(t, ctx, repo, id)
+	if got.Summary != "我是大四学生" || got.Channel != event.ChLive || got.Session != "room-2" {
+		t.Fatalf("跨房间修订未落到新来源：%+v", got)
+	}
+	if len(got.EventIDs) != 1 || got.EventIDs[0] != "live:room-2:fact2" {
+		t.Fatalf("跨房间修订未保留新来源事件：%+v", got.EventIDs)
+	}
+
+	// 逆序回填：旧事件晚到，不能把新事实改回旧值
+	insert(factRecordForTest(id, event.ChLive, "room", false, "我是大一学生", "live:room:old2", base.Add(30*time.Minute), memory.SoulSubjectViewer), false)
+	got = findMemoryRecord(t, ctx, repo, id)
+	if got.Summary != "我是大四学生" || got.Session != "room-2" || !got.ValidFrom.Equal(base.Add(2*time.Hour)) {
+		t.Fatalf("旧事件覆盖了新事实：%+v", got)
+	}
+
+	// 公开认人：按 uid 能读到跨来源修订后的最新公开事实
+	facts, err := repo.FactsByViewer(ctx, "2002", 10)
+	if err != nil {
+		t.Fatalf("按观众查事实失败：%v", err)
+	}
+	if len(facts) != 1 || facts[0].Summary != "我是大四学生" {
+		t.Fatalf("公开事实投影不是最新值：%+v", facts)
+	}
+}
+
+// TestPrivateFactRevisionStaysInOriginalScope 私密事实仍严格原范围：
+// DM-B、公开来源都不能改写 DM-A 的行；同范围新事件仍可修订。
+func TestPrivateFactRevisionStaysInOriginalScope(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	repo, err := NewMemoryRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Microsecond)
+	id := "fact:private:dm:dm-a:2002:sharedhash"
+	insert := func(m store.MemoryRecord, want bool) {
+		t.Helper()
+		ok, err := repo.InsertRecord(ctx, m)
+		if err != nil {
+			t.Fatalf("写入 %s/%s 报错：%v", m.Channel, m.Session, err)
+		}
+		if ok != want {
+			t.Fatalf("写入 %s/%s 返回 %v，期望 %v", m.Channel, m.Session, ok, want)
+		}
+	}
+
+	insert(factRecordForTest(id, event.ChDM, "dm-a", true, "我是大二学生", "dm:dm-a:fact2", base, memory.SoulSubjectViewer), true)
+	// DM-B 同主键、更晚：必须拒绝
+	insert(factRecordForTest(id, event.ChDM, "dm-b", true, "我是大三学生", "dm:dm-b:fact2", base.Add(time.Hour), memory.SoulSubjectViewer), false)
+	// 公开来源同主键、更晚：也必须拒绝（不能降密）
+	insert(factRecordForTest(id, event.ChComment, "oid-777", false, "我是大三学生", "comment:oid-777:fact2", base.Add(2*time.Hour), memory.SoulSubjectViewer), false)
+
+	got := findMemoryRecord(t, ctx, repo, id)
+	if got.Summary != "我是大二学生" || got.Channel != event.ChDM || got.Session != "dm-a" {
+		t.Fatalf("私密事实被跨范围改写：%+v", got)
+	}
+	if len(got.EventIDs) != 1 || got.EventIDs[0] != "dm:dm-a:fact2" || !got.ValidFrom.Equal(base) {
+		t.Fatalf("私密事实来源被跨范围替换：%+v", got)
+	}
+
+	// 同范围更新仍允许，并保留已有主体
+	insert(factRecordForTest(id, event.ChDM, "dm-a", true, "我是大三学生", "dm:dm-a:fact3", base.Add(3*time.Hour), ""), true)
+	got = findMemoryRecord(t, ctx, repo, id)
+	if got.Summary != "我是大三学生" || !got.ValidFrom.Equal(base.Add(3*time.Hour)) {
+		t.Fatalf("同范围修订失败：%+v", got)
+	}
+	if len(got.EventIDs) != 1 || got.EventIDs[0] != "dm:dm-a:fact3" {
+		t.Fatalf("同范围修订未保留新来源事件：%+v", got.EventIDs)
+	}
+	if got.Subject != memory.SoulSubjectViewer {
+		t.Fatalf("修订时主体未保留：%+v", got)
+	}
+
+	// 查询层隔离：DM-B 与公开视角都看不到 DM-A 的私密事实
+	other, err := repo.Records(ctx, memory.Scope{Channel: event.ChDM, Session: "dm-b", Private: true}, 10)
+	if err != nil || len(other) != 0 {
+		t.Fatalf("DM-A 私密事实泄漏到 DM-B：%+v / %v", other, err)
+	}
+	public, err := repo.Records(ctx, memory.Scope{Channel: event.ChLive, Session: "room", Private: false}, 10)
+	if err != nil || len(public) != 0 {
+		t.Fatalf("私密事实泄漏到公开视角：%+v / %v", public, err)
+	}
+}
