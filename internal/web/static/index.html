@@ -135,14 +135,16 @@ async function loadEmbeddingStatus() {
 function costCard(d) {
   var total = Number(d.total_calls) || 0;
   var unknown = Number(d.unknown_calls) || 0;
-  if (total === 0) return card('info', '💸', '已知费用($)', '—', '账本暂无调用');
+  if (total === 0) return card('info', '💸', '已知费用(¥)', '—', '账本暂无调用');
   if (d.known_cost == null) {
-    return card('warn', '💸', '已知费用($)', '未知', total + ' 次调用均未计价');
+    return card('warn', '💸', '已知费用(¥)', '未知', total + ' 次调用均未计价');
   }
   var known = total - unknown;
   var sub = '已计价 ' + known + '/' + total + ' 次';
   if (unknown > 0) sub += ' · 覆盖率 ' + Math.round(known * 100 / total) + '%';
-  return card(unknown > 0 ? 'warn' : 'info', '💸', '已知费用($)', Number(d.known_cost).toFixed(4), sub);
+  // cost_usd 按美元计价；面板显示人民币换算（×7.2），避免主人误读美元符号。
+  var cny = Number(d.known_cost) * 7.2;
+  return card(unknown > 0 ? 'warn' : 'info', '💸', '已知费用(¥)', cny.toFixed(2), sub);
 }
 async function loadStatus() {
   var r = await fetch('/api/status');
