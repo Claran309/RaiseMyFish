@@ -126,6 +126,9 @@
 
 | 69 | **ReAct 思考系统 B/C/D** | B：加「think 阶段」（先输出内心独白再回复，多一次调用）；C：thought 加深（prompt 要求先想 3 层再行动，免费）；D：反思循环（回复后自检够不够好，多一次调用）——主人要求 BCD 全做 | ⏳ 待派 |
 
+
+| 70 | **私信消息接口 404** | `dm_session_msgs`（api.vc.bilibili.com/session_svr/v1/session_svr/get_session_msgs）返回 HTTP 404——B站 API 路径变了/失效，私信详情拉不到（会话列表 200 正常）。需要查 B站当前私信消息 API 正确路径后修。**不要**用全局退避掩盖（那是改日志不是修 bug）。 | ⏳ 待查 |
+
 ## ⚪ 远期 / 阶段任务
 
 | # | 项 | 阶段 | 状态 | 说明 |
