@@ -38,6 +38,9 @@ func newFetcher(t *testing.T, fixture *dmFixture) *BiliFetcher {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/x/web-interface/nav":
+			// WBI 签名密钥（fetch_session_msgs 需要 w_rid/wts）
+			_, _ = w.Write([]byte(`{"code":0,"data":{"wbi_img":{"img_url":"https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
 		case "/session_svr/v1/session_svr/get_sessions":
 			fixture.mu.Lock()
 			body, code := fixture.body, fixture.code
@@ -47,7 +50,7 @@ func newFetcher(t *testing.T, fixture *dmFixture) *BiliFetcher {
 				return
 			}
 			_, _ = w.Write([]byte(body))
-		case "/session_svr/v1/session_svr/get_session_msgs":
+		case "/svr_sync/v1/svr_sync/fetch_session_msgs":
 			talker := r.URL.Query().Get("talker_id")
 			if r.URL.Query().Get("session_type") != "1" || r.URL.Query().Get("size") == "" {
 				w.WriteHeader(http.StatusBadRequest)
@@ -72,6 +75,7 @@ func newFetcher(t *testing.T, fixture *dmFixture) *BiliFetcher {
 	}))
 	t.Cleanup(srv.Close)
 	client, err := bili.New(bili.Options{
+		APIRoot: srv.URL, // nav（WBI 密钥）也走 mock
 		VCRoot:  srv.URL,
 		Cookie:  "SESSDATA=fixture; bili_jct=csrf",
 		SelfMID: selfUID,

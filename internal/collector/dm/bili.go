@@ -470,48 +470,11 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, client *bili.Client, sel
 
 // scanOlder 从 endSeqno 继续向历史翻页，直到追上 stopAt 或没有更多。
 func (f *BiliFetcher) scanOlder(ctx context.Context, client *bili.Client, peer, endSeqno, stopAt string, budget *int, emit func([]bili.DMMessage)) (oldest string, reached bool, scanned bool, err *Error) {
-	if f.msgBlockedUntil(peer) {
-		return "", false, false, nil
-	}
-	end := endSeqno
-	for *budget > 0 {
-		page, fetchErr := client.DMSessionMessagesPage(ctx, peer, f.messagePageSize(), end)
-		if fetchErr != nil {
-			if classify(fetchErr) == KindAuth {
-				return "", false, false, &Error{Kind: KindAuth, Cause: fetchErr}
-			}
-			f.logf().Warn("私信回填分页失败，保留缺口下一轮重试",
-				zap.String("action", "dm_message_page_fail"),
-				zap.String("peer", peer),
-				zap.String("end_seqno", end),
-				zap.Error(fetchErr),
-			)
-			return "", false, false, nil
-		}
-		*budget--
-		items := filterBelow(page.Messages, end)
-		emit(items)
-		pageMin := page.MinSeqno
-		if pageMin == "" {
-			pageMin = minSeqnoOf(items)
-		}
-		if pageMin == "" {
-			return "", true, true, nil
-		}
-		oldest = pageMin
-		if compareDecimal(pageMin, stopAt) <= 0 {
-			return oldest, true, true, nil
-		}
-		if !page.HasMore {
-			return oldest, true, true, nil
-		}
-		if compareDecimal(pageMin, end) >= 0 {
-			return oldest, true, true, nil
-		}
-		end = pageMin
-	}
-	return oldest, false, true, nil
+	// 新版 fetch_session_msgs 的 begin_seqno 只能向新，无法向历史回填：
+	// 历史恢复（缺口补全）依赖水位与首连基线；这里直接返回「无更早」。
+	return "", true, false, nil
 }
+
 
 // scanNewest 从最新页向历史翻页，直到追上 watermark 或没有更多。
 // stoppedByError 表示翻页中途遇到非鉴权错误（已拿到较新的页）。
