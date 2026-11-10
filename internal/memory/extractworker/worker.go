@@ -115,6 +115,9 @@ type Options struct {
 	Now func() time.Time
 	// Profiles 是观众档案重建依赖；nil 表示不跑这个子任务。
 	Profiles ProfileSource
+	// Projection 在档案重建撤回派生内容后同步清理公开知识条目；
+	// nil 或失败都不影响重建本身，清理任务仍留在库里由侧写循环重试。
+	Projection ProfileProjection
 	// ProfileInterval 是档案重建节流间隔，<=0 用 1 小时。
 	ProfileInterval time.Duration
 	// ProfileMinHits 建档门槛，<=0 用 2。
@@ -155,8 +158,13 @@ type RecentBeforeSource interface {
 type ProfileSource interface {
 	// ActiveSince 判断 since 之后是否有入向事件。
 	ActiveSince(ctx context.Context, since time.Time) (bool, error)
-	// RebuildProfiles 从 events 全量重算档案。
+	// RebuildProfiles 从 events 全量重算档案，并撤回来源失效的侧写。
 	RebuildProfiles(ctx context.Context, opts store.ViewerRebuildOptions) (store.ViewerRebuildStats, error)
+}
+
+// ProfileProjection 清理被撤回观众的公开知识条目（由 knowledge.ViewerWriter 适配）。
+type ProfileProjection interface {
+	PurgeViewers(ctx context.Context, uids []string) error
 }
 
 // Stats 是一轮扫描的统计，交给上层打日志/日报。
@@ -182,6 +190,10 @@ type Stats struct {
 	ProfilesRebuilt int
 	// ProfileSkipped 是跳过重建的原因（throttled / idle / none）。
 	ProfileSkipped string
+	// ProfilesRevoked 是本轮被撤回侧写/档案的观众数。
+	ProfilesRevoked int
+	// ProfileProjection 是同步清理知识条目的结果（done / failed / none）。
+	ProfileProjection string
 	// SoulEntries 本轮写入的灵魂条目数（-1 表示跳过）。
 	SoulEntries int
 	// SoulSkipped 是跳过原因（throttled / failed / none）。
@@ -635,6 +647,21 @@ func (w *Worker) rebuildProfiles(ctx context.Context, stats *Stats) {
 	}
 	stats.ProfilesRebuilt = res.Profiles
 	stats.ProfileSkipped = ""
+	stats.ProfilesRevoked = len(res.Revoked)
+	if len(res.Revoked) == 0 {
+		return
+	}
+	// 同步清理只是尽力而为：知识文件坏了也不影响档案撤回，
+	// purge 任务已经和撤回同事务落库，侧写循环会继续补投。
+	if w.opts.Projection == nil {
+		stats.ProfileProjection = "none"
+		return
+	}
+	if err := w.opts.Projection.PurgeViewers(ctx, res.Revoked); err != nil {
+		stats.ProfileProjection = "failed"
+		return
+	}
+	stats.ProfileProjection = "done"
 }
 
 // handleEvent 处理单条事件，返回本条事件对应的新水位。

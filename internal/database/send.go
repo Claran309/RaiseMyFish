@@ -40,9 +40,28 @@ type sendPlan struct {
 	RoomID           string
 	Text             string
 	TextSHA          string `gorm:"column:text_sha"`
+	ReplyMID         string `gorm:"column:reply_mid"`
+	ReplyName        string `gorm:"column:reply_name"`
+	TextVersion      int    `gorm:"column:text_version"`
 	State            string
 	CurrentAttemptID string
 	AttemptCount     int
+}
+
+// sendTextVersion 是本进程写入的发送快照版本。
+const sendTextVersion = 2
+
+// sendApplySnapshot 把计划固定成一次发送的同一份快照。
+//
+// v2 计划已把 wire text 与目标落库，直接使用；v1 是升级前的旧计划，
+// 按创建版本在原计划上就地派生（不改写持久行），后续 Open/Verify/out 共用结果。
+func sendApplySnapshot(a *sendRecord, p sendPlan, row eventRow) {
+	if p.TextVersion >= sendTextVersion {
+		a.Text, a.ReplyMID, a.ReplyName = p.Text, p.ReplyMID, p.ReplyName
+		return
+	}
+	wire := sender.LiveWireFor(row.event(), p.Text, p.ActorID)
+	a.Text, a.ReplyMID, a.ReplyName = wire.Text, wire.ReplyMID, wire.ReplyName
 }
 
 type sendRecord struct {
@@ -86,6 +105,7 @@ func sendCurrent(tx *gorm.DB, row queueRow, actor, attemptID string) (sendPlan, 
 		err = store.ErrConflict
 	}
 	a.Text = p.Text
+	sendApplySnapshot(&a, p, row.Event)
 	if err == nil && (a.ActorID != p.ActorID || a.RoomID != p.RoomID || a.TextSHA != p.TextSHA) {
 		err = store.ErrConflict
 	}
@@ -148,12 +168,13 @@ func (r *SendRepo) Prepare(ctx context.Context, c event.Claim, reply sender.Repl
 			if row.Stage != event.StageGenerate || row.Event.Status != event.StatusReplying {
 				return store.ErrConflict
 			}
-			hash := sha256.Sum256([]byte(reply.Text))
+			wire := sender.LiveWireFor(row.Event.event(), reply.Text, actor)
+			hash := sha256.Sum256([]byte(wire.Text))
 			id, err := sendUUID()
 			if err != nil {
 				return err
 			}
-			p = sendPlan{EventID: row.Event.ID, ActorID: actor, RoomID: row.Event.Session, Text: reply.Text, TextSHA: hex.EncodeToString(hash[:]), State: sender.StateReady, CurrentAttemptID: id, AttemptCount: 1}
+			p = sendPlan{EventID: row.Event.ID, ActorID: actor, RoomID: row.Event.Session, Text: wire.Text, TextSHA: hex.EncodeToString(hash[:]), ReplyMID: wire.ReplyMID, ReplyName: wire.ReplyName, TextVersion: sendTextVersion, State: sender.StateReady, CurrentAttemptID: id, AttemptCount: 1}
 			if err := tx.Table("send_plans").Create(&p).Error; err != nil {
 				return err
 			}
@@ -161,6 +182,7 @@ func (r *SendRepo) Prepare(ctx context.Context, c event.Claim, reply sender.Repl
 			if err != nil {
 				return err
 			}
+			sendApplySnapshot(&a, p, row.Event)
 			if err := tx.Table("send_plans").Where("event_id=?", p.EventID).Update("current_attempt_id", a.ID).Error; err != nil {
 				return err
 			}
@@ -168,7 +190,15 @@ func (r *SendRepo) Prepare(ctx context.Context, c event.Claim, reply sender.Repl
 			if err != nil {
 				return err
 			}
-			if p.ActorID != actor || p.RoomID != row.Event.Session || p.Text != reply.Text {
+			if p.ActorID != actor || p.RoomID != row.Event.Session {
+				return store.ErrConflict
+			}
+			if p.TextVersion >= sendTextVersion {
+				// v2 计划存的是 wire text；调用方仍可能带原始 @ 前缀重试，先规范再比较。
+				if p.Text != sender.LiveWireFor(row.Event.event(), reply.Text, actor).Text {
+					return store.ErrConflict
+				}
+			} else if p.Text != reply.Text {
 				return store.ErrConflict
 			}
 			if row.Stage != event.StageDeliver && row.Stage != event.StageVerify {
@@ -234,6 +264,7 @@ func (r *SendRepo) Load(ctx context.Context, c event.Claim, actor string) (sende
 			if err != nil {
 				return err
 			}
+			sendApplySnapshot(&a, p, row.Event)
 			if err := tx.Table("send_plans").Where("event_id=?", p.EventID).Updates(map[string]any{"current_attempt_id": a.ID, "attempt_count": p.AttemptCount, "state": sender.StateReady}).Error; err != nil {
 				return err
 			}

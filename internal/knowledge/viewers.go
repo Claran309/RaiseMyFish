@@ -39,12 +39,14 @@ const (
 
 // ViewerEntry 是一份待写入知识库的公开观众侧写。
 type ViewerEntry struct {
-	UID       string
-	Name      string
-	Summary   string
-	Stats     string
-	Keywords  []string
-	UpdatedAt time.Time
+	UID        string
+	Name       string
+	Summary    string
+	Stats      string
+	Keywords   []string
+	UpdatedAt  time.Time
+	SourceHash string
+	Generator  string
 }
 
 // ViewerWriter 串行维护 viewers.md；同一进程内不并发写同一文件。
@@ -120,6 +122,62 @@ func (w *ViewerWriter) Upsert(ctx context.Context, entry ViewerEntry) error {
 	return nil
 }
 
+// Remove 删除某位观众的自动侧写条目；文件不存在或条目不存在时幂等成功。
+//
+// 只删 viewer-auto-* 且来源为本次自动生成的条目；人工占用的同 ID 条目保持原样。
+// 读取/解析失败时不改写旧文件，交由投影任务下轮重试。
+func (w *ViewerWriter) Remove(ctx context.Context, uid string) error {
+	if w == nil {
+		return errors.New("观众知识写入器不能为空")
+	}
+	if err := checkContext(ctx); err != nil {
+		return err
+	}
+	uid = strings.TrimSpace(uid)
+	if uid == "" {
+		return errors.New("观众知识条目缺少 UID")
+	}
+	id := viewerKnowledgeID(uid)
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	path := filepath.Join(w.dir, viewerKnowledgeFile)
+	doc, _, err := loadViewerDoc(ctx, path)
+	if err != nil {
+		return err
+	}
+	list := make([]diskEntry, 0, len(*doc.Entries))
+	removed := false
+	for _, existing := range *doc.Entries {
+		if existing.ID != id {
+			list = append(list, existing)
+			continue
+		}
+		if existing.Source != viewerKnowledgeSource {
+			// 人工条目不受自动撤回影响，保持原样。
+			list = append(list, existing)
+			continue
+		}
+		removed = true
+	}
+	if !removed {
+		return nil
+	}
+	doc.Entries = &list
+	data, err := encodeViewerDoc(doc)
+	if err != nil {
+		return err
+	}
+	if _, _, err := parseDocument(ctx, data, false); err != nil {
+		return fmt.Errorf("校验待写入的观众知识文件：%w", err)
+	}
+	if err := writeKnowledgeFile(path, data); err != nil {
+		return fmt.Errorf("写入观众知识文件：%w", err)
+	}
+	return nil
+}
+
 // viewerKnowledgeID 是同一 UID 的稳定条目 ID；不把 UID 明文写进公开文件。
 func viewerKnowledgeID(uid string) string {
 	sum := sha256.Sum256([]byte(uid))
@@ -153,7 +211,19 @@ func viewerEntrySummary(entry ViewerEntry) string {
 		stats = "统计未知"
 	}
 	at := entry.UpdatedAt.UTC().Format("2006-01-02")
-	return fmt.Sprintf("统计：%s；侧写时间：%s。由公开弹幕自动生成，非人工审核。", stats, at)
+	version := strings.TrimSpace(entry.Generator)
+	if version == "" {
+		version = "未知"
+	}
+	hash := strings.TrimSpace(entry.SourceHash)
+	if len(hash) > 12 {
+		hash = hash[:12]
+	}
+	if hash == "" {
+		hash = "无"
+	}
+	return fmt.Sprintf("统计：%s；侧写时间：%s；来源版本：%s/%s。由公开弹幕自动生成，非人工审核。",
+		stats, at, version, hash)
 }
 
 // viewerKeywords 用昵称与口头禅做词法召回；去重并限制长度。

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/store"
 	"gorm.io/gorm"
@@ -32,31 +33,60 @@ func NewViewerRepo(db *gorm.DB) (*ViewerRepo, error) {
 }
 
 type viewerRow struct {
-	UID              string
-	Name             string
-	Hits             int
-	Replies          int
-	LastSeen         time.Time
-	RecentTexts      []byte
-	RecentReplies    []byte
-	ProfileSummary   string
-	SummaryUpdatedAt *time.Time
-	UpdatedAt        time.Time
+	UID                  string
+	Name                 string
+	Hits                 int
+	Replies              int
+	LastSeen             time.Time
+	RecentTexts          []byte
+	RecentReplies        []byte
+	ProfileSummary       string
+	SummaryUpdatedAt     *time.Time
+	SummarySourceHash    string     `gorm:"column:profile_summary_source_hash"`
+	SummarySourceIDs     []byte     `gorm:"column:profile_summary_source_ids"`
+	SummaryGenerator     string     `gorm:"column:profile_summary_generator"`
+	SummaryKeywords      []byte     `gorm:"column:profile_summary_keywords"`
+	SummaryLastSuccessAt *time.Time `gorm:"column:profile_summary_last_success_at"`
+	SummaryFallbackAt    *time.Time `gorm:"column:profile_summary_fallback_at"`
+	SummaryFailures      int        `gorm:"column:profile_summary_failures"`
+	SummaryNextRetryAt   *time.Time `gorm:"column:profile_summary_next_retry_at"`
+	SummaryAttemptedAt   *time.Time `gorm:"column:summary_attempted_at"`
+	UpdatedAt            time.Time
 }
 
 func (r viewerRow) profile() (store.ViewerProfile, error) {
 	p := store.ViewerProfile{
 		UID: r.UID, Name: r.Name, Hits: r.Hits, Replies: r.Replies,
 		LastSeen: r.LastSeen, ProfileSummary: r.ProfileSummary, UpdatedAt: r.UpdatedAt,
+		SummarySourceHash: r.SummarySourceHash, SummaryGenerator: r.SummaryGenerator,
+		SummaryFailures: r.SummaryFailures,
 	}
 	if r.SummaryUpdatedAt != nil {
 		p.SummaryUpdatedAt = *r.SummaryUpdatedAt
+	}
+	if r.SummaryLastSuccessAt != nil {
+		p.SummaryLastSuccessAt = *r.SummaryLastSuccessAt
+	}
+	if r.SummaryFallbackAt != nil {
+		p.SummaryFallbackAt = *r.SummaryFallbackAt
+	}
+	if r.SummaryNextRetryAt != nil {
+		p.SummaryNextRetryAt = *r.SummaryNextRetryAt
+	}
+	if r.SummaryAttemptedAt != nil {
+		p.SummaryAttemptedAt = *r.SummaryAttemptedAt
 	}
 	if err := decodeStrings(r.RecentTexts, &p.RecentTexts); err != nil {
 		return store.ViewerProfile{}, &safeError{"解析观众发言失败", err}
 	}
 	if err := decodeStrings(r.RecentReplies, &p.RecentReplies); err != nil {
 		return store.ViewerProfile{}, &safeError{"解析回复快照失败", err}
+	}
+	if err := decodeStrings(r.SummarySourceIDs, &p.SummarySourceIDs); err != nil {
+		return store.ViewerProfile{}, &safeError{"解析侧写来源失败", err}
+	}
+	if err := decodeStrings(r.SummaryKeywords, &p.SummaryKeywords); err != nil {
+		return store.ViewerProfile{}, &safeError{"解析侧写关键词失败", err}
 	}
 	return p, nil
 }
@@ -160,16 +190,19 @@ func (r *ViewerRepo) ActiveSince(ctx context.Context, since time.Time) (bool, er
 // ActiveViewers 返回本轮该做侧写的观众档案。
 //
 // 口径与旧家建档一致：since 之后有公开发言，或累计说过 minHits 句。
-// 只挑「从未侧写」或「侧写之后又有新发言」的档案，避免每小时重复为同一份
-// 旧发言付费；按侧写时间最旧优先，保证失败的档案下次仍能轮到。
-func (r *ViewerRepo) ActiveViewers(ctx context.Context, since time.Time, minHits, limit int) ([]store.ViewerProfile, error) {
-	if ctx == nil || since.IsZero() || minHits < 1 || limit < 1 || limit > 500 {
+// 只挑「从未侧写」「侧写之后又有新发言且新发言还没尝试过」或「补偿重试已到期」的档案：
+// 失败后的重试由 next_retry 控制，达到上限后置空，必须等新发言才会再尝试。
+func (r *ViewerRepo) ActiveViewers(ctx context.Context, since, now time.Time, minHits, limit int) ([]store.ViewerProfile, error) {
+	if ctx == nil || since.IsZero() || now.IsZero() || minHits < 1 || limit < 1 || limit > 500 {
 		return nil, store.ErrInvalid
 	}
 	var rows []viewerRow
 	err := r.db.WithContext(ctx).Table("viewer_profiles").
 		Where("(last_seen >= ? OR hits >= ?)", since.UTC(), minHits).
-		Where("(summary_updated_at IS NULL OR summary_updated_at < last_seen)").
+		Where("(profile_summary_next_retry_at IS NULL OR profile_summary_next_retry_at <= ?)", now.UTC()).
+		Where(`(summary_updated_at IS NULL
+		  OR (summary_updated_at < last_seen AND (summary_attempted_at IS NULL OR summary_attempted_at < last_seen))
+		  OR profile_summary_next_retry_at IS NOT NULL)`).
 		Order("summary_updated_at ASC NULLS FIRST, last_seen DESC, uid ASC").
 		Limit(limit).Find(&rows).Error
 	if err != nil {
@@ -186,29 +219,51 @@ func (r *ViewerRepo) ActiveViewers(ctx context.Context, since time.Time, minHits
 	return out, nil
 }
 
-// SaveProfileSummary 在同一个事务里写入档案侧写与对应的记忆记录。
+// SaveProfileSummary 在同一个事务里校验来源、写入档案侧写与对应的记忆记录，并登记投影任务。
 //
+// 来源 CAS：按生成时的事件顺序重查 events，重算 store.ViewerSummarySourceHash；
+// 任何来源被删除、改密、移出公开入向或正文变化都返回 store.ErrViewerSourceChanged。
 // 记忆记录用稳定 ID 覆盖同一观众的旧摘要；冲突更新只允许 viewer_profile → viewer_profile，
-// 不会误改其他 kind 的同 ID 行。记录身份（private/subject/asserted_by）在这里再核一遍，
-// 避免调用方把私密或错主体数据写进公开侧写。
-func (r *ViewerRepo) SaveProfileSummary(ctx context.Context, uid, summary string, at time.Time, record store.MemoryRecord) error {
-	if ctx == nil || strings.TrimSpace(uid) == "" || strings.TrimSpace(summary) == "" || at.IsZero() {
+// 不会误改其他 kind 的同 ID 行。记录身份（private/subject/asserted_by）在这里再核一遍。
+func (r *ViewerRepo) SaveProfileSummary(ctx context.Context, w store.ViewerSummaryWrite) error {
+	if ctx == nil {
 		return store.ErrInvalid
 	}
-	if err := record.Validate(); err != nil {
+	if err := w.Validate(); err != nil {
 		return err
 	}
-	if record.Kind != "viewer_profile" || record.Private || record.Subject != memory.SoulSubjectViewer ||
-		record.FromID != uid || record.AssertedByID != uid {
+	if w.Record.Kind != "viewer_profile" || w.Record.Private || w.Record.Subject != memory.SoulSubjectViewer ||
+		w.Record.FromID != w.UID || w.Record.AssertedByID != w.UID {
 		return store.ErrInvalid
 	}
-	ids, err := json.Marshal(record.EventIDs)
+	ids, err := json.Marshal(w.Record.EventIDs)
 	if err != nil {
 		return store.ErrInvalid
 	}
-	at = at.UTC()
+	keywords, err := json.Marshal(nonNil(w.Keywords))
+	if err != nil {
+		return store.ErrInvalid
+	}
+	at := w.At.UTC()
+	var nextRetry any
+	if !w.NextRetryAt.IsZero() {
+		nextRetry = w.NextRetryAt.UTC()
+	}
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		res := tx.Exec("UPDATE viewer_profiles SET profile_summary=?, summary_updated_at=? WHERE uid=?", summary, at, uid)
+		if err := verifySummarySources(tx, w.UID, w.Sources, w.SourceHash, w.Generator); err != nil {
+			return err
+		}
+		res := tx.Exec(`UPDATE viewer_profiles SET
+  profile_summary=?, summary_updated_at=?,
+  profile_summary_source_hash=?, profile_summary_source_ids=?::jsonb,
+  profile_summary_generator=?, profile_summary_keywords=?::jsonb,
+  summary_attempted_at=?, profile_summary_failures=?, profile_summary_next_retry_at=?,
+  profile_summary_last_success_at=CASE WHEN ? THEN profile_summary_last_success_at ELSE ? END,
+  profile_summary_fallback_at=CASE WHEN ? THEN ? ELSE profile_summary_fallback_at END
+WHERE uid=?`,
+			w.Summary, at, w.SourceHash, string(ids), w.Generator, string(keywords),
+			at, w.Failures, nextRetry,
+			w.Fallback, at, w.Fallback, at, w.UID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -231,24 +286,244 @@ ON CONFLICT (id) DO UPDATE SET
   from_name = COALESCE(EXCLUDED.from_name, memory_records.from_name),
   asserted_by_id = COALESCE(EXCLUDED.asserted_by_id, memory_records.asserted_by_id),
   asserted_by_name = COALESCE(EXCLUDED.asserted_by_name, memory_records.asserted_by_name),
-  subject = COALESCE(EXCLUDED.subject, memory_records.subject)
+  subject = COALESCE(EXCLUDED.subject, memory_records.subject),
+  archived = FALSE
 WHERE memory_records.kind = 'viewer_profile'
   AND EXCLUDED.kind = 'viewer_profile'
   AND memory_records.private = EXCLUDED.private`,
-			record.ID, record.Source, record.Kind, record.Title, record.Summary, record.Body,
-			record.Importance, record.Confidence, record.Private, record.Channel, record.Session,
-			record.ValidFrom, string(ids), record.FromID, record.FromName,
-			record.AssertedByID, record.AssertedByName, record.Subject)
+			w.Record.ID, w.Record.Source, w.Record.Kind, w.Record.Title, w.Record.Summary, w.Record.Body,
+			w.Record.Importance, w.Record.Confidence, w.Record.Private, w.Record.Channel, w.Record.Session,
+			w.Record.ValidFrom, string(ids), w.Record.FromID, w.Record.FromName,
+			w.Record.AssertedByID, w.Record.AssertedByName, w.Record.Subject)
 		if res.Error != nil {
 			return res.Error
 		}
 		if res.RowsAffected != 1 {
 			return errors.New("观众侧写记忆未写入：标识冲突或记录不可覆盖")
 		}
+		// 投影任务与侧写同事务登记：知识文件失败时下轮只补投影，不再付费调模型。
+		res = tx.Exec(`INSERT INTO viewer_summary_jobs(uid,action,attempts,next_retry_at,created_at,updated_at)
+VALUES (?,?,0,clock_timestamp(),clock_timestamp(),clock_timestamp())
+ON CONFLICT (uid) DO UPDATE SET
+  action='publish', attempts=0, next_retry_at=clock_timestamp(), updated_at=clock_timestamp()`,
+			w.UID, store.ViewerSummaryActionPublish)
+		if res.Error != nil {
+			return res.Error
+		}
 		return nil
 	})
 	if err != nil {
 		return &safeError{"保存观众侧写失败", err}
+	}
+	return nil
+}
+
+// DeferProfileSummary 记录一次保留旧版本后的失败与补偿时间。
+//
+// 只推进尝试/失败/重试状态，不改 profile_summary 与 summary_updated_at，
+// 旧的好版本继续供注入使用；NextRetryAt 为零表示达到重试上限，等新发言再试。
+func (r *ViewerRepo) DeferProfileSummary(ctx context.Context, d store.ViewerSummaryDefer) error {
+	if ctx == nil {
+		return store.ErrInvalid
+	}
+	if err := d.Validate(); err != nil {
+		return err
+	}
+	var nextRetry any
+	if !d.NextRetryAt.IsZero() {
+		nextRetry = d.NextRetryAt.UTC()
+	}
+	res := r.db.WithContext(ctx).Exec(`UPDATE viewer_profiles SET
+  summary_attempted_at=?, profile_summary_failures=?, profile_summary_next_retry_at=?
+WHERE uid=?`, d.At.UTC(), d.Failures, nextRetry, d.UID)
+	if res.Error != nil {
+		return &safeError{"记录观众侧写失败状态", res.Error}
+	}
+	if res.RowsAffected != 1 {
+		return fmt.Errorf("观众档案不存在: %w", store.ErrViewerNotFound)
+	}
+	return nil
+}
+
+// summarySourceRow 是来源 CAS 校验用的事件行。
+type summarySourceRow struct {
+	ID      string
+	Text    string
+	Dir     string
+	Channel string
+	FromID  string
+	Private bool
+	At      time.Time
+}
+
+// verifySummarySources 在事务内重查并重算来源指纹；任何不一致都视为来源已变。
+func verifySummarySources(tx *gorm.DB, uid string, sources []store.ViewerSummarySource, sourceHash, generator string) error {
+	ids := make([]string, 0, len(sources))
+	for _, source := range sources {
+		ids = append(ids, source.ID)
+	}
+	raw, err := json.Marshal(ids)
+	if err != nil {
+		return store.ErrInvalid
+	}
+	var rows []summarySourceRow
+	err = tx.Raw(`SELECT id,text,dir,channel,from_id,private,at FROM events
+WHERE id IN (SELECT jsonb_array_elements_text(?::jsonb))`, string(raw)).Scan(&rows).Error
+	if err != nil {
+		return err
+	}
+	if len(rows) != len(sources) {
+		return store.ErrViewerSourceChanged
+	}
+	actual := make(map[string]summarySourceRow, len(rows))
+	for _, row := range rows {
+		actual[row.ID] = row
+	}
+	checked := make([]store.ViewerSummarySource, 0, len(sources))
+	for _, source := range sources {
+		row, ok := actual[source.ID]
+		if !ok || row.Dir != string(event.DirIn) || row.Private ||
+			row.Channel == string(event.ChDM) || row.FromID != uid {
+			return store.ErrViewerSourceChanged
+		}
+		checked = append(checked, store.ViewerSummarySource{ID: row.ID, Text: row.Text, At: row.At})
+	}
+	if store.ViewerSummarySourceHash(uid, generator, checked) != sourceHash {
+		return store.ErrViewerSourceChanged
+	}
+	return nil
+}
+
+// revokeSummarySQL 把来源失效的侧写清空，并把 UID 收进调用方的事务临时表。
+//
+// 没有来源指纹的旧侧写（迁移前生成）也视为失效：无法验证来源就不应继续公开。
+const revokeSummarySQL = `
+WITH bad AS (
+    SELECT vp.uid
+    FROM viewer_profiles vp
+    WHERE vp.profile_summary <> ''
+      AND (
+        vp.profile_summary_source_hash = ''
+        OR vp.profile_summary_generator = ''
+        OR jsonb_array_length(vp.profile_summary_source_ids) = 0
+        OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(vp.profile_summary_source_ids) AS s(eid)
+            LEFT JOIN events e ON e.id = s.eid
+            WHERE e.id IS NULL OR e.private OR e.channel = 'dm'
+               OR e.dir <> 'in' OR COALESCE(e.from_id, '') <> vp.uid
+        )
+      )
+), cleared AS (
+    UPDATE viewer_profiles vp SET
+      profile_summary = '', summary_updated_at = NULL,
+      profile_summary_source_hash = '', profile_summary_source_ids = '[]'::jsonb,
+      profile_summary_generator = '', profile_summary_keywords = '[]'::jsonb,
+      profile_summary_last_success_at = NULL, profile_summary_fallback_at = NULL,
+      profile_summary_failures = 0, profile_summary_next_retry_at = NULL,
+      summary_attempted_at = NULL
+    FROM bad
+    WHERE vp.uid = bad.uid
+    RETURNING vp.uid
+)
+INSERT INTO viewer_summary_revoked(uid)
+SELECT uid FROM cleared
+ON CONFLICT (uid) DO NOTHING`
+
+// finalizeRevokedSummaries 在事务内归档被撤回的记忆并登记 purge 投影任务，返回 UID。
+func finalizeRevokedSummaries(tx *gorm.DB) ([]string, error) {
+	if err := tx.Exec(`UPDATE memory_records SET archived = TRUE
+WHERE id IN (SELECT 'viewer-profile:' || uid FROM viewer_summary_revoked) AND NOT archived`).Error; err != nil {
+		return nil, err
+	}
+	if err := tx.Exec(`INSERT INTO viewer_summary_jobs(uid,action,attempts,next_retry_at,created_at,updated_at)
+SELECT uid, 'purge', 0, clock_timestamp(), clock_timestamp(), clock_timestamp()
+FROM viewer_summary_revoked
+ON CONFLICT (uid) DO UPDATE SET
+  action = 'purge', attempts = 0, next_retry_at = clock_timestamp(), updated_at = clock_timestamp()`).Error; err != nil {
+		return nil, err
+	}
+	var revoked []string
+	if err := tx.Raw("SELECT uid FROM viewer_summary_revoked ORDER BY uid").Scan(&revoked).Error; err != nil {
+		return nil, err
+	}
+	return revoked, nil
+}
+
+// RevokeInvalidSummaries 扫描来源已失效的侧写并立即让其不可见。
+//
+// 可见性在同一个事务里切换：清空档案侧写、归档记忆行；知识文件与向量由
+// purge 投影任务异步清理（调用方负责处理任务）。
+func (r *ViewerRepo) RevokeInvalidSummaries(ctx context.Context) ([]string, error) {
+	if ctx == nil {
+		return nil, store.ErrInvalid
+	}
+	var revoked []string
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("CREATE TEMP TABLE IF NOT EXISTS viewer_summary_revoked(uid TEXT PRIMARY KEY) ON COMMIT DROP").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("DELETE FROM viewer_summary_revoked").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(revokeSummarySQL).Error; err != nil {
+			return err
+		}
+		var err error
+		revoked, err = finalizeRevokedSummaries(tx)
+		return err
+	})
+	if err != nil {
+		return nil, &safeError{"撤回失效观众侧写失败", err}
+	}
+	return revoked, nil
+}
+
+// PendingSummaryJobs 取到期投影任务；purge 优先于 publish，避免撤回后又被旧任务写回。
+func (r *ViewerRepo) PendingSummaryJobs(ctx context.Context, now time.Time, limit int) ([]store.ViewerSummaryJob, error) {
+	if ctx == nil || now.IsZero() || limit < 1 || limit > 500 {
+		return nil, store.ErrInvalid
+	}
+	var rows []struct {
+		UID      string
+		Action   string
+		Attempts int
+	}
+	err := r.db.WithContext(ctx).Table("viewer_summary_jobs").
+		Select("uid, action, attempts").
+		Where("next_retry_at <= ?", now.UTC()).
+		Order("CASE action WHEN 'purge' THEN 0 ELSE 1 END, next_retry_at ASC, uid ASC").
+		Limit(limit).Find(&rows).Error
+	if err != nil {
+		return nil, &safeError{"读取观众侧写投影任务失败", err}
+	}
+	out := make([]store.ViewerSummaryJob, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, store.ViewerSummaryJob{UID: row.UID, Action: row.Action, Attempts: row.Attempts})
+	}
+	return out, nil
+}
+
+// FinishSummaryJob 删除已完成的投影任务；动作已被覆盖（如 publish→purge）时视为已处理。
+func (r *ViewerRepo) FinishSummaryJob(ctx context.Context, uid, action string) error {
+	if ctx == nil || strings.TrimSpace(uid) == "" {
+		return store.ErrInvalid
+	}
+	if err := r.db.WithContext(ctx).Exec("DELETE FROM viewer_summary_jobs WHERE uid=? AND action=?", uid, action).Error; err != nil {
+		return &safeError{"完成观众侧写投影任务失败", err}
+	}
+	return nil
+}
+
+// FailSummaryJob 记录投影失败并推迟下次重试；动作已被覆盖时不覆盖新任务。
+func (r *ViewerRepo) FailSummaryJob(ctx context.Context, uid, action string, attempts int, nextRetry time.Time) error {
+	if ctx == nil || strings.TrimSpace(uid) == "" || attempts < 1 || nextRetry.IsZero() {
+		return store.ErrInvalid
+	}
+	if err := r.db.WithContext(ctx).Exec(`UPDATE viewer_summary_jobs
+SET attempts=?, next_retry_at=?, updated_at=clock_timestamp()
+WHERE uid=? AND action=?`, attempts, nextRetry.UTC(), uid, action).Error; err != nil {
+		return &safeError{"记录观众侧写投影失败失败", err}
 	}
 	return nil
 }
@@ -272,8 +547,13 @@ WITH inbound AS (
       AND COALESCE(from_id, '') <> '' AND COALESCE(text, '') <> ''
     GROUP BY from_id
     HAVING COUNT(*) >= ?
+), deleted AS (
+    DELETE FROM viewer_profiles WHERE uid NOT IN (SELECT uid FROM inbound)
+    RETURNING uid
 )
-DELETE FROM viewer_profiles WHERE uid NOT IN (SELECT uid FROM inbound)`
+INSERT INTO viewer_summary_revoked(uid)
+SELECT uid FROM deleted
+ON CONFLICT (uid) DO NOTHING`
 	const upsertSQL = `
 WITH inbound AS (
     SELECT from_id AS uid,
@@ -363,9 +643,16 @@ ON CONFLICT (uid) DO UPDATE SET
     THEN NULL ELSE viewer_profiles.interaction_embedding_updated_at END,
   updated_at = clock_timestamp()`
 	profiles := 0
+	var revoked []string
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("CREATE TEMP TABLE IF NOT EXISTS viewer_summary_revoked(uid TEXT PRIMARY KEY) ON COMMIT DROP").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("DELETE FROM viewer_summary_revoked").Error; err != nil {
+			return err
+		}
 		// 先删不符合公开门槛的旧档案：历史私密来源混入后不再达标的人必须消失，
-		// 其向量随行删除，不能只是「以后不读」。
+		// 其向量随行删除，不能只是「以后不读」；同时登记知识条目清理任务。
 		if res := tx.Exec(cleanupSQL, opts.MinHits); res.Error != nil {
 			return res.Error
 		}
@@ -374,12 +661,18 @@ ON CONFLICT (uid) DO UPDATE SET
 			return res.Error
 		}
 		profiles = int(res.RowsAffected)
-		return nil
+		// 存活档案也要校验侧写来源：来源事件被撤回/改密后，派生内容必须立即不可见。
+		if res := tx.Exec(revokeSummarySQL); res.Error != nil {
+			return res.Error
+		}
+		var err error
+		revoked, err = finalizeRevokedSummaries(tx)
+		return err
 	})
 	if err != nil {
 		return store.ViewerRebuildStats{}, &safeError{"重建观众档案失败", err}
 	}
-	return store.ViewerRebuildStats{Profiles: profiles}, nil
+	return store.ViewerRebuildStats{Profiles: profiles, Revoked: revoked}, nil
 }
 
 func nonNil(v []string) []string {

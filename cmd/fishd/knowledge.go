@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/config"
@@ -24,10 +25,15 @@ type knowledgeDiagnostic struct {
 type knowledgeAssembly struct {
 	Reader knowledge.Reader
 	// Base 始终指向文件快照；热重载与定时增量只操作它，语义包装不改变快照生命周期。
-	Base       *knowledge.FileReader
-	Embedder   knowledge.Embedder
-	Store      knowledge.EmbeddingStore
-	Diagnostic knowledgeDiagnostic
+	Base     *knowledge.FileReader
+	Embedder knowledge.Embedder
+	Store    knowledge.EmbeddingStore
+	// Fingerprint 是当前 embedding 配置的向量空间指纹，检索与增量共用。
+	Fingerprint string
+	// ViewerWriter 是 viewers.md 的进程内唯一写入口：
+	// 侧写任务与档案撤回清理共用，避免两个写器互相覆盖。
+	ViewerWriter *knowledge.ViewerWriter
+	Diagnostic   knowledgeDiagnostic
 }
 
 type knowledgeSetupError struct{ cause error }
@@ -63,6 +69,12 @@ func buildKnowledge(ctx context.Context, cfg config.Knowledge) (knowledgeAssembl
 	result.Diagnostic.Assembled = true
 	result.Diagnostic.Revision = info.Revision
 	result.Diagnostic.Entries = info.Entries
+	// 写器构造只校验目录非空；真正读写时再检查文件。
+	if strings.TrimSpace(cfg.Dir) != "" {
+		if writer, werr := knowledge.NewViewerWriter(cfg.Dir); werr == nil {
+			result.ViewerWriter = writer
+		}
+	}
 	return result, nil
 }
 

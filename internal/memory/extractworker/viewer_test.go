@@ -14,6 +14,7 @@ import (
 type fakeProfiles struct {
 	active       bool
 	profiles     int
+	revoked      []string
 	activeErr    error
 	rebuildErr   error
 	activeCalls  int
@@ -27,7 +28,19 @@ func (f *fakeProfiles) ActiveSince(context.Context, time.Time) (bool, error) {
 
 func (f *fakeProfiles) RebuildProfiles(context.Context, store.ViewerRebuildOptions) (store.ViewerRebuildStats, error) {
 	f.rebuildCalls++
-	return store.ViewerRebuildStats{Profiles: f.profiles}, f.rebuildErr
+	return store.ViewerRebuildStats{Profiles: f.profiles, Revoked: f.revoked}, f.rebuildErr
+}
+
+type fakeProjection struct {
+	purged []string
+	err    error
+	calls  int
+}
+
+func (f *fakeProjection) PurgeViewers(_ context.Context, uids []string) error {
+	f.calls++
+	f.purged = append(f.purged, uids...)
+	return f.err
 }
 
 func newProfileWorker(p ProfileSource, now *time.Time) *Worker {
@@ -119,5 +132,54 @@ func TestRebuildProfilesNilSource(t *testing.T) {
 	w.rebuildProfiles(context.Background(), &stats)
 	if stats.ProfileSkipped != "none" || stats.ProfilesRebuilt != -1 {
 		t.Fatalf("未装配时应跳过：%+v", stats)
+	}
+}
+
+// TestRebuildProfilesPurgesRevoked 撤回档案后同步清理公开知识条目；失败不影响重建结果。
+func TestRebuildProfilesPurgesRevoked(t *testing.T) {
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	src := &fakeProfiles{active: true, profiles: 2, revoked: []string{"42", "43"}}
+	projection := &fakeProjection{}
+	w := newProfileWorker(src, &now)
+	w.opts.Projection = projection
+
+	var stats Stats
+	w.rebuildProfiles(context.Background(), &stats)
+	if stats.ProfilesRebuilt != 2 || stats.ProfilesRevoked != 2 || stats.ProfileProjection != "done" {
+		t.Fatalf("撤回统计不符：%+v", stats)
+	}
+	if projection.calls != 1 || len(projection.purged) != 2 || projection.purged[0] != "42" {
+		t.Fatalf("未清理撤回观众的知识条目：%+v", projection)
+	}
+
+	// 投影失败：重建结果保留，只标记 failed，下轮由侧写循环补投。
+	now = now.Add(2 * time.Hour)
+	projection.err = errors.New("文件坏了")
+	src.revoked = []string{"44"}
+	var second Stats
+	w.rebuildProfiles(context.Background(), &second)
+	if second.ProfilesRebuilt != 2 || second.ProfilesRevoked != 1 || second.ProfileProjection != "failed" {
+		t.Fatalf("投影失败不应影响重建：%+v", second)
+	}
+
+	// 没装配投影：照样记录撤回数量，标记 none。
+	now = now.Add(2 * time.Hour)
+	w.opts.Projection = nil
+	src.revoked = []string{"45"}
+	var third Stats
+	w.rebuildProfiles(context.Background(), &third)
+	if third.ProfilesRevoked != 1 || third.ProfileProjection != "none" {
+		t.Fatalf("未装配投影时统计不符：%+v", third)
+	}
+
+	// 没有撤回：不调用投影。
+	now = now.Add(2 * time.Hour)
+	src.revoked = nil
+	projection2 := &fakeProjection{}
+	w.opts.Projection = projection2
+	var fourth Stats
+	w.rebuildProfiles(context.Background(), &fourth)
+	if fourth.ProfilesRevoked != 0 || projection2.calls != 0 {
+		t.Fatalf("无撤回不应调用投影：%+v calls=%d", fourth, projection2.calls)
 	}
 }

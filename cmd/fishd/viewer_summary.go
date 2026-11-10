@@ -44,13 +44,40 @@ func (a viewerKnowledgeAdapter) UpsertViewer(ctx context.Context, view viewer.Su
 		return errors.New("观众知识写入器未装配")
 	}
 	return a.writer.Upsert(ctx, knowledge.ViewerEntry{
-		UID:       view.UID,
-		Name:      view.Name,
-		Summary:   view.Summary,
-		Stats:     view.Stats,
-		Keywords:  view.Keywords,
-		UpdatedAt: view.UpdatedAt,
+		UID:        view.UID,
+		Name:       view.Name,
+		Summary:    view.Summary,
+		Stats:      view.Stats,
+		Keywords:   view.Keywords,
+		UpdatedAt:  view.UpdatedAt,
+		SourceHash: view.SourceHash,
+		Generator:  view.Generator,
 	})
+}
+
+func (a viewerKnowledgeAdapter) RemoveViewer(ctx context.Context, uid string) error {
+	if a.writer == nil {
+		return errors.New("观众知识写入器未装配")
+	}
+	return a.writer.Remove(ctx, uid)
+}
+
+// viewerPurgeProjection 在档案重建撤回观众后同步清理 viewers.md 自动条目。
+type viewerPurgeProjection struct {
+	writer *knowledge.ViewerWriter
+}
+
+func (p viewerPurgeProjection) PurgeViewers(ctx context.Context, uids []string) error {
+	if p.writer == nil {
+		return errors.New("观众知识写入器未装配")
+	}
+	var failures []error
+	for _, uid := range uids {
+		if err := p.writer.Remove(ctx, uid); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
 }
 
 // newViewerSummarizer 装配侧写器；LLM 或知识库缺失只降级，不阻止任务启动。
@@ -90,12 +117,19 @@ func newViewerSummarizer(cfg config.Config, db *gorm.DB, runtime knowledgeAssemb
 
 	var views viewer.SummaryKnowledge
 	if cfg.Knowledge.Enabled && runtime.Reader != nil && strings.TrimSpace(cfg.Knowledge.Dir) != "" {
-		writer, werr := knowledge.NewViewerWriter(cfg.Knowledge.Dir)
-		if werr != nil {
-			if logger != nil {
-				logger.Warn("观众侧写知识写入器装配失败，跳过 viewers.md", zap.String("action", viewerSummaryAction), zap.Error(werr))
+		// 生产路径复用 main 装配的唯一写器；测试等直接调用时再按目录兜底构造。
+		writer := runtime.ViewerWriter
+		if writer == nil {
+			built, werr := knowledge.NewViewerWriter(cfg.Knowledge.Dir)
+			if werr != nil {
+				if logger != nil {
+					logger.Warn("观众侧写知识写入器装配失败，跳过 viewers.md", zap.String("action", viewerSummaryAction), zap.Error(werr))
+				}
+			} else {
+				writer = built
 			}
-		} else {
+		}
+		if writer != nil {
 			views = viewerKnowledgeAdapter{writer: writer}
 		}
 	}
@@ -153,21 +187,29 @@ func startViewerSummaryLoop(ctx context.Context, worker viewerSummaryWorker, int
 func runViewerSummary(ctx context.Context, worker viewerSummaryWorker, interval time.Duration, logger *zap.Logger) {
 	runOnce := func() {
 		stats, err := worker.RunOnce(ctx)
-		if err != nil {
-			if ctx.Err() == nil {
-				logger.Error("观众侧写本轮有失败", zap.String("action", viewerSummaryAction), zap.Error(err))
-			}
-			return
-		}
-		logger.Info("观众侧写完成",
+		fields := []zap.Field{
 			zap.String("action", viewerSummaryAction),
 			zap.Int("candidates", stats.Candidates),
 			zap.Int("summarized", stats.Summarized),
 			zap.Int("fallback", stats.Fallback),
+			zap.Int("retained", stats.Retained),
+			zap.Int("revoked", stats.Revoked),
+			zap.Int("source_changed", stats.SourceChanged),
 			zap.Int("skipped", stats.Skipped),
 			zap.Int("failed", stats.Failed),
 			zap.Int("knowledge", stats.Knowledge),
-		)
+			zap.Int("projections", stats.Projections),
+			zap.Int("purged", stats.Purged),
+			zap.Int("projection_failed", stats.ProjectionFailed),
+			zap.Int("pending_jobs", stats.PendingJobs),
+		}
+		if err != nil {
+			if ctx.Err() == nil {
+				logger.Error("观众侧写本轮有失败", append(fields, zap.Error(err))...)
+			}
+			return
+		}
+		logger.Info("观众侧写完成", fields...)
 	}
 	runOnce()
 

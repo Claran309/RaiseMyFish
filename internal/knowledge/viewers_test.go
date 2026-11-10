@@ -13,12 +13,14 @@ import (
 
 func viewerTestEntry() ViewerEntry {
 	return ViewerEntry{
-		UID:       "42",
-		Name:      "白饭哥",
-		Summary:   "性格：话痨；偏好：猫猫；口头禅：绷不住了；关系：常被鱼回；最近话题：白饭",
-		Stats:     "说过 12 次 / 鱼回过 3 次 / 最后出现 2026-11-10",
-		Keywords:  []string{"绷不住了", "猫猫"},
-		UpdatedAt: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC),
+		UID:        "42",
+		Name:       "白饭哥",
+		Summary:    "性格：话痨；偏好：猫猫；口头禅：绷不住了；关系：常被鱼回；最近话题：白饭",
+		Stats:      "说过 12 次 / 鱼回过 3 次 / 最后出现 2026-11-10",
+		Keywords:   []string{"绷不住了", "猫猫"},
+		UpdatedAt:  time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC),
+		SourceHash: strings.Repeat("ab", 32),
+		Generator:  "viewer-summary/v2",
 	}
 }
 
@@ -62,6 +64,9 @@ func TestViewerWriterUpsertAndReload(t *testing.T) {
 	}
 	if !strings.Contains(e.summary, "统计：说过 12 次") || !strings.Contains(e.summary, "2026-11-10") {
 		t.Fatalf("统计或侧写日期未写入 summary：%q", e.summary)
+	}
+	if !strings.Contains(e.summary, "来源版本：viewer-summary/v2/abababababab") {
+		t.Fatalf("来源版本未写入 summary：%q", e.summary)
 	}
 	if strings.Contains(e.summary, input.UID) || strings.Contains(e.usage, input.UID) {
 		t.Fatal("公开知识条目不应包含 UID 明文")
@@ -236,4 +241,112 @@ func TestViewerDiskEntryWireShape(t *testing.T) {
 	if decoded.Schema != "fish-knowledge/v1" || decoded.Entries == nil {
 		t.Fatalf("编码后的 schema/entries 不符：%+v", decoded)
 	}
+}
+
+// TestViewerWriterRemove 撤回只删自动条目，人工条目与说明保留；重复删除幂等。
+func TestViewerWriterRemove(t *testing.T) {
+	dir := knowledgeDir(t)
+	manual := testEntry("viewer-manual-2", "人工观众")
+	manual.Source = "manual:test"
+	manual.Summary = "人工资料"
+	writeEmbeddingEntries(t, dir, "viewers.md", manual)
+
+	writer, err := NewViewerWriter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := viewerTestEntry()
+	if err := writer.Upsert(context.Background(), entry); err != nil {
+		t.Fatal(err)
+	}
+
+	id := viewerKnowledgeID(entry.UID)
+	if err := writer.Remove(context.Background(), entry.UID); err != nil {
+		t.Fatal(err)
+	}
+	reader := embeddingReader(t, dir)
+	for _, item := range reader.current().entries {
+		if item.item.ID == id {
+			t.Fatalf("自动条目未删除：%+v", item)
+		}
+	}
+	if _, ok := findOptionalEntry(reader, "viewer-manual-2"); !ok {
+		t.Fatal("人工条目被误删")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, viewerKnowledgeFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "禁止把私信、私密画像或合成测试人物写入此公开知识文件") {
+		t.Fatalf("自动维护说明丢失：%s", data)
+	}
+	// 再次删除：幂等成功。
+	if err := writer.Remove(context.Background(), entry.UID); err != nil {
+		t.Fatalf("重复删除应幂等：%v", err)
+	}
+	// 空目录删除：文件不存在也幂等成功。
+	empty, err := NewViewerWriter(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := empty.Remove(context.Background(), "42"); err != nil {
+		t.Fatalf("不存在文件时删除应幂等：%v", err)
+	}
+}
+
+// TestViewerWriterRemoveKeepsManualSquatter 人工占用同 ID 时不能被自动撤回删掉。
+func TestViewerWriterRemoveKeepsManualSquatter(t *testing.T) {
+	dir := knowledgeDir(t)
+	id := viewerKnowledgeID("42")
+	squatted := testEntry(id, "人工占位")
+	squatted.Source = "manual:test"
+	squatted.Summary = "人工资料"
+	writeEmbeddingEntries(t, dir, "viewers.md", squatted)
+
+	writer, err := NewViewerWriter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Remove(context.Background(), "42"); err != nil {
+		t.Fatal(err)
+	}
+	reader := embeddingReader(t, dir)
+	if _, ok := findOptionalEntry(reader, id); !ok {
+		t.Fatal("人工占用的同 ID 条目被误删")
+	}
+}
+
+// TestViewerWriterRemoveInvalidFile 文件不可解析时拒绝改写，旧文件保持原样。
+func TestViewerWriterRemoveInvalidFile(t *testing.T) {
+	dir := knowledgeDir(t)
+	writeKnowledge(t, dir, "viewers.md", "这不是 YAML")
+	writer, err := NewViewerWriter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Remove(context.Background(), "42"); err == nil {
+		t.Fatal("已有文件不可解析时应拒绝删除")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, viewerKnowledgeFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "这不是 YAML" {
+		t.Fatalf("解析失败时不应改写旧文件：%q", data)
+	}
+	if err := writer.Remove(nil, "42"); err == nil {
+		t.Fatal("nil ctx 应拒绝")
+	}
+	if err := writer.Remove(context.Background(), " "); err == nil {
+		t.Fatal("空 UID 应拒绝")
+	}
+}
+
+func findOptionalEntry(reader *FileReader, id string) (entry, bool) {
+	for _, e := range reader.current().entries {
+		if e.item.ID == id {
+			return e, true
+		}
+	}
+	return entry{}, false
 }

@@ -122,6 +122,16 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取观众侧写迁移：%w", err)
 	}
 	viewerProfileSummaryHash := sha256.Sum256(viewerProfileSummary)
+	sendWireSnapshot, err := migrations.Files.ReadFile("0018_send_wire_snapshot.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取发送快照迁移：%w", err)
+	}
+	sendWireSnapshotHash := sha256.Sum256(sendWireSnapshot)
+	viewerSummaryState, err := migrations.Files.ReadFile("0019_viewer_summary_state.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取观众侧写状态迁移：%w", err)
+	}
+	viewerSummaryStateHash := sha256.Sum256(viewerSummaryState)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -140,6 +150,8 @@ func migrationSteps() ([]migrationStep, error) {
 		{15, string(knowledgeEmbeddingIndexState), hex.EncodeToString(knowledgeEmbeddingIndexStateHash[:])},
 		{16, string(usageCallMeta), hex.EncodeToString(usageCallMetaHash[:])},
 		{17, string(viewerProfileSummary), hex.EncodeToString(viewerProfileSummaryHash[:])},
+		{18, string(sendWireSnapshot), hex.EncodeToString(sendWireSnapshotHash[:])},
+		{19, string(viewerSummaryState), hex.EncodeToString(viewerSummaryStateHash[:])},
 	}, nil
 }
 
@@ -268,6 +280,15 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	}
 	if err := db.Exec("SELECT profile_summary,summary_updated_at FROM " + table("viewer_profiles") + " LIMIT 0").Error; err != nil {
 		return &safeError{"观众侧写字段不完整", err}
+	}
+	if err := db.Exec("SELECT profile_summary_source_hash,profile_summary_source_ids,profile_summary_generator,profile_summary_keywords,profile_summary_last_success_at,profile_summary_fallback_at,profile_summary_failures,profile_summary_next_retry_at,summary_attempted_at FROM " + table("viewer_profiles") + " LIMIT 0").Error; err != nil {
+		return &safeError{"观众侧写来源状态字段不完整", err}
+	}
+	if err := db.Exec("SELECT uid,action,attempts,next_retry_at,created_at,updated_at FROM " + table("viewer_summary_jobs") + " LIMIT 0").Error; err != nil {
+		return &safeError{"观众侧写投影任务表不完整", err}
+	}
+	if err := db.Exec("SELECT reply_mid,reply_name,text_version FROM " + table("send_plans") + " LIMIT 0").Error; err != nil {
+		return &safeError{"发送快照字段不完整", err}
 	}
 	if err := db.Exec("SELECT id,mid,name,cookie,csrf,status,last_check,note,is_active FROM " + table("accounts") + " LIMIT 0").Error; err != nil {
 		return &safeError{"账号管理表不完整", err}

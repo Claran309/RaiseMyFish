@@ -4,6 +4,7 @@ package database
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strconv"
@@ -133,6 +134,107 @@ func TestSendPrepareArmAuditAndRecovery(t *testing.T) {
 	}
 	if out.ID != "live:out:123:"+a.ID || out.FromID != "456" || out.ReplyTo != c.Event.ID || out.Private || out.Status != event.StatusDone {
 		t.Fatal("公开审计快照不正确")
+	}
+}
+
+// TestSendWireSnapshotConsistent 验证 Prepare/Open/Verify/out 使用同一份落库快照：
+// 计划文本、SHA、结构化目标与 out 审计全部一致。
+func TestSendWireSnapshotConsistent(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	r := sendRepo(t, db)
+	c := sendFixture(t, db, ctx, "live:123:wire", "123")
+	if err := db.Exec(`UPDATE events SET from_id='123', from_name='弓长三益', meta='{"reply_to_id":"8","reply_to_name":"大肥鱼"}' WHERE id=?`, c.Event.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	a, err := r.Prepare(ctx, c, sendReply("123", "@弓长三益 收到"), "456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Text != "收到" || a.ReplyMID != "123" || a.ReplyName != "弓长三益" {
+		t.Fatalf("Prepare 快照=%q/%q/%q", a.Text, a.ReplyMID, a.ReplyName)
+	}
+	var p sendPlan
+	if err := db.Table("send_plans").Where("event_id=?", c.Event.ID).Take(&p).Error; err != nil {
+		t.Fatal(err)
+	}
+	if p.Text != "收到" || p.ReplyMID != "123" || p.ReplyName != "弓长三益" || p.TextVersion != sendTextVersion {
+		t.Fatalf("落库快照=%+v", p)
+	}
+	if p.TextSHA != fmt.Sprintf("%x", sha256.Sum256([]byte("收到"))) {
+		t.Fatal("SHA 不是 wire text 的哈希")
+	}
+	// 同一原始回复重试必须命中同一快照，而不是被「@前缀 vs wire」误判为换正文。
+	if _, err := r.Prepare(ctx, c, sendReply("123", "@弓长三益 收到"), "456"); err != nil {
+		t.Fatal("同快照重试被拒绝：", err)
+	}
+	if _, err := r.Prepare(ctx, c, sendReply("123", "@弓长三益 换正文"), "456"); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("不可变快照被换正文", err)
+	}
+	if _, err := r.Arm(ctx, c, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	v := sender.Verdict{Origin: sender.OriginVerify, Outcome: sender.OutcomeAccepted, Verified: true, MsgID: "777", Evidence: "history_nonce"}
+	if _, err := r.Settle(ctx, c, a.ID, v); err != nil {
+		t.Fatal(err)
+	}
+	var out eventRow
+	if err := db.Table("events").Where("dir='out'").Take(&out).Error; err != nil {
+		t.Fatal(err)
+	}
+	if out.Text != "收到" {
+		t.Fatalf("out 文本=%q，期望 wire text", out.Text)
+	}
+}
+
+// TestSendLegacyPlanSnapshotOnLoad 验证升级前的 v1 计划不改写持久行，
+// 但恢复时按创建版本派生同一份快照，out 与 wire 一致。
+func TestSendLegacyPlanSnapshotOnLoad(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	r := sendRepo(t, db)
+	c := sendFixture(t, db, ctx, "live:123:legacy", "123")
+	if err := db.Exec(`UPDATE events SET from_id='123', from_name='弓长三益', meta='{"reply_to_id":"8","reply_to_name":"大肥鱼"}' WHERE id=?`, c.Event.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	a, err := r.Prepare(ctx, c, sendReply("123", "@弓长三益 收到"), "456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟升级前落库的计划：原文带 @、v1、无结构化目标、SHA 也按原文。
+	legacy := "@弓长三益 收到"
+	legacySHA := fmt.Sprintf("%x", sha256.Sum256([]byte(legacy)))
+	if err := db.Exec("UPDATE send_plans SET text=?, text_sha=?, text_version=1, reply_mid='', reply_name='' WHERE event_id=?", legacy, legacySHA, c.Event.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("UPDATE send_attempts SET text_sha=? WHERE event_id=?", legacySHA, c.Event.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := r.Load(ctx, c, "456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ID != a.ID || loaded.Text != "收到" || loaded.ReplyMID != "123" || loaded.ReplyName != "弓长三益" {
+		t.Fatalf("旧计划快照=%q/%q/%q", loaded.Text, loaded.ReplyMID, loaded.ReplyName)
+	}
+	var p sendPlan
+	if err := db.Table("send_plans").Where("event_id=?", c.Event.ID).Take(&p).Error; err != nil {
+		t.Fatal(err)
+	}
+	if p.Text != legacy || p.TextVersion != 1 || p.ReplyMID != "" || p.ReplyName != "" {
+		t.Fatalf("旧计划被改写：%+v", p)
+	}
+	if _, err := r.Arm(ctx, c, loaded.ID); err != nil {
+		t.Fatal(err)
+	}
+	v := sender.Verdict{Origin: sender.OriginVerify, Outcome: sender.OutcomeAccepted, Verified: true, MsgID: "778", Evidence: "history_nonce"}
+	if _, err := r.Settle(ctx, c, loaded.ID, v); err != nil {
+		t.Fatal(err)
+	}
+	var out eventRow
+	if err := db.Table("events").Where("dir='out'").Take(&out).Error; err != nil {
+		t.Fatal(err)
+	}
+	if out.Text != "收到" {
+		t.Fatalf("旧计划 out 文本=%q，期望派生 wire text", out.Text)
 	}
 }
 

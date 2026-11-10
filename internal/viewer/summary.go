@@ -46,6 +46,11 @@ const (
 	summaryMaxInputRunes       = 80
 	summaryMaxCatchphraseRunes = 20
 	summaryMaxCatchphrases     = 4
+	// summaryRetryBase/Max 是失败补偿的指数退避基线/上限。
+	summaryRetryBase = 10 * time.Minute
+	summaryRetryMax  = 6 * time.Hour
+	// summaryMaxFailures 是同一份来源状态的最大连续尝试次数；达到后等新发言再试。
+	summaryMaxFailures = 5
 )
 
 // SummaryLLM 是侧写任务需要的最小模型能力（由 provider 适配，测试用 mock）。
@@ -60,25 +65,41 @@ type SummaryEventSource interface {
 
 // SummaryStore 是侧写任务需要的档案读写能力。
 type SummaryStore interface {
-	// ActiveViewers 返回本轮待侧写的档案（近期活跃且摘要后没有新发言）。
-	ActiveViewers(ctx context.Context, since time.Time, minHits, limit int) ([]store.ViewerProfile, error)
-	// SaveProfileSummary 同事务写入档案侧写与记忆记录。
-	SaveProfileSummary(ctx context.Context, uid, summary string, at time.Time, record store.MemoryRecord) error
+	// ActiveViewers 返回本轮待侧写的档案（近期活跃、有新发言或补偿重试到期）。
+	ActiveViewers(ctx context.Context, since, now time.Time, minHits, limit int) ([]store.ViewerProfile, error)
+	// GetProfile 按 UID 读档案；投影任务据此取最新侧写。
+	GetProfile(ctx context.Context, uid string) (store.ViewerProfile, error)
+	// SaveProfileSummary 同事务校验来源 CAS，写入档案侧写、记忆记录与投影任务。
+	SaveProfileSummary(ctx context.Context, w store.ViewerSummaryWrite) error
+	// DeferProfileSummary 保留旧版本，只推进失败与补偿状态。
+	DeferProfileSummary(ctx context.Context, d store.ViewerSummaryDefer) error
+	// RevokeInvalidSummaries 让来源已失效的侧写立即不可见，并登记清理任务。
+	RevokeInvalidSummaries(ctx context.Context) ([]string, error)
+	// PendingSummaryJobs 取到期的知识投影任务。
+	PendingSummaryJobs(ctx context.Context, now time.Time, limit int) ([]store.ViewerSummaryJob, error)
+	// FinishSummaryJob 删除已完成的投影任务。
+	FinishSummaryJob(ctx context.Context, uid, action string) error
+	// FailSummaryJob 记录投影失败并安排重试。
+	FailSummaryJob(ctx context.Context, uid, action string, attempts int, nextRetry time.Time) error
 }
 
 // SummaryView 是一份可写入知识库的公开观众侧写。
 type SummaryView struct {
-	UID       string
-	Name      string
-	Summary   string
-	Stats     string
-	Keywords  []string
-	UpdatedAt time.Time
+	UID        string
+	Name       string
+	Summary    string
+	Stats      string
+	Keywords   []string
+	UpdatedAt  time.Time
+	SourceHash string
+	Generator  string
 }
 
 // SummaryKnowledge 把侧写写成公开知识条目；nil 表示跳过知识库。
 type SummaryKnowledge interface {
 	UpsertViewer(ctx context.Context, view SummaryView) error
+	// RemoveViewer 删除某位观众的自动知识条目；人工条目不受影响。
+	RemoveViewer(ctx context.Context, uid string) error
 }
 
 // SummaryOptions 是侧写循环的参数；零值按默认值处理。
@@ -103,6 +124,19 @@ type SummaryStats struct {
 	Skipped    int
 	Failed     int
 	Knowledge  int
+	// Revoked 是来源失效、侧写被撤回的观众数。
+	Revoked int
+	// Retained 是模型失败但保留旧版本、只记录补偿的观众数。
+	Retained int
+	// SourceChanged 是生成后来源被撤回/改密，保存 CAS 拒绝的观众数。
+	SourceChanged int
+	// Projections/Purged 是成功补齐/清理的知识条目数。
+	Projections int
+	Purged      int
+	// ProjectionFailed 是知识投影失败次数（不重新调用模型）。
+	ProjectionFailed int
+	// PendingJobs 是本轮看到的到期投影任务数。
+	PendingJobs int
 }
 
 // Summarizer 串行执行「选人 → 取最近公开弹幕 → 模型侧写/统计降级 → 落库」。
@@ -161,13 +195,29 @@ func (s *Summarizer) RunOnce(ctx context.Context) (SummaryStats, error) {
 	if err := ctx.Err(); err != nil {
 		return stats, err
 	}
-	now := s.opts.Now()
-	candidates, err := s.store.ActiveViewers(ctx, now.Add(-s.opts.Window), s.opts.MinHits, s.opts.MaxPerRun)
+	now := s.opts.Now().UTC()
+
+	// 撤回优先：来源失效的侧写必须在同一轮先不可见，再处理任何投影/生成。
+	revoked, err := s.store.RevokeInvalidSummaries(ctx)
+	if err != nil {
+		return stats, fmt.Errorf("撤回失效观众侧写失败：%w", err)
+	}
+	stats.Revoked = len(revoked)
+
+	// 投影补投只读写数据库与知识文件，不调用模型；失败留待下轮，不阻塞生成。
+	var failures []error
+	if err := s.runProjections(ctx, now, &stats); err != nil {
+		failures = append(failures, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return stats, err
+	}
+
+	candidates, err := s.store.ActiveViewers(ctx, now.Add(-s.opts.Window), now, s.opts.MinHits, s.opts.MaxPerRun)
 	if err != nil {
 		return stats, fmt.Errorf("读取待侧写观众失败：%w", err)
 	}
 	stats.Candidates = len(candidates)
-	var failures []error
 	for _, profile := range candidates {
 		if err := ctx.Err(); err != nil {
 			return stats, err
@@ -180,6 +230,72 @@ func (s *Summarizer) RunOnce(ctx context.Context) (SummaryStats, error) {
 	return stats, errors.Join(failures...)
 }
 
+// runProjections 处理到期的知识投影任务；失败只推迟重试，不重新生成侧写。
+func (s *Summarizer) runProjections(ctx context.Context, now time.Time, stats *SummaryStats) error {
+	if s.knowledge == nil {
+		return nil
+	}
+	jobs, err := s.store.PendingSummaryJobs(ctx, now, s.opts.MaxPerRun)
+	if err != nil {
+		return fmt.Errorf("读取观众侧写投影任务失败：%w", err)
+	}
+	stats.PendingJobs = len(jobs)
+	var failures []error
+	for _, job := range jobs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := job.Validate(); err != nil {
+			failures = append(failures, fmt.Errorf("投影任务无效：%w", err))
+			continue
+		}
+		var jobErr error
+		switch job.Action {
+		case store.ViewerSummaryActionPurge:
+			jobErr = s.knowledge.RemoveViewer(ctx, job.UID)
+			if jobErr == nil {
+				stats.Purged++
+			}
+		case store.ViewerSummaryActionPublish:
+			profile, loadErr := s.store.GetProfile(ctx, job.UID)
+			switch {
+			case errors.Is(loadErr, store.ErrViewerNotFound):
+				jobErr = s.knowledge.RemoveViewer(ctx, job.UID)
+				if jobErr == nil {
+					stats.Purged++
+				}
+			case loadErr != nil:
+				jobErr = loadErr
+			case strings.TrimSpace(profile.ProfileSummary) == "":
+				// 侧写已被撤回：旧任务必须转成清理，不能把过期内容写回。
+				jobErr = s.knowledge.RemoveViewer(ctx, job.UID)
+				if jobErr == nil {
+					stats.Purged++
+				}
+			default:
+				jobErr = s.knowledge.UpsertViewer(ctx, summaryViewFromProfile(profile))
+				if jobErr == nil {
+					stats.Projections++
+					stats.Knowledge++
+				}
+			}
+		}
+		if jobErr != nil {
+			stats.ProjectionFailed++
+			failures = append(failures, fmt.Errorf("观众侧写投影失败：%w", jobErr))
+			attempts := job.Attempts + 1
+			if err := s.store.FailSummaryJob(ctx, job.UID, job.Action, attempts, now.Add(summaryRetryDelay(attempts))); err != nil {
+				failures = append(failures, fmt.Errorf("记录观众侧写投影失败：%w", err))
+			}
+			continue
+		}
+		if err := s.store.FinishSummaryJob(ctx, job.UID, job.Action); err != nil {
+			failures = append(failures, fmt.Errorf("完成观众侧写投影任务失败：%w", err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
 // summarizeOne 侧写一位观众；失败只影响这一位。
 func (s *Summarizer) summarizeOne(ctx context.Context, profile store.ViewerProfile, now time.Time, stats *SummaryStats) error {
 	msgs, err := s.events.ViewerRecent(ctx, profile.UID, s.opts.RecentLimit)
@@ -190,10 +306,44 @@ func (s *Summarizer) summarizeOne(ctx context.Context, profile store.ViewerProfi
 		stats.Skipped++
 		return nil
 	}
-	text, statsText, keywords, fallback := s.buildSummary(ctx, profile, msgs)
+	sources := summarySources(msgs)
+	sourceHash := store.ViewerSummarySourceHash(profile.UID, store.ViewerSummaryGenerator, sources)
+	text, statsText, keywords, fallback, retryable := s.buildSummary(ctx, profile, msgs)
 	at := now.UTC()
+
+	// 已有内容时模型失败不降级覆盖：保留好版本（或首次降级版），只记补偿状态。
+	if fallback && retryable && strings.TrimSpace(profile.ProfileSummary) != "" {
+		failures := profile.SummaryFailures + 1
+		if err := s.store.DeferProfileSummary(ctx, store.ViewerSummaryDefer{
+			UID: profile.UID, At: at, Failures: failures,
+			NextRetryAt: summaryNextRetry(at, failures),
+		}); err != nil {
+			return fmt.Errorf("记录观众侧写失败状态：%w", err)
+		}
+		stats.Retained++
+		return nil
+	}
+
+	failures := 0
+	var nextRetry time.Time
+	if fallback {
+		failures = 1
+		if retryable {
+			nextRetry = summaryNextRetry(at, failures)
+		}
+	}
 	record := summaryMemoryRecord(profile, text, at, msgs, fallback)
-	if err := s.store.SaveProfileSummary(ctx, profile.UID, text, at, record); err != nil {
+	err = s.store.SaveProfileSummary(ctx, store.ViewerSummaryWrite{
+		UID: profile.UID, Summary: text, At: at, Record: record,
+		SourceHash: sourceHash, Sources: sources, Generator: store.ViewerSummaryGenerator,
+		Keywords: keywords, Fallback: fallback, Failures: failures, NextRetryAt: nextRetry,
+	})
+	if err != nil {
+		// 来源在读取与保存之间被撤回/改密：放弃这次派生结果，不重试、不覆盖。
+		if errors.Is(err, store.ErrViewerSourceChanged) {
+			stats.SourceChanged++
+			return nil
+		}
 		return fmt.Errorf("保存观众侧写失败：%w", err)
 	}
 	if fallback {
@@ -204,21 +354,72 @@ func (s *Summarizer) summarizeOne(ctx context.Context, profile store.ViewerProfi
 	if s.knowledge != nil {
 		if err := s.knowledge.UpsertViewer(ctx, SummaryView{
 			UID: profile.UID, Name: profile.Name, Summary: text, Stats: statsText,
-			Keywords: keywords, UpdatedAt: at,
+			Keywords: keywords, UpdatedAt: at, SourceHash: sourceHash, Generator: store.ViewerSummaryGenerator,
 		}); err != nil {
-			return fmt.Errorf("写入观众知识条目失败：%w", err)
+			// 知识失败不回滚档案：投影任务留在库里，下轮只补投影不重付费。
+			stats.ProjectionFailed++
+			return nil
 		}
 		stats.Knowledge++
+		if err := s.store.FinishSummaryJob(ctx, profile.UID, store.ViewerSummaryActionPublish); err != nil {
+			return fmt.Errorf("完成观众知识投影任务失败：%w", err)
+		}
 	}
 	return nil
 }
 
+// summarySources 把最近发言转成来源快照；顺序与模型输入一致。
+func summarySources(msgs []event.Event) []store.ViewerSummarySource {
+	out := make([]store.ViewerSummarySource, 0, len(msgs))
+	for _, msg := range msgs {
+		out = append(out, store.ViewerSummarySource{ID: msg.ID, Text: msg.Text, At: msg.At})
+	}
+	return out
+}
+
+// summaryViewFromProfile 用档案里的最新侧写补投影，不重新生成。
+func summaryViewFromProfile(profile store.ViewerProfile) SummaryView {
+	statsText := fmt.Sprintf("说过 %d 次 / 鱼回过 %d 次 / 最后出现 %s",
+		profile.Hits, profile.Replies, profile.LastSeen.Format("2006-01-02"))
+	return SummaryView{
+		UID: profile.UID, Name: profile.Name, Summary: profile.ProfileSummary,
+		Stats: statsText, Keywords: profile.SummaryKeywords,
+		UpdatedAt: profile.SummaryUpdatedAt, SourceHash: profile.SummarySourceHash,
+		Generator: profile.SummaryGenerator,
+	}
+}
+
+// summaryRetryDelay 是指数退避；超过上限后固定为上限。
+func summaryRetryDelay(failures int) time.Duration {
+	if failures < 1 {
+		failures = 1
+	}
+	shift := failures - 1
+	if shift > 6 {
+		shift = 6
+	}
+	delay := summaryRetryBase << shift
+	if delay <= 0 || delay > summaryRetryMax {
+		return summaryRetryMax
+	}
+	return delay
+}
+
+// summaryNextRetry 返回下一次补偿时间；达到尝试上限返回零值，等新发言再试。
+func summaryNextRetry(now time.Time, failures int) time.Time {
+	if failures >= summaryMaxFailures {
+		return time.Time{}
+	}
+	return now.Add(summaryRetryDelay(failures))
+}
+
 // buildSummary 优先走模型；未配置、调用失败或输出无效时退回统计聚合。
-func (s *Summarizer) buildSummary(ctx context.Context, profile store.ViewerProfile, msgs []event.Event) (text, statsText string, keywords []string, fallback bool) {
+// retryable 表示降级是否由可恢复的模型/输出问题导致：未配置模型时重试没有意义。
+func (s *Summarizer) buildSummary(ctx context.Context, profile store.ViewerProfile, msgs []event.Event) (text, statsText string, keywords []string, fallback, retryable bool) {
 	statsText = fmt.Sprintf("说过 %d 次 / 鱼回过 %d 次 / 最后出现 %s",
 		profile.Hits, profile.Replies, profile.LastSeen.Format("2006-01-02"))
 	if s.llm == nil {
-		return fallbackSummary(msgs, statsText), statsText, []string{profile.Name}, true
+		return fallbackSummary(msgs, statsText), statsText, []string{profile.Name}, true, false
 	}
 	callCtx := llmmeta.WithCall(ctx, llmmeta.Call{
 		Purpose:       llmmeta.PurposeViewerSummary,
@@ -226,17 +427,17 @@ func (s *Summarizer) buildSummary(ctx context.Context, profile store.ViewerProfi
 	})
 	raw, err := s.llm.Complete(callCtx, summaryPrompt, buildSummaryInput(profile, msgs))
 	if err != nil {
-		return fallbackSummary(msgs, statsText), statsText, []string{profile.Name}, true
+		return fallbackSummary(msgs, statsText), statsText, []string{profile.Name}, true, true
 	}
 	content, err := parseSummaryReply(raw)
 	if err != nil {
-		return fallbackSummary(msgs, statsText), statsText, []string{profile.Name}, true
+		return fallbackSummary(msgs, statsText), statsText, []string{profile.Name}, true, true
 	}
 	text = content.text()
 	if text == "" {
-		return fallbackSummary(msgs, statsText), statsText, []string{profile.Name}, true
+		return fallbackSummary(msgs, statsText), statsText, []string{profile.Name}, true, true
 	}
-	return text, statsText, append([]string{profile.Name}, content.catchphraseKeywords()...), false
+	return text, statsText, append([]string{profile.Name}, content.catchphraseKeywords()...), false, false
 }
 
 // summaryPrompt 只要求一行 JSON；身份与隐私判断交给输入侧（只喂公开弹幕）。

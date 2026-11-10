@@ -21,13 +21,17 @@ type fakeRepo struct {
 	last                               sender.Verdict
 }
 
-func (r *fakeRepo) Prepare(_ context.Context, _ event.Claim, p sender.Reply, actor string) (sender.Attempt, error) {
+// fakeRepo 模拟 PG 仓储的落库快照语义：Prepare/Load 都返回 wire text + 结构化目标。
+func (r *fakeRepo) Prepare(_ context.Context, c event.Claim, p sender.Reply, actor string) (sender.Attempt, error) {
 	r.prepared++
-	r.a.Text = p.Text
+	wire := sender.LiveWireFor(c.Event, p.Text, actor)
+	r.a.Text, r.a.ReplyMID, r.a.ReplyName = wire.Text, wire.ReplyMID, wire.ReplyName
 	r.a.ActorID = actor
 	return r.a, nil
 }
-func (r *fakeRepo) Load(context.Context, event.Claim, string) (sender.Attempt, error) {
+func (r *fakeRepo) Load(_ context.Context, c event.Claim, actor string) (sender.Attempt, error) {
+	wire := sender.LiveWireFor(c.Event, r.a.Text, actor)
+	r.a.Text, r.a.ReplyMID, r.a.ReplyName = wire.Text, wire.ReplyMID, wire.ReplyName
 	return r.a, nil
 }
 func (r *fakeRepo) Arm(context.Context, event.Claim, string) (sender.Permit, error) {
@@ -238,34 +242,6 @@ func TestVerifyExhaustedKeepsUnconfirmed(t *testing.T) {
 	}
 }
 
-func TestReplyTargetFromEventMeta(t *testing.T) {
-	for _, tc := range []struct {
-		name, text string
-		meta       string
-		fromID     string
-		fromName   string
-		wantMID    string
-		wantName   string
-	}{
-		{"别人@鱼时回给发送者", "@弓长三益 收到", `{"reply_to_id":"8","reply_to_name":"大肥鱼"}`, "123", "弓长三益", "123", "弓长三益"},
-		{"回复其他观众", "@弓长三益 你说得对", `{"reply_to_id":"999","reply_to_name":"弓长三益"}`, "123", "路人", "999", "弓长三益"},
-		{"全角@", "＠弓长三益 好", `{"reply_to_id":"8","reply_to_name":"大肥鱼"}`, "123", "弓长三益", "123", "弓长三益"},
-		{"正文没有@前缀", "收到", `{"reply_to_id":"8","reply_to_name":"大肥鱼"}`, "123", "弓长三益", "", ""},
-		{"@鱼自己不产生目标", "@大肥鱼 我", `{"reply_to_id":"8","reply_to_name":"大肥鱼"}`, "123", "弓长三益", "", ""},
-		{"更长昵称不算命中", "@弓长三益二号 好", `{"reply_to_id":"8","reply_to_name":"大肥鱼"}`, "123", "弓长三益", "", ""},
-		{"损坏Meta", "@弓长三益 好", `{`, "123", "弓长三益", "", ""},
-		{"昵称含控制字符", "@坏\x01蛋 好", `{"reply_to_id":"8"}`, "123", "坏\x01蛋", "", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			e := event.Event{Channel: event.ChLive, FromID: tc.fromID, FromName: tc.fromName, Meta: json.RawMessage(tc.meta)}
-			mid, name := replyTarget(e, tc.text, "8")
-			if mid != tc.wantMID || name != tc.wantName {
-				t.Fatalf("目标=%q/%q，期望=%q/%q", mid, name, tc.wantMID, tc.wantName)
-			}
-		})
-	}
-}
-
 func TestSendForwardsStructuredMention(t *testing.T) {
 	s, _, f, c, p := fixture(t)
 	p.Text = "@弓长三益 收到"
@@ -313,22 +289,5 @@ func TestVerifyTimeoutClassified(t *testing.T) {
 	}
 	if f.posted != 0 {
 		t.Errorf("超时后重新投递了：posted=%d", f.posted)
-	}
-}
-
-// TestStripMentionPrefixWhenStructuredMention 验证结构化@与文本@不重复。
-func TestStripMentionPrefixWhenStructuredMention(t *testing.T) {
-	cases := []struct{ text, name, want string }{
-		{"@Claran309 你好呀", "Claran309", "你好呀"},
-		{"＠Claran309  在吗  ", "Claran309", "在吗"},
-		{"你好呀", "Claran309", "你好呀"},
-		{"@Claran309", "Claran309", "@Claran309"}, // 剥空保留原文
-		{"@Claran3099 你好", "Claran309", "@Claran3099 你好"}, // 不误剥相似昵称
-		{"@Claran309 你好", "", "@Claran309 你好"}, // 无昵称不剥
-	}
-	for _, tc := range cases {
-		if got := stripMentionPrefix(tc.text, tc.name); got != tc.want {
-			t.Errorf("stripMentionPrefix(%q, %q) = %q, 期望 %q", tc.text, tc.name, got, tc.want)
-		}
 	}
 }

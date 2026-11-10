@@ -154,7 +154,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		return printBrainDiagnostic(*brainRoute, routes, pack, stdout)
 	}
 	// 记忆提炼是增强能力：初始化失败只记日志并降级，不阻塞采集/消费主链路。
-	stopMemory := startMemoryExtractor(ctx, cfg, resources.DB, logger)
+	stopMemory := startMemoryExtractor(ctx, cfg, resources.DB, knowledgeRuntime, logger)
 	defer stopMemory()
 	stopEmbeddingRefresh := startKnowledgeEmbeddingRefresh(ctx, cfg, knowledgeRuntime, logger)
 	defer stopEmbeddingRefresh()
@@ -383,6 +383,8 @@ type memoryWorkerDeps struct {
 	Repo   store.MemoryRepo
 	// Profiles 非 nil 时附带观众档案重建（每小时节流 + 只在直播活跃时）。
 	Profiles extractworker.ProfileSource
+	// Projection 非 nil 时在档案撤回后同步清理公开知识条目（尽力而为）。
+	Projection extractworker.ProfileProjection
 	// Soul 非 nil 且 SoulEnabled 时重建灵魂记忆（M12）。
 	Soul extractworker.SoulSource
 	// Extractor 非 nil 时按触发策略走 LLM，否则规则版。
@@ -402,6 +404,7 @@ func newMemoryWorker(deps memoryWorkerDeps) (*extractworker.Worker, error) {
 		Frozen:       deps.Config.Frozen,
 		FreezePath:   deps.FreezePath,
 		Profiles:     deps.Profiles,
+		Projection:   deps.Projection,
 		Extractor:    deps.Extractor,
 		Jobs:         deps.Jobs,
 		JobOwner:     extractJobOwner(),
@@ -606,7 +609,7 @@ func runMemoryExtract(ctx context.Context, worker memoryExtractWorker, interval 
 
 // startMemoryExtractor 装配并启动提炼 worker；返回的 stop 会取消并等待循环退出。
 // 未启用或初始化失败时返回空 stop，调用方主链路不受影响。
-func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, logger *zap.Logger) func() {
+func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, runtime knowledgeAssembly, logger *zap.Logger) func() {
 	noop := func() {}
 	if !cfg.Memory.Enabled {
 		return noop
@@ -628,6 +631,11 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, l
 		profiles = nil
 	}
 	extractor := buildMemoryExtractor(cfg, db, logger)
+	// 撤回清理与侧写任务共用同一个知识写器；知识未启用时留库由后续装配补投。
+	var projection extractworker.ProfileProjection
+	if cfg.Knowledge.Enabled && runtime.ViewerWriter != nil {
+		projection = viewerPurgeProjection{writer: runtime.ViewerWriter}
+	}
 	// 任务队列（M05）：装配失败时回落旧的水位扫描，不让提炼整体停掉。
 	jobs, jerr := database.NewExtractionJobsRepo(db)
 	if jerr != nil {
@@ -647,6 +655,7 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, l
 		Recent:        recent,
 		Repo:          repo,
 		Profiles:      profiles,
+		Projection:    projection,
 		Soul:          repo,
 		Extractor:     extractor,
 		WatermarkPath: memoryWatermarkPath,
