@@ -798,10 +798,10 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 		{len(records), func(n int) { section.Records = records[:n] }},
 		{len(cross), func(n int) { section.CrossChannel = cross[len(cross)-n:] }},
 		{len(facts), func(n int) { section.Shared = facts[len(facts)-n:] }},
-		// Recent 和 Focus 一样最后保：房间流是「刚才在聊什么」的直接证据，
-		// 裁掉会让鱼对刚说过的话「不记得」（例如反复出现的称呼）。
-		{len(focus), func(n int) { section.Focus = focus[len(focus)-n:] }},
+		// Focus 最后保（本轮双方对话最强）；Recent 倒数第二（房间流是
+		// 「刚才在聊什么」的直接证据，裁掉会让鱼对反复出现的称呼「不记得」）。
 		{len(recent), func(n int) { section.Recent = recent[len(recent)-n:] }},
+		{len(focus), func(n int) { section.Focus = focus[len(focus)-n:] }},
 	}
 	for _, group := range groups {
 		if group.count == 0 {
