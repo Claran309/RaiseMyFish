@@ -21,6 +21,7 @@ import (
 	"RaiseMyFish/internal/database"
 	eventbus "RaiseMyFish/internal/event/bus"
 	"RaiseMyFish/internal/infra"
+	"RaiseMyFish/internal/llmmeta"
 	"RaiseMyFish/internal/logview"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/memory/extractworker"
@@ -430,7 +431,7 @@ func extractJobOwner() string {
 
 // buildMemoryExtractor 构造记忆提炼器：LLM 版（按触发策略）或 nil（规则版）。
 // 任何装配失败都回落规则版——提炼是增强能力，不能因模型不可用而中断。
-func buildMemoryExtractor(cfg config.Config, logger *zap.Logger) memory.Extractor {
+func buildMemoryExtractor(cfg config.Config, db *gorm.DB, logger *zap.Logger) memory.Extractor {
 	if !cfg.Memory.LLMExtract {
 		return nil
 	}
@@ -439,7 +440,14 @@ func buildMemoryExtractor(cfg config.Config, logger *zap.Logger) memory.Extracto
 		return nil
 	}
 	key := backgroundRoute(cfg)
-	adapter, model, err := buildBackgroundLLM(cfg, key, cfg.LLM.MaxReplyTokens)
+	// 账本是增强能力：装配失败时照旧提炼，只是这次调用不进成本统计。
+	var usage store.UsageRepo
+	if repo, uerr := database.NewUsageRepo(db); uerr == nil {
+		usage = repo
+	} else {
+		logger.Warn("记忆提炼账本装配失败，本次调用不记成本", zap.String("action", "memory_extract"), zap.Error(uerr))
+	}
+	adapter, model, err := buildBackgroundLLM(cfg, key, cfg.LLM.MaxReplyTokens, llmmeta.PurposeMemoryExtract, usage, logger)
 	if err != nil {
 		logger.Warn("记忆 LLM 提炼装配失败，回落规则版", zap.String("action", "memory_extract"), zap.Error(err))
 		return nil
@@ -472,7 +480,9 @@ func backgroundRoute(cfg config.Config) string {
 }
 
 // buildBackgroundLLM 按具名路由装配后台增强任务共用的模型客户端；不记录密钥。
-func buildBackgroundLLM(cfg config.Config, key string, maxTokens int) (*memoryProviderLLM, string, error) {
+//
+// purpose 会写进每条账本行；usage 为 nil 时仍返回可用客户端（只是不记账）。
+func buildBackgroundLLM(cfg config.Config, key string, maxTokens int, purpose llmmeta.Purpose, usage store.UsageRepo, logger *zap.Logger) (*memoryProviderLLM, string, error) {
 	name, prov, model, err := cfg.LLM.Resolve(key)
 	if err != nil {
 		return nil, "", err
@@ -481,7 +491,13 @@ func buildBackgroundLLM(cfg config.Config, key string, maxTokens int) (*memoryPr
 	if err != nil {
 		return nil, "", err
 	}
-	return &memoryProviderLLM{client: client, model: model, maxTokens: maxTokens}, model, nil
+	adapter := &memoryProviderLLM{client: client, model: model, maxTokens: maxTokens, purpose: purpose, usage: usage, logger: logger}
+	// 报价可选：没配就记 nil 费用，而不是编一个 0。
+	if price, ok := prov.Prices[model]; ok {
+		adapter.inUSD = price.InputUSDPerMillion
+		adapter.outUSD = price.OutputUSDPerMillion
+	}
+	return adapter, model, nil
 }
 
 // memoryProviderLLM 把 provider 适配成后台增强任务共用的最小模型接口
@@ -490,19 +506,58 @@ type memoryProviderLLM struct {
 	client    provider.Provider
 	model     string
 	maxTokens int
+	purpose   llmmeta.Purpose
+	inUSD     *float64
+	outUSD    *float64
+	usage     store.UsageRepo
+	logger    *zap.Logger
 }
 
 func (m *memoryProviderLLM) Complete(ctx context.Context, system, user string) (string, error) {
+	at := time.Now()
 	resp, err := m.client.Chat(ctx, provider.Request{
 		Model:       m.model,
 		Messages:    []provider.Message{{Role: "system", Content: system}, {Role: "user", Content: user}},
 		MaxTokens:   m.maxTokens,
 		Temperature: 0.2,
 	})
+	// 失败调用也要记（OK=false），否则「模型一直挂」在账本里完全看不见。
+	m.record(ctx, at, resp, err)
 	if err != nil {
 		return "", err
 	}
 	return resp.Text, nil
+}
+
+// record 写一行 llm_usage；失败只记日志，绝不上抛（后台增强不能因账本故障中断）。
+func (m *memoryProviderLLM) record(ctx context.Context, at time.Time, resp provider.Response, callErr error) {
+	if m.usage == nil {
+		return
+	}
+	row := store.Usage{
+		At:                at.UTC(),
+		Purpose:           string(m.purpose),
+		Model:             m.model,
+		CorrelationID:     llmmeta.SafeCorrelationID(llmmeta.From(ctx).CorrelationID),
+		InputTokens:       validTokens(resp.Usage.InputTokens),
+		OutputTokens:      validTokens(resp.Usage.OutputTokens),
+		CachedInputTokens: validTokens(resp.Usage.CachedInputTokens),
+		CostUSD:           store.Cost(resp.Usage.InputTokens, resp.Usage.OutputTokens, m.inUSD, m.outUSD),
+		Milliseconds:      int(time.Since(at).Milliseconds()),
+		OK:                callErr == nil,
+	}
+	accountCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := m.usage.RecordUsage(accountCtx, row); err != nil && m.logger != nil {
+		m.logger.Warn("后台模型调用记账失败",
+			zap.String("action", "llm_usage"),
+			zap.String("purpose", string(m.purpose)),
+			zap.String("model", m.model),
+			zap.Bool("ok", callErr == nil),
+			zap.Int("cost_ms", row.Milliseconds),
+			zap.Error(err),
+		)
+	}
 }
 
 // runMemoryExtract 立即扫一轮，之后按 interval 循环；单轮失败只记日志，等下轮重试。
@@ -569,7 +624,7 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, l
 		logger.Warn("观众档案装配失败，跳过档案重建", zap.String("action", "memory_extract"), zap.Error(err))
 		profiles = nil
 	}
-	extractor := buildMemoryExtractor(cfg, logger)
+	extractor := buildMemoryExtractor(cfg, db, logger)
 	// 任务队列（M05）：装配失败时回落旧的水位扫描，不让提炼整体停掉。
 	jobs, jerr := database.NewExtractionJobsRepo(db)
 	if jerr != nil {

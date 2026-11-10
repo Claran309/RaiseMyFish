@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"RaiseMyFish/internal/llmmeta"
 )
 
 type embedderFunc func(ctx context.Context, inputs []string) ([][]float64, error)
@@ -44,13 +46,16 @@ func TestNewHybridReaderValidatesOptions(t *testing.T) {
 	if _, err := NewHybridReader(base, embedder, nil, HybridOptions{}); err == nil {
 		t.Fatal("空store未拒绝")
 	}
+	if _, err := NewHybridReader(base, embedder, store, HybridOptions{Alpha: 0.5}); err == nil {
+		t.Fatal("空指纹未拒绝")
+	}
 	for _, alpha := range []float64{-0.1, 1.1, math.NaN()} {
-		if _, err := NewHybridReader(base, embedder, store, HybridOptions{Alpha: alpha}); err == nil {
+		if _, err := NewHybridReader(base, embedder, store, HybridOptions{Alpha: alpha, Fingerprint: testKnowledgeFingerprint}); err == nil {
 			t.Fatalf("非法alpha未拒绝：%v", alpha)
 		}
 	}
 	for _, alpha := range []float64{0, 0.5, 1} {
-		if _, err := NewHybridReader(base, embedder, store, HybridOptions{Alpha: alpha}); err != nil {
+		if _, err := NewHybridReader(base, embedder, store, HybridOptions{Alpha: alpha, Fingerprint: testKnowledgeFingerprint}); err != nil {
 			t.Fatalf("合法alpha被拒绝：%v %v", alpha, err)
 		}
 	}
@@ -60,12 +65,16 @@ func TestHybridRecallMergesSameEntryAndBoostsSimilarity(t *testing.T) {
 	a, b := testEntry("a", "甲乙丙"), testEntry("b", "甲乙丙")
 	store := newFakeEmbeddingStore()
 	store.semantic = []SemanticHit{{ID: "a", Similarity: 0.2}, {ID: "b", Similarity: 0.8}, {ID: "a", Similarity: 0.1}}
-	reader, err := NewHybridReader(loadEntries(t, a, b), &fakeEmbedder{}, store, HybridOptions{Alpha: 0.5})
+	embedder := &fakeEmbedder{}
+	reader, err := NewHybridReader(loadEntries(t, a, b), embedder, store, HybridOptions{Alpha: 0.5, Fingerprint: testKnowledgeFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := hybridIDs(t, reader, publicScope(), "甲乙丙"); !reflect.DeepEqual(got, []string{"b", "a"}) {
 		t.Fatalf("同条目未去重或相似度未参与排序：%v", got)
+	}
+	if embedder.call.Purpose != llmmeta.PurposeEmbedQuery || embedder.call.CorrelationID != "knowledge" {
+		t.Fatalf("查询向量化用途未标注：%+v", embedder.call)
 	}
 }
 
@@ -77,7 +86,7 @@ func TestHybridRecallAlphaChangesSemanticWeight(t *testing.T) {
 	store.semantic = []SemanticHit{{ID: "first", Similarity: 0.1}, {ID: "second", Similarity: 0.9}}
 	embedder := &fakeEmbedder{}
 
-	reader, err := NewHybridReader(loadEntries(t, first, second), embedder, store, HybridOptions{Alpha: 0.5})
+	reader, err := NewHybridReader(loadEntries(t, first, second), embedder, store, HybridOptions{Alpha: 0.5, Fingerprint: testKnowledgeFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,8 +96,11 @@ func TestHybridRecallAlphaChangesSemanticWeight(t *testing.T) {
 	if embedder.calls != 1 || store.lastLimit != semanticCandidateLimit {
 		t.Fatalf("语义候选调用不符：calls=%d limit=%d", embedder.calls, store.lastLimit)
 	}
+	if store.lastFingerprint != testKnowledgeFingerprint {
+		t.Fatalf("查询未带索引指纹：%q", store.lastFingerprint)
+	}
 
-	reader, err = NewHybridReader(loadEntries(t, first, second), embedder, store, HybridOptions{Alpha: 0})
+	reader, err = NewHybridReader(loadEntries(t, first, second), embedder, store, HybridOptions{Alpha: 0, Fingerprint: testKnowledgeFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +116,7 @@ func TestHybridRecallKeywordTierOutranksSemanticOnly(t *testing.T) {
 	title, semanticOnly := testEntry("title", "甲乙丙"), testEntry("semantic", "无关标题")
 	store := newFakeEmbeddingStore()
 	store.semantic = []SemanticHit{{ID: "semantic", Similarity: 1}, {ID: "title", Similarity: 0}}
-	reader, err := NewHybridReader(loadEntries(t, title, semanticOnly), &fakeEmbedder{}, store, HybridOptions{Alpha: 1})
+	reader, err := NewHybridReader(loadEntries(t, title, semanticOnly), &fakeEmbedder{}, store, HybridOptions{Alpha: 1, Fingerprint: testKnowledgeFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +151,8 @@ func TestHybridRecallDegradesToKeyword(t *testing.T) {
 			tc.setup(embedder, store)
 			var gotErr error
 			reader, err := NewHybridReader(base, embedder, store, HybridOptions{
-				Alpha: 0.5,
+				Alpha:       0.5,
+				Fingerprint: testKnowledgeFingerprint,
 				OnSemanticError: func(err error) {
 					gotErr = err
 				},
@@ -168,6 +181,7 @@ func TestHybridRecallCancellationStopsWithoutDegrading(t *testing.T) {
 	called := 0
 	reader, err := NewHybridReader(base, embedder, newFakeEmbeddingStore(), HybridOptions{
 		Alpha:           0.5,
+		Fingerprint:     testKnowledgeFingerprint,
 		OnSemanticError: func(error) { called++ },
 	})
 	if err != nil {
@@ -205,7 +219,7 @@ func TestHybridRecallSemanticOnlyFiltersScopeAndCapsTop(t *testing.T) {
 		vector[0], vector[1] = 0.25, 0.75
 		return vector
 	}}
-	reader, err := NewHybridReader(base, embedder, store, HybridOptions{Alpha: 0.5})
+	reader, err := NewHybridReader(base, embedder, store, HybridOptions{Alpha: 0.5, Fingerprint: testKnowledgeFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +239,7 @@ func TestHybridRecallSemanticOnlyFiltersScopeAndCapsTop(t *testing.T) {
 func TestHybridRecallSkipsSemanticForEmptyAndOversizeQuery(t *testing.T) {
 	base := loadEntries(t, testEntry("title", "甲乙丙"))
 	embedder := &fakeEmbedder{}
-	reader, err := NewHybridReader(base, embedder, newFakeEmbeddingStore(), HybridOptions{Alpha: 0.5})
+	reader, err := NewHybridReader(base, embedder, newFakeEmbeddingStore(), HybridOptions{Alpha: 0.5, Fingerprint: testKnowledgeFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +256,7 @@ func TestHybridRecallSkipsSemanticForEmptyAndOversizeQuery(t *testing.T) {
 
 func TestHybridRecallRejectsInvalidQueryLikeFileReader(t *testing.T) {
 	base := loadEntries(t, testEntry("title", "甲乙丙"))
-	reader, err := NewHybridReader(base, &fakeEmbedder{}, newFakeEmbeddingStore(), HybridOptions{Alpha: 0.5})
+	reader, err := NewHybridReader(base, &fakeEmbedder{}, newFakeEmbeddingStore(), HybridOptions{Alpha: 0.5, Fingerprint: testKnowledgeFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +278,7 @@ func TestHybridRecallRejectsLowRelevanceSemantic(t *testing.T) {
 		{ID: "lyric", Similarity: 0.31},
 		{ID: "title", Similarity: 0.25},
 	}
-	reader, err := NewHybridReader(base, &fakeEmbedder{}, store, HybridOptions{Alpha: 0.5})
+	reader, err := NewHybridReader(base, &fakeEmbedder{}, store, HybridOptions{Alpha: 0.5, Fingerprint: testKnowledgeFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +292,7 @@ func TestHybridRecallKeepsRelevantSemantic(t *testing.T) {
 	base := loadEntries(t, testEntry("title", "甲乙丙"), testEntry("semantic", "丙丁戊相关设定"))
 	store := newFakeEmbeddingStore()
 	store.semantic = []SemanticHit{{ID: "semantic", Similarity: 0.88}}
-	reader, err := NewHybridReader(base, &fakeEmbedder{}, store, HybridOptions{Alpha: 0.5})
+	reader, err := NewHybridReader(base, &fakeEmbedder{}, store, HybridOptions{Alpha: 0.5, Fingerprint: testKnowledgeFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}

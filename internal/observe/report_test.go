@@ -1,6 +1,6 @@
 package observe
 
-// 本文件测 0.10a 日报渲染：费用三态、成功率边界、空快照、多通道排序与确定性。
+// 本文件测 0.10a 日报渲染：费用四态、成功率边界、空快照、多通道排序与确定性。
 // 全部是纯函数测试，不连库、不读配置。
 
 import (
@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// ptr 返回 float64 指针，用于构造 CostUSD 的三态。
+// ptr 返回 float64 指针，用于构造 KnownCostUSD 的 nil/0/正值三态。
 func ptr(v float64) *float64 { return &v }
 
 // 窗口基准：用固定时区的时间，保证断言不随运行环境变化。
@@ -25,13 +25,14 @@ var (
 // （85/(120-30) = 94.4%，85/120 = 70.8%），这里按**规格文字**的公式断言，不照抄示例数字。
 func TestRenderFullReport(t *testing.T) {
 	s := Snapshot{
-		WindowStart: windowStart,
-		WindowEnd:   windowEnd,
-		Received:    120,
-		Replied:     85,
-		Skipped:     30,
-		Failed:      5,
-		CostUSD:     ptr(0.0123),
+		WindowStart:  windowStart,
+		WindowEnd:    windowEnd,
+		Received:     120,
+		Replied:      85,
+		Skipped:      30,
+		Failed:       5,
+		KnownCostUSD: ptr(0.0123),
+		TotalCalls:   7,
 		Channels: map[string]ChannelStat{
 			"live":    {Received: 100, Replied: 70, Skipped: 25, Failed: 5},
 			"comment": {Received: 20, Replied: 15, Skipped: 5, Failed: 0},
@@ -41,7 +42,7 @@ func TestRenderFullReport(t *testing.T) {
 	want := "# 日报 2026-11-01 00:00 ~ 2026-11-01 23:59\n" +
 		"- 收到 120 / 回复 85 / 跳过 30 / 失败 5\n" +
 		"- 成功率 94.4%\n" +
-		"- 费用：$0.0123\n" +
+		"- 费用：$0.0123（已计价 7/7 次）\n" +
 		"- 通道：comment 20/15/5/0；live 100/70/25/5"
 
 	if got := Render(s); got != want {
@@ -49,33 +50,38 @@ func TestRenderFullReport(t *testing.T) {
 	}
 }
 
-// TestRenderCostStates 费用三态：nil 是未知、0 是免费、其余是数值——绝不能把未知写成 0。
+// TestRenderCostStates 费用口径四态：空账本、明确免费、全未知、混合——绝不能把未知写成 0。
 func TestRenderCostStates(t *testing.T) {
 	cases := []struct {
-		name string
-		cost *float64
-		want string
+		name    string
+		known   *float64
+		unknown int
+		total   int
+		want    string
 	}{
-		{"未知(nil)", nil, "- 费用：未知（未配置报价）"},
-		{"明确免费(0)", ptr(0), "- 费用：$0"},
-		{"负数零", ptr(math.Copysign(0, -1)), "- 费用：$0"},
-		{"小额", ptr(0.0123), "- 费用：$0.0123"},
-		{"整数", ptr(1), "- 费用：$1"},
-		{"半美元", ptr(0.5), "- 费用：$0.5"},
-		{"较大值", ptr(12.345678), "- 费用：$12.345678"},
-		{"NaN", ptr(math.NaN()), "- 费用：未知（报价异常）"},
-		{"正无穷", ptr(math.Inf(1)), "- 费用：未知（报价异常）"},
-		{"负无穷", ptr(math.Inf(-1)), "- 费用：未知（报价异常）"},
+		{"窗口内无调用", nil, 0, 0, "- 费用：未知（窗口内无调用）"},
+		{"只有金额没有次数", ptr(0.5), 0, 0, "- 费用：$0.5（已计价次数未知）"},
+		{"明确免费(0)", ptr(0), 0, 2, "- 费用：$0（已计价 2/2 次）"},
+		{"负数零", ptr(math.Copysign(0, -1)), 0, 1, "- 费用：$0（已计价 1/1 次）"},
+		{"小额", ptr(0.0123), 0, 4, "- 费用：$0.0123（已计价 4/4 次）"},
+		{"整数", ptr(1), 0, 1, "- 费用：$1（已计价 1/1 次）"},
+		{"较大值", ptr(12.345678), 0, 1, "- 费用：$12.345678（已计价 1/1 次）"},
+		{"全部未知", nil, 5, 5, "- 费用：未知（未配置报价，5 次调用均未计价）"},
+		{"合计缺失", nil, 0, 3, "- 费用：未知（账本合计缺失，共 3 次）"},
+		{"混合账本", ptr(0.01), 2, 5, "- 费用：已知 $0.01（已计价 3/5 次，未知 2 次）"},
+		{"NaN", ptr(math.NaN()), 1, 2, "- 费用：未知（报价异常，已计价 1/2 次）"},
+		{"正无穷", ptr(math.Inf(1)), 0, 1, "- 费用：未知（报价异常，已计价 1/1 次）"},
+		{"负无穷", ptr(math.Inf(-1)), 0, 1, "- 费用：未知（报价异常，已计价 1/1 次）"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out := Render(Snapshot{CostUSD: tc.cost})
+			out := Render(Snapshot{KnownCostUSD: tc.known, UnknownCalls: tc.unknown, TotalCalls: tc.total})
 			if !strings.Contains(out, tc.want) {
 				t.Errorf("缺少 %q\n实际输出：\n%s", tc.want, out)
 			}
-			// 关键防线：nil 绝不能被渲染成 $0
-			if tc.cost == nil && strings.Contains(out, "$0") {
+			// 关键防线：未知费用绝不能被渲染成 $0
+			if tc.known == nil && strings.Contains(out, "$0") {
 				t.Errorf("未知费用被渲染成了 0：\n%s", out)
 			}
 		})
@@ -127,7 +133,7 @@ func TestRenderEmptySnapshot(t *testing.T) {
 	want := "# 日报 0001-01-01 00:00 ~ 0001-01-01 00:00\n" +
 		"- 收到 0 / 回复 0 / 跳过 0 / 失败 0\n" +
 		"- 成功率 —\n" +
-		"- 费用：未知（未配置报价）\n" +
+		"- 费用：未知（窗口内无调用）\n" +
 		"- 通道：无"
 	if out != want {
 		t.Errorf("空快照输出不符\n实际：\n%s\n期望：\n%s", out, want)
@@ -167,13 +173,15 @@ func TestRenderChannelOrdering(t *testing.T) {
 // TestRenderDeterministic 同输入同输出：连渲多次必须完全一致（map 顺序不能泄漏到结果里）。
 func TestRenderDeterministic(t *testing.T) {
 	s := Snapshot{
-		WindowStart: windowStart,
-		WindowEnd:   windowEnd,
-		Received:    42,
-		Replied:     30,
-		Skipped:     10,
-		Failed:      2,
-		CostUSD:     ptr(0.04),
+		WindowStart:  windowStart,
+		WindowEnd:    windowEnd,
+		Received:     42,
+		Replied:      30,
+		Skipped:      10,
+		Failed:       2,
+		KnownCostUSD: ptr(0.04),
+		UnknownCalls: 1,
+		TotalCalls:   6,
 		Channels: map[string]ChannelStat{
 			"live":    {Received: 30, Replied: 22, Skipped: 6, Failed: 2},
 			"comment": {Received: 12, Replied: 8, Skipped: 4},

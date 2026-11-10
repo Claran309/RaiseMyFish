@@ -33,6 +33,8 @@ type knowledgeEmbedOutput struct {
 	Pending  int    `json:"pending"`
 	Batches  int    `json:"batches"`
 	Embedded int    `json:"embedded"`
+	// Rejected 是计算期间源已变化、被 CAS 拒绝写回的条数（下一轮会重算）。
+	Rejected int `json:"rejected"`
 }
 
 // runKnowledge 解析参数、加载配置、装配 Reader/Embedding/仓储并执行入库。
@@ -67,17 +69,6 @@ func runKnowledge(ctx context.Context, configPath, envPath string, args []string
 	if err != nil {
 		return fmt.Errorf("加载知识快照：%w", err)
 	}
-	client, err := embedding.New(embedding.Options{
-		URL:       cfg.Embedding.URL,
-		Model:     cfg.Embedding.Model,
-		APIKey:    cfg.Embedding.Key,
-		Dimension: cfg.Embedding.Dimension,
-		BatchSize: cfg.Embedding.BatchSize,
-		Timeout:   embedding.DefaultTimeout,
-	})
-	if err != nil {
-		return fmt.Errorf("装配embedding客户端：%w", err)
-	}
 
 	probe, cancel := context.WithTimeout(ctx, time.Duration(cfg.Database.TimeoutSeconds)*time.Second)
 	defer cancel()
@@ -92,21 +83,41 @@ func runKnowledge(ctx context.Context, configPath, envPath string, args []string
 	if err := database.Ready(probe, resources.DB); err != nil {
 		return err
 	}
+	usageRepo, err := database.NewUsageRepo(resources.DB)
+	if err != nil {
+		return err
+	}
+	// 每次真实 embedding 调用都进成本账本；记账失败只提示，不中断入库。
+	client, err := embedding.New(embedding.Options{
+		URL:       cfg.Embedding.URL,
+		Model:     cfg.Embedding.Model,
+		APIKey:    cfg.Embedding.Key,
+		Dimension: cfg.Embedding.Dimension,
+		BatchSize: cfg.Embedding.BatchSize,
+		Timeout:   embedding.DefaultTimeout,
+		OnUsage: embedding.UsageSinkFor(usageRepo, cfg.Embedding.Model, func(err error) {
+			fmt.Fprintf(stderr, "knowledge embed 记账失败：%v\n", err)
+		}),
+	})
+	if err != nil {
+		return fmt.Errorf("装配embedding客户端：%w", err)
+	}
 	store, err := database.NewKnowledgeEmbeddingRepo(resources.DB)
 	if err != nil {
 		return err
 	}
-	return executeKnowledgeEmbed(ctx, reader, client, store, cfg.Embedding.BatchSize, out, stderr)
+	return executeKnowledgeEmbed(ctx, reader, client, store, cfg.Embedding.BatchSize, client.Fingerprint(knowledge.IndexTemplate), out, stderr)
 }
 
 // executeKnowledgeEmbed 执行增量入库并输出摘要；进度逐批写 stderr。
-func executeKnowledgeEmbed(ctx context.Context, reader *knowledge.FileReader, embedder knowledge.Embedder, store knowledge.EmbeddingStore, batchSize int, out, progressOut io.Writer) error {
+func executeKnowledgeEmbed(ctx context.Context, reader *knowledge.FileReader, embedder knowledge.Embedder, store knowledge.EmbeddingStore, batchSize int, fingerprint string, out, progressOut io.Writer) error {
 	if reader == nil || embedder == nil || store == nil {
 		return errors.New("知识入库依赖不能为空")
 	}
 	doneBatches := 0
 	stats, err := knowledge.RunEmbedding(ctx, reader, embedder, store, knowledge.EmbedOptions{
-		BatchSize: batchSize,
+		BatchSize:   batchSize,
+		Fingerprint: fingerprint,
 		Progress: func(done, total, batches int) {
 			doneBatches++
 			fmt.Fprintf(progressOut, "knowledge embed: 已处理 %d/%d 条（%d/%d 批）\n", done, total, doneBatches, batches)
@@ -122,6 +133,7 @@ func executeKnowledgeEmbed(ctx context.Context, reader *knowledge.FileReader, em
 		Pending:  stats.Pending,
 		Batches:  stats.Batches,
 		Embedded: stats.Embedded,
+		Rejected: stats.Rejected,
 	}
 	if err := json.NewEncoder(out).Encode(summary); err != nil {
 		return fmt.Errorf("输出知识入库结果：%w", err)

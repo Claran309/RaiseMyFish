@@ -32,8 +32,13 @@ type Snapshot struct {
 	Skipped int
 	// Failed 失败数。
 	Failed int
-	// CostUSD 费用（美元）。nil 表示「未知」，与 0（明确免费）严格区分。
-	CostUSD *float64
+	// KnownCostUSD 是窗口内已计价调用的费用合计。
+	// nil 表示没有已计价调用，与 0（明确免费）严格区分。
+	KnownCostUSD *float64
+	// UnknownCalls 是费用未知（未配置报价）的调用数。
+	UnknownCalls int
+	// TotalCalls 是窗口内的调用总数；与 Web 面板同一口径。
+	TotalCalls int
 	// Channels 按通道细分；key 为通道名（live/comment/dm/qq）。
 	Channels map[string]ChannelStat
 }
@@ -74,7 +79,7 @@ func Render(s Snapshot) string {
 	b.WriteString("\n")
 
 	b.WriteString("- 费用：")
-	b.WriteString(renderCost(s.CostUSD))
+	b.WriteString(renderCost(s.KnownCostUSD, s.UnknownCalls, s.TotalCalls))
 	b.WriteString("\n")
 
 	b.WriteString("- 通道：")
@@ -104,17 +109,50 @@ func renderRate(s Snapshot) string {
 	return strconv.FormatFloat(rate, 'f', 1, 64) + "%"
 }
 
-// renderCost 渲染费用。
+// renderCost 渲染费用，口径与 Web 面板一致：known_cost / unknown / total。
 //
-// 三态必须分清：
-//   - nil       → 「未知（未配置报价）」：压根没拿到报价，不能伪造成 0；
-//   - 0         → 「$0」：明确免费（例如本地模型）；
-//   - 其他      → 原值，最少位数输出（0.0123 就是 0.0123，不补成 0.012300）。
+// 必须分清：
+//   - total=0        → 窗口内没有调用，费用无意义；
+//   - known=nil      → 有调用但全部未计价（未配置报价），不能伪造成 0；
+//   - known 非 0/0   → 已计价合计；0 是明确免费（例如本地模型）；
+//   - unknown>0      → 混合账本，只能展示已知部分并标注未知条数。
 //
 // NaN/Inf 属于上游算错，单独标成「报价异常」，避免输出 "$NaN"。
-func renderCost(cost *float64) string {
+func renderCost(known *float64, unknown, total int) string {
+	if unknown < 0 {
+		unknown = 0
+	}
+	if total < unknown {
+		total = unknown
+	}
+	if total == 0 {
+		if known == nil {
+			return "未知（窗口内无调用）"
+		}
+		// 上游只给了费用、没给调用数：保留金额，不编造次数。
+		return formatCost(known) + "（已计价次数未知）"
+	}
+	priced := total - unknown
+	if known == nil && unknown == 0 {
+		// 不一致的数据：没有未知调用却没有合计，按未知处理。
+		return fmt.Sprintf("未知（账本合计缺失，共 %d 次）", total)
+	}
+	if known == nil {
+		return fmt.Sprintf("未知（未配置报价，%d 次调用均未计价）", total)
+	}
+	if value := *known; math.IsNaN(value) || math.IsInf(value, 0) {
+		return fmt.Sprintf("未知（报价异常，已计价 %d/%d 次）", priced, total)
+	}
+	if unknown == 0 {
+		return fmt.Sprintf("%s（已计价 %d/%d 次）", formatCost(known), priced, total)
+	}
+	return fmt.Sprintf("已知 %s（已计价 %d/%d 次，未知 %d 次）", formatCost(known), priced, total, unknown)
+}
+
+// formatCost 输出美元金额：0 记作 "$0"，其余按最少位数输出（0.0123 不补成 0.012300）。
+func formatCost(cost *float64) string {
 	if cost == nil {
-		return "未知（未配置报价）"
+		return "未知"
 	}
 	value := *cost
 	if math.IsNaN(value) || math.IsInf(value, 0) {

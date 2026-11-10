@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/llmmeta"
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
 )
@@ -28,6 +29,7 @@ func UsageSinkFor(usage store.UsageRepo, model string, inUSD, outUSD *float64, l
 		row := store.Usage{
 			At:           time.Now().UTC(),
 			Channel:      event.ChLive,
+			Purpose:      string(llmmeta.PurposeVision),
 			Model:        model,
 			InputTokens:  u.InputTokens,
 			OutputTokens: u.OutputTokens,

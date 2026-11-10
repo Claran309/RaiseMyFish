@@ -107,6 +107,16 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取向量索引状态迁移：%w", err)
 	}
 	embeddingIndexStateHash := sha256.Sum256(embeddingIndexState)
+	knowledgeEmbeddingIndexState, err := migrations.Files.ReadFile("0015_knowledge_embedding_index_state.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取知识向量索引状态迁移：%w", err)
+	}
+	knowledgeEmbeddingIndexStateHash := sha256.Sum256(knowledgeEmbeddingIndexState)
+	usageCallMeta, err := migrations.Files.ReadFile("0016_usage_call_meta.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取LLM账本元数据迁移：%w", err)
+	}
+	usageCallMetaHash := sha256.Sum256(usageCallMeta)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -122,6 +132,8 @@ func migrationSteps() ([]migrationStep, error) {
 		{12, string(sendLogPlannedAttempt), hex.EncodeToString(sendLogPlannedAttemptHash[:])},
 		{13, string(memoryProvenance), hex.EncodeToString(memoryProvenanceHash[:])},
 		{14, string(embeddingIndexState), hex.EncodeToString(embeddingIndexStateHash[:])},
+		{15, string(knowledgeEmbeddingIndexState), hex.EncodeToString(knowledgeEmbeddingIndexStateHash[:])},
+		{16, string(usageCallMeta), hex.EncodeToString(usageCallMetaHash[:])},
 	}, nil
 }
 
@@ -236,7 +248,7 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	if err := db.Exec("SELECT p.event_id,a.id,l.attempt_id FROM " + table("send_plans") + " p JOIN " + table("send_attempts") + " a ON a.event_id=p.event_id LEFT JOIN " + table("send_log") + " l ON l.attempt_id=a.id LIMIT 0").Error; err != nil {
 		return &safeError{"发送迁移字段不完整", err}
 	}
-	if err := db.Exec("SELECT id,source,title,updated_at,embedding FROM " + table("knowledge_embeddings") + " LIMIT 0").Error; err != nil {
+	if err := db.Exec("SELECT id,source,title,updated_at,embedding,text_hash,source_hash,fingerprint FROM " + table("knowledge_embeddings") + " LIMIT 0").Error; err != nil {
 		return &safeError{"知识向量表不完整", err}
 	}
 	if err := db.Exec("SELECT embedding,embedding_text_hash,embedding_source_hash,embedding_fingerprint,embedding_updated_at FROM " + table("memory_records") + " LIMIT 0").Error; err != nil {
@@ -253,6 +265,9 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	}
 	if err := db.Exec("SELECT event_id,extraction_version,status,lease_owner,lease_until,attempts,last_error,created_at,updated_at FROM " + table("extraction_jobs") + " LIMIT 0").Error; err != nil {
 		return &safeError{"提炼任务表不完整", err}
+	}
+	if err := db.Exec("SELECT purpose,correlation_id,cached_in_tokens FROM " + table("llm_usage") + " LIMIT 0").Error; err != nil {
+		return &safeError{"LLM账本字段不完整", err}
 	}
 	return nil
 }

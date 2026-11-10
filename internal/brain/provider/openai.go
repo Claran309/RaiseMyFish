@@ -62,14 +62,30 @@ type chatChoice struct {
 		} `json:"tool_calls"`
 	} `json:"message"`
 }
+type chatUsageDetails struct {
+	Cached *int `json:"cached_tokens"`
+}
+
+type chatUsage struct {
+	Input  *int `json:"prompt_tokens"`
+	Output *int `json:"completion_tokens"`
+	// 缓存命中只有服务端明确返回时才记录，不从其它字段反推。
+	PromptDetails *chatUsageDetails `json:"prompt_tokens_details"`
+}
+
+// cached 返回服务端声明的缓存命中 token；没有该字段时保持 nil（unknown）。
+func (u chatUsage) cached() *int {
+	if u.PromptDetails == nil {
+		return nil
+	}
+	return u.PromptDetails.Cached
+}
+
 type chatResponse struct {
 	Model json.RawMessage `json:"model"`
 	// 先解析账本统计，再验证正文结构，避免格式错误把已知费用变成未知。
 	Choices json.RawMessage `json:"choices"`
-	Usage   struct {
-		Input  *int `json:"prompt_tokens"`
-		Output *int `json:"completion_tokens"`
-	} `json:"usage"`
+	Usage   chatUsage       `json:"usage"`
 }
 
 func classify(err error) *Error {
@@ -129,12 +145,12 @@ func (p *OpenAI) Chat(ctx context.Context, in Request) (response Response, resul
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		return response, &Error{Kind: KindProtocol}
 	}
-	for _, n := range []*int{decoded.Usage.Input, decoded.Usage.Output} {
+	for _, n := range []*int{decoded.Usage.Input, decoded.Usage.Output, decoded.Usage.cached()} {
 		if n != nil && (*n < 0 || int64(*n) > 2147483647) {
 			return response, &Error{Kind: KindProtocol}
 		}
 	}
-	response.Usage = Usage{InputTokens: decoded.Usage.Input, OutputTokens: decoded.Usage.Output}
+	response.Usage = Usage{InputTokens: decoded.Usage.Input, OutputTokens: decoded.Usage.Output, CachedInputTokens: decoded.Usage.cached()}
 	// model是可选审计元数据；字段异常不影响已解析正文和用量。
 	if len(decoded.Model) > 0 {
 		var model string

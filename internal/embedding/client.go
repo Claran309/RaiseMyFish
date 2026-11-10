@@ -63,7 +63,25 @@ type Options struct {
 	BatchSize  int
 	Timeout    time.Duration
 	HTTPClient *http.Client
+	// OnUsage 在每次真实 HTTP 尝试后调用（含失败）；nil 表示不记账。
+	// 回调在请求 goroutine 内同步执行，实现方需自担超时与并发安全。
+	OnUsage UsageSink
 }
+
+// Usage 是一次 embedding HTTP 尝试的账本事实。
+//
+// Embedding 没有输出 token；PromptTokens 与 CachedInputTokens 只在服务端
+// 真实返回时非 nil，不从输入文本长度推算。
+type Usage struct {
+	At                time.Time
+	InputTokens       *int
+	CachedInputTokens *int
+	Milliseconds      int
+	OK                bool
+}
+
+// UsageSink 接收 embedding 调用事实；ctx 携带调用用途与安全关联标识。
+type UsageSink func(context.Context, Usage)
 
 type Client struct {
 	url        string
@@ -72,6 +90,7 @@ type Client struct {
 	dimension  int
 	batchSize  int
 	httpClient *http.Client
+	onUsage    UsageSink
 }
 
 // New 校验参数并构造客户端；不发起网络请求。
@@ -120,6 +139,7 @@ func New(opts Options) (*Client, error) {
 		dimension:  dimension,
 		batchSize:  batchSize,
 		httpClient: client,
+		onUsage:    opts.OnUsage,
 	}, nil
 }
 
@@ -133,6 +153,21 @@ type responseBody struct {
 	Data []struct {
 		Embedding []float64 `json:"embedding"`
 	} `json:"data"`
+	Usage struct {
+		Prompt *int `json:"prompt_tokens"`
+		// 缓存命中只在服务端明确返回时记录。
+		PromptDetails *struct {
+			Cached *int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+	} `json:"usage"`
+}
+
+// cached 返回服务端声明的缓存命中 token；没有该字段时保持 nil（unknown）。
+func (r responseBody) cached() *int {
+	if r.Usage.PromptDetails == nil {
+		return nil
+	}
+	return r.Usage.PromptDetails.Cached
 }
 
 // Embed 按 batch_size 分批调用，返回与 inputs 顺序一致的向量。
@@ -164,7 +199,7 @@ func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float64, error
 	return out, nil
 }
 
-func (c *Client) embedBatch(ctx context.Context, inputs []string) ([][]float64, error) {
+func (c *Client) embedBatch(ctx context.Context, inputs []string) (vectors [][]float64, result error) {
 	body, err := json.Marshal(requestBody{Model: c.model, Input: inputs, Dimensions: c.dimension})
 	if err != nil {
 		return nil, &Error{Kind: KindProtocol, Message: "编码embedding请求失败", cause: err}
@@ -177,6 +212,18 @@ func (c *Client) embedBatch(ctx context.Context, inputs []string) ([][]float64, 
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
+	// 每次真实 HTTP 尝试记一行（含失败）；本地编码/构造错误不算外部尝试。
+	started := time.Now()
+	usage := Usage{}
+	defer func() {
+		if c.onUsage == nil {
+			return
+		}
+		usage.At = started.UTC()
+		usage.Milliseconds = int(time.Since(started).Milliseconds())
+		usage.OK = result == nil
+		c.onUsage(ctx, usage)
+	}()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -203,10 +250,18 @@ func (c *Client) embedBatch(ctx context.Context, inputs []string) ([][]float64, 
 	if err := decoder.Decode(&parsed); err != nil {
 		return nil, &Error{Kind: KindProtocol, Message: "解析embedding响应失败", cause: err}
 	}
+	// 先落账服务端声明的用量，再做向量结构校验：结构异常不能把已知费用变成未知。
+	for _, n := range []*int{parsed.Usage.Prompt, parsed.cached()} {
+		if n != nil && (*n < 0 || int64(*n) > 2147483647) {
+			return nil, &Error{Kind: KindProtocol, Message: "embedding用量字段无效"}
+		}
+	}
+	usage.InputTokens = parsed.Usage.Prompt
+	usage.CachedInputTokens = parsed.cached()
 	if len(parsed.Data) != len(inputs) {
 		return nil, &Error{Kind: KindProtocol, Message: "embedding响应条数与请求不一致"}
 	}
-	vectors := make([][]float64, 0, len(parsed.Data))
+	vectors = make([][]float64, 0, len(parsed.Data))
 	for _, item := range parsed.Data {
 		if len(item.Embedding) != c.dimension {
 			return nil, &Error{Kind: KindProtocol, Message: fmt.Sprintf("embedding维度不符：期望%d，实际%d", c.dimension, len(item.Embedding))}

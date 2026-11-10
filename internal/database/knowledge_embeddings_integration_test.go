@@ -114,7 +114,7 @@ func TestKnowledgeEmbeddingsRealPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	embedder := &pgEmbedder{}
-	stats, err := knowledge.RunEmbedding(ctx, reader, embedder, repo, knowledge.EmbedOptions{BatchSize: 2})
+	stats, err := knowledge.RunEmbedding(ctx, reader, embedder, repo, knowledge.EmbedOptions{BatchSize: 2, Fingerprint: testIndexFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,14 +125,14 @@ func TestKnowledgeEmbeddingsRealPostgres(t *testing.T) {
 	if err := db.WithContext(ctx).Table("knowledge_embeddings").Count(&count).Error; err != nil || count != 4 {
 		t.Fatalf("向量行数不符：%d %v", count, err)
 	}
-	// 幂等增量：文件 mtime 未变时全部跳过，不重复写库。
-	stats, err = knowledge.RunEmbedding(ctx, reader, embedder, repo, knowledge.EmbedOptions{BatchSize: 2})
+	// 幂等增量：内容与指纹未变时全部跳过，不重复写库。
+	stats, err = knowledge.RunEmbedding(ctx, reader, embedder, repo, knowledge.EmbedOptions{BatchSize: 2, Fingerprint: testIndexFingerprint})
 	if err != nil || stats.Skipped != 4 || stats.Embedded != 0 {
 		t.Fatalf("增量未跳过：%+v %v", stats, err)
 	}
 
 	query := knowledgeVector("完全无关的查询")
-	hits, err := repo.SemanticSearch(ctx, query, 20)
+	hits, err := repo.SemanticSearch(ctx, query, testIndexFingerprint, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestKnowledgeEmbeddingsRealPostgres(t *testing.T) {
 	}
 
 	scope := knowledge.Scope{Channel: event.ChLive, Session: "room"}
-	hybrid, err := knowledge.NewHybridReader(reader, embedder, repo, knowledge.HybridOptions{Alpha: 0.5})
+	hybrid, err := knowledge.NewHybridReader(reader, embedder, repo, knowledge.HybridOptions{Alpha: 0.5, Fingerprint: testIndexFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,6 +161,7 @@ func TestKnowledgeEmbeddingsRealPostgres(t *testing.T) {
 	degradedCalls := 0
 	degraded, err := knowledge.NewHybridReader(reader, &pgEmbedder{err: errors.New("embedding不可用")}, repo, knowledge.HybridOptions{
 		Alpha:           0.5,
+		Fingerprint:     testIndexFingerprint,
 		OnSemanticError: func(error) { degradedCalls++ },
 	})
 	if err != nil {
@@ -169,5 +170,68 @@ func TestKnowledgeEmbeddingsRealPostgres(t *testing.T) {
 	want := recallKnowledgeIDs(t, reader, scope, "甲乙丙")
 	if got := recallKnowledgeIDs(t, degraded, scope, "甲乙丙"); !reflect.DeepEqual(got, want) || degradedCalls != 1 {
 		t.Fatalf("降级结果不符：got=%v want=%v calls=%d", got, want, degradedCalls)
+	}
+}
+
+// TestKnowledgeEmbeddingIndexProtocolRealPostgres 验证换模型后不复用旧空间与写回 CAS。
+func TestKnowledgeEmbeddingIndexProtocolRealPostgres(t *testing.T) {
+	db := isolatedDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := knowledge.NewFileReader(ctx, writePGKnowledge(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := NewKnowledgeEmbeddingRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	embedder := &pgEmbedder{}
+	stats, err := knowledge.RunEmbedding(ctx, reader, embedder, repo, knowledge.EmbedOptions{BatchSize: 2, Fingerprint: "model-a"})
+	if err != nil || stats.Embedded != 4 {
+		t.Fatalf("模型A入库失败：%+v %v", stats, err)
+	}
+	query := knowledgeVector("完全无关的查询")
+	if hits, err := repo.SemanticSearch(ctx, query, "model-b", 20); err != nil || len(hits) != 0 {
+		t.Fatalf("换模型后仍命中旧空间：hits=%+v err=%v", hits, err)
+	}
+	stats, err = knowledge.RunEmbedding(ctx, reader, embedder, repo, knowledge.EmbedOptions{BatchSize: 2, Fingerprint: "model-b"})
+	if err != nil || stats.Pending != 4 || stats.Embedded != 4 || stats.Rejected != 0 {
+		t.Fatalf("换模型未重算：%+v %v", stats, err)
+	}
+	if hits, err := repo.SemanticSearch(ctx, query, "model-a", 20); err != nil || len(hits) != 0 {
+		t.Fatalf("旧指纹查询仍返回向量：%+v %v", hits, err)
+	}
+	if hits, err := repo.SemanticSearch(ctx, query, "model-b", 20); err != nil || len(hits) != 4 {
+		t.Fatalf("新指纹查询不符：%+v %v", hits, err)
+	}
+
+	var row struct{ SourceHash string }
+	if err := db.WithContext(ctx).Raw("SELECT source_hash FROM knowledge_embeddings WHERE id='semantic-first'").Scan(&row).Error; err != nil || row.SourceHash == "" {
+		t.Fatalf("读取行状态失败：%q %v", row.SourceHash, err)
+	}
+	newer := knowledge.EmbeddingRecord{
+		ID: "semantic-first", Source: "memes.md", Title: "语义甲改",
+		Hash: "new-text", SourceHash: "new-source", ExpectedSourceHash: row.SourceHash,
+		Fingerprint: "model-b", Embedding: knowledgeVector("无关"),
+	}
+	if written, err := repo.UpsertEmbeddings(ctx, []knowledge.EmbeddingRecord{newer}); err != nil || written != 1 {
+		t.Fatalf("新源写回失败：written=%d err=%v", written, err)
+	}
+	stale := newer
+	stale.Hash = "stale-text"
+	stale.SourceHash = row.SourceHash
+	if written, err := repo.UpsertEmbeddings(ctx, []knowledge.EmbeddingRecord{stale}); err != nil || written != 0 {
+		t.Fatalf("过期计算未被CAS拒绝：written=%d err=%v", written, err)
+	}
+	var after struct{ TextHash, SourceHash string }
+	if err := db.WithContext(ctx).Raw("SELECT text_hash,source_hash FROM knowledge_embeddings WHERE id='semantic-first'").Scan(&after).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after.TextHash != "new-text" || after.SourceHash != "new-source" {
+		t.Fatalf("过期写回覆盖了新版本：%+v", after)
 	}
 }

@@ -29,8 +29,14 @@ type WindowCounts struct {
 	Replied  int
 	Skipped  int
 	Failed   int
-	// CostUSD 为 nil 表示这段时间没有可用的费用记录（不是 0）。
-	CostUSD *float64
+	// KnownCostUSD 是窗口内已计价调用的费用合计；nil 表示没有已计价调用（不是 0）。
+	KnownCostUSD *float64
+	// UnknownCalls 是费用未知（未配置报价）的调用数。
+	UnknownCalls int
+	// TotalCalls 是窗口内的调用总数。
+	TotalCalls int
+	// Coverage 是已计价调用占比；TotalCalls 为 0 时按 0 处理。
+	Coverage float64
 	// Channels 是按通道细分；无法归属通道的行不会进这张表。
 	Channels map[string]ChannelCounts
 }
@@ -52,7 +58,7 @@ func NewStats(db *gorm.DB) (*Stats, error) {
 //	Skipped  = events 里 status='skipped' 的事件数（主动不回复）
 //	Replied  = 窗口内 dir='in' 事件中，send_log.ok IS TRUE 的去重事件数
 //	Failed   = 窗口内 dir='in' 事件中，send_log.ok IS FALSE 的去重事件数（event_id 缺失的老行仍计）
-//	CostUSD  = llm_usage.cost_usd 求和（没有记录或全为 NULL → nil = 未知）
+//	费用口径 = known_cost(SUM) + unknown_calls(cost_usd IS NULL) + total_calls，与 Web 面板一致
 //
 // 用去重事件数而不是尝试次数：同一条回复重试多次不该把「回复数」算多。
 // 老数据的 send_log.channel 可能为空，回落到 events.channel。
@@ -150,14 +156,27 @@ func (s *Stats) Counts(ctx context.Context, from, to time.Time) (WindowCounts, e
 		add(row.Channel, func(c *ChannelCounts) { c.Failed += row.N })
 	}
 
-	var cost struct{ Total *float64 }
+	var cost struct {
+		KnownCost    *float64
+		UnknownCalls int
+		TotalCalls   int
+	}
+	// 与 Web 面板同一口径：SUM 保留 NULL 语义（全无报价 → known_cost=nil，不 COALESCE 成 0），
+	// 同时给出未知条数与总条数，渲染层才能区分空账本、真实零、全未知与混合。
 	if err := s.db.WithContext(ctx).
-		Raw(`SELECT SUM(cost_usd) AS total FROM llm_usage WHERE at >= ? AND at < ?`, from, to).
+		Raw(`SELECT SUM(cost_usd) AS known_cost,
+		            COUNT(*) FILTER (WHERE cost_usd IS NULL) AS unknown_calls,
+		            COUNT(*) AS total_calls
+		       FROM llm_usage WHERE at >= ? AND at < ?`, from, to).
 		Scan(&cost).Error; err != nil {
 		return WindowCounts{}, &safeError{"统计费用失败", err}
 	}
-	// SUM 在没有行时返回 NULL → 保持 nil，交给渲染层显示「未知」而不是 0
-	result.CostUSD = cost.Total
+	result.KnownCostUSD = cost.KnownCost
+	result.UnknownCalls = cost.UnknownCalls
+	result.TotalCalls = cost.TotalCalls
+	if cost.TotalCalls > 0 {
+		result.Coverage = float64(cost.TotalCalls-cost.UnknownCalls) / float64(cost.TotalCalls)
+	}
 
 	return result, nil
 }

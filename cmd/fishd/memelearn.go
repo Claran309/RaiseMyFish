@@ -12,6 +12,8 @@ import (
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/knowledge"
+	"RaiseMyFish/internal/llmmeta"
+	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -43,7 +45,14 @@ func newMemeLearner(cfg config.Config, db *gorm.DB, runtime knowledgeAssembly, l
 	if err != nil {
 		return nil, "", fmt.Errorf("装配事件来源失败：%w", err)
 	}
-	llm, model, err := buildBackgroundLLM(cfg, backgroundRoute(cfg), memeLearnMaxTokens)
+	// 账本是增强能力：装配失败时照旧学习，只是这次调用不进成本统计。
+	var memeUsage store.UsageRepo
+	if repo, uerr := database.NewUsageRepo(db); uerr == nil {
+		memeUsage = repo
+	} else if logger != nil {
+		logger.Warn("梗白学习账本装配失败，本次调用不记成本", zap.String("action", memeLearnAction), zap.Error(uerr))
+	}
+	llm, model, err := buildBackgroundLLM(cfg, backgroundRoute(cfg), memeLearnMaxTokens, llmmeta.PurposeMemeLearn, memeUsage, logger)
 	if err != nil {
 		return nil, "", err
 	}

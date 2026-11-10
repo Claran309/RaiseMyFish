@@ -17,6 +17,7 @@ import (
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/embedding"
 	"RaiseMyFish/internal/knowledge"
+	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -26,6 +27,19 @@ func attachKnowledgeSemantic(cfg config.Config, db *gorm.DB, assembly *knowledge
 	if !cfg.Embedding.Enabled || assembly == nil || assembly.Base == nil {
 		return nil
 	}
+	// 语义召回与定时增量共用这个客户端；每次真实调用都进成本账本。
+	var usage store.UsageRepo
+	if repo, uerr := database.NewUsageRepo(db); uerr == nil {
+		usage = repo
+	} else if logger != nil {
+		logger.Warn("知识向量账本装配失败，本次调用不记成本", zap.String("action", "embed_usage"), zap.Error(uerr))
+	}
+	var onSinkError func(error)
+	if logger != nil {
+		onSinkError = func(err error) {
+			logger.Warn("知识向量调用记账失败", zap.String("action", "embed_usage"), zap.Error(err))
+		}
+	}
 	client, err := embedding.New(embedding.Options{
 		URL:       cfg.Embedding.URL,
 		Model:     cfg.Embedding.Model,
@@ -33,11 +47,12 @@ func attachKnowledgeSemantic(cfg config.Config, db *gorm.DB, assembly *knowledge
 		Dimension: cfg.Embedding.Dimension,
 		BatchSize: cfg.Embedding.BatchSize,
 		Timeout:   embedding.DefaultTimeout,
+		OnUsage:   embedding.UsageSinkFor(usage, cfg.Embedding.Model, onSinkError),
 	})
 	if err != nil {
 		return fmt.Errorf("装配embedding客户端：%w", err)
 	}
-	store, err := database.NewKnowledgeEmbeddingRepo(db)
+	embeddingStore, err := database.NewKnowledgeEmbeddingRepo(db)
 	if err != nil {
 		return fmt.Errorf("装配知识向量仓储：%w", err)
 	}
@@ -47,8 +62,10 @@ func attachKnowledgeSemantic(cfg config.Config, db *gorm.DB, assembly *knowledge
 			logger.Warn("知识语义召回降级为关键词", zap.String("action", "knowledge_semantic"), zap.Error(err))
 		}
 	}
-	hybrid, err := knowledge.NewHybridReader(assembly.Base, client, store, knowledge.HybridOptions{
+	fingerprint := client.Fingerprint(knowledge.IndexTemplate)
+	hybrid, err := knowledge.NewHybridReader(assembly.Base, client, embeddingStore, knowledge.HybridOptions{
 		Alpha:           cfg.Embedding.Alpha,
+		Fingerprint:     fingerprint,
 		MinSimilarity:   cfg.Embedding.MinSimilarity,
 		OnSemanticError: onError,
 	})
@@ -57,7 +74,8 @@ func attachKnowledgeSemantic(cfg config.Config, db *gorm.DB, assembly *knowledge
 	}
 	assembly.Reader = hybrid
 	assembly.Embedder = client
-	assembly.Store = store
+	assembly.Store = embeddingStore
+	assembly.Fingerprint = fingerprint
 	return nil
 }
 
@@ -66,6 +84,7 @@ type knowledgeEmbeddingRefresher struct {
 	reader       *knowledge.FileReader
 	embedder     knowledge.Embedder
 	store        knowledge.EmbeddingStore
+	fingerprint  string
 	batchSize    int
 	lastRevision string
 	logger       *zap.Logger
@@ -81,7 +100,8 @@ func (r *knowledgeEmbeddingRefresher) runOnce(ctx context.Context) error {
 		return nil
 	}
 	stats, err := knowledge.RunEmbedding(ctx, r.reader, r.embedder, r.store, knowledge.EmbedOptions{
-		BatchSize: r.batchSize,
+		BatchSize:   r.batchSize,
+		Fingerprint: r.fingerprint,
 		Progress: func(done, total, batches int) {
 			r.logger.Info("知识向量化进度",
 				zap.String("action", "knowledge_embed"),
@@ -94,7 +114,10 @@ func (r *knowledgeEmbeddingRefresher) runOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.lastRevision = info.Revision
+	// 有写回被 CAS 拒绝说明计算基于的源已过期：不推进 revision，下一轮重跑。
+	if stats.Rejected == 0 {
+		r.lastRevision = info.Revision
+	}
 	r.logger.Info("知识向量化完成",
 		zap.String("action", "knowledge_embed"),
 		zap.String("revision", stats.Revision),
@@ -103,6 +126,7 @@ func (r *knowledgeEmbeddingRefresher) runOnce(ctx context.Context) error {
 		zap.Int("pending", stats.Pending),
 		zap.Int("batches", stats.Batches),
 		zap.Int("embedded", stats.Embedded),
+		zap.Int("rejected", stats.Rejected),
 	)
 	return nil
 }
@@ -110,7 +134,7 @@ func (r *knowledgeEmbeddingRefresher) runOnce(ctx context.Context) error {
 // startKnowledgeEmbeddingRefresh 立即检查一次，之后按配置间隔轮询 revision。
 func startKnowledgeEmbeddingRefresh(ctx context.Context, cfg config.Config, assembly knowledgeAssembly, logger *zap.Logger) func() {
 	noop := func() {}
-	if !cfg.Embedding.AutoRefresh || assembly.Base == nil || assembly.Embedder == nil || assembly.Store == nil || logger == nil {
+	if !cfg.Embedding.AutoRefresh || assembly.Base == nil || assembly.Embedder == nil || assembly.Store == nil || assembly.Fingerprint == "" || logger == nil {
 		return noop
 	}
 	interval := time.Duration(cfg.Embedding.RefreshIntervalSeconds) * time.Second
@@ -118,11 +142,12 @@ func startKnowledgeEmbeddingRefresh(ctx context.Context, cfg config.Config, asse
 		interval = time.Hour
 	}
 	refresher := &knowledgeEmbeddingRefresher{
-		reader:    assembly.Base,
-		embedder:  assembly.Embedder,
-		store:     assembly.Store,
-		batchSize: cfg.Embedding.BatchSize,
-		logger:    logger,
+		reader:      assembly.Base,
+		embedder:    assembly.Embedder,
+		store:       assembly.Store,
+		fingerprint: assembly.Fingerprint,
+		batchSize:   cfg.Embedding.BatchSize,
+		logger:      logger,
 	}
 	logger.Info("知识定时增量已启动",
 		zap.String("action", "knowledge_embed"),

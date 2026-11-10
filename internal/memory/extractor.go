@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/llmmeta"
 )
 
 // Extractor 是可插拔的提炼器。
@@ -167,6 +168,8 @@ func (e *LLMExtractor) llmOut(ctx context.Context, ev event.Event, opts ExtractO
 	if ctx == nil {
 		return nil, errors.New("缺少上下文")
 	}
+	// 账本关联：这次提炼归属到被提炼的事件（只带 ID，正文不离开 prompt）。
+	ctx = llmmeta.WithCall(ctx, llmmeta.Call{Purpose: llmmeta.PurposeMemoryExtract, CorrelationID: ev.ID})
 	user := buildLLMInput(ev, opts)
 	raw, err := e.llm.Complete(ctx, LLMExtractPrompt, user)
 	if err != nil {

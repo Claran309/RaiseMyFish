@@ -9,6 +9,8 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"RaiseMyFish/internal/llmmeta"
 )
 
 const (
@@ -23,7 +25,9 @@ const (
 
 // HybridOptions 控制语义权重、相关性下限与降级回调。
 type HybridOptions struct {
-	Alpha           float64
+	Alpha float64
+	// Fingerprint 是当前向量空间的指纹；必填，查询只命中同一空间的向量。
+	Fingerprint     string
 	OnSemanticError func(error)
 	// MinSimilarity 是语义命中的最低相关性；<=0 用默认值。
 	MinSimilarity float64
@@ -35,6 +39,7 @@ type HybridReader struct {
 	embedder        Embedder
 	store           EmbeddingStore
 	alpha           float64
+	fingerprint     string
 	minSimilarity   float64
 	onSemanticError func(error)
 }
@@ -46,6 +51,10 @@ func NewHybridReader(base *FileReader, embedder Embedder, store EmbeddingStore, 
 	if math.IsNaN(opts.Alpha) || opts.Alpha < 0 || opts.Alpha > 1 {
 		return nil, errors.New("混合召回alpha必须在0至1之间")
 	}
+	fingerprint := strings.TrimSpace(opts.Fingerprint)
+	if fingerprint == "" {
+		return nil, errors.New("混合召回缺少索引指纹：无法确认向量空间")
+	}
 	minSim := opts.MinSimilarity
 	if minSim <= 0 {
 		minSim = defaultMinSimilarity
@@ -53,7 +62,7 @@ func NewHybridReader(base *FileReader, embedder Embedder, store EmbeddingStore, 
 	if math.IsNaN(minSim) || minSim > 1 {
 		return nil, errors.New("混合召回最低相关性必须在0至1之间")
 	}
-	return &HybridReader{base: base, embedder: embedder, store: store, alpha: opts.Alpha, minSimilarity: minSim, onSemanticError: opts.OnSemanticError}, nil
+	return &HybridReader{base: base, embedder: embedder, store: store, alpha: opts.Alpha, fingerprint: fingerprint, minSimilarity: minSim, onSemanticError: opts.OnSemanticError}, nil
 }
 
 // Recall 关键词与语义同时可用时按混合分排序；任一步失败都降级为纯关键词。
@@ -95,6 +104,8 @@ func (h *HybridReader) Recall(ctx context.Context, query Query) (Context, error)
 }
 
 func (h *HybridReader) semanticHits(ctx context.Context, query string) (map[string]float64, error) {
+	// 账本用途：查询向量化；关联标识只写索引名。
+	ctx = llmmeta.WithCall(ctx, llmmeta.Call{Purpose: llmmeta.PurposeEmbedQuery, CorrelationID: "knowledge"})
 	vectors, err := h.embedder.Embed(ctx, []string{query})
 	if err != nil {
 		return nil, err
@@ -102,7 +113,7 @@ func (h *HybridReader) semanticHits(ctx context.Context, query string) (map[stri
 	if len(vectors) != 1 {
 		return nil, errors.New("查询embedding向量数不符")
 	}
-	hits, err := h.store.SemanticSearch(ctx, vectors[0], semanticCandidateLimit)
+	hits, err := h.store.SemanticSearch(ctx, vectors[0], h.fingerprint, semanticCandidateLimit)
 	if err != nil {
 		return nil, err
 	}

@@ -439,6 +439,8 @@ func (w *Worker) handleJob(ctx context.Context, job Job, stats *Stats) error {
 	}
 
 	workCtx, cancelWork := context.WithCancel(ctx)
+	// 所有早退路径（失租、提炼失败、提交失败）都要释放子 context。
+	defer cancelWork()
 	lost, stopHeartbeat := w.startLeaseHeartbeat(ctx, job, cancelWork)
 	records, skipped, err := w.extractEvent(workCtx, job.Event)
 	stopHeartbeat()

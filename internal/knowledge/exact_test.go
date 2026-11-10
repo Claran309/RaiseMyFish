@@ -45,7 +45,7 @@ func TestExactTermsCoversTitleKeywordsNotTags(t *testing.T) {
 // TestHybridReaderForwardsExactTerms 混合召回只加语义，不改精确词表。
 func TestHybridReaderForwardsExactTerms(t *testing.T) {
 	base := loadEntries(t, testEntry("m1", "蚌埠住了"))
-	hybrid, err := NewHybridReader(base, &fakeEmbedder{}, newFakeEmbeddingStore(), HybridOptions{Alpha: 0.5})
+	hybrid, err := NewHybridReader(base, &fakeEmbedder{}, newFakeEmbeddingStore(), HybridOptions{Alpha: 0.5, Fingerprint: testKnowledgeFingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,6 +17,7 @@ import (
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/knowledge"
+	"RaiseMyFish/internal/llmmeta"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/reasoning"
@@ -113,6 +114,8 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 	if runtime == nil || runtime.factory == nil {
 		return reasoning.Result{}, nil
 	}
+	// 账本关联：ReAct 的每次模型调用都归属这条事件（只带 ID，不带正文）。
+	ctx = llmmeta.WithCall(ctx, llmmeta.Call{Purpose: llmmeta.PurposeReact, CorrelationID: ev.ID})
 	maxPrompt := runtime.budget.MaxPromptTokens
 	if maxPrompt <= 0 {
 		maxPrompt = brain.DefaultBudget().MaxPromptTokens
@@ -459,14 +462,17 @@ func (p *providerLLM) record(ctx context.Context, at time.Time, resp provider.Re
 		return
 	}
 	row := store.Usage{
-		At:           at.UTC(),
-		Channel:      p.channel,
-		Model:        p.blueprint.model,
-		InputTokens:  validTokens(resp.Usage.InputTokens),
-		OutputTokens: validTokens(resp.Usage.OutputTokens),
-		CostUSD:      p.cost(resp.Usage),
-		Milliseconds: int(time.Since(at).Milliseconds()),
-		OK:           callErr == nil,
+		At:                at.UTC(),
+		Channel:           p.channel,
+		Purpose:           string(llmmeta.PurposeReact),
+		Model:             p.blueprint.model,
+		CorrelationID:     llmmeta.SafeCorrelationID(llmmeta.From(ctx).CorrelationID),
+		InputTokens:       validTokens(resp.Usage.InputTokens),
+		OutputTokens:      validTokens(resp.Usage.OutputTokens),
+		CachedInputTokens: validTokens(resp.Usage.CachedInputTokens),
+		CostUSD:           p.cost(resp.Usage),
+		Milliseconds:      int(time.Since(at).Milliseconds()),
+		OK:                callErr == nil,
 	}
 	// 父 ctx 可能已经超时（ReAct 预算耗尽），记账用脱离取消的 ctx，但只给 2 秒
 	accountCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)

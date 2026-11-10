@@ -21,9 +21,13 @@ type Request struct {
 }
 
 // Usage 的nil字段表示服务端未提供统计。
+//
+// CachedInputTokens 只在服务端真实返回 prompt_tokens_details.cached_tokens 时非空；
+// 不从输入长度或其它字段推算缓存命中。
 type Usage struct {
-	InputTokens  *int
-	OutputTokens *int
+	InputTokens       *int
+	OutputTokens      *int
+	CachedInputTokens *int
 }
 
 // Response 保留可用统计，空文本由Brain统一决定是否补一次。

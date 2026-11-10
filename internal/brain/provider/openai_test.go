@@ -205,3 +205,60 @@ func TestServedModelIsAuditedWithoutChangingText(t *testing.T) {
 		t.Fatal("缺少服务端模型信息")
 	}
 }
+
+// TestOpenAICachedTokensOnlyWhenDeclared 缓存命中只认服务端显式字段，缺失时保持 nil。
+func TestOpenAICachedTokensOnlyWhenDeclared(t *testing.T) {
+	cases := []struct {
+		name   string
+		usage  string
+		cached *int
+	}{
+		{"显式声明", `{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":40}}`, intPtr(40)},
+		{"零命中", `{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":0}}`, intPtr(0)},
+		{"无明细", `{"prompt_tokens":100,"completion_tokens":5}`, nil},
+		{"明细为空", `{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{}}`, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"鱼"}}],"usage":`+tc.usage+`}`)
+			}))
+			defer s.Close()
+			p, err := NewOpenAI("fake", s.URL, "", s.Client(), time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := p.Chat(context.Background(), request())
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch {
+			case tc.cached == nil && response.Usage.CachedInputTokens != nil:
+				t.Fatalf("未声明缓存命中却写入了 %d", *response.Usage.CachedInputTokens)
+			case tc.cached != nil && response.Usage.CachedInputTokens == nil:
+				t.Fatalf("服务端声明了缓存命中却丢失")
+			case tc.cached != nil && *response.Usage.CachedInputTokens != *tc.cached:
+				t.Fatalf("缓存命中 = %d，期望 %d", *response.Usage.CachedInputTokens, *tc.cached)
+			}
+		})
+	}
+}
+
+// TestOpenAIRejectsNegativeCachedTokens 负数缓存命中属于协议错误。
+func TestOpenAIRejectsNegativeCachedTokens(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"鱼"}}],"usage":{"prompt_tokens":10,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":-1}}}`)
+	}))
+	defer s.Close()
+	p, err := NewOpenAI("fake", s.URL, "", s.Client(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.Chat(context.Background(), request())
+	var callErr *Error
+	if !errors.As(err, &callErr) || callErr.Kind != KindProtocol {
+		t.Fatalf("负数缓存命中未按协议错误拒绝：%v", err)
+	}
+}
+
+func intPtr(v int) *int { return &v }

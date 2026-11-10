@@ -71,6 +71,10 @@ func releaseLease(updates map[string]any) {
 }
 
 // Claim 一条CTE完成有界SKIP LOCKED抢占与换租，不依赖进程内去重。
+//
+// 领取时顺带盘点升级前停在 generate 的旧投递计划：已有当前尝试的，按尝试状态
+// 与 planNextStage 同口径恢复路由（ready/not_posted→deliver，armed/unknown→verify），
+// 恢复不再重跑模型/工具。活跃租约不在领取条件内，运行中的任务不会被改写。
 func (r *EventRepo) Claim(ctx context.Context, owner string, ttl time.Duration, limit int) ([]event.Claim, error) {
 	if ctx == nil || strings.TrimSpace(owner) == "" || len(owner) > 128 || !validTTL(ttl) || limit < 1 || limit > 100 {
 		return nil, store.ErrInvalid
@@ -91,6 +95,16 @@ func (r *EventRepo) Claim(ctx context.Context, owner string, ttl time.Duration, 
  AND (e.lease_owner IS NULL OR e.lease_until<=clock_timestamp())
  ORDER BY r.rn,e.at,e.id LIMIT ? FOR UPDATE OF e SKIP LOCKED
  ) UPDATE events e SET status='queued',
+ stage=CASE WHEN e.stage='generate' THEN COALESCE((
+  SELECT CASE a.state
+   WHEN 'ready' THEN 'deliver'
+   WHEN 'not_posted' THEN 'deliver'
+   WHEN 'armed' THEN 'verify'
+   WHEN 'unknown' THEN 'verify'
+  END
+  FROM delivery_plans dp JOIN delivery_attempts a ON a.event_id=dp.event_id AND a.id=dp.current_attempt_id
+  WHERE dp.event_id=e.id AND dp.channel=e.channel AND dp.destination=e.session
+ ), e.stage) ELSE e.stage END,
  status_changed_at=CASE WHEN e.status='queued' THEN e.status_changed_at ELSE clock_timestamp() END,
  retry_at=NULL,lease_owner=?,lease_version=e.lease_version+1,
  lease_until=clock_timestamp()+(? * interval '1 microsecond')
