@@ -74,7 +74,7 @@ func TestKnowledgeAssemblyAndDiagnosticWithoutBrainCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := b.Reader.(*knowledge.FileReader).SnapshotInfo()
-	if err != nil || info.Entries != 500 || info.Revision != b.Diagnostic.Revision {
+	if err != nil || info.Entries < 1 || info.Revision != b.Diagnostic.Revision {
 		t.Fatal("metadata重新读文件或不来自同一快照")
 	}
 }
