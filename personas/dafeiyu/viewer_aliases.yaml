@@ -15,6 +15,9 @@ aliases:
   - alias: "终南"
     name: "终南仙主"
     status: confirmed
+  - alias: "奇迹鱼"
+    name: "X奇迹与你X"
+    status: confirmed
 # 示例：
 # aliases:
 #   - alias: "长弓三溢"
