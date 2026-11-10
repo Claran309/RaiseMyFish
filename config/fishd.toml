@@ -95,11 +95,11 @@ models = ["deepseek-chat"]
 default = "deepseek:deepseek-chat"
 live = "deepseek:deepseek-chat"
 
-# 报价可省略（费用存NULL）；如配置需同时给两项，按具体model定价。
-# 下面0仅演示明确免费场景，不是DeepSeek报价；不确定真实价格就保留注释。
-# [llm.providers.deepseek.prices.deepseek-chat]
-# input_usd_per_million = 0.0
-# output_usd_per_million = 0.0
+# 报价（USD/百万 tokens）：deepseek-chat（V3）2025 官价
+# 输入 0.27（cache miss）/ 输出 1.10；价格变动请按官网调整。
+[llm.providers.deepseek.prices.deepseek-chat]
+input_usd_per_million = 0.27
+output_usd_per_million = 1.10
 
 # 仅装配知识Reader；默认关闭，事件消费链路尚未接入。
 [knowledge]
