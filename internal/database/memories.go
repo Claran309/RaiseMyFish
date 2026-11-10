@@ -391,17 +391,47 @@ func (row memoryRecordRow) record() (memory.Record, error) {
 
 // KeywordRecords 在 scope 可见范围内按 title/summary 做关键词模糊匹配。
 func (r *MemoryRepo) KeywordRecords(ctx context.Context, s memory.Scope, keyword string, limit int) ([]memory.Record, error) {
+	return r.keywordRecords(ctx, s, keyword, time.Time{}, time.Time{}, limit, true)
+}
+
+// KeywordRecordsBetween 在关键词之外再按 valid_from 的时间窗过滤。
+//
+// keyword 为空表示只看时间窗内的摘要；after/before 是半开区间 [after, before)，
+// 零值表示该侧不限。时间窗与关键词都为空时拒绝，避免无界全表召回。
+func (r *MemoryRepo) KeywordRecordsBetween(ctx context.Context, s memory.Scope, keyword string, after, before time.Time, limit int) ([]memory.Record, error) {
+	return r.keywordRecords(ctx, s, keyword, after, before, limit, false)
+}
+
+func (r *MemoryRepo) keywordRecords(ctx context.Context, s memory.Scope, keyword string, after, before time.Time, limit int, requireKeyword bool) ([]memory.Record, error) {
 	keyword = strings.TrimSpace(keyword)
-	if keyword == "" {
+	if keyword == "" && requireKeyword {
+		return nil, store.ErrInvalid
+	}
+	if keyword == "" && after.IsZero() && before.IsZero() {
+		return nil, store.ErrInvalid
+	}
+	if utf8.RuneCountInString(keyword) > memorySearchMaxRunes {
 		return nil, store.ErrInvalid
 	}
 	if err := validateRecall(ctx, s, limit); err != nil {
 		return nil, err
 	}
-	pattern := "%" + keyword + "%"
+	if err := validateTimeWindow(after, before); err != nil {
+		return nil, err
+	}
+	query := memoryScopeQuery(r.db.WithContext(ctx), s)
+	if !after.IsZero() {
+		query = query.Where("valid_from >= ?", after.UTC())
+	}
+	if !before.IsZero() {
+		query = query.Where("valid_from < ?", before.UTC())
+	}
+	if keyword != "" {
+		pattern := "%" + escapeLikePattern(keyword) + "%"
+		query = query.Where("(title ILIKE ? ESCAPE '\\' OR summary ILIKE ? ESCAPE '\\')", pattern, pattern)
+	}
 	var rows []memoryRecordRow
-	err := memoryScopeQuery(r.db.WithContext(ctx), s).
-		Where("(title ILIKE ? OR summary ILIKE ?)", pattern, pattern).
+	err := query.
 		Select("id, channel, session, summary, importance, confidence, private, valid_from, to_json(event_ids) AS ids").
 		Order("importance DESC, valid_from DESC, id ASC").
 		Limit(limit).
@@ -417,8 +447,22 @@ func (r *MemoryRepo) KeywordRecords(ctx context.Context, s memory.Scope, keyword
 // 记忆摘要可能还没提炼出来，但 events 已有原文；这一路保证「数据在就能搜到」。
 // 可见性口径与 Recent 完全一致（会话隔离、私密过滤、DM 不外泄）。
 func (r *MemoryRepo) KeywordMessages(ctx context.Context, s memory.Scope, keyword string, limit int) ([]memory.Message, error) {
+	return r.keywordMessages(ctx, s, keyword, time.Time{}, time.Time{}, limit, true)
+}
+
+// KeywordMessagesBetween 在关键词之外再按 events.at 的时间窗过滤。
+//
+// keyword 为空表示只看时间窗内的原始弹幕；时间窗与关键词都为空时拒绝。
+func (r *MemoryRepo) KeywordMessagesBetween(ctx context.Context, s memory.Scope, keyword string, after, before time.Time, limit int) ([]memory.Message, error) {
+	return r.keywordMessages(ctx, s, keyword, after, before, limit, false)
+}
+
+func (r *MemoryRepo) keywordMessages(ctx context.Context, s memory.Scope, keyword string, after, before time.Time, limit int, requireKeyword bool) ([]memory.Message, error) {
 	keyword = strings.TrimSpace(keyword)
-	if keyword == "" {
+	if keyword == "" && requireKeyword {
+		return nil, store.ErrInvalid
+	}
+	if keyword == "" && after.IsZero() && before.IsZero() {
 		return nil, store.ErrInvalid
 	}
 	if utf8.RuneCountInString(keyword) > memorySearchMaxRunes {
@@ -427,14 +471,33 @@ func (r *MemoryRepo) KeywordMessages(ctx context.Context, s memory.Scope, keywor
 	if err := validateRecall(ctx, s, limit); err != nil {
 		return nil, err
 	}
-	pattern := "%" + keyword + "%"
+	if err := validateTimeWindow(after, before); err != nil {
+		return nil, err
+	}
 	query := r.db.WithContext(ctx).Table("events").Where("channel=? AND session=?", s.Channel, s.Session).Where("(dir <> 'out' OR status='done')")
 	if !s.Private {
 		query = query.Where("NOT private")
 	}
 	query = query.Where("(channel <> 'dm' OR private)")
-	query = query.Where("(text ILIKE ? OR from_name ILIKE ?)", pattern, pattern)
+	if !after.IsZero() {
+		query = query.Where("at >= ?", after.UTC())
+	}
+	if !before.IsZero() {
+		query = query.Where("at < ?", before.UTC())
+	}
+	if keyword != "" {
+		pattern := "%" + escapeLikePattern(keyword) + "%"
+		query = query.Where("(text ILIKE ? ESCAPE '\\' OR from_name ILIKE ? ESCAPE '\\')", pattern, pattern)
+	}
 	return recallMessages(query, s, limit, false)
+}
+
+// validateTimeWindow 校验半开区间；两端都可缺省，但都给出时起点必须早于终点。
+func validateTimeWindow(after, before time.Time) error {
+	if !after.IsZero() && !before.IsZero() && !after.Before(before) {
+		return store.ErrInvalid
+	}
+	return nil
 }
 
 // SemanticRecords 在 scope 可见范围内按余弦距离取最相近的摘要。

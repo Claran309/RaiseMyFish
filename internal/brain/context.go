@@ -598,7 +598,7 @@ func subjectCandidates(e event.Event, replyName string) []subjectCandidateSectio
 	for _, name := range mentionedNames(e.Text) {
 		add("", name, "mention")
 	}
-	add("", questionedSubject(e.Text), "question")
+	add("", questionSubjectName(e.Text), "question")
 	return out
 }
 
@@ -637,7 +637,7 @@ func questionedSubject(text string) string {
 		prefix = prefix[len(prefix)-maxCandidateRunes:]
 	}
 	name := strings.Trim(string(prefix), candidateTrimCutset)
-	for _, lead := range []string{"请问", "问一下", "你知道", "那个叫", "这个叫", "那个", "这个", "叫"} {
+	for _, lead := range []string{"你还记不记得", "还记不记得", "记不记得", "还记得", "记得", "你还认识", "还认识", "请问", "问一下", "你知道", "那个叫", "这个叫", "那个", "这个", "叫"} {
 		name = strings.TrimPrefix(name, lead)
 	}
 	if utf8.RuneCountInString(name) < 2 {

@@ -13,6 +13,9 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
+
+	"RaiseMyFish/internal/llmmeta"
 )
 
 const (
@@ -36,6 +39,23 @@ type SearchQuery struct {
 	Scope Scope
 	Text  string
 	Limit int
+	// After/Before 是按事实/事件发生时间过滤的半开区间 [After, Before)；
+	// 零值表示该侧不限。有时间窗时不走向量路：向量索引没有可靠的事实时间过滤。
+	After  time.Time
+	Before time.Time
+}
+
+// hasTimeWindow 表示查询带了时间范围。
+func (q SearchQuery) hasTimeWindow() bool {
+	return !q.After.IsZero() || !q.Before.IsZero()
+}
+
+// validateWindow 校验半开区间；两端都可缺省，但都给出时起点必须早于终点。
+func (q SearchQuery) validateWindow() error {
+	if !q.After.IsZero() && !q.Before.IsZero() && !q.After.Before(q.Before) {
+		return errors.New("记忆时间窗起点必须早于终点")
+	}
+	return nil
 }
 
 // SemanticRecord 是一条向量命中的记忆摘要与余弦相似度。
@@ -60,6 +80,21 @@ type SearchRecordSource interface {
 // 没有这一路会出现「数据明明在、鱼却说不知道」。实现方必须在 SQL 层做范围过滤。
 type SearchMessageSource interface {
 	KeywordMessages(ctx context.Context, scope Scope, keyword string, limit int) ([]Message, error)
+}
+
+// TimeSearchRecordSource 是可选的「关键词 + 时间窗」摘要召回能力。
+//
+// keyword 允许为空：只看某个时间窗内发生过什么也应当能召回。
+// 实现方必须在 SQL 层按 valid_from 过滤，并保持与 KeywordRecords 相同的可见性口径。
+type TimeSearchRecordSource interface {
+	KeywordRecordsBetween(ctx context.Context, scope Scope, keyword string, after, before time.Time, limit int) ([]Record, error)
+}
+
+// TimeSearchMessageSource 是可选的「关键词 + 时间窗」原始消息召回能力。
+//
+// 实现方必须在 SQL 层按 events.at 过滤，并保持与 KeywordMessages 相同的可见性口径。
+type TimeSearchMessageSource interface {
+	KeywordMessagesBetween(ctx context.Context, scope Scope, keyword string, after, before time.Time, limit int) ([]Message, error)
 }
 
 // Embedder 由 OpenAI 兼容客户端实现；测试可注入 mock。
@@ -164,9 +199,12 @@ func (h *HybridSearcher) Search(ctx context.Context, query SearchQuery) (Context
 	if err := ValidateScope(query.Scope); err != nil {
 		return Context{}, err
 	}
+	if err := query.validateWindow(); err != nil {
+		return Context{}, err
+	}
 	text := strings.TrimSpace(query.Text)
-	// 空查询等同「没有具体问题」：复用既有最近召回，不额外消耗 embedding。
-	if text == "" {
+	// 空查询且没有时间窗，等同「没有具体问题」：复用既有最近召回，不额外消耗 embedding。
+	if text == "" && !query.hasTimeWindow() {
 		return h.base.Recall(ctx, query.Scope)
 	}
 	limit := query.Limit
@@ -175,6 +213,11 @@ func (h *HybridSearcher) Search(ctx context.Context, query SearchQuery) (Context
 	}
 	if limit > maxSearchLimit {
 		limit = maxSearchLimit
+	}
+	// 时间窗只走关键词/原文两路：向量命中没有可靠的事实时间过滤，
+	// 混进来会把窗外内容塞进「昨天」的回答里。
+	if query.hasTimeWindow() {
+		return h.searchWindow(ctx, query, text, limit)
 	}
 
 	keywordRecords, err := h.source.KeywordRecords(ctx, query.Scope, text, limit)
@@ -211,6 +254,29 @@ func (h *HybridSearcher) Search(ctx context.Context, query SearchQuery) (Context
 	return buildSearchContext(query.Scope, messages, keywordRecords, semantic, h.alpha, limit, "混合记忆召回数据无效")
 }
 
+// searchWindow 按「关键词 + 时间窗」召回摘要与原始消息；关键词可以为空。
+//
+// 时间窗检索依赖可选的 TimeSearch*Source；未实现时明确报错，
+// 避免把不带时间过滤的旧结果伪装成「昨天」。
+func (h *HybridSearcher) searchWindow(ctx context.Context, query SearchQuery, text string, limit int) (Context, error) {
+	recordSource, ok := h.source.(TimeSearchRecordSource)
+	if !ok {
+		return Context{}, errors.New("记忆源不支持时间窗检索")
+	}
+	records, err := recordSource.KeywordRecordsBetween(ctx, query.Scope, text, query.After, query.Before, limit)
+	if err != nil {
+		return Context{}, err
+	}
+	var messages []Message
+	if source, ok := h.source.(TimeSearchMessageSource); ok {
+		messages, err = source.KeywordMessagesBetween(ctx, query.Scope, text, query.After, query.Before, limit)
+		if err != nil {
+			return Context{}, err
+		}
+	}
+	return buildSearchContext(query.Scope, messages, records, nil, 0, limit, "时间窗记忆召回数据无效")
+}
+
 // filterSemanticRecords 丢掉低于相关性下限的向量命中。
 //
 // 允许结果为空：查不到相关内容时，宁可不注入，也不拿「最相近的无关条目」凑数。
@@ -244,6 +310,8 @@ func buildSearchContext(scope Scope, messages []Message, keyword []Record, seman
 }
 
 func (h *HybridSearcher) embedQuery(ctx context.Context, text string) ([]float64, error) {
+	// 账本用途：查询向量化；关联标识只写索引名。
+	ctx = llmmeta.WithCall(ctx, llmmeta.Call{Purpose: llmmeta.PurposeEmbedQuery, CorrelationID: "memory"})
 	vectors, err := h.embedder.Embed(ctx, []string{text})
 	if err != nil {
 		return nil, err

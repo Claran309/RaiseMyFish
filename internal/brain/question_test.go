@@ -19,7 +19,8 @@ type questionSubjectView struct {
 		Name   string `json:"name"`
 		Source string `json:"source"`
 	} `json:"match"`
-	Hint string `json:"hint"`
+	Hint  string `json:"hint"`
+	Check bool   `json:"check"`
 }
 
 func preparedContext(t *testing.T, in ContextInput) (map[string]json.RawMessage, string) {
@@ -192,4 +193,101 @@ func TestQuestionSubjectAbsentForPlainChat(t *testing.T) {
 	if strings.Contains(user, "question_subject") {
 		t.Fatal("普通聊天的 instructions 不应出现主体提示")
 	}
+}
+
+// TestQuestionCheckSubject 覆盖「记得/认识/聊过/喂过/打过招呼」类回忆核查（本批 M01）。
+//
+// 回忆核查和「X是谁」走同一条主体分类：昵称命中房间就 room_candidate，
+// 提示先查观众档案；时间/事件词（昨天聊天/顶号/喂饭）不能被当成人名。
+func TestQuestionCheckSubject(t *testing.T) {
+	base := time.Date(2026, 11, 10, 12, 0, 0, 0, time.Local)
+	room := func(name string) []memory.Message {
+		return []memory.Message{inboundFrom("live:room:c1", "7002", name, "来了", base.Add(time.Minute))}
+	}
+	cases := []struct {
+		name       string
+		text       string
+		focus      []memory.Message
+		wantKind   string
+		wantName   string
+		wantCheck  bool
+		wantHint   string
+		wantAbsent bool
+	}{
+		{name: "记得昵称吗", text: "记得今夜琴声温柔吗", focus: room("今夜琴声温柔"),
+			wantKind: SubjectRoomCandidate, wantName: "今夜琴声温柔", wantCheck: true, wantHint: "viewer_search"},
+		{name: "昵称含时间词也要认", text: "记得今天也要开心吗", focus: room("今天也要开心"),
+			wantKind: SubjectRoomCandidate, wantName: "今天也要开心", wantCheck: true, wantHint: "viewer_search"},
+		{name: "认识昵称吗", text: "你认识阿明吗", focus: room("阿明"),
+			wantKind: SubjectRoomCandidate, wantName: "阿明", wantCheck: true, wantHint: "viewer_search"},
+		{name: "跟昵称聊过吗", text: "跟阿明聊过吗", focus: room("阿明"),
+			wantKind: SubjectRoomCandidate, wantName: "阿明", wantCheck: true, wantHint: "memory_search"},
+		{name: "昵称喂过饭吗", text: "阿明喂过饭吗", focus: room("阿明"),
+			wantKind: SubjectRoomCandidate, wantName: "阿明", wantCheck: true, wantHint: "memory_search"},
+		{name: "跟昵称打过招呼吗", text: "跟阿明打过招呼吗", focus: room("阿明"),
+			wantKind: SubjectRoomCandidate, wantName: "阿明", wantCheck: true, wantHint: "memory_search"},
+		{name: "不在房间仍要查档案", text: "记得鲁迅吗",
+			wantKind: SubjectUnresolved, wantName: "鲁迅", wantCheck: true, wantHint: "viewer_search"},
+		{name: "记得时间事件", text: "记得昨天聊天", wantAbsent: true},
+		{name: "记得顶号的事", text: "记得昨晚顶号的事吗", wantAbsent: true},
+		{name: "有没有喂过饭", text: "有没有喂过饭", wantAbsent: true},
+		{name: "记得喂过饭", text: "记得喂过饭吗", wantAbsent: true},
+		{name: "昨晚顶号的事", text: "昨晚顶号的事", wantAbsent: true},
+		{name: "我认识不是查询", text: "我认识阿明", wantAbsent: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, in := fixture()
+			in.Event.ID = "live:room:check"
+			in.Event.Text = tc.text
+			in.Event.FromID = "1001"
+			in.Event.FromName = "A"
+			in.Event.At = base.Add(2 * time.Minute)
+			in.Memory.Focus = tc.focus
+			subject, user := questionSubjectOf(t, in)
+			if tc.wantAbsent {
+				if subject.Kind != "" || subject.Text != "" {
+					t.Fatalf("不应产生主体分类：%+v", subject)
+				}
+				return
+			}
+			if subject.Kind != tc.wantKind || subject.Text == "" || subject.Check != tc.wantCheck {
+				t.Fatalf("分类 = %+v，期望 kind=%s check=%v", subject, tc.wantKind, tc.wantCheck)
+			}
+			if tc.wantName != "" && (subject.Match == nil || subject.Match.Name != tc.wantName) {
+				if tc.wantKind == SubjectUnresolved {
+					if subject.Text != tc.wantName {
+						t.Fatalf("主体 = %q，期望 %q", subject.Text, tc.wantName)
+					}
+				} else {
+					t.Fatalf("命中证据 = %+v，期望 %s", subject.Match, tc.wantName)
+				}
+			}
+			if tc.wantHint != "" && !strings.Contains(user, tc.wantHint) {
+				t.Fatalf("instructions 缺少提示 %q：%s", tc.wantHint, user)
+			}
+		})
+	}
+}
+
+// TestSubjectCandidatesIncludeCheckName 回忆核查的昵称也要进入候选名单。
+func TestSubjectCandidatesIncludeCheckName(t *testing.T) {
+	_, in := fixture()
+	in.Event.Text = "记得今夜琴声温柔吗"
+	raw, _ := preparedContext(t, in)
+	var current struct {
+		Candidates []struct {
+			Name   string `json:"name"`
+			Source string `json:"source"`
+		} `json:"subject_candidates"`
+	}
+	if err := json.Unmarshal(raw["current_event"], &current); err != nil {
+		t.Fatalf("current_event 解析失败：%v", err)
+	}
+	for _, candidate := range current.Candidates {
+		if candidate.Name == "今夜琴声温柔" && candidate.Source == "question" {
+			return
+		}
+	}
+	t.Fatalf("候选名单缺少回忆核查昵称：%+v", current.Candidates)
 }

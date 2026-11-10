@@ -306,3 +306,113 @@ func TestMemoryEmbeddingIncremental(t *testing.T) {
 		t.Fatalf("二次入库未全部跳过：%+v", stats)
 	}
 }
+
+// TestMemoryKeywordTimeWindow 时间窗召回：摘要与原文都按半开区间过滤，
+// 关键词允许为空，且范围/私密口径不变。
+func TestMemoryKeywordTimeWindow(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatalf("迁移失败：%v", err)
+	}
+	repo, err := NewMemoryRepo(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	after, before := now.Add(-6*time.Hour), now.Add(-time.Hour)
+	inWindow, outWindow := now.Add(-2*time.Hour), now.Add(-8*time.Hour)
+
+	records := []store.MemoryRecord{
+		{Record: memory.Record{ID: "mem-win", Channel: event.ChLive, Session: "room", Summary: "昨晚顶号聊到白饭",
+			Importance: 0.6, Confidence: 0.8, ValidFrom: inWindow}, Source: "owner_direct", Kind: "note", Title: "顶号"},
+		{Record: memory.Record{ID: "mem-out", Channel: event.ChLive, Session: "room", Summary: "更早也聊过白饭",
+			Importance: 0.9, Confidence: 0.8, ValidFrom: outWindow}, Source: "owner_direct", Kind: "note", Title: "旧事"},
+		{Record: memory.Record{ID: "mem-win-private", Channel: event.ChDM, Session: "owner", Private: true,
+			Summary: "私信里的白饭", Importance: 0.5, Confidence: 0.8, ValidFrom: inWindow}, Source: "owner_direct", Kind: "note", Title: "私密"},
+	}
+	for _, record := range records {
+		if ok, err := repo.InsertRecord(ctx, record); err != nil || !ok {
+			t.Fatalf("写入记忆 %s 失败：%v", record.ID, err)
+		}
+	}
+	insertEvent := func(id, channel, session, text string, private bool, at time.Time) {
+		t.Helper()
+		err := repo.db.WithContext(ctx).Exec(`INSERT INTO events(id,channel,dir,session,from_id,from_name,text,private,at,status)
+VALUES(?,?,?,?,?,?,?,?,?,?)`, id, channel, "in", session, "3003", "弓长三益", text, private, at, "done").Error
+		if err != nil {
+			t.Fatalf("写入事件 %s 失败：%v", id, err)
+		}
+	}
+	insertEvent("live:room:win", "live", "room", "昨晚顶号了", false, inWindow)
+	insertEvent("live:room:out", "live", "room", "更早的顶号", false, outWindow)
+	insertEvent("dm:owner:win", "dm", "owner", "私信顶号", true, inWindow)
+
+	scope := memory.Scope{Channel: event.ChLive, Session: "room"}
+	// 关键词 + 时间窗：窗外同关键词不召回。
+	got, err := repo.KeywordRecordsBetween(ctx, scope, "白饭", after, before, 10)
+	if err != nil {
+		t.Fatalf("摘要时间窗检索失败：%v", err)
+	}
+	if len(got) != 1 || got[0].ID != "mem-win" {
+		t.Fatalf("摘要时间窗结果不符：%+v", got)
+	}
+	// 关键词为空：只看时间窗内的公开摘要。
+	got, err = repo.KeywordRecordsBetween(ctx, scope, "", after, before, 10)
+	if err != nil {
+		t.Fatalf("空关键词时间窗失败：%v", err)
+	}
+	if len(got) != 1 || got[0].ID != "mem-win" {
+		t.Fatalf("空关键词应返回窗内公开摘要：%+v", got)
+	}
+	// 私密视角能看自己的私密行，但仍受时间窗限制。
+	private := memory.Scope{Channel: event.ChDM, Session: "owner", Private: true}
+	got, err = repo.KeywordRecordsBetween(ctx, private, "", after, before, 10)
+	if err != nil {
+		t.Fatalf("私密时间窗检索失败：%v", err)
+	}
+	seen := map[string]bool{}
+	for _, record := range got {
+		seen[record.ID] = true
+	}
+	if !seen["mem-win"] || !seen["mem-win-private"] || seen["mem-out"] {
+		t.Fatalf("私密时间窗结果不符：%+v", got)
+	}
+
+	messages, err := repo.KeywordMessagesBetween(ctx, scope, "顶号", after, before, 20)
+	if err != nil {
+		t.Fatalf("原文时间窗检索失败：%v", err)
+	}
+	if len(messages) != 1 || messages[0].EventID != "live:room:win" {
+		t.Fatalf("原文时间窗结果不符：%+v", messages)
+	}
+	messages, err = repo.KeywordMessagesBetween(ctx, scope, "", after, before, 20)
+	if err != nil {
+		t.Fatalf("空关键词原文时间窗失败：%v", err)
+	}
+	if len(messages) != 1 || messages[0].EventID != "live:room:win" {
+		t.Fatalf("空关键词原文结果不符：%+v", messages)
+	}
+	messages, err = repo.KeywordMessagesBetween(ctx, private, "", after, before, 20)
+	if err != nil {
+		t.Fatalf("私密原文时间窗失败：%v", err)
+	}
+	privateSeen := map[string]bool{}
+	for _, message := range messages {
+		privateSeen[message.EventID] = true
+	}
+	// 原文口径按会话隔离：DM 视角只看到 DM 会话内的私密消息。
+	if !privateSeen["dm:owner:win"] || privateSeen["live:room:win"] {
+		t.Fatalf("私密原文时间窗结果不符：%+v", messages)
+	}
+
+	// 非法窗口与无关键词又无窗口都拒绝。
+	if _, err := repo.KeywordRecordsBetween(ctx, scope, "白饭", before, after, 10); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("非法摘要窗口应拒绝：%v", err)
+	}
+	if _, err := repo.KeywordMessagesBetween(ctx, scope, "白饭", before, after, 10); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("非法原文窗口应拒绝：%v", err)
+	}
+	if _, err := repo.KeywordRecordsBetween(ctx, scope, "", time.Time{}, time.Time{}, 10); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("无关键词无窗口应拒绝：%v", err)
+	}
+}

@@ -459,6 +459,157 @@ func TestToolErrorPropagates(t *testing.T) {
 	}
 }
 
+// memoryTimeTestNow 是时间窗测试的固定时钟（本地时区，避免 UTC 跨日）。
+func memoryTimeTestNow() time.Time {
+	return time.Date(2026, 11, 10, 12, 0, 0, 0, time.Local)
+}
+
+// TestMemoryToolParsesYesterdayWindow 「记得昨天聊天」要剥掉时间词与问句外壳。
+func TestMemoryToolParsesYesterdayWindow(t *testing.T) {
+	mem := &fakeQueryMem{queryCtx: memory.Context{
+		Scope: testScope(),
+		Records: []memory.Record{{
+			ID: "m1", Summary: "昨天聊到白饭", Importance: 0.6, Confidence: 0.8,
+			ValidFrom: memoryTimeTestNow().Add(-24 * time.Hour),
+		}},
+	}}
+	box, err := BuildTools(ToolDeps{Memory: mem, Scope: testScope(), Now: memoryTimeTestNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := box.Run(context.Background(), ToolMemorySearch, "记得昨天聊天吗")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if mem.queryCalls != 1 {
+		t.Fatalf("检索次数 = %d，期望 1", mem.queryCalls)
+	}
+	wantAfter := time.Date(2026, 11, 9, 0, 0, 0, 0, time.Local)
+	if mem.gotQuery.Text != "聊天" {
+		t.Errorf("关键词 = %q，期望「聊天」", mem.gotQuery.Text)
+	}
+	if !mem.gotQuery.After.Equal(wantAfter) || !mem.gotQuery.Before.Equal(wantAfter.Add(24*time.Hour)) {
+		t.Errorf("时间窗 = %v ~ %v", mem.gotQuery.After, mem.gotQuery.Before)
+	}
+	if !strings.Contains(got, "时间窗：昨天") {
+		t.Errorf("结果缺少时间窗说明：%q", got)
+	}
+}
+
+// TestMemoryToolLastNightWindowAndBareFallback 「昨晚顶号的事」关键词无结果时
+// 退回只看时间窗，并保留时间窗说明。
+func TestMemoryToolLastNightWindowAndBareFallback(t *testing.T) {
+	mem := &fakeQueryMem{queryCtx: memory.Context{Scope: testScope()}}
+	box, err := BuildTools(ToolDeps{Memory: mem, Scope: testScope(), Now: memoryTimeTestNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := box.Run(context.Background(), ToolMemorySearch, "昨晚顶号的事")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if mem.queryCalls != 2 {
+		t.Fatalf("应先关键词再回退时间窗，实际 %d 次", mem.queryCalls)
+	}
+	if mem.gotQuery.Text != "" {
+		t.Errorf("回退查询应清空关键词，实际 %q", mem.gotQuery.Text)
+	}
+	wantAfter := time.Date(2026, 11, 9, 18, 0, 0, 0, time.Local)
+	wantBefore := time.Date(2026, 11, 10, 6, 0, 0, 0, time.Local)
+	if !mem.gotQuery.After.Equal(wantAfter) || !mem.gotQuery.Before.Equal(wantBefore) {
+		t.Errorf("昨晚窗口 = %v ~ %v", mem.gotQuery.After, mem.gotQuery.Before)
+	}
+	if !strings.Contains(got, "时间窗：昨晚") || !strings.Contains(got, "没有相关记忆") {
+		t.Errorf("结果说明不符：%q", got)
+	}
+}
+
+// TestMemoryToolPureTimeQueryRecallsWindow 只问「昨天」时也要按时间窗召回。
+func TestMemoryToolPureTimeQueryRecallsWindow(t *testing.T) {
+	mem := &fakeQueryMem{queryCtx: memory.Context{Scope: testScope()}}
+	box, err := BuildTools(ToolDeps{Memory: mem, Scope: testScope(), Now: memoryTimeTestNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := box.Run(context.Background(), ToolMemorySearch, "昨天"); err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if mem.queryCalls != 1 || mem.gotQuery.Text != "" {
+		t.Errorf("纯时间查询应只按窗口召回：calls=%d text=%q", mem.queryCalls, mem.gotQuery.Text)
+	}
+	if mem.gotQuery.After.IsZero() || mem.gotQuery.Before.IsZero() {
+		t.Errorf("缺少时间窗：%+v", mem.gotQuery)
+	}
+}
+
+// TestMemoryToolRefinesFeedingVariant 「有没有喂过饭」去「过」后应能命中「喂饭」。
+func TestMemoryToolRefinesFeedingVariant(t *testing.T) {
+	mem := &fakeQueryMem{queryCtx: memory.Context{Scope: testScope()}}
+	box, err := BuildTools(ToolDeps{Memory: mem, Scope: testScope(), Now: memoryTimeTestNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := box.Run(context.Background(), ToolMemorySearch, "有没有喂过饭"); err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if mem.queryCalls != 2 || mem.gotQuery.Text != "喂饭" {
+		t.Errorf("变体回退不符：calls=%d text=%q", mem.queryCalls, mem.gotQuery.Text)
+	}
+	if !mem.gotQuery.After.IsZero() || !mem.gotQuery.Before.IsZero() {
+		t.Errorf("无时间词不应带时间窗：%+v", mem.gotQuery)
+	}
+}
+
+// TestParseMemoryTimeWindow 只认明确说法，半开区间与本地时区口径固定。
+func TestParseMemoryTimeWindow(t *testing.T) {
+	now := memoryTimeTestNow()
+	yesterday := time.Date(2026, 11, 9, 0, 0, 0, 0, time.Local)
+	cases := []struct {
+		query      string
+		wantText   string
+		wantName   string
+		wantAfter  time.Time
+		wantBefore time.Time
+	}{
+		{"昨天聊天", "聊天", "昨天", yesterday, yesterday.Add(24 * time.Hour)},
+		{"昨日说过", "说过", "昨天", yesterday, yesterday.Add(24 * time.Hour)},
+		{"前天的事", "的事", "前天", yesterday.AddDate(0, 0, -1), yesterday},
+		{"昨晚", "", "昨晚", yesterday.Add(18 * time.Hour), time.Date(2026, 11, 10, 6, 0, 0, 0, time.Local)},
+		{"上次说过", "说过", "上次（最近7天）", now.Add(-7 * 24 * time.Hour), now},
+		{"最近", "最近", "", time.Time{}, time.Time{}},
+	}
+	for _, tc := range cases {
+		text, window := parseMemoryTimeWindow(tc.query, now)
+		if text != tc.wantText || window.Name != tc.wantName {
+			t.Errorf("%q → text=%q name=%q，期望 %q/%q", tc.query, text, window.Name, tc.wantText, tc.wantName)
+			continue
+		}
+		if !window.After.Equal(tc.wantAfter) || !window.Before.Equal(tc.wantBefore) {
+			t.Errorf("%q 时间窗 = %v ~ %v，期望 %v ~ %v", tc.query, window.After, window.Before, tc.wantAfter, tc.wantBefore)
+		}
+	}
+}
+
+// TestCleanMemoryKeywordAndVariants 问句外壳剥离与口语变体。
+func TestCleanMemoryKeywordAndVariants(t *testing.T) {
+	if got := cleanMemoryKeyword("还记得今夜琴声温柔吗"); got != "今夜琴声温柔" {
+		t.Errorf("清洗结果 = %q", got)
+	}
+	if got := cleanMemoryKeyword("记得 聊天吗"); got != "聊天" {
+		t.Errorf("清洗结果 = %q", got)
+	}
+	if got := cleanMemoryKeyword("有没有喂过饭"); got != "喂过饭" {
+		t.Errorf("清洗结果 = %q", got)
+	}
+	got := memoryKeywordVariants("喂过饭")
+	if len(got) != 2 || got[0] != "喂过饭" || got[1] != "喂饭" {
+		t.Errorf("变体 = %v", got)
+	}
+	if got := memoryKeywordVariants("  "); got != nil {
+		t.Errorf("空关键词不应有变体：%v", got)
+	}
+}
+
 // TestNewToolboxRejectsBad 空名/重名/nil Run 都算配置错误。
 func TestNewToolboxRejectsBad(t *testing.T) {
 	noop := func(context.Context, string) (string, error) { return "", nil }
