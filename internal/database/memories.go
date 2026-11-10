@@ -73,6 +73,13 @@ func insertMemoryRecord(ctx context.Context, db *gorm.DB, m store.MemoryRecord) 
 	if err != nil {
 		return false, &safeError{"编码记忆来源失败", err}
 	}
+	evidence, err := json.Marshal(m.Evidence)
+	if err != nil {
+		return false, &safeError{"编码记忆依据失败", err}
+	}
+	if len(evidence) == 0 || string(evidence) == "null" {
+		evidence = []byte("[]")
+	}
 	// 数组通过JSON参数转TEXT[]，避免拼接事件ID，也不引入另一套PG驱动。
 	//
 	// 冲突更新的闸门：
@@ -87,8 +94,8 @@ func insertMemoryRecord(ctx context.Context, db *gorm.DB, m store.MemoryRecord) 
 	// subject 用 COALESCE 保留已有主体。valid_from 取 EXCLUDED 的事件时间而不是
 	// now()：否则「更新时间」会顶替「事实发生时间」，让第 4 道的先后比较失真。
 	result := db.WithContext(ctx).Exec(`INSERT INTO memory_records
-(id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name,asserted_by_id,asserted_by_name,subject)
-VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''))
+(id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name,asserted_by_id,asserted_by_name,subject,derived_by,evidence)
+VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),?,?::jsonb)
 ON CONFLICT (id) DO UPDATE SET
   summary    = EXCLUDED.summary,
   confidence = EXCLUDED.confidence,
@@ -100,7 +107,9 @@ ON CONFLICT (id) DO UPDATE SET
   from_name  = COALESCE(EXCLUDED.from_name, memory_records.from_name),
   asserted_by_id   = COALESCE(EXCLUDED.asserted_by_id, memory_records.asserted_by_id),
   asserted_by_name = COALESCE(EXCLUDED.asserted_by_name, memory_records.asserted_by_name),
-  subject    = COALESCE(EXCLUDED.subject, memory_records.subject)
+  subject    = COALESCE(EXCLUDED.subject, memory_records.subject),
+  derived_by = COALESCE(NULLIF(EXCLUDED.derived_by,''), memory_records.derived_by),
+  evidence   = CASE WHEN EXCLUDED.evidence = '[]'::jsonb THEN memory_records.evidence ELSE EXCLUDED.evidence END
 WHERE memory_records.kind = 'fact'
   AND EXCLUDED.kind = 'fact'
   AND memory_records.private = EXCLUDED.private
@@ -112,7 +121,7 @@ WHERE memory_records.kind = 'fact'
       )
   )
   AND EXCLUDED.valid_from > memory_records.valid_from
-  AND memory_records.summary IS DISTINCT FROM EXCLUDED.summary`, m.ID, m.Source, m.Kind, m.Title, m.Summary, m.Body, m.Importance, m.Confidence, m.Private, m.Channel, m.Session, m.ValidFrom, string(ids), m.FromID, m.FromName, m.AssertedByID, m.AssertedByName, m.Subject)
+  AND memory_records.summary IS DISTINCT FROM EXCLUDED.summary`, m.ID, m.Source, m.Kind, m.Title, m.Summary, m.Body, m.Importance, m.Confidence, m.Private, m.Channel, m.Session, m.ValidFrom, string(ids), m.FromID, m.FromName, m.AssertedByID, m.AssertedByName, m.Subject, m.DerivedBy, string(evidence))
 	if result.Error != nil {
 		return false, &safeError{"写入记忆失败", result.Error}
 	}
@@ -687,12 +696,14 @@ func (r *MemoryRepo) queryMemoryRecords(ctx context.Context, keyword string, lim
 		AssertedByID   string
 		AssertedByName string
 		Subject        string
+		DerivedBy      string
+		Evidence       json.RawMessage
 		ValidFrom      time.Time
 		CreatedAt      time.Time
 		IDs            json.RawMessage
 	}
 	err := query.
-		Select("id, source, kind, title, summary, body, importance, confidence, private, COALESCE(channel,'') AS channel, COALESCE(session,'') AS session, COALESCE(from_id,'') AS from_id, COALESCE(from_name,'') AS from_name, COALESCE(asserted_by_id,'') AS asserted_by_id, COALESCE(asserted_by_name,'') AS asserted_by_name, COALESCE(subject,'') AS subject, valid_from, created_at, to_json(event_ids) AS ids").
+		Select("id, source, kind, title, summary, body, importance, confidence, private, COALESCE(channel,'') AS channel, COALESCE(session,'') AS session, COALESCE(from_id,'') AS from_id, COALESCE(from_name,'') AS from_name, COALESCE(asserted_by_id,'') AS asserted_by_id, COALESCE(asserted_by_name,'') AS asserted_by_name, COALESCE(subject,'') AS subject, COALESCE(derived_by,'') AS derived_by, to_json(evidence) AS evidence, valid_from, created_at, to_json(event_ids) AS ids").
 		Order("created_at DESC, id ASC").
 		Limit(limit).
 		Find(&rows).Error
@@ -722,11 +733,17 @@ func (r *MemoryRepo) queryMemoryRecords(ctx context.Context, keyword string, lim
 			AssertedByID:   row.AssertedByID,
 			AssertedByName: row.AssertedByName,
 			Subject:        row.Subject,
+			DerivedBy:      row.DerivedBy,
 			CreatedAt:      row.CreatedAt,
 		}
 		if len(row.IDs) > 0 {
 			if err := json.Unmarshal(row.IDs, &record.EventIDs); err != nil {
 				return nil, &safeError{"读取记忆来源失败", err}
+			}
+		}
+		if len(row.Evidence) > 0 {
+			if err := json.Unmarshal(row.Evidence, &record.Evidence); err != nil {
+				return nil, &safeError{"读取记忆依据失败", err}
 			}
 		}
 		records = append(records, record)

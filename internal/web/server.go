@@ -67,6 +67,8 @@ type Options struct {
 	Accounts AccountService
 	// Control 可选：运行时控制面；nil 时控制类接口返回 503。
 	Control RuntimeController
+	// ViewerSummary 可选：观众侧写控制面；nil 时侧写接口返回 503。
+	ViewerSummary ViewerSummaryControl
 	// Logs 可选：日志读取口；nil 时日志接口返回 503。
 	Logs LogSource
 	// Token 可选：写接口的本地令牌；为空时每次启动随机生成。
@@ -82,6 +84,7 @@ type Server struct {
 	knowledgeInfo KnowledgeInfo
 	accounts      AccountService
 	control       RuntimeController
+	viewerSummary ViewerSummaryControl
 	logs          LogSource
 	// token 是本地写接口令牌（O04）：页面从 HTML 读、CLI 从 /api/token 取。
 	token string
@@ -121,7 +124,7 @@ func New(o Options) (*Server, error) {
 	}
 	return &Server{
 		addr: addr, repo: o.Repo, log: o.Log, now: now,
-		knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts, control: o.Control, logs: o.Logs,
+		knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts, control: o.Control, viewerSummary: o.ViewerSummary, logs: o.Logs,
 		token: token, port: port,
 	}, nil
 }
@@ -171,6 +174,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/message", s.guard(s.handleMessage))
 	mux.HandleFunc("/api/config", s.guard(s.handleConfig))
 	mux.HandleFunc("/api/watchdog", s.guard(s.handleWatchdog))
+	mux.HandleFunc("/api/viewer/summary", s.guard(s.handleViewerSummary))
 	mux.HandleFunc("/api/logs/stream", s.guard(s.handleLogsStream))
 	mux.HandleFunc("/api/gift/log", s.guard(s.handleGiftLog))
 	mux.HandleFunc("/api/gift/quota", s.guard(s.handleGiftQuota))

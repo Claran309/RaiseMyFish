@@ -29,8 +29,18 @@ type Memory struct {
 	// SoulPath 是 soul-memories.md 路径；留空时从 LLM.PersonaDir 派生。
 	SoulPath string `toml:"soul_path"`
 	// ViewerSummaryIntervalSeconds 是观众侧写定时任务的间隔（默认每小时）。
-	// 0 表示关闭该任务；启用时范围 60-86400 秒。侧写只读公开非 DM 弹幕。
+	// 0 表示停止调度但保留已有侧写；启用时范围 60-86400 秒。侧写只读公开非 DM 弹幕。
 	ViewerSummaryIntervalSeconds int `toml:"viewer_summary_interval_seconds"`
+	// ViewerSummaryMaxPerRun 是每轮最多处理多少位观众（含回填名额）。
+	ViewerSummaryMaxPerRun int `toml:"viewer_summary_max_per_run"`
+	// ViewerSummaryBackfillLimit 是每轮最多给几位从未侧写的观众做首次回填；0 关闭回填。
+	ViewerSummaryBackfillLimit int `toml:"viewer_summary_backfill_limit"`
+	// ViewerSummaryMinNewMessages 是已有侧写后触发更新的最少新公开发言数。
+	ViewerSummaryMinNewMessages int `toml:"viewer_summary_min_new_messages"`
+	// ViewerSummaryRecentTTLSeconds 是近期观察层的有效期。
+	ViewerSummaryRecentTTLSeconds int `toml:"viewer_summary_recent_ttl_seconds"`
+	// ViewerSummaryDailyViewers 是每天最多尝试侧写的观众数（按尝试时间去重）。
+	ViewerSummaryDailyViewers int `toml:"viewer_summary_daily_viewers"`
 	// OwnerUID 是主人的可信平台 UID：只有发言人 UID 与之相等才算主人自述，
 	// 也才可能提升为长期设定。昵称可被改名冒充，不参与身份判定。
 	OwnerUID string `toml:"owner_uid"`
@@ -39,7 +49,16 @@ type Memory struct {
 }
 
 func defaultMemory() Memory {
-	return Memory{Enabled: true, IntervalSeconds: 300, LLMExtract: true, LLMExtractMaxPerHour: 30, SoulEnabled: true, SoulMaxEntries: 20, ViewerSummaryIntervalSeconds: 3600}
+	return Memory{
+		Enabled: true, IntervalSeconds: 300, LLMExtract: true, LLMExtractMaxPerHour: 30,
+		SoulEnabled: true, SoulMaxEntries: 20,
+		ViewerSummaryIntervalSeconds:  3600,
+		ViewerSummaryMaxPerRun:        10,
+		ViewerSummaryBackfillLimit:    2,
+		ViewerSummaryMinNewMessages:   3,
+		ViewerSummaryRecentTTLSeconds: 7 * 24 * 3600,
+		ViewerSummaryDailyViewers:     50,
+	}
 }
 
 // deriveSoulPath 在未显式配置 soul_path 时跟随人格包：
@@ -75,6 +94,21 @@ func (m Memory) Validate() error {
 	}
 	if m.ViewerSummaryIntervalSeconds != 0 && (m.ViewerSummaryIntervalSeconds < 60 || m.ViewerSummaryIntervalSeconds > 86400) {
 		return errors.New("观众侧写间隔必须为0（关闭）或60至86400秒")
+	}
+	if m.ViewerSummaryMaxPerRun < 1 || m.ViewerSummaryMaxPerRun > 100 {
+		return errors.New("观众侧写每轮上限必须在1至100之间")
+	}
+	if m.ViewerSummaryBackfillLimit < 0 || m.ViewerSummaryBackfillLimit > 100 {
+		return errors.New("观众侧写回填上限必须在0至100之间")
+	}
+	if m.ViewerSummaryMinNewMessages < 1 || m.ViewerSummaryMinNewMessages > 100 {
+		return errors.New("观众侧写触发消息数必须在1至100之间")
+	}
+	if m.ViewerSummaryRecentTTLSeconds < 3600 || m.ViewerSummaryRecentTTLSeconds > 2592000 {
+		return errors.New("观众侧写近期层有效期必须在3600至2592000秒之间")
+	}
+	if m.ViewerSummaryDailyViewers < 1 || m.ViewerSummaryDailyViewers > 500 {
+		return errors.New("观众侧写每日观众预算必须在1至500之间")
 	}
 	if m.SoulEnabled {
 		if m.SoulMaxEntries < 1 || m.SoulMaxEntries > 100 {

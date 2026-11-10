@@ -16,13 +16,64 @@ import (
 
 // ViewerSummaryGenerator 是当前观众侧写生成器版本；来源指纹与知识条目都带上它，
 // 生成逻辑变化时必须升版，避免旧侧写被当成同一口径继续使用。
-const ViewerSummaryGenerator = "viewer-summary/v2"
+// v3：字段带依据类型与证据，侧写分稳定层/近期层。
+const ViewerSummaryGenerator = "viewer-summary/v3"
 
 // 观众侧写投影动作。
 const (
 	ViewerSummaryActionPublish = "publish"
 	ViewerSummaryActionPurge   = "purge"
 )
+
+// 侧写字段的依据类型（R05）：自述 / 观察 / 推断。
+const (
+	ViewerSummaryBasisSelf     = "self"
+	ViewerSummaryBasisObserved = "observed"
+	ViewerSummaryBasisInferred = "inferred"
+)
+
+// 侧写字段的层次（R06）：稳定明确自述 / 有期限的近期观察。
+const (
+	ViewerSummaryLayerStable = "stable"
+	ViewerSummaryLayerRecent = "recent"
+)
+
+// ViewerSummaryField 是一个侧写字段及其依据。
+//
+// Evidence 只存输入里出现过的原话片段，不进入 identity 向量；
+// Layer=recent 的字段由 ExpiresAt 控制有效期，过期后不再注入。
+type ViewerSummaryField struct {
+	Name     string `json:"field"`
+	Value    string `json:"value"`
+	Basis    string `json:"basis"`
+	Evidence string `json:"evidence,omitempty"`
+	Layer    string `json:"layer"`
+	// UpdatedAt 是最近一次写入该字段的时间。
+	UpdatedAt time.Time `json:"updated_at"`
+	// ExpiresAt 只对近期层有意义；稳定层为零值。
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+}
+
+// Validate 检查字段名、依据类型与层次。
+func (f ViewerSummaryField) Validate() error {
+	if strings.TrimSpace(f.Name) == "" || strings.TrimSpace(f.Value) == "" {
+		return ErrInvalid
+	}
+	switch f.Basis {
+	case ViewerSummaryBasisSelf, ViewerSummaryBasisObserved, ViewerSummaryBasisInferred:
+	default:
+		return ErrInvalid
+	}
+	switch f.Layer {
+	case ViewerSummaryLayerStable, ViewerSummaryLayerRecent:
+	default:
+		return ErrInvalid
+	}
+	if f.Layer == ViewerSummaryLayerRecent && f.ExpiresAt.IsZero() {
+		return ErrInvalid
+	}
+	return nil
+}
 
 // ViewerProfile 是一份观众档案。
 type ViewerProfile struct {
@@ -62,6 +113,14 @@ type ViewerProfile struct {
 	SummaryNextRetryAt time.Time
 	// SummaryAttemptedAt 是最近一次尝试时间（含失败与保留旧版本）。
 	SummaryAttemptedAt time.Time
+	// SummaryStable 是稳定层文本（明确自述/已确认偏好）。
+	SummaryStable string
+	// SummaryRecent 是近期层文本（有期限的近期话题/互动观察）。
+	SummaryRecent string
+	// SummaryRecentUntil 是近期层失效时间；零值表示没有近期层。
+	SummaryRecentUntil time.Time
+	// SummaryFields 是分层后的字段与依据，跨轮修订用。
+	SummaryFields []ViewerSummaryField
 	// UpdatedAt 是档案写入时间。
 	UpdatedAt time.Time
 }
@@ -149,6 +208,12 @@ type ViewerSummaryWrite struct {
 	Sources    []ViewerSummarySource
 	Generator  string
 	Keywords   []string
+	// Stable/Recent 是剖面文本的两层；Recent 为空时 RecentUntil 必须为零。
+	Stable      string
+	Recent      string
+	RecentUntil time.Time
+	// Fields 是每字段的 value/basis/evidence/layer，供跨轮修订与面板核对。
+	Fields []ViewerSummaryField
 	// Fallback 表示本次内容是统计降级结果，只写 fallback_at。
 	Fallback bool
 	// Failures 是本次写入后的连续失败次数（降级为 1，成功为 0）。
@@ -171,6 +236,22 @@ func (w ViewerSummaryWrite) Validate() error {
 	if err := w.Record.Validate(); err != nil {
 		return err
 	}
+	// 侧写是模型/规则派生内容：必须标 derived_by；asserted_by 只允许明确自述，
+	// 且必须是本人，不能把推断写成「观众本人断言」。
+	if strings.TrimSpace(w.Record.DerivedBy) == "" {
+		return ErrInvalid
+	}
+	if w.Record.AssertedByID != "" && w.Record.AssertedByID != w.UID {
+		return ErrInvalid
+	}
+	if (w.Recent == "") != w.RecentUntil.IsZero() {
+		return ErrInvalid
+	}
+	for _, field := range w.Fields {
+		if err := field.Validate(); err != nil {
+			return err
+		}
+	}
 	if len(w.Record.EventIDs) != len(w.Sources) {
 		return ErrInvalid
 	}
@@ -183,6 +264,34 @@ func (w ViewerSummaryWrite) Validate() error {
 		}
 	}
 	if ViewerSummarySourceHash(w.UID, w.Generator, w.Sources) != w.SourceHash {
+		return ErrInvalid
+	}
+	return nil
+}
+
+// ViewerSummaryQuery 是选择本轮待侧写观众的参数（R06/R09）。
+//
+// 更新路径只收「侧写之后新增公开发言达到 MinNewMessages」或补偿到期的档案；
+// 首次回填单独限流（BackfillLimit，0 表示本轮不回填），按 hits 倒序先试熟人。
+type ViewerSummaryQuery struct {
+	// Since 是「近期活跃」回看窗口起点。
+	Since time.Time
+	// Now 是当前时间，用于补偿到期判断。
+	Now time.Time
+	// MinHits 是建档门槛。
+	MinHits int
+	// MinNewMessages 是触发重写所需的新增公开发言条数。
+	MinNewMessages int
+	// Limit 是本轮最多返回的观众数。
+	Limit int
+	// BackfillLimit 是首次回填名额；0 表示本轮不回填新人。
+	BackfillLimit int
+}
+
+// Validate 检查选择参数。
+func (q ViewerSummaryQuery) Validate() error {
+	if q.Since.IsZero() || q.Now.IsZero() || q.MinHits < 1 || q.MinNewMessages < 1 ||
+		q.Limit < 1 || q.Limit > 500 || q.BackfillLimit < 0 || q.BackfillLimit > 500 {
 		return ErrInvalid
 	}
 	return nil
@@ -220,6 +329,23 @@ func (j ViewerSummaryJob) Validate() error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+// ViewerSummaryPanel 是面板展示的侧写落库概览；只含计数与时间，不含任何正文。
+type ViewerSummaryPanel struct {
+	// Summarized 是当前有侧写的观众数。
+	Summarized int64
+	// Failed 是侧写仍在失败/补偿状态的观众数。
+	Failed int64
+	// Fallback 是当前仍是统计降级版本（从未成功生成）的观众数。
+	Fallback int64
+	// Sources 是当前侧写引用的来源事件总数。
+	Sources int64
+	// LastSummaryAt 是最近一次模型成功生成侧写的时间。
+	LastSummaryAt time.Time
+	// PendingPublish/PendingPurge 是待投影到知识库的发布/清理任务数。
+	PendingPublish int64
+	PendingPurge   int64
 }
 
 // ErrViewerNotFound 是观众档案统一的「不存在」错误（陌生人）。

@@ -46,6 +46,13 @@ type ViewerProfileSearcher interface {
 	Find(ctx context.Context, query string, limit int) (viewer.Result, error)
 }
 
+// ViewerProfileLoader 按确定 UID 补取完整档案（含自动侧写）。
+//
+// 检索结果只带认人字段，侧写不参与 identity 向量；确定是谁之后再单独读一次。
+type ViewerProfileLoader interface {
+	GetProfile(ctx context.Context, uid string) (store.ViewerProfile, error)
+}
+
 // ReplySearcher 查本会话最近发出的回复。
 type ReplySearcher interface {
 	RecentReplies(ctx context.Context, ch event.Channel, session string, limit int) ([]event.Event, error)
@@ -82,12 +89,14 @@ type ReadOnlyDeps struct {
 	Viewer ViewerSearcher
 	// ViewerSearch 为 nil 时不注册 viewer_search（不影响固定 7 个工具）。
 	ViewerSearch ViewerProfileSearcher
-	Replies      ReplySearcher
-	Live         LiveStatusSource
-	Quota        QuotaSource
-	Frame        FrameSource
-	FrameRead    FrameReader
-	Search       WebSearcher
+	// Profiles 为可选的档案补取能力；仅当 viewer_search 确定到具体 UID 后读取自动侧写。
+	Profiles  ViewerProfileLoader
+	Replies   ReplySearcher
+	Live      LiveStatusSource
+	Quota     QuotaSource
+	Frame     FrameSource
+	FrameRead FrameReader
+	Search    WebSearcher
 	// Room 是本会话房间号；空串时直播类工具返回未配置。
 	Room string
 	// SpeakerUID 是本条事件的发送者 UID（可信平台身份），用于「我是谁」。
@@ -166,7 +175,13 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 				if err != nil {
 					return "", err
 				}
-				return clip(formatIdentityResult(result), maxReadOnlyRunes), nil
+				text := formatIdentityResult(result)
+				// 侧写只在身份已确定后按 UID 补取：它不进入 identity 向量，
+				// 也不能拿近似/内容候选的档案去猜人。
+				if block := viewerSummaryBlock(ctx, d, result); block != "" {
+					text += "\n" + block
+				}
+				return clip(text, maxReadOnlyRunes), nil
 			},
 		})
 	}
@@ -380,6 +395,57 @@ func tierReasonText(c viewer.Candidate) string {
 		return "仅在发言里提到过这个名字，不一定是本人"
 	default:
 		return "语义相近，不保证是本人"
+	}
+}
+
+// summaryMinTier 是附加侧写所需的最低身份档位：UID/昵称/已确认别名。
+// 近似、内容与语义候选都可能不是本人，不能把别人的侧写挂上来。
+const summaryMinTier = viewer.TierAlias
+
+// maxSummaryRunes 是侧写在工具输出里的截断长度；侧写本身生成时已限长。
+const maxSummaryRunes = 300
+
+// viewerSummaryBlock 在身份确定后按 UID 补取自动侧写，并标明提问者与目标。
+//
+// 补取失败不影响认人结果：身份来自检索，侧写只是附加观察。
+func viewerSummaryBlock(ctx context.Context, d ReadOnlyDeps, result viewer.Result) string {
+	if d.Profiles == nil || result.Status != viewer.StatusFound || len(result.Candidates) == 0 {
+		return ""
+	}
+	top := result.Candidates[0]
+	if top.Tier < summaryMinTier {
+		return ""
+	}
+	target := strings.TrimSpace(top.Profile.UID)
+	if target == "" {
+		return ""
+	}
+	who := formatQuestionPair(d.SpeakerUID, target)
+	profile, err := d.Profiles.GetProfile(ctx, target)
+	if err != nil {
+		return who + "；自动侧写：暂时没能读取（不影响上面的身份识别）"
+	}
+	if strings.TrimSpace(profile.ProfileSummary) == "" {
+		return who + "；自动侧写：暂无（还没有生成过）"
+	}
+	at := "更新时间未知"
+	if !profile.SummaryUpdatedAt.IsZero() {
+		at = "更新于 " + profile.SummaryUpdatedAt.Local().Format("2006-01-02 15:04")
+	}
+	return fmt.Sprintf("%s；%s，依据：%s\n自动侧写（系统按近期公开发言自动生成的观察，仅供称呼/偏好参考，不是本人自述）：%s",
+		who, at, tierReasonText(top), clip(profile.ProfileSummary, maxSummaryRunes))
+}
+
+// formatQuestionPair 分别标识提问者与检索目标，避免模型把甲的资料当成乙的。
+func formatQuestionPair(speaker, target string) string {
+	speaker = strings.TrimSpace(speaker)
+	switch {
+	case speaker == "":
+		return "目标 uid " + target
+	case speaker == target:
+		return "提问者与目标是同一人（uid " + target + "）"
+	default:
+		return "提问者 uid " + speaker + "；目标 uid " + target
 	}
 }
 

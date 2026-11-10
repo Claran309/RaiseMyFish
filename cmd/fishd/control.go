@@ -57,6 +57,9 @@ type runtimeDeps struct {
 	Live              collector.Collector
 	Comment           collector.Collector
 	DM                collector.Collector
+	// ViewerSummary 是侧写循环的运行状态快照；FreezePath 与记忆提炼共用冻结文件。
+	ViewerSummary *viewerSummaryRuntime
+	FreezePath    string
 }
 
 // runtimeControl 实现 web.RuntimeController。
@@ -75,6 +78,10 @@ type runtimeControl struct {
 	proactive *proactiveController
 	hotReload *backgroundController
 	memeLearn *backgroundController
+
+	viewerSummary  *viewerSummaryRuntime
+	viewerProfiles *database.ViewerRepo
+	freezePath     string
 
 	opMu sync.Mutex
 	mu   sync.Mutex
@@ -109,6 +116,15 @@ func newRuntimeControl(ctx context.Context, cfg config.Config, deps runtimeDeps,
 		quota:         buildGiftQuota(cfg, log),
 		commentVideos: append([]string{}, cfg.Collector.Comment.Videos...),
 		allowedMIDs:   initialAllowedMIDs(cfg),
+		viewerSummary: deps.ViewerSummary,
+		freezePath:    deps.FreezePath,
+	}
+	if deps.Resources != nil && deps.Resources.DB != nil {
+		if repo, rerr := database.NewViewerRepo(deps.Resources.DB); rerr == nil {
+			c.viewerProfiles = repo
+		} else {
+			log.Warn("观众侧写面板仓储装配失败", zap.String("action", "web_viewer_summary"), zap.Error(rerr))
+		}
 	}
 
 	c.live = newCollectorController("live", ctx, deps.Bus, deps.Timeout, log, now, deps.Live,

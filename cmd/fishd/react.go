@@ -269,7 +269,7 @@ func logReActUsage(log *zap.Logger, ev event.Event, agent *reasoning.Agent) {
 // giftGate 是可选的动态送礼开关（面板热更新），nil 时用配置值。
 // sideLimiter 由进程装配一次，跨事件共享限频；每个事件仍各自建工具箱（Scope/Room 不共享）。
 // 返回 nil 表示不启用（配置关闭、没模型、或一个工具都装不起来）——此时 serve 仍走单步。
-func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, events *database.EventRepo, viewerSearch reasoning.ViewerProfileSearcher, quota reasoning.QuotaSource, exec toolExecutors, usage store.UsageRepo, giftGate func() bool, sideLimiter *reasoning.SideEffectLimiter, log *zap.Logger) (reactFactory, error) {
+func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.Reader, pres *presence.Table, events *database.EventRepo, viewerSearch reasoning.ViewerProfileSearcher, profiles reasoning.ViewerProfileLoader, quota reasoning.QuotaSource, exec toolExecutors, usage store.UsageRepo, giftGate func() bool, sideLimiter *reasoning.SideEffectLimiter, log *zap.Logger) (reactFactory, error) {
 	if !cfg.Reasoning.Enabled {
 		log.Info("ReAct 未启用（配置关闭）", zap.String("action", "react_disabled"))
 		return nil, nil
@@ -312,6 +312,7 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 		readonly, err := reasoning.BuildReadOnlyTools(reasoning.ReadOnlyDeps{
 			Viewer:       events,
 			ViewerSearch: viewerSearch,
+			Profiles:     profiles,
 			Replies:      events,
 			Live:         exec.Live,
 			Quota:        quota,

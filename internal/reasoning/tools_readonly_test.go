@@ -103,6 +103,19 @@ func (f *fakeViewerProfileSearch) Find(_ context.Context, query string, limit in
 	return f.result, f.err
 }
 
+type fakeProfileLoader struct {
+	profile store.ViewerProfile
+	err     error
+	gotUID  string
+	calls   int
+}
+
+func (f *fakeProfileLoader) GetProfile(_ context.Context, uid string) (store.ViewerProfile, error) {
+	f.calls++
+	f.gotUID = uid
+	return f.profile, f.err
+}
+
 func readonlyDeps() ReadOnlyDeps {
 	return ReadOnlyDeps{
 		Viewer:     &fakeViewer{rows: []event.Event{{Text: "早"}, {Text: "在吃鱼"}}},
@@ -340,6 +353,155 @@ func TestViewerSearchContentIsNotIdentity(t *testing.T) {
 	}
 	if !strings.Contains(got, "不一定是本人") {
 		t.Errorf("内容命中要标注不确定性：%q", got)
+	}
+}
+
+// TestViewerSearchAttachesSummaryForResolvedUID（R04）身份确定后按目标 UID 补取侧写，
+// 提问者与目标分别标识，侧写注明更新时间、依据与「非本人自述」。
+func TestViewerSearchAttachesSummaryForResolvedUID(t *testing.T) {
+	d := readonlyDeps()
+	d.SpeakerUID = "4242"
+	search := &fakeViewerProfileSearch{result: viewer.Result{
+		Status: viewer.StatusFound,
+		Candidates: []viewer.Candidate{{
+			ViewerProfileHit: store.ViewerProfileHit{
+				Profile: store.ViewerProfile{UID: "2002", Name: "白饭哥", Hits: 12},
+			},
+			Tier:   viewer.TierName,
+			Reason: "name_exact",
+		}},
+	}}
+	at := time.Date(2026, 11, 9, 20, 15, 0, 0, time.UTC)
+	loader := &fakeProfileLoader{profile: store.ViewerProfile{
+		UID: "2002", Name: "白饭哥",
+		ProfileSummary:   "性格：话痨；偏好：白饭（近期观察）",
+		SummaryUpdatedAt: at,
+	}}
+	d.ViewerSearch = search
+	d.Profiles = loader
+	box, err := BuildReadOnlyTools(d)
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	got, err := box.Run(context.Background(), ToolViewerSearch, "白饭哥")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	for _, want := range []string{
+		"2002", "白饭哥", "提问者 uid 4242", "目标 uid 2002",
+		"自动侧写", "性格：话痨", "近期观察", "昵称精确命中",
+		at.Local().Format("2006-01-02 15:04"), "不是本人自述",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("侧写输出缺少 %q：%q", want, got)
+		}
+	}
+	if loader.calls != 1 || loader.gotUID != "2002" {
+		t.Errorf("应按目标 UID 补取档案：calls=%d uid=%q", loader.calls, loader.gotUID)
+	}
+}
+
+// TestViewerSearchUncertainCandidatesSkipSummary（R04）歧义与近似/内容/语义候选不附侧写，
+// 不能把别人的档案观察挂到未确认的人身上。
+func TestViewerSearchUncertainCandidatesSkipSummary(t *testing.T) {
+	cases := map[string]viewer.Result{
+		"歧义": {Status: viewer.StatusAmbiguous, Candidates: []viewer.Candidate{
+			{ViewerProfileHit: store.ViewerProfileHit{Profile: store.ViewerProfile{UID: "7001", Name: "琴声温柔"}}, Tier: viewer.TierNear},
+			{ViewerProfileHit: store.ViewerProfileHit{Profile: store.ViewerProfile{UID: "7002", Name: "琴身温柔"}}, Tier: viewer.TierNear},
+		}},
+		"近似": {Status: viewer.StatusFound, Candidates: []viewer.Candidate{{
+			ViewerProfileHit: store.ViewerProfileHit{Profile: store.ViewerProfile{UID: "7001", Name: "琴声温柔"}}, Tier: viewer.TierNear,
+		}}},
+		"内容": {Status: viewer.StatusFound, Candidates: []viewer.Candidate{{
+			ViewerProfileHit: store.ViewerProfileHit{Profile: store.ViewerProfile{UID: "1002", Name: "路人甲"}}, Tier: viewer.TierContent,
+		}}},
+		"语义": {Status: viewer.StatusFound, Candidates: []viewer.Candidate{{
+			ViewerProfileHit: store.ViewerProfileHit{Profile: store.ViewerProfile{UID: "1003", Name: "像他的人"}}, Tier: viewer.TierSemantic,
+		}}},
+	}
+	for name, result := range cases {
+		t.Run(name, func(t *testing.T) {
+			d := readonlyDeps()
+			d.ViewerSearch = &fakeViewerProfileSearch{result: result}
+			loader := &fakeProfileLoader{profile: store.ViewerProfile{ProfileSummary: "不应出现"}}
+			d.Profiles = loader
+			box, _ := BuildReadOnlyTools(d)
+			got, err := box.Run(context.Background(), ToolViewerSearch, "琴声温柔")
+			if err != nil {
+				t.Fatalf("执行失败：%v", err)
+			}
+			if loader.calls != 0 || strings.Contains(got, "自动侧写") || strings.Contains(got, "不应出现") {
+				t.Errorf("未确认身份不应补取侧写：calls=%d out=%q", loader.calls, got)
+			}
+		})
+	}
+}
+
+// TestViewerSearchSummaryLoadFailureKeepsIdentity（R04）补取失败只降级侧写，不影响认人结果。
+func TestViewerSearchSummaryLoadFailureKeepsIdentity(t *testing.T) {
+	d := readonlyDeps()
+	d.ViewerSearch = &fakeViewerProfileSearch{result: viewer.Result{
+		Status: viewer.StatusFound,
+		Candidates: []viewer.Candidate{{
+			ViewerProfileHit: store.ViewerProfileHit{Profile: store.ViewerProfile{UID: "2002", Name: "白饭哥"}},
+			Tier:             viewer.TierUID,
+			Reason:           "uid_exact",
+		}},
+	}}
+	d.Profiles = &fakeProfileLoader{err: store.ErrViewerNotFound}
+	box, _ := BuildReadOnlyTools(d)
+	got, err := box.Run(context.Background(), ToolViewerSearch, "2002")
+	if err != nil {
+		t.Fatalf("补取失败不应让工具报错：%v", err)
+	}
+	for _, want := range []string{"2002", "白饭哥", "UID 精确命中", "暂时没能读取", "不影响"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("降级文案缺少 %q：%q", want, got)
+		}
+	}
+}
+
+// TestViewerSearchSummarySameSpeaker 提问者就是目标时明确标成同一人，并展示本人侧写。
+func TestViewerSearchSummarySameSpeaker(t *testing.T) {
+	d := readonlyDeps()
+	d.SpeakerUID = "4242"
+	d.ViewerSearch = &fakeViewerProfileSearch{result: viewer.Result{
+		Status: viewer.StatusFound,
+		Candidates: []viewer.Candidate{{
+			ViewerProfileHit: store.ViewerProfileHit{Profile: store.ViewerProfile{UID: "4242", Name: "提问的人"}},
+			Tier:             viewer.TierUID,
+			Reason:           "uid_exact",
+		}},
+	}}
+	d.Profiles = &fakeProfileLoader{profile: store.ViewerProfile{UID: "4242", ProfileSummary: "偏好：猫猫"}}
+	box, _ := BuildReadOnlyTools(d)
+	got, err := box.Run(context.Background(), ToolViewerSearch, "我是谁")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if !strings.Contains(got, "同一人（uid 4242）") || !strings.Contains(got, "偏好：猫猫") {
+		t.Errorf("同一人标识不符：%q", got)
+	}
+}
+
+// TestViewerSearchSummaryEmpty 没有生成过侧写时给出明确「暂无」，而不是编造。
+func TestViewerSearchSummaryEmpty(t *testing.T) {
+	d := readonlyDeps()
+	d.ViewerSearch = &fakeViewerProfileSearch{result: viewer.Result{
+		Status: viewer.StatusFound,
+		Candidates: []viewer.Candidate{{
+			ViewerProfileHit: store.ViewerProfileHit{Profile: store.ViewerProfile{UID: "2002", Name: "白饭哥"}},
+			Tier:             viewer.TierName,
+		}},
+	}}
+	d.Profiles = &fakeProfileLoader{}
+	box, _ := BuildReadOnlyTools(d)
+	got, err := box.Run(context.Background(), ToolViewerSearch, "白饭哥")
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if !strings.Contains(got, "自动侧写：暂无") {
+		t.Errorf("空侧写文案不符：%q", got)
 	}
 }
 

@@ -148,12 +148,14 @@ func buildToolbox(ctx context.Context, cfg config.Config, db *gorm.DB, log *zap.
 	}
 
 	var viewerSearch reasoning.ViewerProfileSearcher
+	var profileLoader reasoning.ViewerProfileLoader
 	if cfg.Viewer.Enabled {
 		repo, err := database.NewViewerRepo(db)
 		if err != nil {
 			log.Warn("观众档案仓储装配失败，viewer_search 不注册",
 				zap.String("action", "mcp_viewer"), zap.Error(err))
 		} else {
+			profileLoader = repo
 			var aliasSource viewer.AliasSource
 			if path := strings.TrimSpace(cfg.Viewer.AliasFile); path != "" {
 				source, aliasErr := viewer.NewAliasFile(path, func(err error) {
@@ -202,6 +204,7 @@ func buildToolbox(ctx context.Context, cfg config.Config, db *gorm.DB, log *zap.
 	readonly, err := reasoning.BuildReadOnlyTools(reasoning.ReadOnlyDeps{
 		Viewer:       events,
 		ViewerSearch: viewerSearch,
+		Profiles:     profileLoader,
 		Replies:      events,
 		Live:         execs.Live,
 		Quota:        quota,

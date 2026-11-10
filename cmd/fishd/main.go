@@ -162,7 +162,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	stopMemoryEmbedding := startMemoryEmbeddingRefresh(ctx, cfg, resources.DB, logger)
 	defer stopMemoryEmbedding()
 	// 观众侧写：默认每小时总结近期活跃观众的公开弹幕（LLM 失败回落统计）。
-	stopViewerSummary := startViewerSummary(ctx, cfg, resources.DB, knowledgeRuntime, logger)
+	viewerState := &viewerSummaryRuntime{}
+	stopViewerSummary := startViewerSummary(ctx, cfg, resources.DB, knowledgeRuntime, memoryFreezePath, viewerState, logger)
 	defer stopViewerSummary()
 	stopHeartbeatLike := startHeartbeatLike(ctx, cfg, logger)
 	defer stopHeartbeatLike()
@@ -246,6 +247,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 		Now:         time.Now,
 
 		SideEffectLimiter: sideLimiter,
+		ViewerSummary:     viewerState,
+		FreezePath:        memoryFreezePath,
 	}
 	// 避免 typed-nil 指针装进接口后变成「非 nil 采集器」。
 	if liveCollector != nil {
@@ -264,7 +267,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	defer control.Close()
 
 	// 运维面板（只监听回环）：默认关，开启后独立 goroutine 跑。
-	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, accountService, control, logview.NewSource(cfg.Log.Dir, nil), logger)
+	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, accountService, control, control, logview.NewSource(cfg.Log.Dir, nil), logger)
 	defer stopWeb()
 
 	// 主循环先就绪（running 状态落盘）再启动采集：外部不会先看到事件、后看到服务状态。

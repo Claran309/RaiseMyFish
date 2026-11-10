@@ -9,6 +9,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +52,10 @@ type viewerRow struct {
 	SummaryFailures      int        `gorm:"column:profile_summary_failures"`
 	SummaryNextRetryAt   *time.Time `gorm:"column:profile_summary_next_retry_at"`
 	SummaryAttemptedAt   *time.Time `gorm:"column:summary_attempted_at"`
+	SummaryStable        string     `gorm:"column:profile_summary_stable"`
+	SummaryRecent        string     `gorm:"column:profile_summary_recent"`
+	SummaryRecentUntil   *time.Time `gorm:"column:profile_summary_recent_until"`
+	SummaryFields        []byte     `gorm:"column:profile_summary_fields"`
 	UpdatedAt            time.Time
 }
 
@@ -75,6 +80,16 @@ func (r viewerRow) profile() (store.ViewerProfile, error) {
 	}
 	if r.SummaryAttemptedAt != nil {
 		p.SummaryAttemptedAt = *r.SummaryAttemptedAt
+	}
+	if r.SummaryRecentUntil != nil {
+		p.SummaryRecentUntil = *r.SummaryRecentUntil
+	}
+	p.SummaryStable = r.SummaryStable
+	p.SummaryRecent = r.SummaryRecent
+	if len(r.SummaryFields) > 0 {
+		if err := json.Unmarshal(r.SummaryFields, &p.SummaryFields); err != nil {
+			return store.ViewerProfile{}, &safeError{"解析侧写字段失败", err}
+		}
 	}
 	if err := decodeStrings(r.RecentTexts, &p.RecentTexts); err != nil {
 		return store.ViewerProfile{}, &safeError{"解析观众发言失败", err}
@@ -187,26 +202,38 @@ func (r *ViewerRepo) ActiveSince(ctx context.Context, since time.Time) (bool, er
 	return exists, nil
 }
 
-// ActiveViewers 返回本轮该做侧写的观众档案。
+// ActiveViewers 返回本轮该做侧写的观众档案（R06/R09）。
 //
-// 口径与旧家建档一致：since 之后有公开发言，或累计说过 minHits 句。
-// 只挑「从未侧写」「侧写之后又有新发言且新发言还没尝试过」或「补偿重试已到期」的档案：
-// 失败后的重试由 next_retry 控制，达到上限后置空，必须等新发言才会再尝试。
-func (r *ViewerRepo) ActiveViewers(ctx context.Context, since, now time.Time, minHits, limit int) ([]store.ViewerProfile, error) {
-	if ctx == nil || since.IsZero() || now.IsZero() || minHits < 1 || limit < 1 || limit > 500 {
+// 选人分两条路：
+//   - 更新/补偿：已有侧写的档案，只有「侧写之后新增公开消息达到 MinNewMessages」
+//     或补偿重试到期才入选；失败达到上限后 next_retry 为空，必须等新发言。
+//   - 首次回填：从未侧写过的档案，按 hits 倒序先试熟人，且每轮最多
+//     BackfillLimit 个；0 表示本轮不回填，避免一次性对全库跑模型。
+//
+// 两条路都受建档口径约束：since 之后有公开发言，或累计说过 MinHits 句。
+func (r *ViewerRepo) ActiveViewers(ctx context.Context, q store.ViewerSummaryQuery) ([]store.ViewerProfile, error) {
+	if ctx == nil {
 		return nil, store.ErrInvalid
+	}
+	if err := q.Validate(); err != nil {
+		return nil, err
 	}
 	var rows []viewerRow
 	err := r.db.WithContext(ctx).Table("viewer_profiles").
-		Where("(last_seen >= ? OR hits >= ?)", since.UTC(), minHits).
-		Where("(profile_summary_next_retry_at IS NULL OR profile_summary_next_retry_at <= ?)", now.UTC()).
-		Where(`(summary_updated_at IS NULL
-		  OR (summary_updated_at < last_seen AND (summary_attempted_at IS NULL OR summary_attempted_at < last_seen))
-		  OR profile_summary_next_retry_at IS NOT NULL)`).
-		Order("summary_updated_at ASC NULLS FIRST, last_seen DESC, uid ASC").
-		Limit(limit).Find(&rows).Error
+		Where("(last_seen >= ? OR hits >= ?)", q.Since.UTC(), q.MinHits).
+		Where("(profile_summary_next_retry_at IS NULL OR profile_summary_next_retry_at <= ?)", q.Now.UTC()).
+		Where(`(summary_updated_at IS NOT NULL AND (
+		    profile_summary_next_retry_at IS NOT NULL
+		    OR ((summary_attempted_at IS NULL OR summary_attempted_at < last_seen)
+		      AND (SELECT COUNT(*) FROM events e
+		           WHERE e.from_id = viewer_profiles.uid AND e.dir = 'in' AND NOT e.private
+		             AND e.channel <> 'dm' AND e.at > viewer_profiles.summary_updated_at) >= ?)
+		  ))`, q.MinNewMessages).
+		Order("CASE WHEN profile_summary_next_retry_at IS NOT NULL THEN 0 ELSE 1 END, " +
+			"profile_summary_next_retry_at ASC NULLS LAST, last_seen DESC, uid ASC").
+		Limit(q.Limit).Find(&rows).Error
 	if err != nil {
-		return nil, &safeError{"读取待侧写观众失败", err}
+		return nil, &safeError{"读取待更新观众失败", err}
 	}
 	out := make([]store.ViewerProfile, 0, len(rows))
 	for _, row := range rows {
@@ -216,7 +243,262 @@ func (r *ViewerRepo) ActiveViewers(ctx context.Context, since, now time.Time, mi
 		}
 		out = append(out, p)
 	}
+
+	remaining := q.Limit - len(out)
+	backfill := q.BackfillLimit
+	if backfill > remaining {
+		backfill = remaining
+	}
+	if backfill < 1 {
+		return out, nil
+	}
+	var fresh []viewerRow
+	err = r.db.WithContext(ctx).Table("viewer_profiles").
+		Where("(last_seen >= ? OR hits >= ?)", q.Since.UTC(), q.MinHits).
+		Where("summary_updated_at IS NULL").
+		Where("(profile_summary_next_retry_at IS NULL OR profile_summary_next_retry_at <= ?)", q.Now.UTC()).
+		Where("(profile_summary_next_retry_at IS NOT NULL OR summary_attempted_at IS NULL OR summary_attempted_at < last_seen)").
+		Order("hits DESC, last_seen DESC, uid ASC").
+		Limit(backfill).Find(&fresh).Error
+	if err != nil {
+		return nil, &safeError{"读取首次回填观众失败", err}
+	}
+	for _, row := range fresh {
+		p, err := row.profile()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
 	return out, nil
+}
+
+// ExpireProfileSummaryRecent 清掉已过期的近期层，并同步记忆与投影任务（R06）。
+//
+// 过期只撤回「近期观察」，稳定自述继续保留：档案文本退回稳定层；
+// 稳定层也为空时记忆行归档并登记 purge，否则更新记忆行并登记 publish。
+func (r *ViewerRepo) ExpireProfileSummaryRecent(ctx context.Context, now time.Time) ([]string, error) {
+	if ctx == nil || now.IsZero() {
+		return nil, store.ErrInvalid
+	}
+	var expired []string
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var rows []struct {
+			UID    string
+			Stable string
+			Fields []byte
+		}
+		err := tx.Raw(`SELECT uid, profile_summary_stable AS stable, to_json(profile_summary_fields) AS fields
+FROM viewer_profiles
+WHERE profile_summary_recent <> '' AND profile_summary_recent_until IS NOT NULL
+  AND profile_summary_recent_until <= ?
+ORDER BY uid
+FOR UPDATE`, now.UTC()).Scan(&rows).Error
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			var fields []store.ViewerSummaryField
+			if len(row.Fields) > 0 {
+				if err := json.Unmarshal(row.Fields, &fields); err != nil {
+					return err
+				}
+			}
+			stableFields := make([]store.ViewerSummaryField, 0, len(fields))
+			evidence := make([]store.MemoryEvidence, 0, len(fields))
+			for _, field := range fields {
+				if field.Layer != store.ViewerSummaryLayerStable {
+					continue
+				}
+				stableFields = append(stableFields, field)
+				if strings.TrimSpace(field.Evidence) != "" {
+					evidence = append(evidence, store.MemoryEvidence{Field: field.Name, Type: field.Basis, Text: field.Evidence})
+				}
+			}
+			encodedFields, err := json.Marshal(nonNilFields(stableFields))
+			if err != nil {
+				return err
+			}
+			encodedEvidence, err := json.Marshal(evidence)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(row.Stable) == "" {
+				// 只有近期层：过期后档案内容整体清空，summary_updated_at 归零表示当前没有侧写。
+				if err := tx.Exec(`UPDATE viewer_profiles SET
+  profile_summary='', summary_updated_at=NULL,
+  profile_summary_stable='', profile_summary_recent='', profile_summary_recent_until=NULL,
+  profile_summary_fields='[]'::jsonb, updated_at=clock_timestamp()
+WHERE uid=?`, row.UID).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec(`UPDATE memory_records SET archived = TRUE
+WHERE id = ? AND kind = 'viewer_profile' AND NOT archived`, "viewer-profile:"+row.UID).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec(`INSERT INTO viewer_summary_jobs(uid,action,attempts,next_retry_at,created_at,updated_at)
+VALUES (?,?,0,clock_timestamp(),clock_timestamp(),clock_timestamp())
+ON CONFLICT (uid) DO UPDATE SET
+  action='purge', attempts=0, next_retry_at=clock_timestamp(), updated_at=clock_timestamp()`,
+					row.UID, store.ViewerSummaryActionPurge).Error; err != nil {
+					return err
+				}
+			} else {
+				if err := tx.Exec(`UPDATE viewer_profiles SET
+  profile_summary=?, summary_updated_at=clock_timestamp(),
+  profile_summary_recent='', profile_summary_recent_until=NULL,
+  profile_summary_fields=?::jsonb, updated_at=clock_timestamp()
+WHERE uid=?`, row.Stable, string(encodedFields), row.UID).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec(`UPDATE memory_records SET summary=?, evidence=?::jsonb, archived=FALSE
+WHERE id = ? AND kind = 'viewer_profile'`, row.Stable, string(encodedEvidence), "viewer-profile:"+row.UID).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec(`INSERT INTO viewer_summary_jobs(uid,action,attempts,next_retry_at,created_at,updated_at)
+VALUES (?,?,0,clock_timestamp(),clock_timestamp(),clock_timestamp())
+ON CONFLICT (uid) DO UPDATE SET
+  action='publish', attempts=0, next_retry_at=clock_timestamp(), updated_at=clock_timestamp()`,
+					row.UID, store.ViewerSummaryActionPublish).Error; err != nil {
+					return err
+				}
+			}
+			expired = append(expired, row.UID)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, &safeError{"清理过期观众侧写失败", err}
+	}
+	return expired, nil
+}
+
+// ForegroundBusy 判断近期是否有正在生成的回复（R09）。
+//
+// 侧写是后台任务，前台回复（status=replying）繁忙时应让路：
+// 调用方据此跳过本轮生成，撤回/过期/投影等纠正动作不受影响。
+func (r *ViewerRepo) ForegroundBusy(ctx context.Context, since time.Time) (bool, error) {
+	if ctx == nil || since.IsZero() {
+		return false, store.ErrInvalid
+	}
+	var busy bool
+	err := r.db.WithContext(ctx).Raw(
+		"SELECT EXISTS(SELECT 1 FROM events WHERE status = ? AND status_changed_at >= ?)",
+		event.StatusReplying, since.UTC()).Scan(&busy).Error
+	if err != nil {
+		return false, &safeError{"检查前台回复忙碌状态失败", err}
+	}
+	return busy, nil
+}
+
+// SummaryAttemptsSince 统计 since 之后尝试过侧写的观众数（按 summary_attempted_at）。
+//
+// 同一观众当天多次尝试只计一次：日预算按「观众数」而不是调用次数控制。
+func (r *ViewerRepo) SummaryAttemptsSince(ctx context.Context, since time.Time) (int, error) {
+	if ctx == nil || since.IsZero() {
+		return 0, store.ErrInvalid
+	}
+	var count int
+	err := r.db.WithContext(ctx).Raw(
+		"SELECT COUNT(*) FROM viewer_profiles WHERE summary_attempted_at IS NOT NULL AND summary_attempted_at >= ?",
+		since.UTC()).Scan(&count).Error
+	if err != nil {
+		return 0, &safeError{"统计观众侧写日预算失败", err}
+	}
+	return count, nil
+}
+
+// SummaryPanel 汇总面板需要的侧写计数与最近成功时间（R08）。
+//
+// 只返回计数与时间，不返回侧写正文或来源事件 ID；正文由记忆/档案接口按权限读取。
+func (r *ViewerRepo) SummaryPanel(ctx context.Context) (store.ViewerSummaryPanel, error) {
+	var out store.ViewerSummaryPanel
+	if ctx == nil {
+		return out, store.ErrInvalid
+	}
+	var last sql.NullTime
+	err := r.db.WithContext(ctx).Raw(`SELECT
+  COUNT(*) FILTER (WHERE profile_summary <> '') AS summarized,
+  COUNT(*) FILTER (WHERE profile_summary <> '' AND profile_summary_failures > 0) AS failed,
+  COUNT(*) FILTER (WHERE profile_summary <> '' AND profile_summary_last_success_at IS NULL) AS fallback,
+  COALESCE(SUM(jsonb_array_length(profile_summary_source_ids)) FILTER (WHERE profile_summary <> ''), 0) AS sources,
+  MAX(profile_summary_last_success_at) AS last_summary_at,
+  (SELECT COUNT(*) FROM viewer_summary_jobs WHERE action = 'publish') AS pending_publish,
+  (SELECT COUNT(*) FROM viewer_summary_jobs WHERE action = 'purge') AS pending_purge
+FROM viewer_profiles`).Row().Scan(
+		&out.Summarized, &out.Failed, &out.Fallback, &out.Sources, &last,
+		&out.PendingPublish, &out.PendingPurge)
+	if err != nil {
+		return out, &safeError{"统计观众侧写状态失败", err}
+	}
+	if last.Valid {
+		out.LastSummaryAt = last.Time
+	}
+	return out, nil
+}
+
+// RequeueSummary 把一位观众的侧写标记为「下一轮重建」。
+//
+// 只把补偿时间提前，不伪造尝试时间：重建仍受日预算与前台让路约束，
+// 且 ActiveViewers 会把它当作补偿到期优先处理。
+func (r *ViewerRepo) RequeueSummary(ctx context.Context, uid string) error {
+	if ctx == nil || strings.TrimSpace(uid) == "" {
+		return store.ErrInvalid
+	}
+	res := r.db.WithContext(ctx).Exec(
+		"UPDATE viewer_profiles SET profile_summary_next_retry_at = clock_timestamp(), summary_attempted_at = NULL WHERE uid = ?", uid)
+	if res.Error != nil {
+		return &safeError{"标记观众侧写重建失败", res.Error}
+	}
+	if res.RowsAffected != 1 {
+		return store.ErrViewerNotFound
+	}
+	return nil
+}
+
+// RevokeSummary 立即撤回单个观众的侧写：档案清空、记忆归档、登记 purge 投影任务。
+//
+// 「立即不可见」在同一个事务里完成；viewers.md 与向量由 purge 任务异步清理。
+func (r *ViewerRepo) RevokeSummary(ctx context.Context, uid string) error {
+	if ctx == nil || strings.TrimSpace(uid) == "" {
+		return store.ErrInvalid
+	}
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("CREATE TEMP TABLE IF NOT EXISTS viewer_summary_revoked(uid TEXT PRIMARY KEY) ON COMMIT DROP").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("DELETE FROM viewer_summary_revoked").Error; err != nil {
+			return err
+		}
+		res := tx.Exec("INSERT INTO viewer_summary_revoked(uid) SELECT uid FROM viewer_profiles WHERE uid = ?", uid)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return store.ErrViewerNotFound
+		}
+		if err := tx.Exec(`UPDATE viewer_profiles SET
+  profile_summary = '', summary_updated_at = NULL,
+  profile_summary_source_hash = '', profile_summary_source_ids = '[]'::jsonb,
+  profile_summary_generator = '', profile_summary_keywords = '[]'::jsonb,
+  profile_summary_stable = '', profile_summary_recent = '',
+  profile_summary_recent_until = NULL, profile_summary_fields = '[]'::jsonb,
+  profile_summary_last_success_at = NULL, profile_summary_fallback_at = NULL,
+  profile_summary_failures = 0, profile_summary_next_retry_at = NULL,
+  summary_attempted_at = NULL
+WHERE uid = ?`, uid).Error; err != nil {
+			return err
+		}
+		_, err := finalizeRevokedSummaries(tx)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrViewerNotFound) {
+			return store.ErrViewerNotFound
+		}
+		return &safeError{"撤回观众侧写失败", err}
+	}
+	return nil
 }
 
 // SaveProfileSummary 在同一个事务里校验来源、写入档案侧写与对应的记忆记录，并登记投影任务。
@@ -232,8 +514,9 @@ func (r *ViewerRepo) SaveProfileSummary(ctx context.Context, w store.ViewerSumma
 	if err := w.Validate(); err != nil {
 		return err
 	}
+	// asserted_by 只允许明确自述：派生侧写必须留空，不能被写成「观众本人断言」。
 	if w.Record.Kind != "viewer_profile" || w.Record.Private || w.Record.Subject != memory.SoulSubjectViewer ||
-		w.Record.FromID != w.UID || w.Record.AssertedByID != w.UID {
+		w.Record.FromID != w.UID || (w.Record.AssertedByID != "" && w.Record.AssertedByID != w.UID) {
 		return store.ErrInvalid
 	}
 	ids, err := json.Marshal(w.Record.EventIDs)
@@ -244,10 +527,25 @@ func (r *ViewerRepo) SaveProfileSummary(ctx context.Context, w store.ViewerSumma
 	if err != nil {
 		return store.ErrInvalid
 	}
+	fields, err := json.Marshal(nonNilFields(w.Fields))
+	if err != nil {
+		return store.ErrInvalid
+	}
+	evidence, err := json.Marshal(w.Record.Evidence)
+	if err != nil {
+		return store.ErrInvalid
+	}
+	if string(evidence) == "null" {
+		evidence = []byte("[]")
+	}
 	at := w.At.UTC()
 	var nextRetry any
 	if !w.NextRetryAt.IsZero() {
 		nextRetry = w.NextRetryAt.UTC()
+	}
+	var recentUntil any
+	if !w.RecentUntil.IsZero() {
+		recentUntil = w.RecentUntil.UTC()
 	}
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := verifySummarySources(tx, w.UID, w.Sources, w.SourceHash, w.Generator); err != nil {
@@ -257,11 +555,14 @@ func (r *ViewerRepo) SaveProfileSummary(ctx context.Context, w store.ViewerSumma
   profile_summary=?, summary_updated_at=?,
   profile_summary_source_hash=?, profile_summary_source_ids=?::jsonb,
   profile_summary_generator=?, profile_summary_keywords=?::jsonb,
+  profile_summary_stable=?, profile_summary_recent=?, profile_summary_recent_until=?,
+  profile_summary_fields=?::jsonb,
   summary_attempted_at=?, profile_summary_failures=?, profile_summary_next_retry_at=?,
   profile_summary_last_success_at=CASE WHEN ? THEN profile_summary_last_success_at ELSE ? END,
   profile_summary_fallback_at=CASE WHEN ? THEN ? ELSE profile_summary_fallback_at END
 WHERE uid=?`,
 			w.Summary, at, w.SourceHash, string(ids), w.Generator, string(keywords),
+			w.Stable, w.Recent, recentUntil, string(fields),
 			at, w.Failures, nextRetry,
 			w.Fallback, at, w.Fallback, at, w.UID)
 		if res.Error != nil {
@@ -271,8 +572,8 @@ WHERE uid=?`,
 			return fmt.Errorf("观众档案不存在: %w", store.ErrViewerNotFound)
 		}
 		res = tx.Exec(`INSERT INTO memory_records
-(id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name,asserted_by_id,asserted_by_name,subject)
-VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''))
+(id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name,asserted_by_id,asserted_by_name,subject,derived_by,evidence)
+VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),?::jsonb)
 ON CONFLICT (id) DO UPDATE SET
   source = EXCLUDED.source,
   title = EXCLUDED.title,
@@ -284,9 +585,11 @@ ON CONFLICT (id) DO UPDATE SET
   event_ids = EXCLUDED.event_ids,
   from_id = COALESCE(EXCLUDED.from_id, memory_records.from_id),
   from_name = COALESCE(EXCLUDED.from_name, memory_records.from_name),
-  asserted_by_id = COALESCE(EXCLUDED.asserted_by_id, memory_records.asserted_by_id),
-  asserted_by_name = COALESCE(EXCLUDED.asserted_by_name, memory_records.asserted_by_name),
+  asserted_by_id = EXCLUDED.asserted_by_id,
+  asserted_by_name = EXCLUDED.asserted_by_name,
   subject = COALESCE(EXCLUDED.subject, memory_records.subject),
+  derived_by = COALESCE(NULLIF(EXCLUDED.derived_by,''), memory_records.derived_by),
+  evidence = CASE WHEN EXCLUDED.evidence = '[]'::jsonb THEN memory_records.evidence ELSE EXCLUDED.evidence END,
   archived = FALSE
 WHERE memory_records.kind = 'viewer_profile'
   AND EXCLUDED.kind = 'viewer_profile'
@@ -294,7 +597,7 @@ WHERE memory_records.kind = 'viewer_profile'
 			w.Record.ID, w.Record.Source, w.Record.Kind, w.Record.Title, w.Record.Summary, w.Record.Body,
 			w.Record.Importance, w.Record.Confidence, w.Record.Private, w.Record.Channel, w.Record.Session,
 			w.Record.ValidFrom, string(ids), w.Record.FromID, w.Record.FromName,
-			w.Record.AssertedByID, w.Record.AssertedByName, w.Record.Subject)
+			w.Record.AssertedByID, w.Record.AssertedByName, w.Record.Subject, w.Record.DerivedBy, string(evidence))
 		if res.Error != nil {
 			return res.Error
 		}
@@ -419,6 +722,8 @@ WITH bad AS (
       profile_summary = '', summary_updated_at = NULL,
       profile_summary_source_hash = '', profile_summary_source_ids = '[]'::jsonb,
       profile_summary_generator = '', profile_summary_keywords = '[]'::jsonb,
+      profile_summary_stable = '', profile_summary_recent = '',
+      profile_summary_recent_until = NULL, profile_summary_fields = '[]'::jsonb,
       profile_summary_last_success_at = NULL, profile_summary_fallback_at = NULL,
       profile_summary_failures = 0, profile_summary_next_retry_at = NULL,
       summary_attempted_at = NULL
@@ -678,6 +983,13 @@ ON CONFLICT (uid) DO UPDATE SET
 func nonNil(v []string) []string {
 	if v == nil {
 		return []string{}
+	}
+	return v
+}
+
+func nonNilFields(v []store.ViewerSummaryField) []store.ViewerSummaryField {
+	if v == nil {
+		return []store.ViewerSummaryField{}
 	}
 	return v
 }

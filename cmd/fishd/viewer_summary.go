@@ -17,6 +17,7 @@ import (
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/knowledge"
 	"RaiseMyFish/internal/llmmeta"
+	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/viewer"
 	"go.uber.org/zap"
@@ -80,6 +81,18 @@ func (p viewerPurgeProjection) PurgeViewers(ctx context.Context, uids []string) 
 	return errors.Join(failures...)
 }
 
+// viewerSummaryOptions 把配置映射成侧写参数；预算字段超出范围时 NewSummarizer 会拒绝装配。
+func viewerSummaryOptions(cfg config.Config) viewer.SummaryOptions {
+	return viewer.SummaryOptions{
+		MinHits:        cfg.Viewer.MinHits,
+		MaxPerRun:      cfg.Memory.ViewerSummaryMaxPerRun,
+		BackfillLimit:  cfg.Memory.ViewerSummaryBackfillLimit,
+		MinNewMessages: cfg.Memory.ViewerSummaryMinNewMessages,
+		RecentTTL:      time.Duration(cfg.Memory.ViewerSummaryRecentTTLSeconds) * time.Second,
+		DailyViewers:   cfg.Memory.ViewerSummaryDailyViewers,
+	}
+}
+
 // newViewerSummarizer 装配侧写器；LLM 或知识库缺失只降级，不阻止任务启动。
 func newViewerSummarizer(cfg config.Config, db *gorm.DB, runtime knowledgeAssembly, logger *zap.Logger) (viewerSummaryWorker, string, error) {
 	if db == nil {
@@ -134,17 +147,60 @@ func newViewerSummarizer(cfg config.Config, db *gorm.DB, runtime knowledgeAssemb
 		}
 	}
 
-	summarizer, err := viewer.NewSummarizer(profiles, events, llm, views, viewer.SummaryOptions{})
+	summarizer, err := viewer.NewSummarizer(profiles, events, llm, views, viewerSummaryOptions(cfg))
 	if err != nil {
 		return nil, "", err
 	}
 	return summarizer, model, nil
 }
 
+// viewerSummaryFreeze 判断本轮是否应冻结跳过：配置冻结优先，其次看运行时状态文件，
+// 与记忆提炼 worker 的语义一致（冻结只停写，不清理已生成的侧写）。
+type viewerSummaryFreeze struct {
+	cfgFrozen bool
+	path      string
+	// isFrozen 可注入状态检查（测试用）；nil 时读取 memory.IsFrozen。
+	isFrozen func(string) (bool, error)
+}
+
+func (g viewerSummaryFreeze) frozen() (bool, string, error) {
+	if g.cfgFrozen {
+		return true, "config", nil
+	}
+	if strings.TrimSpace(g.path) == "" {
+		return false, "", nil
+	}
+	check := g.isFrozen
+	if check == nil {
+		check = memory.IsFrozen
+	}
+	frozen, err := check(g.path)
+	if err != nil {
+		return false, "", err
+	}
+	if frozen {
+		return true, "state_file", nil
+	}
+	return false, "", nil
+}
+
 // startViewerSummary 装配并启动侧写循环；返回的 stop 会取消并等待循环退出。
-// 间隔为 0 表示关闭；初始化失败只降级，调用方主链路不受影响。
-func startViewerSummary(ctx context.Context, cfg config.Config, db *gorm.DB, runtime knowledgeAssembly, logger *zap.Logger) func() {
+//
+// 停用条件（R07）：
+//   - Memory.Enabled=false 或 Viewer.Enabled=false：不装配、不调度；
+//   - 配置冻结 Memory.Frozen=true：不启动循环（解冻需重启，与提炼 worker 一致）；
+//   - 运行时间隔为 0：不调度，但已生成的侧写保留；
+//   - 运行时冻结文件 state/memory.frozen 存在：循环保留、每轮跳过，解冻后自动恢复。
+func startViewerSummary(ctx context.Context, cfg config.Config, db *gorm.DB, runtime knowledgeAssembly, freezePath string, state *viewerSummaryRuntime, logger *zap.Logger) func() {
 	noop := func() {}
+	if !cfg.Memory.Enabled {
+		logger.Info("观众侧写停用：记忆提炼未启用", zap.String("action", viewerSummaryAction), zap.String("reason", "memory_disabled"))
+		return noop
+	}
+	if !cfg.Viewer.Enabled {
+		logger.Info("观众侧写停用：观众档案未启用", zap.String("action", viewerSummaryAction), zap.String("reason", "viewer_disabled"))
+		return noop
+	}
 	seconds := cfg.Memory.ViewerSummaryIntervalSeconds
 	if seconds == 0 {
 		return noop
@@ -152,6 +208,10 @@ func startViewerSummary(ctx context.Context, cfg config.Config, db *gorm.DB, run
 	if seconds < 60 || seconds > 86400 {
 		logger.Warn("观众侧写间隔无效，跳过",
 			zap.String("action", viewerSummaryAction), zap.Int("interval_seconds", seconds))
+		return noop
+	}
+	if cfg.Memory.Frozen {
+		logger.Info("观众侧写停用：记忆已冻结", zap.String("action", viewerSummaryAction), zap.String("reason", "config"))
 		return noop
 	}
 	worker, model, err := newViewerSummarizer(cfg, db, runtime, logger)
@@ -166,16 +226,20 @@ func startViewerSummary(ctx context.Context, cfg config.Config, db *gorm.DB, run
 		zap.Bool("knowledge", runtime.Reader != nil && cfg.Knowledge.Enabled),
 		zap.Duration("interval", interval),
 	)
-	return startViewerSummaryLoop(ctx, worker, interval, logger)
+	return startViewerSummaryLoop(ctx, worker, interval, viewerSummaryFreeze{path: freezePath}, state, logger)
 }
 
 // startViewerSummaryLoop 起周期循环；返回 stop 取消并等待退出。
-func startViewerSummaryLoop(ctx context.Context, worker viewerSummaryWorker, interval time.Duration, logger *zap.Logger) func() {
+func startViewerSummaryLoop(ctx context.Context, worker viewerSummaryWorker, interval time.Duration, freeze viewerSummaryFreeze, state *viewerSummaryRuntime, logger *zap.Logger) func() {
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runViewerSummary(runCtx, worker, interval, logger)
+		if state != nil {
+			state.setRunning(true)
+			defer state.setRunning(false)
+		}
+		runViewerSummary(runCtx, worker, interval, freeze, state, logger)
 	}()
 	return func() {
 		cancel()
@@ -184,9 +248,27 @@ func startViewerSummaryLoop(ctx context.Context, worker viewerSummaryWorker, int
 }
 
 // runViewerSummary 立即跑一轮，之后按 interval 循环；单轮失败只记日志，等下轮重试。
-func runViewerSummary(ctx context.Context, worker viewerSummaryWorker, interval time.Duration, logger *zap.Logger) {
+func runViewerSummary(ctx context.Context, worker viewerSummaryWorker, interval time.Duration, freeze viewerSummaryFreeze, state *viewerSummaryRuntime, logger *zap.Logger) {
 	runOnce := func() {
+		frozen, reason, err := freeze.frozen()
+		if err != nil {
+			logger.Warn("读取记忆冻结状态失败，观众侧写本轮跳过",
+				zap.String("action", viewerSummaryAction), zap.Error(err))
+			return
+		}
+		if frozen {
+			logger.Info("记忆已冻结，观众侧写本轮跳过",
+				zap.String("action", viewerSummaryAction), zap.String("reason", reason))
+			return
+		}
+		if state != nil && state.Paused() {
+			logger.Info("观众侧写已暂停，本轮跳过", zap.String("action", viewerSummaryAction))
+			return
+		}
 		stats, err := worker.RunOnce(ctx)
+		if state != nil {
+			state.record(stats, err, time.Now())
+		}
 		fields := []zap.Field{
 			zap.String("action", viewerSummaryAction),
 			zap.Int("candidates", stats.Candidates),
@@ -194,8 +276,11 @@ func runViewerSummary(ctx context.Context, worker viewerSummaryWorker, interval 
 			zap.Int("fallback", stats.Fallback),
 			zap.Int("retained", stats.Retained),
 			zap.Int("revoked", stats.Revoked),
+			zap.Int("expired", stats.Expired),
 			zap.Int("source_changed", stats.SourceChanged),
 			zap.Int("skipped", stats.Skipped),
+			zap.Int("busy_skipped", stats.BusySkipped),
+			zap.Int("budget_skipped", stats.BudgetSkipped),
 			zap.Int("failed", stats.Failed),
 			zap.Int("knowledge", stats.Knowledge),
 			zap.Int("projections", stats.Projections),

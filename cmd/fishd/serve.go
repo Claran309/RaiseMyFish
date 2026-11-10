@@ -400,8 +400,14 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	}
 	memReader := memory.Reader(assembled)
 
+	// ReAct / Brain / 后台与 embedding 的 token 都要进 llm_usage，否则日报费用偏低。
+	usageRepo, err := database.NewUsageRepo(resources.DB)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("装配用量账本失败：%w", err)
+	}
+
 	// embedding 是增强能力：装配失败只记日志，记忆/档案检索退回纯关键词。
-	embedClient := buildEmbeddingClient(cfg, log)
+	embedClient := buildEmbeddingClient(cfg, usageRepo, log)
 	// 即使没有 embedding 也要装混合检索：关键词档位包含 events 原文，
 	// 否则 memory_search 只能走 Recall，摘要没提炼出来时会「数据在却说不知道」。
 	var memEmbedder memory.Embedder
@@ -438,19 +444,17 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	// ReAct 的 token 也要进 llm_usage，否则日报费用偏低
-	usageRepo, err := database.NewUsageRepo(resources.DB)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("装配用量账本失败：%w", err)
-	}
 	// 观众档案：查询能力始终可用（存量档案不该因为「暂停建档」就查不到）；
 	// prompt 注入仍只在 [viewer] enabled 时开启，避免额外查询改变既有行为。
 	var viewerRepo store.ViewerRepo
 	var viewerSearch reasoning.ViewerProfileSearcher
+	var profileLoader reasoning.ViewerProfileLoader
 	viewerStore, err := database.NewViewerRepo(resources.DB)
 	if err != nil {
 		log.Warn("观众档案仓储装配失败，viewer_search 不注册", zap.String("action", "viewer_setup"), zap.Error(err))
 	} else {
+		// 侧写补取与认人解耦：查询能力在，就可以在确定 UID 后带出自动侧写。
+		profileLoader = viewerStore
 		if cfg.Viewer.Enabled {
 			viewerRepo = viewerStore
 		}
@@ -469,7 +473,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	}
 	quota := buildGiftQuota(cfg, log)
 	execs := buildToolExecutors(cfg, usageRepo, log)
-	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, viewerSearch, quota, execs, usageRepo, giftGate, sideLimiter, log)
+	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, viewerSearch, profileLoader, quota, execs, usageRepo, giftGate, sideLimiter, log)
 	if err != nil {
 		return nil, nil, nil, err
 	}

@@ -23,6 +23,9 @@ button.danger{color:var(--bad);border-color:#3a2a2a}
 .bar{display:flex;gap:8px;margin-bottom:12px;align-items:center}
 .muted{color:var(--muted)}
 .tag{font-size:12px;color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:16px}
+.card h2{font-size:14px;margin:0 0 6px;display:flex;gap:10px;align-items:center}
+.card .bar{margin:8px 0 0}
 </style>
 </head>
 <body>
@@ -31,6 +34,18 @@ button.danger{color:var(--bad);border-color:#3a2a2a}
   <nav><a href="/">概览</a><a href="/live">直播</a><a href="/message">消息</a><a href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a class="on" href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
 </header>
 <main>
+  <section class="card" id="vs-card">
+    <h2>观众侧写 <span id="vs-status" class="tag">读取中…</span></h2>
+    <div class="muted" id="vs-meta">—</div>
+    <div class="muted" id="vs-last">—</div>
+    <div class="bar">
+      <button id="vs-pause" onclick="vsPause(true)">暂停</button>
+      <button id="vs-resume" onclick="vsPause(false)">恢复</button>
+      <input id="vs-uid" placeholder="观众 UID" size="18">
+      <button onclick="vsAction('rebuild')">重建</button>
+      <button class="danger" onclick="vsAction('revoke')">撤回</button>
+    </div>
+  </section>
   <div class="bar">
     <input id="q" placeholder="搜索标题/摘要" size="26">
     <select id="kind">
@@ -78,7 +93,57 @@ async function del(id) {
   if (!r.ok) { var e = await r.json(); alert(e.error || '删除失败'); return; }
   load();
 }
+function vsStateText(d) {
+  if (d.error) return '状态读取失败';
+  if (!d.enabled) return '已停用';
+  if (d.frozen) return '已冻结（' + esc(d.frozen_reason || '记忆冻结') + '）';
+  if (d.paused) return '已暂停';
+  if (d.running) return '运行中';
+  return '未运行';
+}
+async function loadViewerSummary() {
+  var r = await fetch('/api/viewer/summary');
+  var status = document.getElementById('vs-status');
+  if (!r.ok) { status.textContent = '未启用'; return; }
+  var d = await r.json();
+  status.textContent = vsStateText(d);
+  var p = d.profiles || {};
+  var run = d.last_run || {};
+  document.getElementById('vs-meta').textContent =
+    '间隔 ' + (d.interval_seconds || 0) + ' 秒 · 已有侧写 ' + (p.summarized || 0) +
+    ' 位 · 失败 ' + (p.failed || 0) + ' · fallback ' + (p.fallback || 0) +
+    ' · 来源 ' + (p.sources || 0) + ' 条 · 待发布知识 ' + (d.pending_publish || 0) +
+    ' · 待清理 ' + (d.pending_purge || 0);
+  document.getElementById('vs-last').textContent =
+    '最后成功 ' + (d.last_success_at || '暂无') + ' · 最近落库 ' + (p.last_summary_at || '暂无') +
+    ' · 最近一轮：候选 ' + (run.candidates || 0) + ' / 成功 ' + (run.summarized || 0) +
+    ' / 降级 ' + (run.fallback || 0) + ' / 失败 ' + (run.failed || 0) +
+    ' / 让路 ' + (run.busy_skipped || 0) + ' / 预算跳过 ' + (run.budget_skipped || 0) +
+    (d.last_error ? ' · 错误：' + esc(d.last_error) : '');
+  document.getElementById('vs-pause').disabled = !!(d.paused || d.frozen || !d.enabled);
+  document.getElementById('vs-resume').disabled = !d.enabled || d.frozen || !d.paused;
+}
+async function vsPost(body) {
+  var r = await fetch('/api/viewer/summary?confirm=yes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Panel-Token': panelToken() },
+    body: JSON.stringify(body)
+  });
+  var d = await r.json();
+  if (!r.ok) { alert(d.error || '操作失败'); return false; }
+  return true;
+}
+async function vsPause(paused) {
+  if (await vsPost({ action: paused ? 'pause' : 'resume' })) loadViewerSummary();
+}
+async function vsAction(action) {
+  var uid = document.getElementById('vs-uid').value.trim();
+  if (!uid) { alert('请先填写观众 UID'); return; }
+  if (action === 'revoke' && !confirm('确认撤回该观众侧写？')) return;
+  if (await vsPost({ action: action, uid: uid })) loadViewerSummary();
+}
 load();
+loadViewerSummary();
 </script>
 </body>
 </html>

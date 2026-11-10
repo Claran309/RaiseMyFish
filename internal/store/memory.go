@@ -6,7 +6,18 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
+
+// MemoryEvidence 是记忆字段的依据（R05）。
+//
+// Type 复用侧写的三种依据类型：self=本人明确自述、observed=可直接观察、
+// inferred=模型或规则推断。Text 只存来源原话片段，便于面板核对。
+type MemoryEvidence struct {
+	Field string `json:"field"`
+	Type  string `json:"type"`
+	Text  string `json:"text,omitempty"`
+}
 
 // MemoryRecord 是写入用数据；只读Records接口仅返回嵌入的摘要投影。
 type MemoryRecord struct {
@@ -24,6 +35,11 @@ type MemoryRecord struct {
 	AssertedByName string
 	// Subject 是陈述主体（说的是谁）：owner/viewer/fish；空表示旧数据未知。
 	Subject string
+	// DerivedBy 是派生来源（如 model:viewer-summary/v3、rule:stats）；
+	// 空表示直接来自事件或历史数据，不表示「人工确认」。
+	DerivedBy string
+	// Evidence 是每字段的依据类型与片段；只存公开来源，不含私密正文。
+	Evidence []MemoryEvidence
 	// CreatedAt 只由 ListRecords/SearchRecords 填充，用于运维查看；写入时忽略。
 	CreatedAt time.Time
 }
@@ -69,6 +85,25 @@ func (r MemoryRecord) Validate() error {
 	for _, id := range r.EventIDs {
 		if strings.TrimSpace(id) == "" {
 			return fmt.Errorf("记忆来源事件为空：%w", ErrInvalid)
+		}
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(r.DerivedBy)) > 100 {
+		return fmt.Errorf("记忆派生来源过长：%w", ErrInvalid)
+	}
+	if len(r.Evidence) > 32 {
+		return fmt.Errorf("记忆依据条目过多：%w", ErrInvalid)
+	}
+	for _, evidence := range r.Evidence {
+		if strings.TrimSpace(evidence.Field) == "" || utf8.RuneCountInString(evidence.Field) > 64 {
+			return fmt.Errorf("记忆依据字段错误：%w", ErrInvalid)
+		}
+		switch evidence.Type {
+		case ViewerSummaryBasisSelf, ViewerSummaryBasisObserved, ViewerSummaryBasisInferred:
+		default:
+			return fmt.Errorf("记忆依据类型错误：%w", ErrInvalid)
+		}
+		if utf8.RuneCountInString(evidence.Text) > 200 {
+			return fmt.Errorf("记忆依据片段过长：%w", ErrInvalid)
 		}
 	}
 	return nil

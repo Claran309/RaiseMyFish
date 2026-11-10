@@ -16,7 +16,7 @@ import (
 )
 
 // startWebPanel 启动面板；返回的 stop 会等待服务退出（未启用时是空函数）。
-func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Resources, runtime knowledgeAssembly, accounts *account.Service, control web.RuntimeController, logs web.LogSource, log *zap.Logger) func() {
+func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Resources, runtime knowledgeAssembly, accounts *account.Service, control web.RuntimeController, viewerSummary web.ViewerSummaryControl, logs web.LogSource, log *zap.Logger) func() {
 	if !cfg.Web.Enabled {
 		return func() {}
 	}
@@ -36,7 +36,7 @@ func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Reso
 			return info.Entries, info.Revision
 		}
 	}
-	srv, err := web.New(web.Options{Addr: cfg.Web.Addr, Repo: repo, Log: log, KnowledgeInfo: knowledgeInfo, Accounts: accounts, Control: control, Logs: logs})
+	srv, err := web.New(web.Options{Addr: cfg.Web.Addr, Repo: repo, Log: log, KnowledgeInfo: knowledgeInfo, Accounts: accounts, Control: control, ViewerSummary: viewerSummary, Logs: logs})
 	if err != nil {
 		log.Warn("面板未启动：参数不合法", zap.String("action", "web_setup"), zap.Error(err))
 		return func() {}
