@@ -82,7 +82,7 @@ max_reply_tokens = 128
 attempt_timeout_ms = 10000
 total_timeout_ms = 40000
 backoff_ms = 250
-max_concurrent = 4
+max_concurrent = 8
 temperature = 0.7
 
 [llm.providers.deepseek]
@@ -274,7 +274,7 @@ viewer_summary_interval_seconds = 3600
 # 消费循环（Claim → Scheduler → Brain → Sender）。
 # 整段缺失表示「只采集不回复」；这里保留默认值，实际是否回复还取决于 [llm] enabled 与路由。
 [scheduler]
-max_concurrent = 4
+max_concurrent = 8
 max_pending = 64
 claim_batch = 8
 poll_interval_ms = 500
