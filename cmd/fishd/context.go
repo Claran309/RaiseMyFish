@@ -367,7 +367,12 @@ type viewerTarget struct {
 // 主体就是当前发言人时不重复注入。
 func (b *contextBuilder) targetViewerSegment(ctx context.Context, in brain.ContextInput) (viewerTarget, bool) {
 	target := brain.ResolveQuestionTarget(in)
-	if target == nil || target.Kind != brain.SubjectRoomCandidate {
+	if target == nil {
+		return viewerTarget{}, false
+	}
+	// 问自己/问发言人不需要另取档案；unresolved（如「仙主是谁」）也尝试别名/近似召回，
+	// 让「仙主→终南仙主」这类简称能命中，而不是直接当作不认识。
+	if target.Kind == brain.SubjectSelf || target.Kind == brain.SubjectSpeaker {
 		return viewerTarget{}, false
 	}
 	uid := strings.TrimSpace(target.UID)

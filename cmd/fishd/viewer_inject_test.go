@@ -141,9 +141,10 @@ func TestViewerTargetProfileInjection(t *testing.T) {
 		}
 	})
 
-	t.Run("无可见证据不预取", func(t *testing.T) {
+	t.Run("无可见证据且检索无命中不预取", func(t *testing.T) {
 		viewers := &fakeViewerRepo{profiles: profiles}
-		finder := &fakeProfileFinder{results: map[string]viewer.Result{"鲁迅": foundViewerResult(profiles["7002"])}}
+		// 「鲁迅」不是观众：检索 not_found（真实行为），unresolved 尝试后不注入。
+		finder := &fakeProfileFinder{results: map[string]viewer.Result{"鲁迅": {Status: viewer.StatusNotFound}}}
 		builder := newContextBuilder(snapshotTestPack(), nil, nil, viewers, nil, nil, zap.NewNop())
 		builder.finder = finder
 		ev := viewerMemoryEvent(now)
@@ -151,11 +152,26 @@ func TestViewerTargetProfileInjection(t *testing.T) {
 
 		got := builder.viewerText(context.Background(), brain.ContextInput{Event: ev})
 
-		if strings.Contains(got, "【被问到的观众") {
-			t.Errorf("unresolved 主体不应预取观众档案：\n%s", got)
+		if strings.Contains(got, "被问到的观众") {
+			t.Errorf("检索无命中不应预取观众档案：%s", got)
 		}
-		if finder.calls != 0 {
-			t.Errorf("unresolved 主体不应查观众检索：calls=%d", finder.calls)
+		if finder.calls == 0 {
+			t.Errorf("unresolved 应尝试一次检索（别名/近似）：calls=0")
+		}
+	})
+
+	t.Run("unresolved别名命中注入", func(t *testing.T) {
+		viewers := &fakeViewerRepo{profiles: profiles}
+		finder := &fakeProfileFinder{results: map[string]viewer.Result{"仙主": foundViewerResult(profiles["7002"])}}
+		builder := newContextBuilder(snapshotTestPack(), nil, nil, viewers, nil, nil, zap.NewNop())
+		builder.finder = finder
+		ev := viewerMemoryEvent(now)
+		ev.Text = "仙主是谁"
+
+		got := builder.viewerText(context.Background(), brain.ContextInput{Event: ev})
+
+		if !strings.Contains(got, "被问到的观众") {
+			t.Errorf("unresolved 别名命中应注入乙档案：%s", got)
 		}
 	})
 
