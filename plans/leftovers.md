@@ -119,6 +119,10 @@
 | 64 | 观众侧写进知识库 | 侧写作为 knowledge 条目（visibility=public，可被 RAG 召回）| 🟡 已交付待验收（viewers.md viewer-auto-*，usage 参与 embedding） |
 | 65 | 观众移动数据校验 | 迁移校验脚本修正（all-memory 计数口径） | ✅ 已做（实际 24=24） |
 
+
+| 66 | **仙主别名未生效** | 「仙主是谁」→ 鱼仍说「没印象」（别名表已加 仙主→终南仙主 confirmed，但没生效——查热更新/解析/调用链） | ⏳ 待查 |
+| 67 | **主动弹幕四感输入** | 画面✅+声音❌（ASR未接）+最近弹幕⚠️（不聚焦）——见 plans/proactive-input-design.md | ⏳ 待派 |
+
 ## ⚪ 远期 / 阶段任务
 
 | # | 项 | 阶段 | 状态 | 说明 |
