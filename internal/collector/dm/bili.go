@@ -90,6 +90,8 @@ type BiliFetcher struct {
 	// cursorsAccount/lastAccount 标记内存态属于哪个账号；切号后重新加载。
 	cursorsAccount string
 	lastAccount    string
+	// msgBlocked 记录消息接口不可用（如 404）的会话退避截止时间；避免每轮重试全部会话。
+	msgBlocked map[string]time.Time
 }
 
 // Fetch 实现 Fetcher；返回的 Batch.Commit 需要在整批事件获得持久化确认后调用，
@@ -189,6 +191,33 @@ func (f *BiliFetcher) snapshotActor(ctx context.Context) (bili.Actor, error) {
 		return bili.Actor{}, &Error{Kind: KindNetwork, Cause: err}
 	}
 	return actor, nil
+}
+
+
+// msgBlockedUntil 判断该会话的消息接口是否仍在退避（404 等不可恢复错误）。
+func (f *BiliFetcher) msgBlockedUntil(peer string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	until, ok := f.msgBlocked[peer]
+	return ok && time.Now().Before(until)
+}
+
+// blockMessages 给会话的消息接口设退避，避免 404 时每轮重试全部会话。
+func (f *BiliFetcher) blockMessages(peer string, d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.msgBlocked == nil {
+		f.msgBlocked = make(map[string]time.Time)
+	}
+	f.msgBlocked[peer] = time.Now().Add(d)
+}
+
+// isNotFound 判断错误是否为 HTTP 404（消息接口不可用）。
+func isNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "HTTP 404")
 }
 
 func (f *BiliFetcher) logf() *zap.Logger {
@@ -441,6 +470,9 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, client *bili.Client, sel
 
 // scanOlder 从 endSeqno 继续向历史翻页，直到追上 stopAt 或没有更多。
 func (f *BiliFetcher) scanOlder(ctx context.Context, client *bili.Client, peer, endSeqno, stopAt string, budget *int, emit func([]bili.DMMessage)) (oldest string, reached bool, scanned bool, err *Error) {
+	if f.msgBlockedUntil(peer) {
+		return "", false, false, nil
+	}
 	end := endSeqno
 	for *budget > 0 {
 		page, fetchErr := client.DMSessionMessagesPage(ctx, peer, f.messagePageSize(), end)
@@ -484,6 +516,9 @@ func (f *BiliFetcher) scanOlder(ctx context.Context, client *bili.Client, peer, 
 // scanNewest 从最新页向历史翻页，直到追上 watermark 或没有更多。
 // stoppedByError 表示翻页中途遇到非鉴权错误（已拿到较新的页）。
 func (f *BiliFetcher) scanNewest(ctx context.Context, client *bili.Client, peer, watermark string, budget *int, emit func([]bili.DMMessage)) (oldest string, reached bool, pageMax string, scanned bool, stoppedByError bool, err *Error) {
+	if f.msgBlockedUntil(peer) {
+		return "", false, "", false, true, nil
+	}
 	end := ""
 	for *budget > 0 {
 		page, fetchErr := client.DMSessionMessagesPage(ctx, peer, f.messagePageSize(), end)
@@ -491,12 +526,21 @@ func (f *BiliFetcher) scanNewest(ctx context.Context, client *bili.Client, peer,
 			if classify(fetchErr) == KindAuth {
 				return "", false, "", false, false, &Error{Kind: KindAuth, Cause: fetchErr}
 			}
-			f.logf().Warn("私信消息分页失败，下一轮重试",
-				zap.String("action", "dm_message_page_fail"),
-				zap.String("peer", peer),
-				zap.String("end_seqno", end),
-				zap.Error(fetchErr),
-			)
+			if isNotFound(fetchErr) {
+				f.blockMessages(peer, 5*time.Minute)
+				f.logf().Warn("私信消息接口不可用(404)，该会话退避 5 分钟",
+					zap.String("action", "dm_message_interface_unavailable"),
+					zap.String("peer", peer),
+					zap.Error(fetchErr),
+				)
+			} else {
+				f.logf().Warn("私信消息分页失败，下一轮重试",
+					zap.String("action", "dm_message_page_fail"),
+					zap.String("peer", peer),
+					zap.String("end_seqno", end),
+					zap.Error(fetchErr),
+				)
+			}
 			if end == "" {
 				return "", false, "", false, false, nil
 			}

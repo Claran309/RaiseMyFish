@@ -34,8 +34,8 @@ func Open(ctx context.Context, dsn string, timeout time.Duration) (*gorm.DB, err
 func openConfig(ctx context.Context, pc *pgx.ConnConfig, timeout time.Duration) (*gorm.DB, error) {
 	pc.ConnectTimeout = timeout
 	pool := stdlib.OpenDB(*pc)
-	pool.SetMaxOpenConns(10)
-	pool.SetMaxIdleConns(2)
+	pool.SetMaxOpenConns(30)
+	pool.SetMaxIdleConns(10)
 	pool.SetConnMaxLifetime(30 * time.Minute)
 	db, err := gorm.Open(postgres.New(postgres.Config{Conn: pool}), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent), DisableAutomaticPing: true})
 	if err == nil {
