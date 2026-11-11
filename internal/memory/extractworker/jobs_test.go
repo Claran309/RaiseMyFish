@@ -255,7 +255,7 @@ func TestJobQueueExtractsUnansweredInbound(t *testing.T) {
 // 任务表没有事件时间游标，所以 at 很早、done 很晚的事件照样会被领取。
 func TestJobQueueProcessesLateDoneEvent(t *testing.T) {
 	// 事件时间是两小时前，远早于任何「当前水位」。
-	late := mkEvent("live:1:3002", baseTime.Add(-2*time.Hour), "我是大二学生", "路人乙", false, event.ChLive, "1")
+	late := mkEvent("live:1:3002", baseTime.Add(-2*time.Hour), "明天给你带白饭", "路人乙", false, event.ChLive, "1")
 	jobs := &fakeJobSource{}
 	jobs.add(late)
 	repo := &fakeRepo{}
@@ -264,12 +264,17 @@ func TestJobQueueProcessesLateDoneEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunOnce 失败：%v", err)
 	}
-	if stats.Inserted != 1 {
-		t.Fatalf("晚完成事件应被提炼：%+v", stats)
+	// 规则版 fact 已禁用（交 LLM）：这里验证「晚完成事件被扫描并被处理」，
+	// 提炼结果允许为空（不再强制 fact）。
+	if stats.Scanned != 1 {
+		t.Fatalf("晚完成事件应被扫描：%+v", stats)
 	}
 	recs := repo.all()
-	if len(recs) != 1 || recs[0].FromName != "路人乙" {
-		t.Fatalf("记录主体不符：%+v", recs)
+	// 提炼结果允许为空（规则版 fact 已禁用）；有记录时校验主体。
+	for _, r := range recs {
+		if r.FromName != "路人乙" {
+			t.Fatalf("记录主体不符：%+v", recs)
+		}
 	}
 }
 
@@ -376,7 +381,7 @@ func TestJobQueueRenewsDuringLongExtraction(t *testing.T) {
 	}
 	jobs := &fakeJobSource{}
 	first := mkEvent("live:1:3401", baseTime, "我保证明天带话", "慢速甲", false, event.ChLive, "1")
-	second := mkEvent("live:1:3402", baseTime.Add(time.Second), "我是大二学生", "慢速乙", false, event.ChLive, "1")
+	second := mkEvent("live:1:3402", baseTime.Add(time.Second), "明天给你带白饭", "慢速乙", false, event.ChLive, "1")
 	jobs.add(first, second)
 	repo := &fakeRepo{}
 	extractor := &slowExtractor{delay: 800 * time.Millisecond, inner: memory.NewRuleExtractor()}
@@ -388,8 +393,8 @@ func TestJobQueueRenewsDuringLongExtraction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunOnce 失败：%v", err)
 	}
-	if stats.Inserted != 2 || stats.LeaseLost != 0 || stats.Failed != 0 {
-		t.Fatalf("续租后两条都应落库：%+v", stats)
+	if stats.Scanned != 2 || stats.LeaseLost != 0 || stats.Failed != 0 {
+		t.Fatalf("续租后应处理两条（允许一条无候选）：%+v", stats)
 	}
 	completed, failed := jobs.snapshot()
 	if len(completed) != 2 || len(failed) != 0 {
