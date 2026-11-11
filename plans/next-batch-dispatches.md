@@ -178,6 +178,27 @@
 
 **验收**：页面关键路径测试通过。
 
+
+## 批 O：#86 dm dead 定位（私信采到但 dead）
+
+**现状**（DSH 已深挖）：
+- ✅ dm Fetch 正常（515 条，含 18:16 的「覆盆子～」）
+- ✅ 18:16「覆盆子～」采到了（events channel=dm dir=in）
+- ❌ 状态 **dead**（没回复）
+- ❌ **dead 原因日志缺失**（dm 处理静默）
+
+**关键矛盾**：
+- M 批（稳定回执→已发送未确认）18:00 交付/18:03 重启
+- 18:16 的「覆盆子」应该「已发送未确认」——**但还是 dead**
+
+**排查**：
+1. **dm 处理日志**：生成（ReAct）/发送/结算——**加日志**（dead 前打原因）
+2. **M 批（delivery_plans）对 dm 生效**：durable 通道（dm/comment）的 sent_unconfirmed 逻辑是否覆盖 dm
+3. **dm 的 verify**（receipt）——是否 unknow
+4. **dead 的判定**（哪里标 dead——attempt/defer/error）
+
+**验收**：18:16 场景（真实私信）→ 要么「已发送（未确认）」out + send_log，要么 dead 有明确原因日志。
+
 ## 执行规则
 
 - **fishd 不重启**（本批纯代码，交付后 DSH 验证）
@@ -198,5 +219,7 @@
 - 批 J：已交付（`context_injections` 表 + 面板注入区：默认 1 小时、可永久，60 秒~30 天；ContextBuilder 只读未过期注入，最多 5 条/500 字，按新到旧拼接；brain 新增 `<injection>` 段并转义伪标签，预算降级顺序 soul 之后、memory 之前；面板可新增/编辑/删除，写接口沿用同源/令牌）。
 - 批 K：已交付（`[summary]` 每日定时总结前一天事件 → `daily_summaries`；东八区自然日、`max_events/max_tokens` 可配；面板 `/diary` 列表/正文/Markdown 导出，手动生成需 `confirm=yes`，重复生成按天覆盖；LLM 关闭时定时与手动都不可用）。
 - 批 L：已交付（记忆新增 `sort=time|importance` 白名单与面板排序/分组/空态；异常列表过滤 `cleared_at`，支持单条清理与「清理 7 天前」批量清理，只影响面板不改事件状态机）。
-- 门禁：`go build ./...`、`go test ./...` 全绿；受影响包 `-race` 全绿；`go vet` 仅既有 `internal/memory/fact_test.go:47 unreachable code`。
+- 批 M：已交付（planned_unknown 放宽：平台已接受 + 稳定回执但核验失败 → input `done`、out `retry` + `meta.sent_unconfirmed=true`、send_log `ok=true/verified=false/error=unconfirmed`，面板显示「已发送（未确认）」且不重发；平台已接受但无稳定回执仍按 unknown 结清，不重试；恢复路径同样不重发）。
+- 批 N：已交付（新增 `internal/web/e2e_test.go`：十个页面关键控件/令牌注入/nosniff + 注入/日报/记忆/异常/发送记录读写主路径 + 跨站写 403；注入按永久/临时、错误按 dead/retry、日报按月份分组，记忆空态区分「无数据/无匹配」，活动页补事件空态与未确认说明）。
+- 门禁（M/N）：`go build ./...`、`go test ./...` 全绿；`internal/web`、`internal/sender/durable`、`internal/database`、`cmd/fishd` `-race` 全绿；`go vet` 仅既有 `internal/memory/fact_test.go:47 unreachable code`；M 相关真实 PG 集成用例（accepted 有/无回执、forged verified）全过。
 
