@@ -1,0 +1,30 @@
+package dm
+
+import (
+ "context"
+ "errors"
+ "path/filepath"
+ "testing"
+ "time"
+ "RaiseMyFish/internal/sender"
+)
+
+func TestReview20261109UnknownReservationMustSurviveLaterFailure(t *testing.T) {
+ now:=time.Date(2026,11,9,12,0,0,0,time.UTC)
+ s,tr,rel:=newReserveSender(t,filepath.Join(t.TempDir(),"recipient.json"),[]string{"1001","1002"},&now)
+ tr.err=&Error{Kind:KindUncertain,Cause:errors.New("fixture: POST outcome unknown")}
+ _,err:=s.Send(context.Background(),claimFor("1001"),sender.Reply{Text:"first"})
+ if err==nil {t.Fatal("fixture must fail uncertain")}
+ first,_:=s.store.Load()
+ t.Logf("after unknown: peer=%q committed=%q",first.Peers[""],first.Committed[""])
+ tr.err=nil
+ rel.err=errors.New("fixture: relation lookup unavailable")
+ _,err=s.Send(context.Background(),claimFor("1001"),sender.Reply{Text:"second"})
+ if err==nil {t.Fatal("fixture relation lookup must fail")}
+ second,_:=s.store.Load()
+ t.Logf("after later preflight failure: peer=%q committed=%q",second.Peers[""],second.Committed[""])
+ rel.err=nil
+ result,err:=s.Send(context.Background(),claimFor("1002"),sender.Reply{Text:"third"})
+ t.Logf("other peer: result=%+v err=%v total transport calls=%d",result,err,tr.sent)
+ if err==nil || result.OK {t.Fatal("BUG reproduced: later failure released earlier unknown reservation and allowed another peer")}
+}

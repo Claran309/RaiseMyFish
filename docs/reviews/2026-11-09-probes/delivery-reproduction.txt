@@ -1,0 +1,29 @@
+=== RUN   TestReview20261109UnverifiedMustNotBecomeVerified
+    review_20261109_test.go:18: observed: input OK=true Verified=false MsgID=empty; outcome={State:accepted OK:true Verified:true MsgID: ErrorKind:}
+    review_20261109_test.go:19: BUG reproduced: unverified result upgraded to verified
+--- FAIL: TestReview20261109UnverifiedMustNotBecomeVerified (0.00s)
+=== RUN   TestReview20261109DMEmptyEnvelopeMustNotSucceed
+    review_20261109_test.go:29: observed: HTTP200 {} -> msgID="" err=<nil> POST=1
+    review_20261109_test.go:30: BUG reproduced: empty envelope treated as successful DM response
+--- FAIL: TestReview20261109DMEmptyEnvelopeMustNotSucceed (0.00s)
+=== RUN   TestReview20261109DMEmptyEnvelopeMustNotWriteConfirmedPlan
+    review_20261109_test.go:48: observed: POST=1 result={OK:true MsgID: Verified:true Error:} err=<nil> recorded=&{State:accepted OK:true Verified:true MsgID: ErrorKind:}
+    review_20261109_test.go:49: BUG reproduced: HTTP200 {} persisted as verified accepted plan
+--- FAIL: TestReview20261109DMEmptyEnvelopeMustNotWriteConfirmedPlan (0.00s)
+FAIL
+FAIL	RaiseMyFish/internal/sender/durable	1.749s
+=== RUN   TestReview20261109UnknownReservationMustSurviveLaterFailure
+    review_20261109_test.go:19: after unknown: peer="1001" committed=""
+    review_20261109_test.go:25: after later preflight failure: peer="" committed=""
+    review_20261109_test.go:28: other peer: result={OK:true MsgID:msg-1 Verified:true Error:} err=<nil> total transport calls=2
+    review_20261109_test.go:29: BUG reproduced: later failure released earlier unknown reservation and allowed another peer
+--- FAIL: TestReview20261109UnknownReservationMustSurviveLaterFailure (0.01s)
+FAIL
+FAIL	RaiseMyFish/internal/sender/dm	1.838s
+=== RUN   TestReview20261109CursorMustWaitForPublishCommit
+    review_20261109_test.go:32: observed: cursor committed before Publish returned=true; Publish result=采集事件持久化失败，已停止采集
+    review_20261109_test.go:33: BUG reproduced: persisted cursor advanced while final Publish was still uncommitted and then failed
+--- FAIL: TestReview20261109CursorMustWaitForPublishCommit (0.00s)
+FAIL
+FAIL	RaiseMyFish/internal/collector/dm	1.770s
+FAIL

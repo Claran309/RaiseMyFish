@@ -23,6 +23,9 @@
 | 19 | [knowledge.md](knowledge.md) | 知识库与 RAG：人格/知识/记忆分层、K0/K1/K2 阶段 | ✅ |
 | 20 | [presence.md](presence.md) | Presence 三心二意状态表：主体/会话分离、状态注册表、租约 | ✅ |
 | 21 | [2026-11-05 全项目审查与弹幕回复改进设计](reviews/2026-11-05-project-review-and-improvement-design.md) | 用户截图/归档问题对照、源码缺陷、上下文/认人/记忆方案、跨通道与运维、任务和验收矩阵 | 审查与建议，未实施 |
+| 22 | [2026-11-09 修改后复核与弹幕智能评估](reviews/2026-11-09-recheck-and-intelligence-assessment.md) | 对照修复提交复核剩余问题、离线缺陷探针、真实智能验收方案 | 修改后复核；尚无新版实测 |
+| 23 | [2026-11-10 三通道收尾条件与能力评估](reviews/2026-11-10-three-channel-closeout-assessment.md) | 阶段条件判定、旧问题改善、剩余缺陷、token比较与受控收尾门槛 | 候选版评估，未宣告阶段通过 |
+| 24 | [2026-11-10 短测试与观众侧写上线复核](reviews/2026-11-10-short-test-and-viewer-summary-review.md) | 短测改善、侧写三份投影生命周期、失败恢复、目标人物接线及监护使用建议 | 侧写试运行审查 |
 
 契约文档：`../contracts/`（event / collector / sender / brain）
 

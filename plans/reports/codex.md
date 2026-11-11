@@ -764,3 +764,35 @@ DSH请按contracts/sender.md、event增量、memory增量独立验收：Scope/�
 实际验证：全仓unit、vet、build通过；真实PG指定database/infra/fishd/fishctl integration通过（随机独立schema）；关键包Windows64位GCC race通过；Node直播协议/发送37/37、gift14/14通过。gofmt只读检查发现既有cmd/fishd/react.go未格式化，未触碰他人源码；未运行完整lint、全仓race/integration-race、真实平台、付费模型或2h验收。现有测试通过不替代本报告新增缺陷回归。文档链接、编号、表格和源码指纹一致性已校验，具体命令与限制见文档第16节。
 
 请DSH按实际接手源码复核、登记待裁决项并拆精确派发单；本文不自动放行未来Phase、契约变更或真实副作用操作。尚无本轮DSH验收，不执行Git提交/push。
+
+## 2026-11-09 · 修改后复核与弹幕智能评估（只读业务源码）
+
+主人称已按11月5日审查修复，要求复核剩余问题及回复是否足够智能，并明确尚未进行新版实测。受审HEAD f48f4726eb71c97fa3a1a7f797efabd188cd581b；接手时仅未跟踪cmd/fishd/personas/，未触碰。交付docs/reviews/2026-11-09-recheck-and-intelligence-assessment.md（N01—N22共22项剩余缺陷/条件风险/优化），配套recheck-evidence.json和2026-11-09-probes/离线探针，索引增加入口。旧报告保留，不改源码、contracts、ADR、配置、Phase任务勾选，不提交/push。
+
+确认大量旧修复已实际实现，不沿用旧50项为当前缺陷。重点残留：ReAct预算/校验与当前事件信息缺口、焦点轮次与证据回落、别名/拼音生产未接线、普通观众陈述提升全局Soul、提炼租约失效写入、向量源版本与外发策略；DM落库ACK/actor归属/恢复stage/Verified语义、unknown预占及切号超时补偿；页面JS遮蔽、CI扩展schema、运维凭据校验等。C/R/D与实测边界在文档分别记录，未声称生产已发生隐私泄漏或真实效果已测。
+
+验证：现有全仓unit、指定真实PG integration、vet、最终build、关键包64位GCC race、Node51/51通过；gofmt只读无输出，diff检查通过。离线新增探针：context观测到63437字节未裁剪而普通Brain裁至16235；真实HTML脚本NodeVM三状态报pill is not a function；delivery五个正确安全不变量FAIL（伪Verified/空响应成功/组合伪确认/unknown释放/Commit先于Publish）；memory两个缺陷行为断言PASS。后两种PASS/FAIL语义在文档明示，不把探针结果冒充功能验收。全部假平台/本机httptest，无真实平台、付费模型或新增PG故障注入。
+
+结论：有明显工程进步，尚不能认定稳定智能；无新版真实对话证据，不给虚假正确率或智能分。文档第10节提供12组多轮验收和建议30—50场景起始集。请DSH按接手快照复核并拆新精确派单，内部审查助手不替代DSH独立验收。
+
+## 2026-11-10 · 三通道阶段收尾条件与能力评估
+
+主人要求核对完整养鱼Agent能力（弹幕/评论/私信共享记忆、梗/观众/长期记忆、上下文、省token、人情味）、能否收尾并拓展、旧问题改善与剩余修改。受审HEAD ba3abe4a4fb2d47aedeba8bf19b7dcbbacfea09c；检查了未提交人格规则与DM测试但未改动/认领。交付docs/reviews/2026-11-10-three-channel-closeout-assessment.md、closeout-evidence.json、2026-11-10-probes/可复跑脱敏探针及索引入口。本轮只写审查文档/探针/本人报告，不改业务、契约、配置、ADR、Phase状态，无Git提交/push。
+
+结论：可以作为候选版进入受控收尾流程，暂不宣告阶段通过或直接扩大功能。旧N01—N22多数有实质修复；公开共享与私密隔离正确区分，私密提炼默认未开、别名表当前空、评论配置关闭。省token/人情味没有真实对照，不能由fake输入验收直接判定。报告给出9项收敛问题与A—D门槛，避免无限新需求挡测试。
+
+新增证据：真实PG随机schema复现同公开事实跨live→comment修订updated=false保留旧值；离线纠正误撤无关out、knowledge更换Embedder仍跳过、限制模式unknown名额释放、实际Agent请求估计超过Prepare预算（16221→17441/18355）与长问题尾部缺失。确认启动脚本有Git跟踪的非占位凭据字面值，报告不复述、不验证活性，建议去字面值并维护者轮换；后台提炼/学习/embedding漏账及缺回复归因导致全系统节省无证据。
+
+本轮现有全仓unit与全仓integration（真实PG）均退出0；pass测试事件2142/2356（含subtest），关键包race、vet、build、gofmt/diff检查通过，Node51/51。cleanDB扩展测试因角色无CREATEDB跳过，符号链接条件测试及Watchdog辅助入口跳过均明确记录；不把skip说成通过。新增不变量探针与现有门禁分开记录，实体均非.go或隔离main目录，不污染业务测试。尚无真实平台/付费模型、2h/长运行、干净Compose或生产旧数据盘点；内部助手不替代DSH验收。后续请冻结模型/配置/数据并补明确收尾证据后再放行拓展。
+
+## 2026-11-10 晚 · 短测试与观众侧写上线复核
+
+主人称已短测并新增侧写/档案总结，要求判断可否用及优化建议，提供docs/reports/2026-11-10-short-test.md。开始HEAD5e2df51，期间新增仅短测文档提交f5b687c；后段578个源码指纹至结束无变化。工作区有其他agent未提交usage/index适配，不改/不认领；本轮只新增docs/reviews/2026-11-10-short-test-and-viewer-summary-review.md、evening-evidence.json、evening-probes/与索引、本人记录，不改业务/配置/契约/ADR，不提交/push。
+
+结论：直播可继续小范围监护试用，短测认人/主语/房间有实质改善；评论/私信和新侧写不据此批准无人值守。日志5次live ReAct约777—2811ms（非端到端），73次DM分页警告/5条unknown待核对；viewer_summary action0，不能证明新任务实跑。只报告脱敏统计，不读私信正文，不回显凭据。
+
+新主要缺口：结构化@剥前缀在Prepare后，wire正文与计划/out/sha不一致；来源撤回后侧写档案/记忆/知识未失效（独立真实PG删全部来源后仍active）；DB成功后知识失败不补偿、LLM fallback覆盖好摘要且无新发言不恢复（stateful fake复现）；第三人viewer_search丢弃已存在ProfileSummary；模型推断写成观众本人断言；开关/冻结、面板与初次回填预算未闭环。建议先修有限P1，区分稳定事实和近期观察、证据/时效/生成状态/投影任务，避免继续无界堆功能。
+
+现有全仓unit及全仓integration退出0（2238/2462 PASS测试事件含subtest，48 PASS包）；vet/build/Node51通过，关键新功能race独立复跑通过。knowledge全标题race过慢，核实本轮子进程归属后停止，不记通过或业务故障；gofmt只读发现sender/live.go及live_test.go未格式化，未改；cleanDB测试因CREATEDB跳过，符号链接条件/辅助子进程skip明确保留。新增probe：发送计划/target summary不变量FAIL，源撤回PG FAIL，摘要补偿两条缺陷断言PASS，旧N13安全探针转PASS（已改善）。结果不可混称全绿。无真实平台写、LLM费用或业务PG写；PG只随机schema。
+
+侧写有价值但不能把有限20条发言的模型性格推断当本人确认；测试报告@out文本不能代平台高亮证据。文档给出9项问题和可执行监护使用/扩容顺序，待DSH独立复核；当前未替主人开关侧写或上线。

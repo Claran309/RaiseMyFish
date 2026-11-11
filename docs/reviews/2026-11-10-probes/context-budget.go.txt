@@ -1,0 +1,40 @@
+package main
+
+import (
+ "context"
+ "encoding/json"
+ "fmt"
+ "strings"
+ "time"
+ "RaiseMyFish/internal/brain"
+ "RaiseMyFish/internal/event"
+ "RaiseMyFish/internal/memory"
+ "RaiseMyFish/internal/persona"
+ "RaiseMyFish/internal/reasoning"
+ "go.uber.org/zap"
+)
+
+type capture struct{ calls int; sizes []int; tailSeen bool }
+func (c *capture) Complete(_ context.Context,system,user string)(string,error){
+ c.calls++;c.sizes=append(c.sizes,64+len(system)+len(user));c.tailSeen=c.tailSeen||strings.Contains(user,"尾部否定标记")
+ if c.calls==1{return `{"action":"history","args":"10"}`,nil}
+ return `{"action":"final","final":"测试"}`,nil
+}
+func main(){
+ ctx:=context.Background();s:=memory.Scope{Channel:event.ChLive,Session:"test-room"}
+ in:=brain.ContextInput{Event:event.Event{ID:"probe-in",Channel:event.ChLive,Session:s.Session,Dir:event.DirIn,FromID:"1",FromName:"A",Text:"刚才聊什么",At:time.Now()},Persona:persona.Pack{Meta:persona.Meta{Name:"测试鱼",Version:"v1",Channels:[]string{"live"}},Soul:"身份",Rules:"规则",Samples:"样例",Contexts:map[string]string{"live":"直播场景"}},Memory:memory.Context{Scope:s},Shared:memory.SharedState{Scope:s}}
+ for n:=0;n<100;n++{in.Memory.Recent=append(in.Memory.Recent,memory.Message{EventID:fmt.Sprintf("old-%d",n),Channel:event.ChLive,Session:s.Session,Dir:event.DirIn,Text:strings.Repeat("长",100),At:time.Now()})}
+ p,err:=brain.Prepare(ctx,brain.Task{ID:"t",EventID:in.Event.ID,Channel:in.Event.Channel,Session:in.Event.Session},in,brain.Budget{MaxPromptTokens:16384,KnowledgeBudgetPercent:10});if err!=nil{panic(err)}
+ preparedBytes:=64;for _,m:=range p.Messages{preparedBytes+=len(m.Content)}
+ box,err:=reasoning.NewToolbox(reasoning.Tool{Name:"history",Desc:"查最近弹幕",Run:func(context.Context,string)(string,error){return strings.Repeat("观察",150),nil}});if err!=nil{panic(err)}
+ cap:=&capture{};a,err:=reasoning.New(cap,box,reasoning.Options{MaxSteps:3,Timeout:time.Second},zap.NewNop());if err!=nil{panic(err)}
+ _,err=a.Run(ctx,reasoning.Input{System:p.Messages[0].Content,Context:p.Context,Question:p.Question});if err!=nil{panic(err)}
+ result:=map[string]any{"configured_conservative_byte_budget":16384,"prepared_estimate":preparedBytes,"actual_agent_request_estimates":cap.sizes,"real_network_calls":0}
+ in.Memory.Recent=nil;in.Event.Text=strings.Repeat("前",350)+"尾部否定标记：不要把前文当事实"
+ longPrepared,longErr:=brain.Prepare(ctx,brain.Task{ID:"t",EventID:in.Event.ID,Channel:in.Event.Channel,Session:in.Event.Session},in,brain.DefaultBudget());if longErr!=nil{panic(longErr)}
+ longCap:=&capture{};longAgent,longErr:=reasoning.New(longCap,box,reasoning.Options{MaxSteps:3,Timeout:time.Second},zap.NewNop());if longErr!=nil{panic(longErr)}
+ _,longErr=longAgent.Run(ctx,reasoning.Input{System:longPrepared.Messages[0].Content,Context:longPrepared.Context,Question:longPrepared.Question});if longErr!=nil{panic(longErr)}
+ result["long_question_tail_reaches_agent_without_recalled_duplicate"]=longCap.tailSeen
+ pack,loadErr:=persona.Load(ctx,"personas/dafeiyu");if loadErr==nil{result["actual_persona_system_bytes"]=len(pack.SystemPrompt());result["actual_persona_system_runes"]=len([]rune(pack.SystemPrompt()))}
+ b,_:=json.MarshalIndent(result,"","  ");fmt.Println(string(b))
+}

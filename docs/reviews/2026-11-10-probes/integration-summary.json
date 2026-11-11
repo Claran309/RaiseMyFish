@@ -1,0 +1,23 @@
+{
+  "suite": "integration",
+  "passed_test_events": 2356,
+  "passed_packages": 47,
+  "failures": [],
+  "skips": [
+    {
+      "package": "RaiseMyFish/internal/watchdog",
+      "test": "TestWatchdogSpawnHelper",
+      "explanation": "=== RUN   TestWatchdogSpawnHelper exec_test.go:29: 仅作为 runCommand 的子进程 helper --- SKIP: TestWatchdogSpawnHelper (0.00s)"
+    },
+    {
+      "package": "RaiseMyFish/internal/database",
+      "test": "TestVectorExtensionStableSchemaOnCleanDatabase",
+      "explanation": "=== RUN   TestVectorExtensionStableSchemaOnCleanDatabase vector_extension_integration_test.go:101: 当前数据库角色无 CREATEDB 权限，干净库验收需在 CI 超级用户下执行 --- SKIP: TestVectorExtensionStableSchemaOnCleanDatabase (0.09s)"
+    },
+    {
+      "package": "RaiseMyFish/internal/knowledge",
+      "test": "TestLoadRejectsEscapingSymlink",
+      "explanation": "=== RUN   TestLoadRejectsEscapingSymlink file_test.go:188: 系统不允许当前用户创建符号链接；Linux/race环境另验 --- SKIP: TestLoadRejectsEscapingSymlink (0.00s)"
+    }
+  ]
+}

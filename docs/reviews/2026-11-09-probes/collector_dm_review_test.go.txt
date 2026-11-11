@@ -1,0 +1,34 @@
+package dm
+
+import (
+ "context"
+ "errors"
+ "testing"
+ "time"
+ "RaiseMyFish/internal/collector"
+ "RaiseMyFish/internal/event"
+ "go.uber.org/zap"
+)
+
+type reviewFetcherFunc func(context.Context)(Batch,error)
+func(f reviewFetcherFunc) Fetch(ctx context.Context)(Batch,error){return f(ctx)}
+type reviewOnePoll struct{*Collector}
+func(c reviewOnePoll) Start(ctx context.Context,out chan<- event.Event,_ chan<- error)error{return c.poll(ctx,out)}
+type reviewBlockedPublish struct{entered chan struct{}; fail chan struct{}}
+func(p reviewBlockedPublish) Publish(ctx context.Context,_ event.Event)(bool,error){close(p.entered);select{case <-p.fail:return false,errors.New("fixture: database publish failed");case <-ctx.Done():return false,ctx.Err()}}
+
+func TestReview20261109CursorMustWaitForPublishCommit(t *testing.T){
+ committed:=make(chan struct{})
+ f:=reviewFetcherFunc(func(context.Context)(Batch,error){return Batch{Messages:[]Message{{ID:"9001",PeerID:"2002",Text:"fixture",At:time.Unix(1700000000,0)}},Commit:func()error{close(committed);return nil}},nil})
+ c,err:=New(f,Options{Interval:10*time.Second,Log:zap.NewNop()});if err!=nil{t.Fatal(err)}
+ p:=reviewBlockedPublish{entered:make(chan struct{}),fail:make(chan struct{})}
+ ctx,cancel:=context.WithTimeout(context.Background(),3*time.Second);defer cancel()
+ done:=make(chan error,1);go func(){done<-collector.RunToBus(ctx,reviewOnePoll{c},p,time.Second,zap.NewNop())}()
+ <-p.entered
+ early:=false
+ select{case <-committed:early=true;case <-time.After(200*time.Millisecond):}
+ close(p.fail)
+ bridgeErr:=<-done
+ t.Logf("observed: cursor committed before Publish returned=%v; Publish result=%v",early,bridgeErr)
+ if early{t.Fatal("BUG reproduced: persisted cursor advanced while final Publish was still uncommitted and then failed")}
+}

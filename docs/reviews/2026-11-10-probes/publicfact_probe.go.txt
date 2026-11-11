@@ -1,0 +1,26 @@
+//go:build integration
+
+package database
+
+import (
+ "crypto/sha256"
+ "encoding/hex"
+ "testing"
+ "time"
+ "RaiseMyFish/internal/event"
+ "RaiseMyFish/internal/memory"
+ "RaiseMyFish/internal/store"
+)
+
+func TestCloseoutPublicFactCrossChannelUpdate(t *testing.T){
+ db,ctx:=repositoryDB(t)
+ repo,err:=NewMemoryRepo(db);if err!=nil{t.Fatal(err)}
+ title:="学业阶段"; h:=sha256.Sum256([]byte(title));id:="fact:public:2002:"+hex.EncodeToString(h[:])[:12]
+ old:=store.MemoryRecord{Record:memory.Record{ID:id,Channel:event.ChLive,Session:"room-1",Summary:"本人自述大二",Importance:.6,Confidence:.85,EventIDs:[]string{"live:room-1:1"},ValidFrom:time.Now().Add(-2*time.Hour)},Source:"persona",Kind:"fact",Title:title,FromID:"2002",FromName:"同一B站观众"}
+ ok,err:=repo.InsertRecord(ctx,old);if err!=nil||!ok{t.Fatalf("first=%v error=%v",ok,err)}
+ newer:=old;newer.Channel=event.ChComment;newer.Session="video-2";newer.Summary="本人自述已升大三";newer.ValidFrom=time.Now().Add(-time.Hour);newer.EventIDs=[]string{"comment:video-2:2"}
+ changed,err:=repo.InsertRecord(ctx,newer);if err!=nil{t.Fatal(err)}
+ rows,err:=repo.Records(ctx,memory.Scope{Channel:event.ChLive,Session:"room-1"},10);if err!=nil{t.Fatal(err)}
+ t.Logf("newer public statement from another channel: updated=%v visible=%+v",changed,rows)
+ if len(rows)!=1||rows[0].Summary!=newer.Summary{t.Fatal("newer same-subject public fact silently lost across channel/session")}
+}

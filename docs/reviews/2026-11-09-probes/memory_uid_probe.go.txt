@@ -1,0 +1,27 @@
+package viewer
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"RaiseMyFish/internal/store"
+)
+
+type reviewRepositoryNotFoundSource struct{ fakeProfileSource }
+
+// 返回值与真实 database.ViewerRepo.GetProfile 的未知 UID 分支相同。
+func (*reviewRepositoryNotFoundSource) GetProfile(context.Context, string) (store.ViewerProfile, error) {
+	return store.ViewerProfile{}, store.ErrNotFound
+}
+
+// 本探针断言缺陷当前存在；PASS 不是正确性或修复完成证明。
+func TestReviewProbeUnknownUIDBecomesError(t *testing.T) {
+	s, err := NewSearcher(&reviewRepositoryNotFoundSource{}, nil, SearchOptions{})
+	if err != nil { t.Fatal(err) }
+	result, err := s.Find(context.Background(), "900003", 3)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("缺陷已变化：result=%+v err=%v", result, err)
+	}
+	t.Logf("DEFECT EVIDENCE: repository ErrNotFound becomes Find error=%q rather than status=not_found; ErrViewerNotFound matches=%t", err, errors.Is(err, store.ErrViewerNotFound))
+}

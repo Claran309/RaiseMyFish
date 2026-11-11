@@ -1,0 +1,39 @@
+package viewer
+
+import (
+ "context"
+ "errors"
+ "testing"
+ "time"
+ "RaiseMyFish/internal/event"
+ "RaiseMyFish/internal/store"
+)
+
+// 候选条件与真实 ActiveViewers 的 summary_updated_at < last_seen 保持相同。
+type reviewVersionedSummaryStore struct {profile store.ViewerProfile; writes int}
+func(s *reviewVersionedSummaryStore) ActiveViewers(context.Context,time.Time,int,int)([]store.ViewerProfile,error){
+ if s.profile.SummaryUpdatedAt.IsZero() || s.profile.SummaryUpdatedAt.Before(s.profile.LastSeen){return []store.ViewerProfile{s.profile},nil};return nil,nil
+}
+func(s *reviewVersionedSummaryStore) SaveProfileSummary(_ context.Context,_ string,summary string,at time.Time,_ store.MemoryRecord)error{
+ s.writes++;s.profile.ProfileSummary=summary;s.profile.SummaryUpdatedAt=at;return nil
+}
+// PASS 是当前缺陷行为的证据，不是正确性验收通过。
+func TestReviewSummaryKnowledgeFailureNotRetried(t *testing.T){
+ st:=&reviewVersionedSummaryStore{profile:testProfile("90001")}
+ kb:=&fakeKnowledge{err:errors.New("transient write failure")}
+ llm:=&scriptedLLM{reply:`{"personality":"安静"}`}
+ s:=newTestSummarizer(t,st,&fakeEventSource{byUID:map[string][]event.Event{"90001":testMessages("90001")}},llm,kb)
+ first,err:=s.RunOnce(context.Background());if err==nil || first.Failed!=1 || st.writes!=1{t.Fatalf("first=%+v writes=%d err=%v",first,st.writes,err)}
+ kb.err=nil
+ second,err:=s.RunOnce(context.Background());if err!=nil || second.Candidates!=0 || len(kb.views)!=0 {t.Fatalf("behavior changed second=%+v views=%d err=%v",second,len(kb.views),err)}
+ t.Logf("DEFECT: DB saved then knowledge failed; recovered writer next run candidates=%d knowledge=%d, no retry without new speech",second.Candidates,len(kb.views))
+}
+func TestReviewSummaryFallbackNeverUpgradesWithoutSpeech(t *testing.T){
+ st:=&reviewVersionedSummaryStore{profile:testProfile("90002")}
+ llm:=&scriptedLLM{err:errors.New("transient model failure")}
+ s:=newTestSummarizer(t,st,&fakeEventSource{byUID:map[string][]event.Event{"90002":testMessages("90002")}},llm,nil)
+ first,err:=s.RunOnce(context.Background());if err!=nil || first.Fallback!=1 {t.Fatalf("first=%+v err=%v",first,err)}
+ llm.err=nil;llm.reply=`{"personality":"安静"}`
+ second,err:=s.RunOnce(context.Background());if err!=nil || second.Candidates!=0 || len(llm.users)!=1 {t.Fatalf("behavior changed second=%+v calls=%d err=%v",second,len(llm.users),err)}
+ t.Logf("DEFECT: recovered model never called again, total calls=%d; existing statistical fallback remains final until new speech",len(llm.users))
+}

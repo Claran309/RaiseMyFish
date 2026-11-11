@@ -1,0 +1,20 @@
+{
+  "suite": "integration",
+  "test_passes": 2462,
+  "package_passes": 48,
+  "failures": [],
+  "skipped_tests": [
+    {
+      "package": "RaiseMyFish/internal/watchdog",
+      "test": "TestWatchdogSpawnHelper"
+    },
+    {
+      "package": "RaiseMyFish/internal/database",
+      "test": "TestVectorExtensionStableSchemaOnCleanDatabase"
+    },
+    {
+      "package": "RaiseMyFish/internal/knowledge",
+      "test": "TestLoadRejectsEscapingSymlink"
+    }
+  ]
+}

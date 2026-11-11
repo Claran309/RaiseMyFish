@@ -1,0 +1,13 @@
+{
+  "configured_budget": 16384,
+  "context_has_current_name": false,
+  "context_has_current_uid": false,
+  "context_has_precalled_knowledge": false,
+  "context_text_accepts_invalid_scope": true,
+  "context_text_accepts_raw_viewer_tags": true,
+  "context_text_bytes": 63437,
+  "ordinary_brain_error": false,
+  "ordinary_brain_rejects_invalid_scope": true,
+  "ordinary_brain_rejects_raw_viewer_tags": true,
+  "ordinary_brain_sent_bytes": 16235
+}

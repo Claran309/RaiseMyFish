@@ -1,0 +1,50 @@
+package durable
+
+import (
+ "context"
+ "net/http"
+ "net/http/httptest"
+ "testing"
+ "time"
+ "RaiseMyFish/internal/bili"
+ "RaiseMyFish/internal/event"
+ "RaiseMyFish/internal/sender"
+ senderdm "RaiseMyFish/internal/sender/dm"
+)
+
+func TestReview20261109UnverifiedMustNotBecomeVerified(t *testing.T) {
+ s := &Sender{channel:event.ChDM}
+ got := s.classify(nil, sender.Result{OK:true, Verified:false})
+ t.Logf("observed: input OK=true Verified=false MsgID=empty; outcome=%+v", got)
+ if got.Verified { t.Fatal("BUG reproduced: unverified result upgraded to verified") }
+}
+
+func TestReview20261109DMEmptyEnvelopeMustNotSucceed(t *testing.T) {
+ posts:=0
+ srv:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){posts++; w.Header().Set("Content-Type","application/json"); _,_=w.Write([]byte(`{}`))}))
+ defer srv.Close()
+ client,err:=bili.New(bili.Options{APIRoot:srv.URL,LiveRoot:srv.URL,VCRoot:srv.URL,Cookie:"SESSDATA=fixture; bili_jct=fixture",SelfMID:"10001",Timeout:time.Second})
+ if err!=nil {t.Fatal(err)}
+ id,err:=client.SendMessage(context.Background(),"20002","offline probe")
+ t.Logf("observed: HTTP200 {} -> msgID=%q err=%v POST=%d",id,err,posts)
+ if err==nil {t.Fatal("BUG reproduced: empty envelope treated as successful DM response")}
+}
+
+type reviewRelation struct{}
+func (reviewRelation) Attribute(context.Context,string)(int,error){return 6,nil}
+
+func TestReview20261109DMEmptyEnvelopeMustNotWriteConfirmedPlan(t *testing.T) {
+ posts:=0
+ srv:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){posts++;w.Header().Set("Content-Type","application/json");_,_=w.Write([]byte(`{}`))}))
+ defer srv.Close()
+ client,err:=bili.New(bili.Options{APIRoot:srv.URL,LiveRoot:srv.URL,VCRoot:srv.URL,Cookie:"SESSDATA=fixture; bili_jct=fixture",SelfMID:"10001",Timeout:time.Second})
+ if err!=nil {t.Fatal(err)}
+ inner,err:=senderdm.New(senderdm.NewBiliTransporter(client),reviewRelation{},senderdm.Options{AllFollowers:true})
+ if err!=nil {t.Fatal(err)}
+ repo:=&fakeRepo{}
+ s:=newTestSender(t,event.ChDM,repo,inner)
+ claim:=dmClaim()
+ got,err:=s.Send(context.Background(),claim,replyFor(claim,"offline probe"))
+ t.Logf("observed: POST=%d result=%+v err=%v recorded=%+v",posts,got,err,repo.recorded)
+ if got.Verified || (repo.recorded!=nil && repo.recorded.Verified) {t.Fatal("BUG reproduced: HTTP200 {} persisted as verified accepted plan")}
+}

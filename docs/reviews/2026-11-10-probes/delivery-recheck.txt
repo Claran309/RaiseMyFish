@@ -1,0 +1,20 @@
+=== RUN   TestReview20261109UnknownReservationMustSurviveLaterFailure
+    review_20261109_test.go:19: after unknown: peer="1001" committed=""
+    review_20261109_test.go:25: after later preflight failure: peer="" committed=""
+    review_20261109_test.go:28: other peer: result={OK:true MsgID:msg-1 Verified:true Error:} err=<nil> total transport calls=2
+    review_20261109_test.go:29: BUG reproduced: later failure released earlier unknown reservation and allowed another peer
+--- FAIL: TestReview20261109UnknownReservationMustSurviveLaterFailure (0.03s)
+FAIL
+FAIL	RaiseMyFish/internal/sender/dm	2.047s
+=== RUN   TestReview20261109UnverifiedMustNotBecomeVerified
+    review_20261109_test.go:18: observed: input OK=true Verified=false MsgID=empty; outcome={State:accepted OK:true Verified:false MsgID: ErrorKind:unconfirmed}
+--- PASS: TestReview20261109UnverifiedMustNotBecomeVerified (0.00s)
+=== RUN   TestReview20261109DMEmptyEnvelopeMustNotSucceed
+    review_20261109_test.go:29: observed: HTTP200 {} -> msgID="" err=B站接口dm_send失败：响应缺少有效code POST=1
+--- PASS: TestReview20261109DMEmptyEnvelopeMustNotSucceed (0.01s)
+=== RUN   TestReview20261109DMEmptyEnvelopeMustNotWriteConfirmedPlan
+    review_20261109_test.go:48: observed: POST=1 result={OK:false MsgID: Verified:false Error:unknown_manual} err=弹幕发送结果（uncertain） recorded=&{State:unknown OK:false Verified:false MsgID: ErrorKind:unknown_manual}
+--- PASS: TestReview20261109DMEmptyEnvelopeMustNotWriteConfirmedPlan (0.00s)
+PASS
+ok  	RaiseMyFish/internal/sender/durable	2.024s
+FAIL

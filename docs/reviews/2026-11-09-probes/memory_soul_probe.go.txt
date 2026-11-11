@@ -1,0 +1,36 @@
+package extractworker
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/memory"
+	"RaiseMyFish/internal/store"
+)
+
+// 本探针断言缺陷当前存在；PASS 不是正确性或修复完成证明。
+func TestReviewProbeOrdinaryViewerBecomesGlobalOwner(t *testing.T) {
+	ev := event.Event{
+		ID: "live:30308220:review-probe", Channel: event.ChLive,
+		Dir: event.DirIn, Session: "30308220", FromID: "900002",
+		FromName: "普通观众", Text: "主人是阿猫", Private: false,
+		At: time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC),
+	}
+	candidates := memory.Extract(ev, memory.ExtractOptions{OwnerName: "Claran309"})
+	if len(candidates) != 1 || candidates[0].Kind != memory.KindPreference || candidates[0].Importance < 0.8 {
+		t.Fatalf("探针前提已变化：%+v", candidates)
+	}
+	w := &Worker{opts: Options{Now: func() time.Time { return ev.At.Add(time.Hour) }}}
+	record := w.buildRecord(ev, candidates[0])
+	entries := soulEntriesFrom([]store.MemoryRecord{record}, "Claran309")
+	if len(entries) != 1 || entries[0].Subject != memory.SoulSubjectOwner || entries[0].FromID != ev.FromID {
+		t.Fatalf("缺陷已变化：%+v", entries)
+	}
+	rendered := memory.RenderSoul(entries)
+	if !strings.Contains(rendered, ev.Text) {
+		t.Fatalf("未观察到全局注入：%q", rendered)
+	}
+	t.Logf("DEFECT EVIDENCE: ordinary viewer uid=%s produced importance=%.1f, subject=%s, visibility=%s, global_render=%q", ev.FromID, record.Importance, entries[0].Subject, entries[0].Visibility, rendered)
+}

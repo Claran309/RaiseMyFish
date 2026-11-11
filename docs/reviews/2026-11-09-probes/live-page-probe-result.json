@@ -1,0 +1,35 @@
+{
+  "source": "internal/web/static/live.html",
+  "mode": "offline-node-vm-minimal-dom",
+  "realNetworkCalls": 0,
+  "cases": [
+    {
+      "name": "直播采集运行",
+      "passed": false,
+      "error": {
+        "name": "TypeError",
+        "message": "pill is not a function"
+      },
+      "blockedFetchCalls": 1
+    },
+    {
+      "name": "直播采集停止",
+      "passed": false,
+      "error": {
+        "name": "TypeError",
+        "message": "pill is not a function"
+      },
+      "blockedFetchCalls": 1
+    },
+    {
+      "name": "直播能力未装配",
+      "passed": false,
+      "error": {
+        "name": "TypeError",
+        "message": "pill is not a function"
+      },
+      "blockedFetchCalls": 1
+    }
+  ],
+  "passed": false
+}

@@ -1,0 +1,16 @@
+{
+  "suite": "unit",
+  "test_passes": 2238,
+  "package_passes": 48,
+  "failures": [],
+  "skipped_tests": [
+    {
+      "package": "RaiseMyFish/internal/watchdog",
+      "test": "TestWatchdogSpawnHelper"
+    },
+    {
+      "package": "RaiseMyFish/internal/knowledge",
+      "test": "TestLoadRejectsEscapingSymlink"
+    }
+  ]
+}

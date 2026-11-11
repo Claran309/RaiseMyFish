@@ -1,0 +1,21 @@
+package knowledge
+
+import (
+ "context"
+ "testing"
+ "time"
+)
+
+// PASS 表示换 Embedder 后仍复用旧向量的当前缺口；不是真实模型调用。
+func TestReviewMemoryKnowledgeNewEmbedderSkipsOldIndex(t *testing.T) {
+ reader:=&FileReader{}
+ reader.state.Store(&snapshotState{revision:"fixed",entries:[]entry{{item:Item{ID:"probe"},title:"知识甲",usage:"解释甲",file:"probe.md",modTime:time.Date(2026,11,9,0,0,0,0,time.UTC)}}})
+ store:=newFakeEmbeddingStore()
+ first:=&fakeEmbedder{}
+ a,err:=RunEmbedding(context.Background(),reader,first,store,EmbedOptions{})
+ if err!=nil || a.Embedded!=1 { t.Fatalf("准备失败: %+v %v",a,err) }
+ second:=&fakeEmbedder{factory:func(string)[]float64{return unitEmbedding(900)}}
+ b,err:=RunEmbedding(context.Background(),reader,second,store,EmbedOptions{})
+ if err!=nil || b.Skipped!=1 || second.calls!=0 {t.Fatalf("行为已改变: %+v calls=%d err=%v",b,second.calls,err)}
+ t.Logf("DEFECT: first Embedded=%d; different embedding implementation: Skipped=%d, calls=%d; no model fingerprint available in knowledge options/store",a.Embedded,b.Skipped,second.calls)
+}

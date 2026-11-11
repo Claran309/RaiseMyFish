@@ -35,6 +35,15 @@
 | **R08** | 只有日志，无专门 API/页面 | 面板显示：运行/最后成功/失败/fallback/来源数量/pending 知识发布 + 暂停/重建/撤回入口；httptest + 页面断言 |
 | **R09** | ActiveViewers 是「近期活跃**或** hits 门槛」，无专门日预算/首次回填开关 | 先少量熟人试跑、分批回填；按新发言量/有效变化决定更新；后台优先级低于被点名回复 |
 
+## 批 2 结果（2026-11-10）
+
+- [x] **R04** 已实现：`viewer_search` 识别后按确定 UID 补取 `GetProfile`，返回自动侧写、`summary_updated_at` 与逐字段依据；甲/乙标识与歧义不强认保持原契约。
+- [x] **R05** 已实现：侧写写 `subject=观众`、`derived_by=model:viewer-summary/v3|rule:stats`、`asserted_by` 仅明确自述；记忆行与 `profile_summary_fields` 保留每字段证据/类型，文本标注「近期观察，仅参考」。
+- [x] **R06** 已实现：稳定层（self，跨轮修订）+ 近期层（observed/inferred，7 天 TTL）；过期自动回退稳定层或整体清空；仅按新消息量/补偿到期/过期触发。话题变化检测未做（明确列为未做项）。
+- [x] **R07** 已实现：启动时遵循 `Memory.Enabled`/`Viewer.Enabled`/`Memory.Frozen`，运行中每轮检查冻结文件可自动恢复；`interval=0` 静默停调度、不清理已有摘要。
+- [x] **R08** 已实现：`/api/viewer/summary` GET/POST + memory 页面状态卡与暂停/重建/撤回入口；httptest 与页面断言齐全。
+- [x] **R09** 已实现：首次回填按 hits 倒序小批、更新按新增公开发言门槛与补偿到期；日预算按观众数、前台 replying 事件让路，参数全部配置化。
+
 ## 执行规则
 
 - 批 1（R01-R03）先修：GPT 明确「投入长期使用前优先修三处」

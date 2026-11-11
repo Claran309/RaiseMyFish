@@ -1,0 +1,12 @@
+{
+  "actual_agent_request_estimates": [
+    17441,
+    18355
+  ],
+  "actual_persona_system_bytes": 28049,
+  "actual_persona_system_runes": 11865,
+  "configured_conservative_byte_budget": 16384,
+  "long_question_tail_reaches_agent_without_recalled_duplicate": false,
+  "prepared_estimate": 16221,
+  "real_network_calls": 0
+}

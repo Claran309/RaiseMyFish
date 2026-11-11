@@ -1,0 +1,10 @@
+=== RUN   TestReviewMemoryCorrectionRetractsUnrelatedReplies
+    zz_review_memory_test.go:25: DEFECT: correcting r-wrong also supersedes unrelated prior time reply and unrelated latest B weather reply: [r-time r-wrong r-weather]
+--- PASS: TestReviewMemoryCorrectionRetractsUnrelatedReplies (0.00s)
+PASS
+ok  	RaiseMyFish/internal/brain	1.229s
+=== RUN   TestReviewMemoryKnowledgeNewEmbedderSkipsOldIndex
+    zz_review_memory_test.go:20: DEFECT: first Embedded=1; different embedding implementation: Skipped=1, calls=0; no model fingerprint available in knowledge options/store
+--- PASS: TestReviewMemoryKnowledgeNewEmbedderSkipsOldIndex (0.00s)
+PASS
+ok  	RaiseMyFish/internal/knowledge	0.865s

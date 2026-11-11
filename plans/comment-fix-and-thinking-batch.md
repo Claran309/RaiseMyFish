@@ -51,7 +51,7 @@
 - 评论/私信延迟放宽（不因 8 秒预算失败）
 - 弹幕不受影响（仍 8 秒）
 
-## 批 2.5：账号消息监听（关键——替换视频轮询）——**已由 Qoder 开工（不用派）**
+## 批 2.5：账号消息监听（关键——替换视频轮询）——**已交付待验收（Qoder）**
 
 ### 问题
 现在评论采集是**轮询自己视频的评论**——只能看到「自己视频/动态」的评论。
@@ -76,7 +76,7 @@
 
 **与视频轮询的关系（主人定）**：
 - **消息监听替代视频轮询**（默认主用——覆盖别人视频下的 @）
-- **视频轮询功能与代码保留**（不删，可配置切换/备用——`[collector.comment] poll_fallback=true` 之类开关）
+- **视频轮询功能与代码保留**（不删，可配置切换/备用——`[collector.comment] feed_enabled=false`）
 
 ### 验收
 - 别人视频下 @ 鱼 → 消息采到 → 鱼回复（在别人视频评论区）
@@ -105,3 +105,27 @@
 - 再批 2（思考式）——评论/私信体验提升
 - 不执行 git；不碰弹幕的 8 秒预算
 - 交付格式照旧
+
+## 交付状态（2026-11-11，Qoder）
+
+- **批 2 已交付待验收**
+  - 按通道 ReAct 预算：`[reasoning.comment]` / `[reasoning.dm]` 默认 5 步 / 45 秒（可配 5-10 步 / 30-60 秒）；live 仍 3 步 / 8 秒，未改。
+  - 评论/私信恒走 ReAct（不受 `default_react` 影响）；ReAct 提示词按通道标注「评论/私信/直播弹幕」。
+  - 评论发送：`[sender.comment] enabled=true`；root/parent 表达回复线程（平台显示「回复 @xxx」），账号快照 + durable 准入已有，本批补账号快照回归测试。
+  - `[scheduler] worker_timeout_ms=120000`，为长 ReAct 之后留一次单步回落；弹幕 ReAct 自身仍 8 秒。
+- **批 3 已交付待验收**
+  - 采集：`content.pics[].img_src` → `Meta.pics`（https、长度、去重、封顶 4）；纯图评论正文占位 `[图片]`。
+  - 识别：`[comment_vision]`，B站图床 https 白名单（重定向复检）、单图 4MB、整条评论共用一个超时；逐图描述/OCR，单图失败只跳过。
+  - 读帧支持 `.webp`（评论图床常见），data URI 标 `image/webp`，已补回归测试。
+  - 注入：`ContextInput.Visual`，单步 Brain 与 ReAct 共用；全部失败等于无图，不阻塞评论回复。
+- **批 2.5 已交付待验收**
+  - 来源切换：`[collector.comment] feed_enabled=true`（默认）监听账号消息；`feed_enabled=false` 切回原视频轮询。视频轮询代码与自动发现完整保留。
+  - 消息监听：`x/msgfeed/reply` + `x/msgfeed/at`，默认 60 秒（10–3600 可配）；回复我的与 @我的合并去重；@我的只取评论里的 @（`item.type=reply`），动态正文 @ 跳过。B站没有 `x/msgfeed/comment` 端点（参考 bili-cli 与平台接口清单，只有 reply/at/like/unread）；「评论我的」并入 `reply` 收件箱。
+  - 事件化：`comment:{oid}:{rpid}`，Meta 带 `source=bili-msgfeed`、`feed=reply|at`、`comment_type`、`root`、`parent`；发送器沿用 root/parent 在消息对应评论区回复。
+  - 账号隔离：整轮冻结账号快照并持有账号切换准入（Batch.Close 释放）；水位按 selfMID 分账号保存到 `feed_state_path`（默认 `state/msgfeed-cursors.json`）。
+  - 首次接入：优先平台 `last_view_at` 建立基线，无则取当前最新一条，不补答历史；水位只在事件全部落库确认后提交。
+  - 面板：`/api/message` 增加 `feed_enabled` / `feed_interval_seconds`，`/message` 页显示消息监听模式（视频列表只在轮询模式可编辑）。
+  - 暂不支持图文评论区（business_id=11）：发送器仅支持 1/12/17，消息监听跳过并记调试日志。
+- **未做**：批 1（412）此前已修。
+- **门禁**：`go build ./...`、`go vet ./...`、受影响包 `go test -race` 全绿；全量测试仍有既有红（本批未触碰）：`internal/memory`、`internal/memory/extractworker`（f39499d 已下线规则版 fact，旧测试未同步）、`internal/collector/dm`（工作区 bili UA 改动相关）。
+

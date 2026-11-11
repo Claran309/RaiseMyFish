@@ -1,0 +1,34 @@
+{
+  "log_rows": 398,
+  "formal_start": "2026-11-10T16:31:45.844+0800",
+  "last_log": "2026-11-10T17:45:37.021+0800",
+  "react_completed": 10,
+  "live_react_completed": 5,
+  "live_react_latency_ms": [
+    959,
+    1182,
+    2503,
+    2811,
+    777
+  ],
+  "live_react_tools": [
+    [],
+    [],
+    [
+      "memory_search"
+    ],
+    [
+      "viewer_search"
+    ],
+    []
+  ],
+  "react_usage_calls": 12,
+  "react_usage_input_tokens": 48850,
+  "react_usage_output_tokens": 521,
+  "dm_page_fail_warnings": 73,
+  "planned_unknown_warnings": 5,
+  "viewer_summary_log_events": 0,
+  "react_prepare_truncated": 10,
+  "react_budget_fallback": 1,
+  "scope_note": "只统计本文件已有日志，包含模型阶段与后台启动；不等于全系统账单/平台完整送达/新版侧写执行证明。时间按原日志+0800，不改为用户时区。"
+}

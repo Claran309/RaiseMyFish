@@ -1,0 +1,8 @@
+package reasoning
+import("strings";"testing";"RaiseMyFish/internal/store";"RaiseMyFish/internal/viewer")
+func TestReviewEveningIdentifiedViewerMustCarryExistingSummary(t *testing.T){
+ p:=store.ViewerProfile{UID:"42",Name:"目标观众",Hits:12,Replies:3,ProfileSummary:"偏好：天文学；口头禅：星河"}
+ out:=formatIdentityResult(viewer.Result{Status:viewer.StatusFound,Candidates:[]viewer.Candidate{{ViewerProfileHit:store.ViewerProfileHit{Profile:p},Tier:viewer.TierUID,Reason:"uid_exact"}}})
+ t.Logf("identified target tool result=%q",out)
+ if !strings.Contains(out,"天文学"){t.Fatal("GAP reproduced: identified viewer summary discarded by tool formatting")}
+}

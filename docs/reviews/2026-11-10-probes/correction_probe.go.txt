@@ -1,0 +1,26 @@
+package brain
+
+import (
+ "testing"
+ "time"
+ "RaiseMyFish/internal/event"
+ "RaiseMyFish/internal/memory"
+)
+
+// PASS 表示复现当前误撤回行为，不是正确性验收通过。
+func TestReviewMemoryCorrectionRetractsUnrelatedReplies(t *testing.T) {
+ now := time.Date(2026,11,10,12,0,0,0,time.UTC)
+ all := []memory.Message{
+  {EventID:"a-old",Dir:event.DirIn,FromID:"A",FromName:"甲",Text:"几点了",At:now},
+  {EventID:"r-time",Dir:event.DirOut,ReplyTo:"a-old",Text:"十二点",At:now.Add(time.Second)},
+  {EventID:"a-wrong",Dir:event.DirIn,FromID:"A",FromName:"甲",Text:"是谁说喜欢猫",At:now.Add(2*time.Second)},
+  {EventID:"r-wrong",Dir:event.DirOut,ReplyTo:"a-wrong",Text:"是甲说的",At:now.Add(3*time.Second)},
+  {EventID:"b-now",Dir:event.DirIn,FromID:"B",FromName:"乙",Text:"现在下雨吗",At:now.Add(4*time.Second)},
+  {EventID:"r-weather",Dir:event.DirOut,ReplyTo:"b-now",Text:"没有下雨",At:now.Add(5*time.Second)},
+ }
+ corr := memory.Message{EventID:"corr",Dir:event.DirIn,FromID:"A",FromName:"甲",Text:"那句不是我说的，是乙说的",At:now.Add(6*time.Second)}
+ got := supersededEvents(corr,actorSection{ID:"A",Name:"甲"},all)
+ seen:=map[string]bool{}; for _,id:=range got {seen[id]=true}
+ if !seen["r-time"] || !seen["r-weather"] || !seen["r-wrong"] { t.Fatalf("行为已改变: %v",got) }
+ t.Logf("DEFECT: correcting r-wrong also supersedes unrelated prior time reply and unrelated latest B weather reply: %v",got)
+}

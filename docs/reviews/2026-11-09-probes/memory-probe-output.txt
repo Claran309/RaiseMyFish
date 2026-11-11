@@ -1,0 +1,10 @@
+=== RUN   TestReviewProbeOrdinaryViewerBecomesGlobalOwner
+    zz_review_probe_test.go:35: DEFECT EVIDENCE: ordinary viewer uid=900002 produced importance=0.8, subject=owner, visibility=public, global_render="- 主人相关：主人是阿猫：主人是阿猫"
+--- PASS: TestReviewProbeOrdinaryViewerBecomesGlobalOwner (0.00s)
+PASS
+ok  	RaiseMyFish/internal/memory/extractworker	0.924s
+=== RUN   TestReviewProbeUnknownUIDBecomesError
+    zz_review_probe_test.go:26: DEFECT EVIDENCE: repository ErrNotFound becomes Find error="存储记录不存在" rather than status=not_found; ErrViewerNotFound matches=false
+--- PASS: TestReviewProbeUnknownUIDBecomesError (0.00s)
+PASS
+ok  	RaiseMyFish/internal/viewer	0.643s

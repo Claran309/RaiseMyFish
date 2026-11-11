@@ -1,0 +1,20 @@
+=== RUN   TestReviewEveningActualTextMustMatchDurablePlan
+    review_evening_test.go:9: persisted plan text="@弓长三益 收到"; actual transport text="收到"; structured target=123
+    review_evening_test.go:10: BUG reproduced: actual wire body differs from immutable plan/out audit body
+--- FAIL: TestReviewEveningActualTextMustMatchDurablePlan (0.00s)
+FAIL
+FAIL	RaiseMyFish/internal/sender/live	2.011s
+=== RUN   TestReview20261109UnknownReservationMustSurviveLaterFailure
+    review_evening_test.go:19: after unknown: peer="1001" committed=""
+    review_evening_test.go:25: after later preflight failure: peer="1001" committed=""
+    review_evening_test.go:28: other peer: result={OK:false MsgID: Verified:false Error:} err=私信发送失败（input） total transport calls=1
+--- PASS: TestReview20261109UnknownReservationMustSurviveLaterFailure (0.03s)
+PASS
+ok  	RaiseMyFish/internal/sender/dm	2.872s
+=== RUN   TestReviewEveningIdentifiedViewerMustCarryExistingSummary
+    review_evening_test.go:6: identified target tool result="42 目标观众（说过 12 次 / 鱼回过 3 次）【UID 精确命中】"
+    review_evening_test.go:7: GAP reproduced: identified viewer summary discarded by tool formatting
+--- FAIL: TestReviewEveningIdentifiedViewerMustCarryExistingSummary (0.00s)
+FAIL
+FAIL	RaiseMyFish/internal/reasoning	1.834s
+FAIL

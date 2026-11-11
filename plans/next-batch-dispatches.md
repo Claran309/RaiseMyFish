@@ -222,4 +222,6 @@
 - 批 M：已交付（planned_unknown 放宽：平台已接受 + 稳定回执但核验失败 → input `done`、out `retry` + `meta.sent_unconfirmed=true`、send_log `ok=true/verified=false/error=unconfirmed`，面板显示「已发送（未确认）」且不重发；平台已接受但无稳定回执仍按 unknown 结清，不重试；恢复路径同样不重发）。
 - 批 N：已交付（新增 `internal/web/e2e_test.go`：十个页面关键控件/令牌注入/nosniff + 注入/日报/记忆/异常/发送记录读写主路径 + 跨站写 403；注入按永久/临时、错误按 dead/retry、日报按月份分组，记忆空态区分「无数据/无匹配」，活动页补事件空态与未确认说明）。
 - 门禁（M/N）：`go build ./...`、`go test ./...` 全绿；`internal/web`、`internal/sender/durable`、`internal/database`、`cmd/fishd` `-race` 全绿；`go vet` 仅既有 `internal/memory/fact_test.go:47 unreachable code`；M 相关真实 PG 集成用例（accepted 有/无回执、forged verified）全过。
+- 批 O：已交付（根因：`send_msg` 旧请求缺 `msg[dev_id]`/`msg[timestamp]` 与 WBI 查询签名，平台直接拒绝 → 全量 `unknown_manual` → dead；M 只覆盖 `accepted`，救不了 `unknown`。修复：SendMessage 补设备号/时间戳/`msg_status`+WBI 签名（`w_sender_uid/w_receiver_id/w_dev_id`）、Referer 改 message 站；工具层 `SendDM` 复用同一实现；平台/本地错误分类保留原始 code 与根因；`planned_unknown`/`planned_rejected`/`planned_not_posted` 日志带 `cause` 错误链，新增 `planned_unknown_no_receipt`，`fishd` 结清后补 `send_settled` 留痕。回归：设备号稳定性、请求参数/签名/Referer、错误链保留、dead 原因日志）。
+- 门禁（O）：`go build ./...`、`go test ./...` 全绿；`internal/bili`、`internal/sender/dm`、`internal/sender/durable`、`cmd/fishd` `-race` 全绿；`go vet` 仍仅既有 `internal/memory/fact_test.go:47 unreachable code`。
 

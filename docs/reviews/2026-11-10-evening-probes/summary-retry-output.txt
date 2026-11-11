@@ -1,0 +1,8 @@
+=== RUN   TestReviewSummaryKnowledgeFailureNotRetried
+    zz_review_summary_test.go:29: DEFECT: DB saved then knowledge failed; recovered writer next run candidates=0 knowledge=0, no retry without new speech
+--- PASS: TestReviewSummaryKnowledgeFailureNotRetried (0.00s)
+=== RUN   TestReviewSummaryFallbackNeverUpgradesWithoutSpeech
+    zz_review_summary_test.go:38: DEFECT: recovered model never called again, total calls=1; existing statistical fallback remains final until new speech
+--- PASS: TestReviewSummaryFallbackNeverUpgradesWithoutSpeech (0.00s)
+PASS
+ok  	RaiseMyFish/internal/viewer	1.631s
