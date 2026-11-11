@@ -131,5 +131,8 @@
 - 批 D：已交付（`send_danmaku` 工具：live、单轮≤3 条、每条≤40 字、去重/限频；发过弹幕后跳过普通回复）。
 - 批 E：已交付（`dynamic_poll_enabled` 默认开：feed 模式下 msgfeed + 动态评论轮询并行，组合器把落库回执转给产出子采集器；动态首轮只补最近 24h；事件沿用 `comment:{oid}:{rpid}`，sender 走 `x/v2/reply/add`；面板同步模式文案）。
 - 批 F：已交付（#85 根因：动态 `id_str` 不是评论区 oid，评论 oid 要看 `basic.comment_id_str`；图文动态 `basic.comment_type=11` 而非 17。现按平台 `comment_id_str/comment_type` 映射 11/17，视频/专栏动态跳过；sender 与 msgfeed 支持 type=11；新增首轮 target 拉取计数、拉取失败与组合来源日志）。
+- 批 G：已交付（声音：`watch.ClipAudio` 录 30 秒→抽 16k 单声道 WAV→本机 OpenAI 兼容 ASR，`[watch] asr_url` 为空则不装配；最近弹幕：`RecentEvents` 取 20 条、去 SelfID/空文本、留 10 条、每条 80 字、反转正序；声音与截帧/识图并发，等待上限 45 秒，失败/超时/读库失败都只降级；brain 新增 `<audio>`/`<live_chat>` 段，超预算降级顺序 visual→audio→liveChat）。
+- 批 H：已交付（`liveview.Senses` 缓存本轮画面/声音/弹幕，TTL 2 分钟；`watch_live` 只读工具仅在主动弹幕装配 `LiveView` 时注册，ReAct 检测到后剥离被动注入并提示「先调用 watch_live」，工具只读缓存不现场录制；被动回复不注册该工具）。
+- 批 I：已交付（live 通道 `ThinkDeep` 要求 thought 写完「字面｜关联｜表达」三层；`Reflect` 在 final/自然语言收尾后追加一次自检改写，步数、剩余时间 ≥1.5 秒、prompt 预算任一不足则跳过；反思失败/空/JSON 输出保留原稿；弹幕预算仍 3 步/8 秒）。
 - 门禁：`go build ./...`、`go test ./...` 全绿；受影响包 `-race` 全绿；`go vet` 仅既有 `internal/memory/fact_test.go:47 unreachable code`。
 
