@@ -155,6 +155,29 @@
 
 **验收**：记忆能排序/筛选；旧错误能清。
 
+
+## 批 M：#74 planned_unknown 放宽（发送成功但 unknown）
+
+**问题**：私信/评论发送后验证 unknown（planned_unknown）→ 停止不重试（防重复），但实际已发送成功（bili-cli 可见）。用户感知「没回复」。
+
+**改法**：
+1. **验证放宽**：发送后验证失败但「平台已接受」（回执/msg_id 存在）→ 记「已发送（未确认）」而非 unknown
+2. **记账**：out 事件 + send_log 记录（用户可见「已发送」）
+3. **unknown 保留**：真正没回执才 unknown（不重试）
+
+**验收**：发送成功但验证失败的场景 → out 事件 + send_log 有记录（用户可见）。
+
+## 批 N：Web 面板体验收尾（#71 剩余）
+
+**目标**：面板 E2E 测试 + 空态/分组完善。
+
+**实现**：
+1. **E2E 测试**（httptest——页面关键路径）
+2. 空态/分组（注入/日报/记忆/错误）
+3. 页面文案/可读性
+
+**验收**：页面关键路径测试通过。
+
 ## 执行规则
 
 - **fishd 不重启**（本批纯代码，交付后 DSH 验证）
@@ -172,5 +195,8 @@
 - 批 G：已交付（声音：`watch.ClipAudio` 录 30 秒→抽 16k 单声道 WAV→本机 OpenAI 兼容 ASR，`[watch] asr_url` 为空则不装配；最近弹幕：`RecentEvents` 取 20 条、去 SelfID/空文本、留 10 条、每条 80 字、反转正序；声音与截帧/识图并发，等待上限 45 秒，失败/超时/读库失败都只降级；brain 新增 `<audio>`/`<live_chat>` 段，超预算降级顺序 visual→audio→liveChat）。
 - 批 H：已交付（`liveview.Senses` 缓存本轮画面/声音/弹幕，TTL 2 分钟；`watch_live` 只读工具仅在主动弹幕装配 `LiveView` 时注册，ReAct 检测到后剥离被动注入并提示「先调用 watch_live」，工具只读缓存不现场录制；被动回复不注册该工具）。
 - 批 I：已交付（live 通道 `ThinkDeep` 要求 thought 写完「字面｜关联｜表达」三层；`Reflect` 在 final/自然语言收尾后追加一次自检改写，步数、剩余时间 ≥1.5 秒、prompt 预算任一不足则跳过；反思失败/空/JSON 输出保留原稿；弹幕预算仍 3 步/8 秒）。
+- 批 J：已交付（`context_injections` 表 + 面板注入区：默认 1 小时、可永久，60 秒~30 天；ContextBuilder 只读未过期注入，最多 5 条/500 字，按新到旧拼接；brain 新增 `<injection>` 段并转义伪标签，预算降级顺序 soul 之后、memory 之前；面板可新增/编辑/删除，写接口沿用同源/令牌）。
+- 批 K：已交付（`[summary]` 每日定时总结前一天事件 → `daily_summaries`；东八区自然日、`max_events/max_tokens` 可配；面板 `/diary` 列表/正文/Markdown 导出，手动生成需 `confirm=yes`，重复生成按天覆盖；LLM 关闭时定时与手动都不可用）。
+- 批 L：已交付（记忆新增 `sort=time|importance` 白名单与面板排序/分组/空态；异常列表过滤 `cleared_at`，支持单条清理与「清理 7 天前」批量清理，只影响面板不改事件状态机）。
 - 门禁：`go build ./...`、`go test ./...` 全绿；受影响包 `-race` 全绿；`go vet` 仅既有 `internal/memory/fact_test.go:47 unreachable code`。
 
