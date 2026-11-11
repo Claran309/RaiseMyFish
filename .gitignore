@@ -49,3 +49,13 @@ tmp/
 .dev-fishd.pid
 .probe.txt
 .workbuddy/
+
+# ── 一次性排查残留（数据导出/查询结果，含真实观众与聊天数据，绝不入仓）──
+/tmp_*
+/migrate_*.sql
+
+# ── persona 运行时学习数据（含真实观众档案与鱼的私人记忆，只留本地）──
+# 已在库中的模板文件用 skip-worktree 脱离跟踪，新 persona 包自动忽略。
+/personas/*/knowledge/viewers.md
+/personas/*/knowledge/soul-memories.md
+/personas/*/knowledge/memes/learned.md
