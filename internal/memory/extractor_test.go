@@ -76,12 +76,8 @@ func TestLLMExtractorFallsBackOnBadJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("不应报错：%v", err)
 	}
-	if len(got) == 0 || got[0].Kind != KindFact {
-		t.Fatalf("应回落规则版（fact）：%+v", got)
-	}
-	if !strings.HasPrefix(got[0].Title, "事实") {
-		t.Errorf("规则版标题不符：%q", got[0].Title)
-	}
+	// 规则版已不产 fact（「我是」等句式会误收玩笑，交 LLM）：坏 JSON 回落允许空。
+	_ = got
 }
 
 // TestLLMExtractorFallsBackOnModelError 模型报错 → 回落规则版。
@@ -90,8 +86,8 @@ func TestLLMExtractorFallsBackOnModelError(t *testing.T) {
 	e := newLLM(t, llm)
 
 	got, err := e.Extract(context.Background(), llmEvent("我是学生"), ExtractOptions{})
-	if err != nil || len(got) == 0 {
-		t.Fatalf("模型报错应回落规则：%+v / %v", got, err)
+	if err != nil {
+		t.Fatalf("模型报错应回落（允许空）：%+v / %v", got, err)
 	}
 }
 
@@ -143,9 +139,8 @@ func TestLLMExtractorRateLimit(t *testing.T) {
 	if llm.calls != 2 {
 		t.Errorf("限流后不应再调模型：%d", llm.calls)
 	}
-	if len(got) == 0 || !strings.HasPrefix(got[0].Title, "事实") {
-		t.Errorf("限流应回落规则版：%+v", got)
-	}
+	// 规则版已不产 fact（清空 factMarkers），回落允许空。
+	_ = got
 
 	// 过一小时后额度恢复
 	now = now.Add(61 * time.Minute)
@@ -179,8 +174,9 @@ func TestRuleExtractorMatchesPureFunction(t *testing.T) {
 func TestLLMExtractorNilLLM(t *testing.T) {
 	e := newLLM(t, nil)
 	got, err := e.Extract(context.Background(), llmEvent("我是学生"), ExtractOptions{})
-	if err != nil || len(got) == 0 {
-		t.Fatalf("应直接走规则版：%+v / %v", got, err)
+	// 规则版已不产 fact（清空 factMarkers），允许空。
+	if err != nil {
+		t.Fatalf("不应报错：%+v / %v", got, err)
 	}
 }
 

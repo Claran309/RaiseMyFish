@@ -102,6 +102,7 @@ func newSwitchingClient(t *testing.T, fake *switchingFixture, defaultCookie, def
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
 	client, err := bili.New(bili.Options{
+		APIRoot: srv.URL, // nav（WBI 密钥）也走 mock
 		VCRoot:  srv.URL,
 		Cookie:  defaultCookie,
 		SelfMID: defaultMID,
@@ -158,8 +159,8 @@ func TestBiliFetcherKeepsActorForWholeBatch(t *testing.T) {
 			t.Fatalf("切号后请求串用了新凭据：%q", cookie)
 		}
 	}
-	if len(fake.recordedCookies()) != 7 {
-		t.Fatalf("应发 3 次会话列表 + 4 次详情，实际 %d", len(fake.recordedCookies()))
+	if len(fake.recordedCookies()) != 8 {
+		t.Fatalf("应发 3 次会话列表 + 4 次详情 + 1 次 nav，实际 %d", len(fake.recordedCookies()))
 	}
 	for _, msg := range batch.Messages {
 		if msg.ID == "" || msg.PeerID == "" {
@@ -217,6 +218,9 @@ func TestBiliFetcherSwitchesAccountBetweenBatches(t *testing.T) {
 	}
 	if first.AccountID != "account-old" || first.SelfID != "111" {
 		t.Fatalf("旧批次快照不符：%+v", first)
+	}
+	if first.Commit == nil {
+		t.Fatalf("Fetch 应返回可提交批次：%+v", first)
 	}
 	if err := first.Commit(); err != nil {
 		t.Fatal(err)

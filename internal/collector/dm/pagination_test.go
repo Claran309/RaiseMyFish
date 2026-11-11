@@ -61,9 +61,12 @@ func newFakeDM() *fakeDM {
 
 func (f *fakeDM) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/x/web-interface/nav":
+		// 消息接口需要 WBI 签名：统一在 fake 里应答 nav。
+		_, _ = w.Write([]byte(`{"code":0,"data":{"wbi_img":{"img_url":"https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
 	case "/session_svr/v1/session_svr/get_sessions":
 		f.serveSessions(w, r)
-	case "/session_svr/v1/session_svr/get_session_msgs":
+	case "/svr_sync/v1/svr_sync/fetch_session_msgs":
 		f.serveMessages(w, r)
 	default:
 		w.WriteHeader(http.StatusNotFound)

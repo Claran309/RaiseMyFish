@@ -28,7 +28,8 @@ func factCandidates(text string) []Candidate {
 	return out
 }
 
-// TestFactSelfStatementsAreExtracted 自我陈述命中 fact，字段符合规格。
+// TestFactSelfStatementsAreExtracted 规则版不再产 fact（factMarkers 清空——「我是梁文峰」这类
+// 玩笑/钓鱼会被误收，事实统一交 LLM）；保留用例断言「不产」以防回归。
 func TestFactSelfStatementsAreExtracted(t *testing.T) {
 	cases := []string{
 		"我是学生",
@@ -39,9 +40,10 @@ func TestFactSelfStatementsAreExtracted(t *testing.T) {
 	}
 	for _, text := range cases {
 		got := factCandidates(text)
-		if len(got) != 1 {
-			t.Fatalf("%q 应产出 1 条 fact，实际 %d", text, len(got))
+		if len(got) != 0 {
+			t.Fatalf("%q 规则版不应产 fact（交 LLM），实际 %d 条", text, len(got))
 		}
+		continue
 		c := got[0]
 		if c.Importance != factImportance {
 			t.Errorf("%q 重要度 = %v，期望 %v", text, c.Importance, factImportance)
