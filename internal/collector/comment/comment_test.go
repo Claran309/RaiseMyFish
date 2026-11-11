@@ -197,6 +197,17 @@ func timedReply(rpid, mid int, uname, text string, ctime int64, rcount int) repl
 	return r
 }
 
+// replyWithPics 给评论附上图片地址；正文可为空，模拟纯图片评论。
+func replyWithPics(rpid, mid int, uname, text string, pics ...string) replyJSON {
+	r := reply(rpid, mid, uname, text)
+	list := make([]map[string]string, 0, len(pics))
+	for _, pic := range pics {
+		list = append(list, map[string]string{"img_src": pic})
+	}
+	r["content"].(map[string]any)["pics"] = list
+	return r
+}
+
 func subReply(rpid, mid int, uname, text string, ctime int64, root int) replyJSON {
 	r := reply(rpid, mid, uname, text)
 	r["ctime"] = ctime
@@ -428,6 +439,94 @@ func TestCollectorTopLevelZeroRoot(t *testing.T) {
 	}
 }
 
+// TestCollectorCapturesCommentPictures 带图评论把图片地址写进 Meta；纯图片评论用占位正文。
+func TestCollectorCapturesCommentPictures(t *testing.T) {
+	const (
+		img1 = "https://i0.hdslb.com/bfs/new_dyn/a.jpg"
+		img2 = "https://i1.hdslb.com/bfs/new_dyn/b.webp"
+	)
+	fixture, srv := newCommentServer(t)
+	fixture.add("123",
+		replyWithPics(3001, 42, "带图甲", "看这个", img1, img2),
+		replyWithPics(3002, 43, "纯图乙", "   ", img1),
+	)
+	c := newCollector(t, srv.URL, []string{"123"}, 20*time.Millisecond)
+	cancel, out, _, _ := startCollector(t, c)
+	defer cancel()
+
+	got := map[string]event.Event{}
+	for i := 0; i < 2; i++ {
+		ev := awaitEvent(t, out)
+		got[ev.ID] = ev
+	}
+	withText, ok := got["comment:123:3001"]
+	if !ok {
+		t.Fatalf("缺少带图评论事件：%+v", got)
+	}
+	if withText.Text != "看这个" {
+		t.Errorf("正文 = %q，期望保留原文", withText.Text)
+	}
+	if pics := Pics(withText.Meta); len(pics) != 2 || pics[0] != img1 || pics[1] != img2 {
+		t.Errorf("Meta 图片 = %v，期望 [%s %s]", pics, img1, img2)
+	}
+	pure, ok := got["comment:123:3002"]
+	if !ok {
+		t.Fatalf("缺少纯图片评论事件：%+v", got)
+	}
+	if pure.Text != pictureOnlyText {
+		t.Errorf("纯图片评论正文 = %q，期望 %q", pure.Text, pictureOnlyText)
+	}
+	if pics := Pics(pure.Meta); len(pics) != 1 || pics[0] != img1 {
+		t.Errorf("纯图片评论 Meta 图片 = %v", pics)
+	}
+}
+
+// TestPictureURLsFiltersAndCaps 只收 https、无凭据、长度受限的地址，去重并封顶 4 张。
+func TestPictureURLsFiltersAndCaps(t *testing.T) {
+	valid := func(n string) apiPicture { return apiPicture{URL: "https://i0.hdslb.com/" + n} }
+	long := apiPicture{URL: "https://i0.hdslb.com/" + strings.Repeat("x", maxPictureURL)}
+	pics := []apiPicture{
+		{URL: " https://i0.hdslb.com/a.jpg "},
+		{URL: "http://i0.hdslb.com/b.jpg"},
+		{URL: "https://user:pass@i0.hdslb.com/c.jpg"},
+		{URL: ""},
+		{URL: "https://i0.hdslb.com/d.\njpg"},
+		long,
+		{URL: "https://i0.hdslb.com/a.jpg"},
+		valid("e1.jpg"), valid("e2.jpg"), valid("e3.jpg"), valid("e4.jpg"), valid("e5.jpg"),
+	}
+	got := pictureURLs(pics)
+	want := []string{
+		"https://i0.hdslb.com/a.jpg",
+		"https://i0.hdslb.com/e1.jpg",
+		"https://i0.hdslb.com/e2.jpg",
+		"https://i0.hdslb.com/e3.jpg",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("图片数 = %d，期望 %d：%v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("第 %d 张 = %q，期望 %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestPicsReadsMeta Meta 缺失、坏 JSON、空串与超量都要安全降级。
+func TestPicsReadsMeta(t *testing.T) {
+	if got := Pics(nil); got != nil {
+		t.Errorf("空 Meta 应返回 nil：%v", got)
+	}
+	if got := Pics(json.RawMessage(`not-json`)); got != nil {
+		t.Errorf("坏 JSON 应返回 nil：%v", got)
+	}
+	meta := json.RawMessage(`{"pics":[" https://i0.hdslb.com/a.jpg ","","https://i0.hdslb.com/b.jpg","https://i0.hdslb.com/c.jpg","https://i0.hdslb.com/d.jpg","https://i0.hdslb.com/e.jpg"]}`)
+	got := Pics(meta)
+	if len(got) != 4 || got[0] != "https://i0.hdslb.com/a.jpg" || got[1] != "https://i0.hdslb.com/b.jpg" {
+		t.Errorf("Meta 图片读取不符：%v", got)
+	}
+}
+
 // TestCollectorAutoDiscoverMergesTargets 覆盖：手动+视频+动态合并、动态 type=17 与 comment_type。
 func TestCollectorAutoDiscoverMergesTargets(t *testing.T) {
 	fixture, srv := newCommentServer(t)
@@ -530,18 +629,137 @@ func TestBiliDiscovererPartial(t *testing.T) {
 }
 
 type fakeSpaceSource struct {
-	videos     []bili.SpaceVideo
-	dynamics   []bili.SpaceDynamic
-	videoErr   error
-	dynamicErr error
+	videos       []bili.SpaceVideo
+	dynamics     []bili.SpaceDynamic
+	videoErr     error
+	dynamicErr   error
+	videoCalls   int
+	dynamicCalls int
 }
 
 func (f *fakeSpaceSource) SpaceVideos(context.Context, string, int) ([]bili.SpaceVideo, error) {
+	f.videoCalls++
 	return f.videos, f.videoErr
 }
 
 func (f *fakeSpaceSource) SpaceDynamics(context.Context, string, int) ([]bili.SpaceDynamic, error) {
+	f.dynamicCalls++
 	return f.dynamics, f.dynamicErr
+}
+
+// TestDynamicDiscovererOnlyDynamics 只拉动态列表，按平台评论区类型/OID 映射。
+func TestDynamicDiscovererOnlyDynamics(t *testing.T) {
+	source := &fakeSpaceSource{
+		videos: []bili.SpaceVideo{{AID: "11"}},
+		dynamics: []bili.SpaceDynamic{
+			{ID: "22", CommentID: "415114992", CommentType: 11},
+			{ID: "022", CommentID: "415114992", CommentType: 11},
+			{ID: "abc"},
+			{ID: "33"},
+			{ID: "44", CommentType: 1},
+		},
+	}
+	got, err := DynamicDiscoverer{Client: source, MID: "42", Limit: 5}.Discover(context.Background())
+	if err != nil {
+		t.Fatalf("动态发现失败：%v", err)
+	}
+	if source.videoCalls != 0 {
+		t.Errorf("动态发现不应调用视频接口：%d 次", source.videoCalls)
+	}
+	want := []Target{{OID: "415114992", Type: TypeDraw}, {OID: "33", Type: TypeDynamic}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("动态 target 映射不符：%+v", got)
+	}
+	if _, err := (DynamicDiscoverer{}).Discover(context.Background()); err == nil {
+		t.Fatal("缺少列表来源应失败")
+	}
+}
+
+// TestMergeTargetsKeepsDraw 图文动态（type=11）不能被 merged 去重逻辑丢掉。
+func TestMergeTargetsKeepsDraw(t *testing.T) {
+	got := mergeTargets(nil, []Target{{OID: "415114992", Type: TypeDraw}})
+	if len(got) != 1 || got[0].Type != TypeDraw || got[0].OID != "415114992" {
+		t.Fatalf("图文动态 target 被丢弃：%+v", got)
+	}
+}
+
+// TestCollectorDynamicPollingType17 动态只轮询 type=17 并带动态评论类型。
+func TestCollectorDynamicPollingType17(t *testing.T) {
+	fixture, srv := newCommentServer(t)
+	top := timedReply(601, 77, "观众", "评论动态", 1700000000, 0)
+	top["root"], top["parent"] = 0, 0
+	fixture.add("520", top)
+
+	c := newCollectorWith(t, srv.URL, nil, 20*time.Millisecond, zap.NewNop(), func(o *Options) {
+		o.AutoDiscover = true
+		o.DiscoverInterval = time.Hour
+		o.Discoverer = DynamicDiscoverer{
+			Client: &fakeSpaceSource{dynamics: []bili.SpaceDynamic{{ID: "520"}}},
+			MID:    "8",
+			Limit:  5,
+		}
+	})
+	_, out, _, _ := startCollector(t, c)
+	ev := awaitEvent(t, out)
+	if ev.ID != "comment:520:601" || ev.Session != "520" || ev.FromID != "77" {
+		t.Fatalf("动态评论事件不符：%+v", ev)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(ev.Meta, &meta); err != nil || meta["comment_type"] != float64(TypeDynamic) {
+		t.Errorf("动态评论 Meta 不符：%s (%v)", ev.Meta, err)
+	}
+	queries, _ := fixture.snapshot()
+	if len(queries) == 0 || queries[0].Get("type") != "17" || queries[0].Get("oid") != "520" {
+		t.Errorf("动态评论查询参数不符：%v", queries)
+	}
+}
+
+// TestCollectorDynamicPollingType11 图文动态（draw）必须按平台评论类型 11 拉取。
+func TestCollectorDynamicPollingType11(t *testing.T) {
+	fixture, srv := newCommentServer(t)
+	top := timedReply(601, 77, "观众", "评论图文动态", 1700000000, 0)
+	top["root"], top["parent"] = 0, 0
+	fixture.add("415114992", top)
+
+	c := newCollectorWith(t, srv.URL, nil, 20*time.Millisecond, zap.NewNop(), func(o *Options) {
+		o.AutoDiscover = true
+		o.DiscoverInterval = time.Hour
+		o.Discoverer = DynamicDiscoverer{
+			Client: &fakeSpaceSource{dynamics: []bili.SpaceDynamic{{ID: "415114992", CommentID: "415114992", CommentType: TypeDraw}}},
+			MID:    "8",
+			Limit:  5,
+		}
+	})
+	_, out, _, _ := startCollector(t, c)
+	ev := awaitEvent(t, out)
+	if ev.ID != "comment:415114992:601" || ev.Session != "415114992" {
+		t.Fatalf("图文动态评论事件不符：%+v", ev)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(ev.Meta, &meta); err != nil || meta["comment_type"] != float64(TypeDraw) {
+		t.Errorf("图文动态 Meta 不符：%s (%v)", ev.Meta, err)
+	}
+	queries, _ := fixture.snapshot()
+	if len(queries) == 0 || queries[0].Get("type") != "11" || queries[0].Get("oid") != "415114992" {
+		t.Errorf("图文动态评论查询参数不符：%v", queries)
+	}
+}
+
+// TestCollectorRecentSinceSkipsOldComments 首轮补采窗口只放行近期评论。
+func TestCollectorRecentSinceSkipsOldComments(t *testing.T) {
+	fixture, srv := newCommentServer(t)
+	fixture.add("700",
+		timedReply(701, 41, "旧评论", "两天前", 1700000000, 0),
+		timedReply(702, 42, "新评论", "刚刚", 1700003600, 0),
+	)
+	c := newCollectorWith(t, srv.URL, []string{"700"}, 20*time.Millisecond, zap.NewNop(), func(o *Options) {
+		o.RecentSince = time.Unix(1700001800, 0)
+	})
+	_, out, _, _ := startCollector(t, c)
+	if ev := awaitEvent(t, out); ev.ID != "comment:700:702" {
+		t.Fatalf("窗口内评论未产出或旧评论混入：%+v", ev)
+	}
+	assertNoEvents(t, out, 80*time.Millisecond)
 }
 
 func TestCollectorMultipleVideos(t *testing.T) {

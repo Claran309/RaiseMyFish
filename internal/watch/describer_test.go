@@ -230,6 +230,45 @@ func TestDescribeRecordsFailure(t *testing.T) {
 	}
 }
 
+// TestReadFrameWebPMime 评论图床常见 webp：data URI 必须带 image/webp，而不是按 jpeg 发。
+func TestReadFrameWebPMime(t *testing.T) {
+	frame := tempPath(t, "comment.webp")
+	writeTestFile(t, frame, []byte("webp-bytes"))
+
+	var gotImage string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Messages []struct {
+				Content []struct {
+					ImageURL *struct {
+						URL string `json:"url"`
+					} `json:"image_url"`
+				} `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("请求不是合法JSON：%v", err)
+		}
+		if len(payload.Messages) == 1 && len(payload.Messages[0].Content) == 2 && payload.Messages[0].Content[1].ImageURL != nil {
+			gotImage = payload.Messages[0].Content[1].ImageURL.URL
+		}
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"一张评论图"}}]}`)
+	}))
+	defer server.Close()
+
+	describer, err := NewOpenAIDescriber(server.URL, "", "vision-model", server.Client(), 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := describer.Describe(context.Background(), []string{frame}, DefaultPrompt); err != nil {
+		t.Fatal(err)
+	}
+	want := "data:image/webp;base64," + base64.StdEncoding.EncodeToString([]byte("webp-bytes"))
+	if gotImage != want {
+		t.Fatalf("webp 帧 data URI 不符：%q", gotImage)
+	}
+}
+
 // TestDescribeSanitizesBadTokens 负数/越界 token 记 unknown，不让脏数据进账本。
 func TestDescribeSanitizesBadTokens(t *testing.T) {
 	frame := tempPath(t, "frame-00.jpg")

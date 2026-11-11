@@ -20,6 +20,13 @@ type systemClock struct{}
 func (systemClock) Now() time.Time                            { return time.Now() }
 func (systemClock) AfterFunc(d time.Duration, f func()) Timer { return time.AfterFunc(d, f) }
 
+// 弹幕路由模式：mention_only 只回 @/结构化回复；filter 走规则筛选；all 全部回复。
+const (
+	RoutingMentionOnly = "mention_only"
+	RoutingFilter      = "filter"
+	RoutingAll         = "all"
+)
+
 // ChannelPolicy 由可信装配提供，ID不从消息正文推断。
 type ChannelPolicy struct {
 	Public           bool
@@ -31,6 +38,9 @@ type ChannelPolicy struct {
 	Cooldown         time.Duration
 	MinRunes         int
 	RepeatWindow     time.Duration
+	// RoutingMode 是 live 弹幕路由：mention_only/filter/all；
+	// 为空时兼容旧配置，按 ReplyOnlyMention 推导。
+	RoutingMode      string
 	ReplyOnlyMention bool
 	ReplyMentionBack bool
 	MaxReplyRunes    int

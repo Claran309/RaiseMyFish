@@ -10,13 +10,16 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
+	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/infra"
 	"RaiseMyFish/internal/knowledge"
+	"RaiseMyFish/internal/liveview"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/presence"
@@ -92,6 +95,12 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 	}
 	// 统一上下文快照：被动 Brain/ReAct 与主动弹幕共用同一套资料装配。
 	builder := newContextBuilder(pack, memReader, know, viewerRepo, newSoulCache(cfg.Memory.SoulPath), brainStateSource(rooms.Current, cfg.Watch), logger)
+	// 看板注入与被动路径同源；装配失败只降级为不读取注入。
+	if webRepo, werr := database.NewWebRepo(resources.DB); werr != nil {
+		logger.Warn("主动弹幕注入仓储装配失败，注入不生效", zap.String("action", "injection_setup"), zap.Error(werr))
+	} else {
+		builder.injections = webRepo
+	}
 
 	wiring, err := resolveSenderWiring(cfg, senderlive.DefaultOptions().MinInterval)
 	if err != nil {
@@ -105,6 +114,29 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 	if err != nil {
 		return nil, err
 	}
+	// 声音：30 秒录制 → 抽音频 → 本机 ASR；任何一环装不起来只降级为「没有声音」。
+	var clipAudio proactive.AudioListener
+	if strings.TrimSpace(cfg.Watch.ASRURL) != "" {
+		extractor, err := watch.NewFFmpegAudioExtractor(watch.FFmpegAudioExtractorOptions{
+			FFmpegPath:  cfg.Watch.FFmpegPath,
+			FFprobePath: cfg.Watch.FFprobePath,
+			TempDir:     cfg.Watch.TempDir,
+		})
+		if err != nil {
+			logger.Warn("主动弹幕声音采样未装配，本轮只用画面/弹幕",
+				zap.String("action", "proactive_audio_setup"), zap.Error(err))
+		} else if transcriber, err := watch.NewHTTPTranscriber(cfg.Watch.ASRURL, nil, 0); err != nil {
+			logger.Warn("主动弹幕 ASR 未装配，本轮只用画面/弹幕",
+				zap.String("action", "proactive_audio_setup"), zap.Error(err))
+		} else if clip, err := watch.NewClipAudio(recorder, extractor, transcriber, watch.DefaultClipAudioSeconds); err != nil {
+			logger.Warn("主动弹幕声音采样未装配，本轮只用画面/弹幕",
+				zap.String("action", "proactive_audio_setup"), zap.Error(err))
+		} else {
+			clipAudio = clip
+		}
+	}
+	// 感知缓存：主动弹幕每轮写入，ReAct 的 watch_live 工具主动读取。
+	senses := liveview.NewSenses(liveview.Options{})
 	// ReAct 多步：与弹幕回复共用同一套装配（工具按事件 Scope 现造）。
 	// use_react=false 时明确传 nil，永远单步。
 	var react proactive.ReactFactory
@@ -113,14 +145,18 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 		if err != nil {
 			return nil, fmt.Errorf("装配主动弹幕用量账本失败：%w", err)
 		}
-		factory, err := buildReasonerFactory(cfg, memReader, know, pres, events, nil, buildGiftQuota(cfg, logger), buildToolExecutors(cfg, usageRepo, logger), usageRepo, giftGate, sideLimiter, logger)
+		execs := buildToolExecutors(cfg, usageRepo, logger)
+		// 只有主动弹幕装配看直播工具：缓存由本 Runner 每轮刷新。
+		execs.LiveView = senses
+		factory, err := buildReasonerFactory(cfg, memReader, know, pres, events, nil, nil, buildGiftQuota(cfg, logger), execs, usageRepo, giftGate, sideLimiter, logger)
 		if err != nil {
 			return nil, err
 		}
 		// 主动弹幕没有「提问者」，身份查询用空 UID（「我是谁」会被明确拒绝）。
 		// 主动路径不预召回知识（由工具按需查），因此 knowledgePreloaded=false。
 		react = proactive.ReactFactory(func(scope memory.Scope) (*reasoning.Agent, error) {
-			return factory(scope, "", false)
+			// 主动弹幕走直播通道预算（3 步 / 8 秒），与弹幕回复一致。
+			return factory(scope, "", false, event.ChLive)
 		})
 	}
 	options := senderlive.DefaultProactiveOptions()
@@ -135,6 +171,11 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 		RoomID:       cfg.Collector.Live.RoomID,
 		ReactTrigger: cfg.Proactive.ReactTrigger,
 		Builder:      builder,
+		Audio:        clipAudio,
+		Chat:         events,
+		Senses:       senses,
+		SelfID:       wiring.Service.SelfID,
+		AudioTimeout: proactive.DefaultAudioTimeout,
 		Budget:       brain.Budget{MaxPromptTokens: cfg.LLM.MaxPromptTokens, KnowledgeBudgetPercent: cfg.Knowledge.BudgetPercent},
 		Logger:       logger,
 	})

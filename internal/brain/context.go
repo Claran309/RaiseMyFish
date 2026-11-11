@@ -21,11 +21,20 @@ import (
 // maxVisualRunes 是画面描述的长度上限：它是上下文不是弹幕，但也不能无限长。
 const maxVisualRunes = 2000
 
+// maxAudioRunes 是主播声音转写的长度上限：它是上下文不是弹幕。
+const maxAudioRunes = 2000
+
+// maxLiveChatRunes 是最近观众弹幕聚焦段的长度上限（10 条左右）。
+const maxLiveChatRunes = 2000
+
 // maxViewerRunes 是对方档案片段的长度上限（设计值 300-400 字，留余量）。
 const maxViewerRunes = 800
 
 // maxSoulRunes 是长期设定注入片段的长度上限（派发单：≤500 字）。
 const maxSoulRunes = 500
+
+// maxInjectionRunes 是看板注入段的长度上限（与 store.MaxInjectionRunes 一致）。
+const maxInjectionRunes = 500
 
 // 工具证据是 ReAct 回落单步时复用「已查证观察」的资料段：
 // 条数与字段长度都设上限，避免多轮工具结果撑爆提示预算。
@@ -58,7 +67,7 @@ func inputBounds(ctx context.Context, task Task, in ContextInput) error {
 	}
 	e := in.Event
 	key, _ := persona.ContextKey(string(e.Channel), e.Private)
-	bytes := len(task.ID) + len(e.ID) + len(e.Text) + len(e.Session) + len(e.FromID) + len(e.FromName) + len(in.State) + len(in.Visual) + len(in.Viewer) + len(soulText(in.Soul)) + len(in.Persona.Soul) + len(in.Persona.Rules) + len(in.Persona.Samples) + len(in.Persona.Contexts[key])
+	bytes := len(task.ID) + len(e.ID) + len(e.Text) + len(e.Session) + len(e.FromID) + len(e.FromName) + len(in.State) + len(in.Visual) + len(in.Audio) + len(in.LiveChat) + len(in.Viewer) + len(in.Injection) + len(soulText(in.Soul)) + len(in.Persona.Soul) + len(in.Persona.Rules) + len(in.Persona.Samples) + len(in.Persona.Contexts[key])
 	for _, ev := range in.Evidence {
 		bytes += len(ev.Tool) + len(ev.Args) + len(ev.Result)
 	}
@@ -144,8 +153,19 @@ func validateInput(task Task, in ContextInput) error {
 	if strings.ContainsRune(in.Visual, '\x00') || !utf8.ValidString(in.Visual) || utf8.RuneCountInString(in.Visual) > maxVisualRunes {
 		return &Error{Kind: KindInput}
 	}
+	// 主播声音转写与最近弹幕同样是多行文本，只禁 NUL 并限制长度。
+	if strings.ContainsRune(in.Audio, '\x00') || !utf8.ValidString(in.Audio) || utf8.RuneCountInString(in.Audio) > maxAudioRunes {
+		return &Error{Kind: KindInput}
+	}
+	if strings.ContainsRune(in.LiveChat, '\x00') || !utf8.ValidString(in.LiveChat) || utf8.RuneCountInString(in.LiveChat) > maxLiveChatRunes {
+		return &Error{Kind: KindInput}
+	}
 	// 档案片段是多行文本（允许换行），同样只禁 NUL，长度另设上限。
 	if strings.ContainsRune(in.Viewer, '\x00') || !utf8.ValidString(in.Viewer) || utf8.RuneCountInString(in.Viewer) > maxViewerRunes {
+		return &Error{Kind: KindInput}
+	}
+	// 看板注入是操作人写的临时设定：允许多行，只禁 NUL 并限制总长。
+	if strings.ContainsRune(in.Injection, '\x00') || !utf8.ValidString(in.Injection) || utf8.RuneCountInString(in.Injection) > maxInjectionRunes {
 		return &Error{Kind: KindInput}
 	}
 
@@ -381,6 +401,15 @@ func statePromptLine(state string) string {
 	return "[当前状态] " + encodePromptText(state) + "\n"
 }
 
+// injectionPromptLine 把看板操作人写入的临时设定包成独立段落；空注入返回空串。
+func injectionPromptLine(injection string) string {
+	injection = strings.TrimSpace(injection)
+	if injection == "" {
+		return ""
+	}
+	return "<injection>\n看板操作人注入（本轮按此设定回复；与旧设定冲突时以此为准）：\n" + encodePromptText(injection) + "\n</injection>\n"
+}
+
 // visualPromptLine 把画面描述包成独立段落；空描述返回空串，不改变 prompt 结构。
 //
 // 用标签包起来是为了让模型分得清「这是看到的东西」而不是「别人说的话」；
@@ -400,6 +429,24 @@ func viewerPromptLine(viewer string) string {
 		return ""
 	}
 	return "<viewer>\n" + encodePromptText(viewer) + "\n</viewer>\n"
+}
+
+// audioPromptLine 把主播声音转写包成独立段落；空转写返回空串。
+func audioPromptLine(audio string) string {
+	audio = strings.TrimSpace(audio)
+	if audio == "" {
+		return ""
+	}
+	return "<audio>\n主播刚说：" + encodePromptText(audio) + "\n</audio>\n"
+}
+
+// liveChatPromptLine 把最近观众弹幕（聚焦段）包成独立段落；空列表返回空串。
+func liveChatPromptLine(liveChat string) string {
+	liveChat = strings.TrimSpace(liveChat)
+	if liveChat == "" {
+		return ""
+	}
+	return "<live_chat>\n" + encodePromptText(liveChat) + "\n</live_chat>\n"
 }
 
 // soulText 把长期设定拼成一段（每行一条），空切片返回空串。
@@ -422,8 +469,8 @@ func longtermPromptLine(soul []string) string {
 	return "<longterm>\n" + encodePromptText(text) + "\n</longterm>\n"
 }
 
-func renderContext(ctx context.Context, p persona.Pack, section contextSection, eventJSON []byte, ch event.Channel, state, visual, viewer string, soul []string) ([]provider.Message, string, error) {
-	body, err := contextBody(ctx, p, section, ch, state, visual, viewer, soul)
+func renderContext(ctx context.Context, p persona.Pack, section contextSection, eventJSON []byte, ch event.Channel, state, visual, audio, liveChat, viewer, injection string, soul []string) ([]provider.Message, string, error) {
+	body, err := contextBody(ctx, p, section, ch, state, visual, audio, liveChat, viewer, injection, soul)
 	if err != nil {
 		return nil, "", err
 	}
@@ -458,9 +505,9 @@ func contextHints(section contextSection) string {
 	return strings.Join(hints, "")
 }
 
-// contextBody 渲染统一快照正文：场景/记忆/知识 + 状态/画面/档案/长期设定，
+// contextBody 渲染统一快照正文：场景/记忆/知识 + 状态/画面/声音/最近弹幕/档案/长期设定，
 // 不含当前事件与回复指令。Brain 的单步 prompt 与 ReAct 的 Context 共用这一段。
-func contextBody(ctx context.Context, p persona.Pack, section contextSection, ch event.Channel, state, visual, viewer string, soul []string) (string, error) {
+func contextBody(ctx context.Context, p persona.Pack, section contextSection, ch event.Channel, state, visual, audio, liveChat, viewer, injection string, soul []string) (string, error) {
 	if err := pendingError(ctx); err != nil {
 		return "", contextFailure(err)
 	}
@@ -468,7 +515,9 @@ func contextBody(ctx context.Context, p persona.Pack, section contextSection, ch
 	if err != nil {
 		return "", &Error{Kind: KindInput, Cause: err}
 	}
-	return fmt.Sprintf("<context>\n%s\n</context>\n%s%s%s%s", data, statePromptLine(state), visualPromptLine(visual), viewerPromptLine(viewer), longtermPromptLine(soul)), nil
+	return fmt.Sprintf("<context>\n%s\n</context>\n%s%s%s%s%s%s%s", data,
+		statePromptLine(state), injectionPromptLine(injection), visualPromptLine(visual), audioPromptLine(audio),
+		liveChatPromptLine(liveChat), viewerPromptLine(viewer), longtermPromptLine(soul)), nil
 }
 
 // buildContextSection 把快照数据整理成固定顺序；单步 prompt 与 Prepare 共用。
@@ -726,11 +775,14 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 	}
 	p := in.Persona
 	visual := in.Visual
+	audio := in.Audio
+	liveChat := in.LiveChat
 	viewer := in.Viewer
+	injection := in.Injection
 	soul := in.Soul
 	truncated := false
 	render := func() ([]provider.Message, string, error) {
-		return renderContext(ctx, p, section, eventJSON, e.Channel, in.State, visual, viewer, soul)
+		return renderContext(ctx, p, section, eventJSON, e.Channel, in.State, visual, audio, liveChat, viewer, injection, soul)
 	}
 	finish := func(messages []provider.Message, body string, err error) (promptPlan, error) {
 		if err != nil {
@@ -739,7 +791,7 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 		if in.Knowledge == nil {
 			return promptPlan{Messages: messages, Context: body, Truncated: truncated}, nil
 		}
-		return finishKnowledge(ctx, in.Knowledge, p, section, eventJSON, e.Channel, in.State, visual, viewer, soul, messages, limit, knowledgePercent, truncated)
+		return finishKnowledge(ctx, in.Knowledge, p, section, eventJSON, e.Channel, in.State, visual, audio, liveChat, viewer, injection, soul, messages, limit, knowledgePercent, truncated)
 	}
 	messages, body, err := render()
 	if err != nil {
@@ -752,6 +804,29 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 	// 这样主动弹幕最坏情况退化成一条普通弹幕回复，而不是整条失败。
 	if visual != "" {
 		visual = ""
+		truncated = true
+		messages, body, err = render()
+		if err != nil {
+			return promptPlan{}, err
+		}
+		if estimate(messages) <= limit {
+			return finish(messages, body, nil)
+		}
+	}
+	// 声音转写通常最长，其次丢弃；最近弹幕短，且能从记忆段部分补回。
+	if audio != "" {
+		audio = ""
+		truncated = true
+		messages, body, err = render()
+		if err != nil {
+			return promptPlan{}, err
+		}
+		if estimate(messages) <= limit {
+			return finish(messages, body, nil)
+		}
+	}
+	if liveChat != "" {
+		liveChat = ""
 		truncated = true
 		messages, body, err = render()
 		if err != nil {
@@ -776,6 +851,18 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 	// 长期设定是「人设级」的，最后才丢
 	if len(soul) > 0 {
 		soul = nil
+		truncated = true
+		messages, body, err = render()
+		if err != nil {
+			return promptPlan{}, err
+		}
+		if estimate(messages) <= limit {
+			return finish(messages, body, nil)
+		}
+	}
+	// 看板注入是操作人本轮的明确指令：比长期设定更晚丢，只有实在放不下才裁掉。
+	if injection != "" {
+		injection = ""
 		truncated = true
 		messages, body, err = render()
 		if err != nil {

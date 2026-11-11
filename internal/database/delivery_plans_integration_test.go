@@ -639,6 +639,90 @@ func TestDeliveryPlanAcceptedWithoutReceiptIsUnconfirmed(t *testing.T) {
 	}
 }
 
+// TestDeliveryPlanAcceptedWithReceiptIsSentUnconfirmed 平台接受且回执稳定、
+// 只是没完成核验：按「已发送（未确认）」记账（out + send_log 可见），
+// 输入 done 且不再重投；与真正无回执的 unknown_manual 区分。
+func TestDeliveryPlanAcceptedWithReceiptIsSentUnconfirmed(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	ch, id, session := event.ChComment, "comment:778:889", "778"
+	c := planFixture(t, db, ctx, id, ch, session, false)
+	_, snd, post := planSetup(t, db, ch)
+	post.result = sender.Result{OK: true, MsgID: "platform-unconfirmed", Verified: false}
+
+	res, err := snd.Send(ctx, c, planReply(ch, session, false, "平台已收但未核验"))
+	if err == nil || planKind(t, err) != sender.KindUncertain || !sender.Handled(err) {
+		t.Fatalf("投递=%+v err=%v", res, err)
+	}
+	if !res.OK || res.Verified || res.MsgID != "platform-unconfirmed" {
+		t.Fatalf("结果=%+v", res)
+	}
+	if post.sends != 1 {
+		t.Fatalf("POST 次数=%d", post.sends)
+	}
+	p, a := planCurrent(t, db, id)
+	if p.State != sender.StateAccepted || a.State != sender.StateAccepted ||
+		a.Verified || a.MsgID != "platform-unconfirmed" || a.ErrorKind != "unconfirmed" {
+		t.Fatalf("计划/尝试=%+v/%+v", p, a)
+	}
+
+	// 有稳定回执就是已发送：输入按 done 结清，不再重投。
+	var row queueRow
+	if err := db.Table("events").Where("id=?", id).Take(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Event.Status != event.StatusDone || row.Stage != event.StageVerify ||
+		row.Owner != nil || row.Version != c.Lease.Version+1 {
+		t.Fatalf("输入结算=%+v owner=%v version=%d", row, row.Owner, row.Version)
+	}
+
+	var logRow struct {
+		OK        bool
+		Verified  bool
+		MsgID     string `gorm:"column:msg_id"`
+		Error     string
+		AttemptID string `gorm:"column:attempt_id"`
+	}
+	if err := db.Table("send_log").Where("attempt_id=?", a.ID).Take(&logRow).Error; err != nil {
+		t.Fatalf("缺少 send_log：%v", err)
+	}
+	if !logRow.OK || logRow.Verified || logRow.MsgID != "platform-unconfirmed" || logRow.Error != "unconfirmed" {
+		t.Fatalf("send_log=%+v", logRow)
+	}
+
+	outID := string(ch) + ":out:" + session + ":" + a.ID
+	var out struct {
+		Status string
+		Meta   json.RawMessage
+	}
+	if err := db.Table("events").Where("id=?", outID).Take(&out).Error; err != nil {
+		t.Fatalf("缺少 out 事件：%v", err)
+	}
+	if out.Status != string(event.StatusRetry) {
+		t.Fatalf("out 状态=%s want retry", out.Status)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(out.Meta, &meta); err != nil || meta["sent_unconfirmed"] != true || meta["unknown_manual"] != nil ||
+		meta["verified"] != false || meta["evidence"] != "platform_receipt" || meta["outcome"] != string(sender.StateAccepted) {
+		t.Fatalf("out meta=%s %v", out.Meta, err)
+	}
+
+	// 恢复只返回同一事实，不重投；旧数据窗口里输入未结清时也不能重发。
+	if err := db.Table("events").Where("id=?", id).Updates(map[string]any{
+		"status": event.StatusReplying, "stage": event.StageVerify,
+		"lease_owner": c.Lease.Owner, "lease_version": c.Lease.Version,
+		"lease_until": time.Now().UTC().Add(time.Minute),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	res, err = snd.Resume(ctx, c)
+	if err == nil || planKind(t, err) != sender.KindUncertain {
+		t.Fatalf("恢复 err=%v", err)
+	}
+	if !res.OK || res.Verified || res.MsgID != "platform-unconfirmed" || post.sends != 1 {
+		t.Fatalf("恢复 res=%+v sends=%d", res, post.sends)
+	}
+}
+
 // TestDeliveryPlanForgedVerifiedIsCorrected 数据层不信任调用方给的 Verified：
 // 没有稳定回执时落库即纠正为未验证，输入 dead 而不是 done；
 // 重复记录走已接受分支，同样不会把未验证事实升级成 done。

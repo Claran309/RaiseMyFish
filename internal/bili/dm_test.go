@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -153,9 +154,10 @@ func TestDMSessionMessagesRejectsBadTalker(t *testing.T) {
 	}
 }
 
-// TestSendMessageParams 断言 POST、msg[...] 参数与 csrf。
+// TestSendMessageParams 断言 POST、msg[...] 参数、设备号、WBI 签名与 csrf。
 func TestSendMessageParams(t *testing.T) {
 	var method, path, sender, receiver, content, csrf string
+	var devID, timestamp, querySender, queryReceiver, queryDevID, wts, wRID, referer string
 	c := dmClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/web_im/v1/web_im/send_msg" {
 			w.WriteHeader(http.StatusNotFound)
@@ -167,6 +169,14 @@ func TestSendMessageParams(t *testing.T) {
 		receiver = r.PostForm.Get("msg[receiver_id]")
 		content = r.PostForm.Get("msg[content]")
 		csrf = r.PostForm.Get("csrf")
+		devID = r.PostForm.Get("msg[dev_id]")
+		timestamp = r.PostForm.Get("msg[timestamp]")
+		querySender = r.URL.Query().Get("w_sender_uid")
+		queryReceiver = r.URL.Query().Get("w_receiver_id")
+		queryDevID = r.URL.Query().Get("w_dev_id")
+		wts = r.URL.Query().Get("wts")
+		wRID = r.URL.Query().Get("w_rid")
+		referer = r.Header.Get("Referer")
 		_, _ = w.Write([]byte(`{"code":0,"data":{"msg_key":"777888"}}`))
 	})
 
@@ -189,6 +199,36 @@ func TestSendMessageParams(t *testing.T) {
 	}
 	if msgID != "777888" {
 		t.Errorf("msg_key 未返回：%q", msgID)
+	}
+	if devID == "" || queryDevID != devID {
+		t.Errorf("设备号缺失或与签名参数不一致：body=%q query=%q", devID, queryDevID)
+	}
+	ts, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil || time.Since(time.Unix(ts, 0)) > time.Minute {
+		t.Errorf("时间戳不符：%q", timestamp)
+	}
+	if querySender != sender || queryReceiver != receiver {
+		t.Errorf("签名收件参数不一致：%s -> %s", querySender, queryReceiver)
+	}
+	if wts == "" || wRID == "" {
+		t.Errorf("缺 WBI 签名：wts=%q w_rid=%q", wts, wRID)
+	}
+	if referer != "https://message.bilibili.com/" {
+		t.Errorf("Referer 不符：%q", referer)
+	}
+}
+
+// TestDMDeviceIDStable 设备号在进程内固定，且形如大写 UUID。
+func TestDMDeviceIDStable(t *testing.T) {
+	first, second := dmDeviceID(), dmDeviceID()
+	if first != second {
+		t.Fatalf("设备号应进程内固定：%q != %q", first, second)
+	}
+	if len(first) != 36 || strings.Count(first, "-") != 4 {
+		t.Errorf("设备号格式不符：%q", first)
+	}
+	if first != strings.ToUpper(first) {
+		t.Errorf("设备号应为大写：%q", first)
 	}
 }
 

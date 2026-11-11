@@ -63,7 +63,7 @@ func TestSafeCorrelationID(t *testing.T) {
 func TestPurposeSets(t *testing.T) {
 	for _, p := range []Purpose{
 		PurposeReply, PurposeReact, PurposeVision,
-		PurposeMemoryExtract, PurposeMemeLearn, PurposeViewerSummary,
+		PurposeMemoryExtract, PurposeMemeLearn, PurposeViewerSummary, PurposeDailySummary,
 		PurposeEmbedIndex, PurposeEmbedQuery, PurposeUnknown,
 	} {
 		if !KnownPurpose(string(p)) {
@@ -82,7 +82,7 @@ func TestPurposeSets(t *testing.T) {
 			t.Errorf("%s 应绑定通道", p)
 		}
 	}
-	for _, p := range []Purpose{PurposeMemoryExtract, PurposeMemeLearn, PurposeViewerSummary, PurposeEmbedIndex, PurposeEmbedQuery, PurposeUnknown} {
+	for _, p := range []Purpose{PurposeMemoryExtract, PurposeMemeLearn, PurposeViewerSummary, PurposeDailySummary, PurposeEmbedIndex, PurposeEmbedQuery, PurposeUnknown} {
 		if ChannelBound(p) {
 			t.Errorf("%s 不应绑定通道", p)
 		}

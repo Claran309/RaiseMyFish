@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"RaiseMyFish/internal/brain/provider"
+	"RaiseMyFish/internal/llmmeta"
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
 )
@@ -152,7 +153,19 @@ func (b *OpenAI) Reply(ctx context.Context, task Task, in ContextInput) (Reply, 
 				break
 			}
 		}
-		row := store.Usage{At: at.UTC(), Channel: task.Channel, Model: b.Name(), InputTokens: response.Usage.InputTokens, OutputTokens: response.Usage.OutputTokens, CostUSD: cost(response.Usage, b.options), Milliseconds: int(time.Since(at).Milliseconds()), OK: callErr == nil}
+		row := store.Usage{
+			At:                at.UTC(),
+			Channel:           task.Channel,
+			Purpose:           string(llmmeta.PurposeReply),
+			Model:             b.Name(),
+			CorrelationID:     llmmeta.SafeCorrelationID(task.EventID),
+			InputTokens:       response.Usage.InputTokens,
+			OutputTokens:      response.Usage.OutputTokens,
+			CachedInputTokens: response.Usage.CachedInputTokens,
+			CostUSD:           cost(response.Usage, b.options),
+			Milliseconds:      int(time.Since(at).Milliseconds()),
+			OK:                callErr == nil,
+		}
 		accountCtx, finish := context.WithTimeout(context.WithoutCancel(totalCtx), 5*time.Second)
 		accountErr := b.usage.RecordUsage(accountCtx, row)
 		finish()

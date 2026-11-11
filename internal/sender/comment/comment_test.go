@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"RaiseMyFish/internal/bili"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/sender"
@@ -133,6 +135,31 @@ func TestSendPostsExpectedForm(t *testing.T) {
 	}
 	if !strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
 		t.Errorf("Content-Type = %q", contentType)
+	}
+}
+
+// TestSendUsesActorSnapshotCredential 账号快照优先于静态配置：旧尝试不能换号重发。
+func TestSendUsesActorSnapshotCredential(t *testing.T) {
+	fixture, srv := newSendServer(t)
+	s := newService(t, srv.URL)
+	ctx := bili.WithActor(context.Background(), bili.Actor{
+		AccountID: "account-1", MID: "90",
+		Cookie: "SESSDATA=snapshot; bili_jct=snap-csrf", Source: "db",
+	})
+	if _, err := s.Send(ctx, testClaim(), testReply("回复")); err != nil {
+		t.Fatalf("发送失败：%v", err)
+	}
+	fixture.mu.Lock()
+	cookie, form := fixture.cookie, fixture.form
+	fixture.mu.Unlock()
+	if cookie != "SESSDATA=snapshot; bili_jct=snap-csrf" || form.Get("csrf") != "snap-csrf" {
+		t.Errorf("未使用账号快照：cookie=%q csrf=%q", cookie, form.Get("csrf"))
+	}
+
+	// 快照缺凭据时直接判 auth，不能悄悄回落到静态配置去发。
+	bad := bili.WithActor(context.Background(), bili.Actor{AccountID: "account-2", MID: "91"})
+	if _, err := s.Send(bad, testClaim(), testReply("回复")); err == nil || kindOf(t, err) != sender.KindAuth {
+		t.Errorf("快照缺凭据应返回 auth，实际 %v", err)
 	}
 }
 
@@ -294,18 +321,29 @@ func TestSendRateLimitByMessage(t *testing.T) {
 }
 
 func TestSendUsesEventCommentType(t *testing.T) {
-	fixture, srv := newSendServer(t)
-	s := newService(t, srv.URL)
-	claim := testClaim()
-	claim.Event.Meta = json.RawMessage(`{"source":"bili-comment","comment_type":17}`)
-	if _, err := s.Send(context.Background(), claim, testReply("动态下面回你")); err != nil {
-		t.Fatalf("发送失败：%v", err)
+	cases := []struct {
+		name        string
+		commentType int
+	}{
+		{"普通动态", 17},
+		{"图文动态", 11},
 	}
-	fixture.mu.Lock()
-	form := fixture.form
-	fixture.mu.Unlock()
-	if form.Get("type") != "17" {
-		t.Errorf("动态评论 type = %q，期望 17", form.Get("type"))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture, srv := newSendServer(t)
+			s := newService(t, srv.URL)
+			claim := testClaim()
+			claim.Event.Meta = json.RawMessage(`{"source":"bili-comment","comment_type":` + strconv.Itoa(tc.commentType) + `}`)
+			if _, err := s.Send(context.Background(), claim, testReply("动态下面回你")); err != nil {
+				t.Fatalf("发送失败：%v", err)
+			}
+			fixture.mu.Lock()
+			form := fixture.form
+			fixture.mu.Unlock()
+			if form.Get("type") != strconv.Itoa(tc.commentType) {
+				t.Errorf("评论 type = %q，期望 %d", form.Get("type"), tc.commentType)
+			}
+		})
 	}
 }
 

@@ -90,14 +90,16 @@ func collectStats(ctx context.Context, src StatsSource, now time.Time, window ti
 	}
 
 	snapshot := observe.Snapshot{
-		WindowStart: from,
-		WindowEnd:   to,
-		Received:    counts.Received,
-		Replied:     counts.Replied,
-		Skipped:     counts.Skipped,
-		Failed:      counts.Failed,
-		CostUSD:     counts.CostUSD,
-		Channels:    toChannelStats(counts.Channels),
+		WindowStart:  from,
+		WindowEnd:    to,
+		Received:     counts.Received,
+		Replied:      counts.Replied,
+		Skipped:      counts.Skipped,
+		Failed:       counts.Failed,
+		KnownCostUSD: counts.KnownCostUSD,
+		UnknownCalls: counts.UnknownCalls,
+		TotalCalls:   counts.TotalCalls,
+		Channels:     toChannelStats(counts.Channels),
 	}
 
 	return StatusStats{

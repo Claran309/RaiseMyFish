@@ -32,7 +32,8 @@ import (
 // fromID 是本条事件的发送者平台 UID，供「我是谁」做精确身份查询。
 // knowledgePreloaded 表示 Prepare 已把知识写进资料段，工厂据此不再注册
 // knowledge_search（避免同一轮重复召回）；零命中时传 false，工具保留。
-type reactFactory func(scope memory.Scope, fromID string, knowledgePreloaded bool) (*reasoning.Agent, error)
+// channel 决定本次的步数/超时预算：弹幕 3 步/8 秒，评论、私信可更长。
+type reactFactory func(scope memory.Scope, fromID string, knowledgePreloaded bool, channel event.Channel) (*reasoning.Agent, error)
 
 // reactRuntime 是 Generate 阶段用到的 ReAct 装配：工厂 + 触发策略。
 //
@@ -61,17 +62,55 @@ type reactRuntime struct {
 // 不再依赖「梗/刚才」这类词表——词表漏判就查不到记忆，可用性优先。
 // default_react=false：保留旧两段式，仅命中召回线索时走 ReAct。
 //
-// shouldUseReAct 判断这条弹幕要不要走多步思考。
+// shouldUseReAct 判断这条事件要不要走多步思考。
 //
-// default_react=true（默认）：**全量走 ReAct**（含短句）——可用性优先，
-// 短句也可能需要查记忆/知识（「记得吗」「摸我」），不再按长度区分。
-// default_react=false：保留旧两段式，仅命中召回线索时走 ReAct。
-func shouldUseReAct(text string, defaultReact bool) bool {
+// 评论/私信恒走 ReAct：它们没有直播弹幕的实时节奏约束，思考阶段是功能要求，
+// 不受 default_react（弹幕策略）影响。
+// 弹幕在 default_react=true 时全量走 ReAct（含短句）——可用性优先，
+// 短句也可能需要查记忆/知识（「记得吗」「摸我」），不再按长度区分；
+// default_react=false 时保留旧两段式，仅命中召回线索时走 ReAct。
+func shouldUseReAct(channel event.Channel, text string, defaultReact bool) bool {
+	switch channel {
+	case event.ChComment, event.ChDM:
+		return true
+	}
 	if defaultReact {
 		return true
 	}
 	d := reasoning.Decide(text)
 	return d.NeedMemory || d.NeedKnowledge
+}
+
+// reasoningOptionsForChannel 取该通道的 ReAct 预算；未覆盖的通道用弹幕预算。
+func reasoningOptionsForChannel(r config.Reasoning, channel event.Channel) reasoning.Options {
+	steps, timeoutMS := r.MaxSteps, r.TimeoutMS
+	switch channel {
+	case event.ChComment:
+		steps, timeoutMS = r.Comment.MaxSteps, r.Comment.TimeoutMS
+	case event.ChDM:
+		steps, timeoutMS = r.DM.MaxSteps, r.DM.TimeoutMS
+	}
+	if steps <= 0 {
+		steps = r.MaxSteps
+	}
+	if timeoutMS <= 0 {
+		timeoutMS = r.TimeoutMS
+	}
+	return reasoning.Options{MaxSteps: steps, Timeout: time.Duration(timeoutMS) * time.Millisecond}
+}
+
+// reasoningLabel 是提示词里的回复对象称呼（评论/私信不是弹幕）。
+func reasoningLabel(channel event.Channel) string {
+	switch channel {
+	case event.ChComment:
+		return "评论"
+	case event.ChDM:
+		return "私信"
+	case event.ChLive:
+		return "直播弹幕"
+	default:
+		return "弹幕"
+	}
 }
 
 // prepareDeadline 给「准备 + ReAct」划出预算：父 deadline 减去最终正文预留。
@@ -164,7 +203,7 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 		// 知识已注入资料段 → 不再注册 knowledge_search，避免同一轮重复召回；
 		// 零命中（IncludedIDs 为空）时保留工具，模型可以换关键词主动查。
 		knowledgePreloaded = prepared.KnowledgeInjected()
-		agent, err = runtime.factory(scope, ev.FromID, knowledgePreloaded)
+		agent, err = runtime.factory(scope, ev.FromID, knowledgePreloaded, ev.Channel)
 		if err != nil || agent == nil {
 			return reasoning.Result{}, err
 		}
@@ -172,7 +211,11 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 			System:       prepared.Messages[0].Content,
 			Context:      prepared.Context,
 			Question:     prepared.Question,
+			Label:        reasoningLabel(ev.Channel),
 			PromptBudget: promptLimit,
+			// 弹幕通道：先想三层再回，收尾后自检一次；评论/私信保持原协议。
+			ThinkDeep: ev.Channel == event.ChLive,
+			Reflect:   ev.Channel == event.ChLive,
 		}
 		// Prepare 只算了人格与资料段；这里补上工具协议、消息框架与最坏观察预留。
 		base := agent.Estimate(reactIn)
@@ -282,16 +325,14 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 		log.Info("ReAct 未启用（没有可用模型路由）", zap.String("action", "react_disabled"))
 		return nil, nil
 	}
-	opts := reasoning.Options{
-		MaxSteps: cfg.Reasoning.MaxSteps,
-		Timeout:  time.Duration(cfg.Reasoning.TimeoutMS) * time.Millisecond,
-	}
 	var presenceFn func(time.Time) string
 	if pres != nil {
 		presenceFn = pres.Summary
 	}
 
-	return func(scope memory.Scope, fromID string, knowledgePreloaded bool) (*reasoning.Agent, error) {
+	return func(scope memory.Scope, fromID string, knowledgePreloaded bool, channel event.Channel) (*reasoning.Agent, error) {
+		// 预算按事件通道现取：评论/私信允许更长思考，弹幕保持 3 步/8 秒。
+		opts := reasoningOptionsForChannel(cfg.Reasoning, channel)
 		// 预召回命中时把知识工具摘掉：资料已在 Context 里，再查一遍是重复召回。
 		// 零命中时保留工具（know 原样传入），让模型能换关键词主动查。
 		toolKnowledge := know
@@ -308,13 +349,14 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 		if err != nil {
 			return nil, err
 		}
-		// 只读 7 个：观众史/回复史/直播状态/额度/时间/画面/搜索；档案语义检索按依赖额外注册
+		// 只读 8 个：观众史/回复史/直播状态/看直播/额度/时间/画面/搜索；档案语义检索按依赖额外注册
 		readonly, err := reasoning.BuildReadOnlyTools(reasoning.ReadOnlyDeps{
 			Viewer:       events,
 			ViewerSearch: viewerSearch,
 			Profiles:     profiles,
 			Replies:      events,
 			Live:         exec.Live,
+			LiveView:     exec.LiveView,
 			Quota:        quota,
 			QuotaLimit:   cfg.Gift.DailyLimit,
 			Frame:        exec.Frame,
@@ -328,6 +370,20 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 			return nil, err
 		}
 		boxes := []*reasoning.Toolbox{recall, readonly}
+		// 弹幕工具只对 live 注册：一条事件里可发 1-3 条，发送走主动弹幕的 Node 通道。
+		// 执行器为 nil（未开启或未装配）时工具不出现，模型也就不会尝试。
+		if channel == event.ChLive && exec.Danmaku != nil {
+			danmaku, err := reasoning.BuildDanmakuTool(reasoning.DanmakuDeps{
+				Sender:  exec.Danmaku,
+				Limiter: sideLimiter,
+				Actor:   selfMID(cfg),
+				Log:     log,
+			})
+			if err != nil {
+				return nil, err
+			}
+			boxes = append(boxes, danmaku)
+		}
 		// 副作用 5 个：默认关；关了就不注册，模型连选项都看不见
 		if cfg.Reasoning.AllowSideEffectTools {
 			side, err := reasoning.BuildSideEffectTools(sideEffectDeps(cfg, quota, exec, scope.Session, giftGate, sideLimiter, log))

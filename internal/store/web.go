@@ -54,11 +54,13 @@ type WebEvent struct {
 
 // WebSend 是发送记录项。
 type WebSend struct {
-	EventID string
-	Channel string
-	OK      bool
-	MsgID   string
-	At      time.Time
+	EventID  string
+	Channel  string
+	OK       bool
+	Verified bool
+	MsgID    string
+	Error    string
+	At       time.Time
 }
 
 // WebEventDetail 是事件详情：原事件 + 回复计划/尝试。
@@ -120,8 +122,8 @@ type WebRepo interface {
 	Status(ctx context.Context) (WebStatus, error)
 	// EmbeddingStatus 汇总知识/记忆/档案的向量入库进度。
 	EmbeddingStatus(ctx context.Context) (WebEmbeddingStatus, error)
-	// Memory 按 kind/关键词过滤记忆（新的在前）。
-	Memory(ctx context.Context, kind, query string, limit int) ([]WebMemory, error)
+	// Memory 按 kind/关键词过滤记忆；order 为 time（默认，新的在前）或 importance（重要度高在前）。
+	Memory(ctx context.Context, kind, query, order string, limit int) ([]WebMemory, error)
 	// ArchiveMemory 软删除一条记忆（归档 + 置失效时间）。
 	ArchiveMemory(ctx context.Context, id string) error
 	// Events 取最近事件（dir 为空表示不筛）。
@@ -130,8 +132,12 @@ type WebRepo interface {
 	EventsByChannel(ctx context.Context, channel, dir string, limit int) ([]WebEvent, error)
 	// Event 取单条事件详情（含回复计划与尝试）。
 	Event(ctx context.Context, id string) (WebEventDetail, error)
-	// Errors 取最近异常事件（status 为 dead/retry）。
+	// Errors 取最近未清理的异常事件（status 为 dead/retry）。
 	Errors(ctx context.Context, limit int) ([]WebEvent, error)
+	// ClearError 标记单条异常已清理；只影响面板列表，不改事件状态机。
+	ClearError(ctx context.Context, id string) error
+	// ClearErrorsBefore 清理 at 早于 before 的异常，返回清理条数。
+	ClearErrorsBefore(ctx context.Context, before time.Time) (int64, error)
 	// SendLogs 取最近发送记录。
 	SendLogs(ctx context.Context, limit int) ([]WebSend, error)
 }

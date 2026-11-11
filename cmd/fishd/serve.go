@@ -75,6 +75,7 @@ func buildSchedulerOptions(c *config.Scheduler) scheduler.Options {
 			MinRunes:      p.MinRunes,
 			RepeatWindow:  time.Duration(p.RepeatWindowMS) * time.Millisecond,
 			// 指针只用于配置层区分「未写」；进入调度后就是确定的布尔策略。
+			RoutingMode:      p.RoutingMode,
 			ReplyOnlyMention: p.ReplyOnlyMention != nil && *p.ReplyOnlyMention,
 			ReplyMentionBack: p.ReplyMentionBack != nil && *p.ReplyMentionBack,
 			MaxReplyRunes:    p.MaxReplyRunes,
@@ -115,12 +116,24 @@ func resolveRoutes(policies map[event.Channel]scheduler.ChannelPolicy, routes ma
 type consumeOption func(*consumeOptions)
 
 type consumeOptions struct {
-	viewerFinder profileFinder
+	viewerFinder  profileFinder
+	commentVision *commentVision
+	injections    store.InjectionReader
 }
 
 // withViewerFinder 注入「按昵称查观众档案」能力，用于甲问乙时预取乙档案。
 func withViewerFinder(finder profileFinder) consumeOption {
 	return func(o *consumeOptions) { o.viewerFinder = finder }
+}
+
+// withCommentVision 注入评论附图识别；nil 表示按无图处理。
+func withCommentVision(vision *commentVision) consumeOption {
+	return func(o *consumeOptions) { o.commentVision = vision }
+}
+
+// withInjections 注入看板临时设定来源；nil 表示不读取注入。
+func withInjections(reader store.InjectionReader) consumeOption {
+	return func(o *consumeOptions) { o.injections = reader }
 }
 
 func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, viewers store.ViewerRepo, soulPath string, pres *presence.Table, state func(time.Time) string, react *reactRuntime, channels *channelSet, log *zap.Logger, opts ...consumeOption) (scheduler.Workers, error) {
@@ -149,17 +162,19 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 	// 统一上下文快照：被动回复与主动弹幕共用同一套资料装配规则。
 	builder := newContextBuilder(pack, mem, know, viewers, newSoulCache(soulPath), state, log)
 	builder.finder = extra.viewerFinder
+	builder.injections = extra.injections
 	generate := generateHandler(generateDeps{
-		live:       live,
-		brains:     byChannel,
-		sender:     snd,
-		bus:        bus,
-		retryDelay: retryDelay,
-		context:    builder,
-		channels:   channels,
-		presence:   pres,
-		react:      react,
-		log:        log,
+		live:          live,
+		brains:        byChannel,
+		sender:        snd,
+		bus:           bus,
+		retryDelay:    retryDelay,
+		context:       builder,
+		channels:      channels,
+		presence:      pres,
+		react:         react,
+		commentVision: extra.commentVision,
+		log:           log,
 	})
 	// deliver 与 verify 是同一件事：事件已经投递出去，只需要 Resume 核验并结清。
 	resume := resumeDeps{channels: channels,
@@ -472,6 +487,13 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	// 看板注入：装配失败只降级为不读取注入，不影响回复主链路。
+	var injectionReader store.InjectionReader
+	if webRepo, werr := database.NewWebRepo(resources.DB); werr != nil {
+		log.Warn("看板注入仓储装配失败，注入不生效", zap.String("action", "injection_setup"), zap.Error(werr))
+	} else {
+		injectionReader = webRepo
+	}
 	// 观众档案：查询能力始终可用（存量档案不该因为「暂停建档」就查不到）；
 	// prompt 注入仍只在 [viewer] enabled 时开启，避免额外查询改变既有行为。
 	var viewerRepo store.ViewerRepo
@@ -501,6 +523,19 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	}
 	quota := buildGiftQuota(cfg, log)
 	execs := buildToolExecutors(cfg, usageRepo, log)
+	// send_danmaku 只在 live 开启且显式允许时装配；失败只降级为不注册工具。
+	if cfg.Reasoning.AllowDanmakuTool && cfg.Channels.Live.Enabled && execs.Danmaku == nil {
+		danmaku, err := buildDanmakuExecutor(cfg, eventRepo, log)
+		if err != nil {
+			log.Warn("send_danmaku 执行器装配失败，工具不注册",
+				zap.String("action", "tool_executor_setup"),
+				zap.String("reason", "danmaku_unavailable"),
+				zap.Error(err),
+			)
+		} else {
+			execs.Danmaku = danmaku
+		}
+	}
 	react, err := buildReasonerFactory(cfg, memReader, know, pres, eventRepo, viewerSearch, profileLoader, quota, execs, usageRepo, giftGate, sideLimiter, log)
 	if err != nil {
 		return nil, nil, nil, err
@@ -518,7 +553,12 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 			finalReserve: time.Duration(cfg.LLM.AttemptTimeoutMS) * time.Millisecond,
 		}
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch))
+	// 评论附图识别：未开启/未配置视觉路由时不装配，评论照常回复。
+	commentVisual, err := buildCommentVision(cfg, usageRepo, log)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader))
 	if err != nil {
 		return nil, nil, nil, err
 	}

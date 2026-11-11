@@ -42,6 +42,12 @@ type SpaceVideo struct {
 type SpaceDynamic struct {
 	ID   string
 	Type string
+	// CommentID 是该动态评论区的 oid（平台 basic.comment_id_str），
+	// 视频/专栏动态可能与动态 ID 不同；缺失时调用方回落到 ID。
+	CommentID string
+	// CommentType 是评论区类型（basic.comment_type）：11=图文动态、17=普通动态，
+	// 视频/专栏动态会是 1/12。0 表示平台未给出。
+	CommentType int
 }
 
 // SpaceVideos 拉当前账号最近投稿（按发布时间倒序）。
@@ -132,6 +138,10 @@ func (c *Client) SpaceDynamics(ctx context.Context, mid string, limit int) ([]Sp
 		Items []struct {
 			IDStr json.RawMessage `json:"id_str"`
 			Type  string          `json:"type"`
+			Basic struct {
+				CommentIDStr json.RawMessage `json:"comment_id_str"`
+				CommentType  int             `json:"comment_type"`
+			} `json:"basic"`
 		} `json:"items"`
 	}
 	if err := c.do(ctx, "space_dynamics", http.MethodGet, endpoint, nil, &data); err != nil {
@@ -143,7 +153,16 @@ func (c *Client) SpaceDynamics(ctx context.Context, mid string, limit int) ([]Sp
 		if !isDigits(id) || strings.Trim(id, "0") == "" {
 			continue
 		}
-		out = append(out, SpaceDynamic{ID: id, Type: strings.TrimSpace(item.Type)})
+		commentID := rawJSONID(item.Basic.CommentIDStr)
+		if !isDigits(commentID) || strings.Trim(commentID, "0") == "" {
+			commentID = ""
+		}
+		out = append(out, SpaceDynamic{
+			ID:          id,
+			Type:        strings.TrimSpace(item.Type),
+			CommentID:   commentID,
+			CommentType: item.Basic.CommentType,
+		})
 		if len(out) >= limit {
 			break
 		}

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"RaiseMyFish/internal/llmmeta"
 	"RaiseMyFish/internal/store"
 )
 
@@ -53,11 +54,13 @@ type fakeQueryEmbedder struct {
 	err     error
 	calls   int
 	inputs  []string
+	call    llmmeta.Call
 }
 
-func (f *fakeQueryEmbedder) Embed(_ context.Context, inputs []string) ([][]float64, error) {
+func (f *fakeQueryEmbedder) Embed(ctx context.Context, inputs []string) ([][]float64, error) {
 	f.calls++
 	f.inputs = inputs
+	f.call = llmmeta.From(ctx)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -125,6 +128,9 @@ func TestSearchScoresKeywordAndSemantic(t *testing.T) {
 	}
 	if len(embedder.inputs) != 1 || embedder.inputs[0] != "那个爱要白饭的人" {
 		t.Errorf("embedding 输入不符：%v", embedder.inputs)
+	}
+	if embedder.call.Purpose != llmmeta.PurposeEmbedQuery || embedder.call.CorrelationID != "viewer" {
+		t.Errorf("查询向量化用途未标注：%+v", embedder.call)
 	}
 	// M10：认人只用 identity/facts，绝不能查 interaction。
 	if !hasKind(source.kwKinds, KindIdentity) || !hasKind(source.kwKinds, KindFacts) || hasKind(source.kwKinds, KindInteraction) {

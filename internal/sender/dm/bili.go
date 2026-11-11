@@ -5,6 +5,7 @@ package dm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"RaiseMyFish/internal/bili"
@@ -49,6 +50,9 @@ func (t BiliTransporter) bound(ctx context.Context) (*bili.Client, error) {
 }
 
 // classifyBiliError 把 B站平台错误映射成受控类别；未知平台错误保持 uncertain。
+//
+// 所有分支都用 %w 保留原始 *bili.Error：dead/unknown 的日志必须能看到
+// HTTP 状态与平台 code，否则只剩一句「私信平台错误」无法定位。
 func classifyBiliError(err error) error {
 	var apiErr *bili.Error
 	if !errors.As(err, &apiErr) {
@@ -56,17 +60,17 @@ func classifyBiliError(err error) error {
 	}
 	switch apiErr.Status {
 	case http.StatusPreconditionFailed, http.StatusTooManyRequests:
-		return &Error{Kind: KindRetry, Cause: errors.New("私信被平台限流")}
+		return &Error{Kind: KindRetry, Cause: fmt.Errorf("私信被平台限流：%w", apiErr)}
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return &Error{Kind: KindAuth, Cause: errors.New("私信被权限拒绝")}
+		return &Error{Kind: KindAuth, Cause: fmt.Errorf("私信被权限拒绝：%w", apiErr)}
 	}
 	switch apiErr.Code {
 	case -101, -111, -403:
-		return &Error{Kind: KindAuth, Cause: errors.New("私信被权限拒绝")}
+		return &Error{Kind: KindAuth, Cause: fmt.Errorf("私信被权限拒绝：%w", apiErr)}
 	case -352, -412, -509:
-		return &Error{Kind: KindRetry, Cause: errors.New("私信被平台限流")}
+		return &Error{Kind: KindRetry, Cause: fmt.Errorf("私信被平台限流：%w", apiErr)}
 	}
-	return &Error{Kind: KindUncertain, Cause: errors.New("私信平台错误")}
+	return &Error{Kind: KindUncertain, Cause: fmt.Errorf("私信平台错误：%w", apiErr)}
 }
 
 // BiliRelation 用 bili 客户端查关注关系。

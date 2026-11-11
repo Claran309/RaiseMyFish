@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"RaiseMyFish/internal/gift"
 	"RaiseMyFish/internal/proactive"
 	"RaiseMyFish/internal/reasoning"
+	senderlive "RaiseMyFish/internal/sender/live"
 	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/watch"
 	"RaiseMyFish/internal/webtools"
@@ -33,6 +35,10 @@ type toolExecutors struct {
 	Frame     reasoning.FrameSource
 	FrameRead reasoning.FrameReader
 	Search    reasoning.WebSearcher
+	// Danmaku 只在被动消费循环里装配；nil 时 send_danmaku 不注册。
+	Danmaku reasoning.DanmakuSender
+	// LiveView 是主动弹幕的感知缓存；nil 时 watch_live 不注册（被动消费循环保持 nil）。
+	LiveView reasoning.LiveViewSource
 }
 
 // buildToolExecutors 按环境装配执行器；任何一项装配失败只降级该项。
@@ -130,6 +136,51 @@ func buildToolExecutors(cfg config.Config, usage store.UsageRepo, log *zap.Logge
 		zap.Bool("web_search", execs.Search != nil),
 	)
 	return execs
+}
+
+// buildDanmakuExecutor 用主动弹幕的 ProactiveSender 作为 send_danmaku 执行器：
+// 复用 Node 一次性投递协议，并把真实结果写成 DirOut 审计事件（不经过 send_plans）。
+func buildDanmakuExecutor(cfg config.Config, recorder senderlive.OutEventRecorder, log *zap.Logger) (reasoning.DanmakuSender, error) {
+	wiring, err := resolveSenderWiring(cfg, senderlive.DefaultOptions().MinInterval)
+	if err != nil {
+		return nil, err
+	}
+	transport, err := senderlive.NewNodeTransport(wiring.Node)
+	if err != nil {
+		return nil, err
+	}
+	options := senderlive.DefaultProactiveOptions()
+	options.RoomID = cfg.Collector.Live.RoomID
+	options.SelfID = wiring.Service.SelfID
+	sender, err := senderlive.NewProactiveSender(transport, recorder, options, log)
+	if err != nil {
+		return nil, err
+	}
+	return danmakuExecutor{sender: sender, log: log}, nil
+}
+
+// danmakuExecutor 把 ProactiveSender 适配成 reasoning.DanmakuSender。
+type danmakuExecutor struct {
+	sender *senderlive.ProactiveSender
+	log    *zap.Logger
+}
+
+func (d danmakuExecutor) SendDanmaku(ctx context.Context, text string) error {
+	res, err := d.sender.Send(ctx, text)
+	// 平台已接受时，即使审计写入失败也算发送成功：再让模型重试会重复弹幕。
+	if res.OK {
+		if err != nil {
+			d.log.Warn("弹幕已发出但审计记录失败",
+				zap.String("action", "tool_danmaku"),
+				zap.Error(err),
+			)
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("弹幕未被平台接受")
 }
 
 // buildGiftSender 用现有 gift 配置装配 NodeSender。

@@ -76,20 +76,6 @@ func runViewer(ctx context.Context, configPath, envPath string, args []string, o
 	if spec.Action == "embed" && !cfg.Embedding.Enabled {
 		return errors.New("embedding 未启用：请先在 [embedding] 设置 enabled=true")
 	}
-	var client *embedding.Client
-	if cfg.Embedding.Enabled {
-		client, err = embedding.New(embedding.Options{
-			URL:       cfg.Embedding.URL,
-			Model:     cfg.Embedding.Model,
-			APIKey:    cfg.Embedding.Key,
-			Dimension: cfg.Embedding.Dimension,
-			BatchSize: cfg.Embedding.BatchSize,
-			Timeout:   embedding.DefaultTimeout,
-		})
-		if err != nil {
-			return fmt.Errorf("装配embedding客户端：%w", err)
-		}
-	}
 
 	probe, cancel := context.WithTimeout(ctx, time.Duration(cfg.Database.TimeoutSeconds)*time.Second)
 	defer cancel()
@@ -103,6 +89,28 @@ func runViewer(ctx context.Context, configPath, envPath string, args []string, o
 	defer func() { result = errors.Join(result, resources.Close(ctx)) }()
 	if err := database.Ready(probe, resources.DB); err != nil {
 		return err
+	}
+	var client *embedding.Client
+	if cfg.Embedding.Enabled {
+		usageRepo, uerr := database.NewUsageRepo(resources.DB)
+		if uerr != nil {
+			return uerr
+		}
+		// 每次真实 embedding 调用都进成本账本；记账失败只提示，不中断命令。
+		client, err = embedding.New(embedding.Options{
+			URL:       cfg.Embedding.URL,
+			Model:     cfg.Embedding.Model,
+			APIKey:    cfg.Embedding.Key,
+			Dimension: cfg.Embedding.Dimension,
+			BatchSize: cfg.Embedding.BatchSize,
+			Timeout:   embedding.DefaultTimeout,
+			OnUsage: embedding.UsageSinkFor(usageRepo, cfg.Embedding.Model, func(err error) {
+				fmt.Fprintf(stderr, "viewer 记账失败：%v\n", err)
+			}),
+		})
+		if err != nil {
+			return fmt.Errorf("装配embedding客户端：%w", err)
+		}
 	}
 	repo, err := database.NewViewerRepo(resources.DB)
 	if err != nil {

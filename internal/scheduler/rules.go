@@ -90,17 +90,26 @@ func structuredMention(e event.Event, p ChannelPolicy) bool {
 }
 
 // MentionBackTarget 返回 live 回复要 @ 的昵称。
-// 仅在 live、开启 ReplyMentionBack 且事件是结构化 @ 自己时生效；
-// reply_to_name 是「被回复的人」——别人回复鱼时它就是鱼自己，@ 自己没意义；
-// 此时改用发弹幕的人（FromName）；都空或含控制字符返回 false。
+// 生效条件：live、开启 ReplyMentionBack，且事件明确指向鱼——
+// 结构化回复目标是自己，或正文直接 @ 了鱼。
+// 结构化回复的 reply_to_name 是「被回复的人」；别人回复鱼时它就是鱼自己，@ 自己没意义，
+// 此时改用发弹幕的人（FromName）；正文 @ 鱼的普通弹幕同样 @ 发送者。
+// 都空或含控制字符返回 false。
 func MentionBackTarget(e event.Event, p ChannelPolicy) (string, bool) {
-	if e.Channel != event.ChLive || !p.ReplyMentionBack || !structuredMention(e, p) {
+	if e.Channel != event.ChLive || !p.ReplyMentionBack {
 		return "", false
 	}
-	meta, _ := structuredReply(e)
-	name := strings.TrimSpace(meta.ReplyToName)
-	if name != "" && isSelfName(name, p.SelfNames) {
-		name = ""
+	structured := structuredMention(e, p)
+	if !structured && !containsMention(e.Text, p.SelfNames) {
+		return "", false
+	}
+	name := ""
+	if structured {
+		meta, _ := structuredReply(e)
+		name = strings.TrimSpace(meta.ReplyToName)
+		if name != "" && isSelfName(name, p.SelfNames) {
+			name = ""
+		}
 	}
 	if name == "" {
 		name = strings.TrimSpace(e.FromName)
@@ -125,9 +134,105 @@ func isSelfName(name string, selfNames []string) bool {
 	return false
 }
 
-// mentionMiss 只对 live 生效：开启后未 @ 自己的弹幕在准入前跳过，不进入 LLM。
+// mentionOnlySkip 只对 live 生效：未 @ 自己（且不是结构化回复自己）就跳过。
+func mentionOnlySkip(e event.Event, p ChannelPolicy) bool {
+	return e.Channel == event.ChLive && !containsMention(e.Text, p.SelfNames) && !structuredMention(e, p)
+}
+
+// mentionMiss 是旧配置 reply_only_mention 的判定入口。
 func mentionMiss(e event.Event, p ChannelPolicy) bool {
-	return e.Channel == event.ChLive && p.ReplyOnlyMention && !containsMention(e.Text, p.SelfNames) && !structuredMention(e, p)
+	return p.ReplyOnlyMention && mentionOnlySkip(e, p)
+}
+
+// policyRouting 把新 routing_mode 与旧 reply_only_mention 统一成一个模式。
+func policyRouting(p ChannelPolicy) string {
+	switch p.RoutingMode {
+	case RoutingMentionOnly, RoutingFilter, RoutingAll:
+		return p.RoutingMode
+	}
+	if p.ReplyOnlyMention {
+		return RoutingMentionOnly
+	}
+	return RoutingAll
+}
+
+// routingSkip 决定 live 弹幕是否在准入前丢弃（唯一合法的 queued→skipped 阶段）。
+func routingSkip(e event.Event, p ChannelPolicy) bool {
+	if e.Channel != event.ChLive {
+		return false
+	}
+	switch policyRouting(p) {
+	case RoutingMentionOnly:
+		return mentionOnlySkip(e, p)
+	case RoutingFilter:
+		return !filterRelevant(e, p)
+	default:
+		return false
+	}
+}
+
+// 规则筛选器的互动线索：提问、请求、以及指向上下文的指代。
+// 只做确定性近似；调度器是单线程，不能在这里调小模型或读最近事件。
+var (
+	liveQuestionCues = []string{
+		"?", "？", "吗", "什么", "怎么", "怎样", "为什么", "为啥", "哪", "谁", "多少", "几点",
+		"是不是", "有没有", "能不能", "可不可以", "会不会", "对不对", "好不好", "行不行", "要不要",
+		"在吗", "在不在", "有人吗",
+	}
+	liveRequestCues = []string{
+		"帮我", "帮忙", "来一个", "来一首", "来首", "唱一首", "唱首", "唱个", "讲个", "讲讲", "说说",
+		"解释一下", "查一下", "搜一下", "推荐一下", "教我", "给我讲", "你会", "你能", "陪我",
+	}
+	liveContextCues = []string{
+		"刚才", "刚刚", "上一条", "前面说", "你说", "你说的", "你刚", "继续", "再来", "还有吗", "然后呢", "接着",
+	}
+)
+
+// filterRelevant 是 routing_mode=filter 的规则筛选器：
+// 直接 @/结构化回复/叫鱼名字/主人/白名单直接放行；
+// 其余用提问、请求、上下文指代判断是否有互动价值；纯闲聊（复读、表情、寒暄）返回 false。
+func filterRelevant(e event.Event, p ChannelPolicy) bool {
+	if e.Channel != event.ChLive {
+		return true
+	}
+	text := strings.TrimSpace(e.Text)
+	if text == "" {
+		return false
+	}
+	if containsMention(text, p.SelfNames) || structuredMention(e, p) {
+		return true
+	}
+	if inList(e.FromID, p.OwnerIDs) || inList(text, p.Whitelist) {
+		return true
+	}
+	if containsSelfName(text, p.SelfNames) {
+		return true
+	}
+	return containsAnyCue(text, liveQuestionCues) ||
+		containsAnyCue(text, liveRequestCues) ||
+		containsAnyCue(text, liveContextCues)
+}
+
+// containsSelfName 判断正文是否直接叫了鱼的名字（不带 @）。
+func containsSelfName(text string, names []string) bool {
+	lower := strings.ToLower(text)
+	for _, name := range names {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name != "" && strings.Contains(lower, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAnyCue(text string, cues []string) bool {
+	lower := strings.ToLower(text)
+	for _, cue := range cues {
+		if cue != "" && strings.Contains(lower, cue) {
+			return true
+		}
+	}
+	return false
 }
 
 func noiseReason(e event.Event, p ChannelPolicy) string {

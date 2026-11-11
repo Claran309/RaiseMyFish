@@ -15,6 +15,8 @@ import (
 	"RaiseMyFish/internal/knowledge"
 )
 
+const testCLIFingerprint = "test-cli-knowledge-fingerprint"
+
 type cliEmbedder struct {
 	calls  int
 	inputs []string
@@ -52,15 +54,15 @@ func (s *cliEmbeddingStore) ExistingEmbeddings(context.Context) (map[string]know
 	return result, nil
 }
 
-func (s *cliEmbeddingStore) UpsertEmbeddings(_ context.Context, records []knowledge.EmbeddingRecord) error {
+func (s *cliEmbeddingStore) UpsertEmbeddings(_ context.Context, records []knowledge.EmbeddingRecord) (int, error) {
 	for _, record := range records {
 		s.records = append(s.records, record)
-		s.existing[record.ID] = knowledge.EmbeddingMeta{Source: record.Source, Title: record.Title, UpdatedAt: record.UpdatedAt}
+		s.existing[record.ID] = knowledge.EmbeddingMeta{TextHash: record.Hash, SourceHash: record.SourceHash, Fingerprint: record.Fingerprint}
 	}
-	return nil
+	return len(records), nil
 }
 
-func (s *cliEmbeddingStore) SemanticSearch(context.Context, []float64, int) ([]knowledge.SemanticHit, error) {
+func (s *cliEmbeddingStore) SemanticSearch(context.Context, []float64, string, int) ([]knowledge.SemanticHit, error) {
 	return nil, nil
 }
 
@@ -112,7 +114,7 @@ func TestExecuteKnowledgeEmbedIncrementalAndProgress(t *testing.T) {
 	embedder := &cliEmbedder{}
 	store := newCLIEmbeddingStore()
 	var out, progress bytes.Buffer
-	if err := executeKnowledgeEmbed(context.Background(), reader, embedder, store, 2, &out, &progress); err != nil {
+	if err := executeKnowledgeEmbed(context.Background(), reader, embedder, store, 2, testCLIFingerprint, &out, &progress); err != nil {
 		t.Fatal(err)
 	}
 	var summary knowledgeEmbedOutput
@@ -131,7 +133,7 @@ func TestExecuteKnowledgeEmbedIncrementalAndProgress(t *testing.T) {
 
 	out.Reset()
 	progress.Reset()
-	if err := executeKnowledgeEmbed(context.Background(), reader, embedder, store, 2, &out, &progress); err != nil {
+	if err := executeKnowledgeEmbed(context.Background(), reader, embedder, store, 2, testCLIFingerprint, &out, &progress); err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal(out.Bytes(), &summary); err != nil {
@@ -152,7 +154,7 @@ func TestExecuteKnowledgeEmbedReportsFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	err = executeKnowledgeEmbed(context.Background(), reader, &cliEmbedder{err: errors.New("上游不可用")}, newCLIEmbeddingStore(), 2, &out, io.Discard)
+	err = executeKnowledgeEmbed(context.Background(), reader, &cliEmbedder{err: errors.New("上游不可用")}, newCLIEmbeddingStore(), 2, testCLIFingerprint, &out, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "知识入库失败") {
 		t.Fatalf("embedding失败未向上返回：%v", err)
 	}

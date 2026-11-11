@@ -135,8 +135,8 @@ func TestSpaceDynamicsParsed(t *testing.T) {
 		}
 		gotQuery = r.URL.Query()
 		_, _ = w.Write([]byte(`{"code":0,"data":{"items":[
-			{"id_str":"9001","type":"DYNAMIC_TYPE_DRAW"},
-			{"id_str":9002,"type":"DYNAMIC_TYPE_FORWARD"},
+			{"id_str":"9001","type":"DYNAMIC_TYPE_DRAW","basic":{"comment_id_str":"415114992","comment_type":11}},
+			{"id_str":9002,"type":"DYNAMIC_TYPE_FORWARD","basic":{"comment_id_str":9002,"comment_type":17}},
 			{"id_str":"bad"}
 		]}}`))
 	})
@@ -146,6 +146,12 @@ func TestSpaceDynamicsParsed(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].ID != "9001" || got[1].ID != "9002" {
 		t.Fatalf("动态解析不符：%+v", got)
+	}
+	if got[0].CommentID != "415114992" || got[0].CommentType != 11 {
+		t.Errorf("图文动态评论区未解析：%+v", got[0])
+	}
+	if got[1].CommentType != 17 {
+		t.Errorf("普通动态评论类型未解析：%+v", got[1])
 	}
 	if gotQuery.Get("host_mid") != "42" {
 		t.Errorf("host_mid 不符：%v", gotQuery)

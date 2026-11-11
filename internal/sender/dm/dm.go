@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -449,6 +450,9 @@ func (e *Error) ErrKind() string { return string(e.Kind) }
 func (e *Error) RetryAfter() (time.Time, bool) { return e.RetryAt, e.Kind == KindRetry }
 
 // classify 把传输层错误映射成受控类别（限流/网络 → retry，风控/权限 → auth，其余 uncertain）。
+//
+// 用 %w 保留原始错误：dead/unknown 的日志要能展开到「缺 bili_jct」「缺本账号UID」
+// 这类请求前就被拦下的原因，而不是只剩一句笼统的「结果不确定」。
 func classify(err error) error {
 	var typed *Error
 	if errors.As(err, &typed) {
@@ -457,13 +461,17 @@ func classify(err error) error {
 	msg := strings.ToLower(err.Error())
 	switch {
 	case rateLimitMessage(msg):
-		return &Error{Kind: KindRetry, Cause: errors.New("私信被平台限流")}
+		return &Error{Kind: KindRetry, Cause: fmt.Errorf("私信被平台限流：%w", err)}
+	case strings.Contains(msg, "bili_jct"), strings.Contains(msg, "本账号uid"), strings.Contains(msg, "未配置b站凭据"):
+		return &Error{Kind: KindAuth, Cause: fmt.Errorf("私信缺少可用凭据：%w", err)}
+	case strings.Contains(msg, "mid 必须"), strings.Contains(msg, "内容不能为空"), strings.Contains(msg, "编码失败"):
+		return &Error{Kind: KindInput, Cause: fmt.Errorf("私信请求参数无效：%w", err)}
 	case strings.Contains(msg, "auth"), strings.Contains(msg, "403"), strings.Contains(msg, "封禁"), strings.Contains(msg, "风控"):
-		return &Error{Kind: KindAuth, Cause: errors.New("私信被风控或权限拒绝")}
+		return &Error{Kind: KindAuth, Cause: fmt.Errorf("私信被风控或权限拒绝：%w", err)}
 	case strings.Contains(msg, "timeout"), strings.Contains(msg, "network"):
-		return &Error{Kind: KindRetry, Cause: errors.New("私信网络异常")}
+		return &Error{Kind: KindRetry, Cause: fmt.Errorf("私信网络异常：%w", err)}
 	default:
-		return &Error{Kind: KindUncertain, Cause: errors.New("私信结果不确定")}
+		return &Error{Kind: KindUncertain, Cause: fmt.Errorf("私信结果不确定：%w", err)}
 	}
 }
 

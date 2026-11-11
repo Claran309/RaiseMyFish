@@ -57,8 +57,9 @@ func TestCollectStatsWithData(t *testing.T) {
 	src := &mockStats{
 		counts: database.WindowCounts{
 			Received: 8, Replied: 6, Skipped: 1, Failed: 1,
-			CostUSD:  floatPtr(0.02),
-			Channels: map[string]database.ChannelCounts{"live": {Received: 8, Replied: 6, Skipped: 1, Failed: 1}},
+			KnownCostUSD: floatPtr(0.02),
+			TotalCalls:   3,
+			Channels:     map[string]database.ChannelCounts{"live": {Received: 8, Replied: 6, Skipped: 1, Failed: 1}},
 		},
 		lastSeen: map[string]time.Time{
 			"live":    statNow.Add(-5 * time.Minute),  // 正常
@@ -81,7 +82,7 @@ func TestCollectStatsWithData(t *testing.T) {
 		"# 日报 " + statNow.Add(-DefaultStatsWindow).Format("2006-01-02 15:04"),
 		"- 收到 8 / 回复 6 / 跳过 1 / 失败 1",
 		"- 成功率 85.7%", // 6/(8-1)
-		"- 费用：$0.02",
+		"- 费用：$0.02（已计价 3/3 次）",
 		"- 通道：live 8/6/1/1",
 	} {
 		if !strings.Contains(got.Report, want) {
@@ -116,7 +117,7 @@ func TestCollectStatsEmptyData(t *testing.T) {
 	for _, want := range []string{
 		"- 收到 0 / 回复 0 / 跳过 0 / 失败 0",
 		"- 成功率 —",
-		"- 费用：未知（未配置报价）",
+		"- 费用：未知（窗口内无调用）",
 		"- 通道：无",
 	} {
 		if !strings.Contains(got.Report, want) {
@@ -128,6 +129,33 @@ func TestCollectStatsEmptyData(t *testing.T) {
 	}
 	if len(got.HeartbeatWarnings) != 0 {
 		t.Errorf("没有通道数据时不应告警，实际 %v", got.HeartbeatWarnings)
+	}
+}
+
+// TestCollectStatsCostLedger 与 Web 面板同口径：known_cost / unknown / total 三件套原样进入日报。
+func TestCollectStatsCostLedger(t *testing.T) {
+	cases := []struct {
+		name   string
+		counts database.WindowCounts
+		want   string
+	}{
+		{"混合账本", database.WindowCounts{KnownCostUSD: floatPtr(0.01), UnknownCalls: 2, TotalCalls: 5},
+			"- 费用：已知 $0.01（已计价 3/5 次，未知 2 次）"},
+		{"全部未知", database.WindowCounts{UnknownCalls: 3, TotalCalls: 3},
+			"- 费用：未知（未配置报价，3 次调用均未计价）"},
+		{"明确免费", database.WindowCounts{KnownCostUSD: floatPtr(0), TotalCalls: 2},
+			"- 费用：$0（已计价 2/2 次）"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := collectStats(context.Background(), &mockStats{counts: tc.counts}, statNow, DefaultStatsWindow)
+			if err != nil {
+				t.Fatalf("collectStats 失败：%v", err)
+			}
+			if !strings.Contains(got.Report, tc.want) {
+				t.Errorf("日报缺少 %q\n实际：\n%s", tc.want, got.Report)
+			}
+		})
 	}
 }
 

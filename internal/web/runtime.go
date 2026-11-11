@@ -79,11 +79,16 @@ type FeatureState struct {
 	LastError string `json:"last_error,omitempty"`
 }
 
-// CommentState 是评论监听状态与当前视频列表。
+// CommentState 是评论监听状态与当前来源配置。
 type CommentState struct {
 	CollectorState
-	Videos       []string `json:"videos"`
-	AutoDiscover bool     `json:"auto_discover"`
+	// FeedEnabled=true 表示监听账号消息（回复我的/@我的）；false 表示视频轮询。
+	FeedEnabled         bool `json:"feed_enabled"`
+	FeedIntervalSeconds int  `json:"feed_interval_seconds"`
+	// DynamicPollEnabled 表示是否轮询自己动态的评论区。
+	DynamicPollEnabled bool     `json:"dynamic_poll_enabled"`
+	Videos             []string `json:"videos"`
+	AutoDiscover       bool     `json:"auto_discover"`
 }
 
 // DMState 是私信监听与白名单状态。

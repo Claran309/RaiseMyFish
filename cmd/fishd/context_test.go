@@ -393,14 +393,21 @@ func TestGeneratePassesUnifiedSnapshotToBrain(t *testing.T) {
 }
 
 // capturingReactLLM 记录 ReAct 实际收到的 system/user。
+// 弹幕通道收尾后会再调用一次反思，首轮 prompt 单独留存供断言。
 type capturingReactLLM struct {
 	system string
 	user   string
 	calls  int
+
+	firstSystem string
+	firstUser   string
 }
 
 func (c *capturingReactLLM) Complete(_ context.Context, system, user string) (string, error) {
 	c.calls++
+	if c.calls == 1 {
+		c.firstSystem, c.firstUser = system, user
+	}
 	c.system = system
 	c.user = user
 	return `{"thought":"够了","action":"final","final":"记得，刚才在聊吃鱼"}`, nil
@@ -415,7 +422,7 @@ func newCapturingReactRuntime(t *testing.T, llm *capturingReactLLM) *reactRuntim
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory := func(memory.Scope, string, bool) (*reasoning.Agent, error) {
+	factory := func(memory.Scope, string, bool, event.Channel) (*reasoning.Agent, error) {
 		return reasoning.New(llm, box, reasoning.Options{MaxSteps: 2, Timeout: 2 * time.Second}, zap.NewNop())
 	}
 	return &reactRuntime{factory: factory, defaultReact: true}
@@ -442,13 +449,13 @@ func TestGenerateReactUsesSameContextSnapshot(t *testing.T) {
 		t.Fatalf("Generate 失败：%v", err)
 	}
 
-	if llm.calls != 1 {
-		t.Fatalf("ReAct 模型调用 = %d，期望 1", llm.calls)
+	if llm.calls != 2 {
+		t.Fatalf("ReAct 模型调用 = %d，期望 2（首轮 + 一次反思）", llm.calls)
 	}
 	if engine.calls != 0 {
 		t.Fatalf("走 ReAct 时不应调单步 Brain，实际 %d", engine.calls)
 	}
-	if !strings.HasPrefix(llm.system, snapshotTestPack().SystemPrompt()) || !strings.Contains(llm.system, "你在回答一条直播弹幕") {
+	if !strings.HasPrefix(llm.firstSystem, snapshotTestPack().SystemPrompt()) || !strings.Contains(llm.firstSystem, "你在回答一条直播弹幕") {
 		t.Errorf("ReAct system 不是「人格 prompt + 协议」")
 	}
 	for _, want := range []string{
@@ -459,8 +466,8 @@ func TestGenerateReactUsesSameContextSnapshot(t *testing.T) {
 		"喜欢被摸头",
 		"你在直播间里陪观众聊天",
 	} {
-		if !strings.Contains(llm.user, want) {
-			t.Errorf("ReAct 上下文缺少 %q：\n%s", want, llm.user)
+		if !strings.Contains(llm.firstUser, want) {
+			t.Errorf("ReAct 上下文缺少 %q：\n%s", want, llm.firstUser)
 		}
 	}
 
@@ -473,8 +480,8 @@ func TestGenerateReactUsesSameContextSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("准备统一生成输入失败：%v", err)
 	}
-	if !strings.HasPrefix(llm.user, strings.TrimSpace(prepared.Context)) {
-		t.Errorf("ReAct 的 Context 与统一快照不同源：\nwant prefix:\n%s\ngot:\n%s", prepared.Context, llm.user)
+	if !strings.HasPrefix(llm.firstUser, strings.TrimSpace(prepared.Context)) {
+		t.Errorf("ReAct 的 Context 与统一快照不同源：\nwant prefix:\n%s\ngot:\n%s", prepared.Context, llm.firstUser)
 	}
 }
 
@@ -491,7 +498,7 @@ func TestRunReactRejectsBadInputBeforeFactory(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
-			runtime := &reactRuntime{factory: func(memory.Scope, string, bool) (*reasoning.Agent, error) {
+			runtime := &reactRuntime{factory: func(memory.Scope, string, bool, event.Channel) (*reasoning.Agent, error) {
 				calls++
 				return nil, errors.New("不应创建 Agent")
 			}, defaultReact: true}

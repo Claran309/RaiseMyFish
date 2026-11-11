@@ -68,6 +68,15 @@ func (b *Toolbox) Names() []string {
 	return append([]string(nil), b.order...)
 }
 
+// Has 判断某个工具是否已注册；调用方据此决定是否改用主动查证路径。
+func (b *Toolbox) Has(name string) bool {
+	if b == nil {
+		return false
+	}
+	_, ok := b.tools[name]
+	return ok
+}
+
 // Descriptions 生成 prompt 里的工具清单。
 func (b *Toolbox) Descriptions() string {
 	if b == nil || len(b.order) == 0 {

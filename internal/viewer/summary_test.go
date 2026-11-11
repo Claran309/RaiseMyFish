@@ -29,6 +29,10 @@ type fakeSummaryStore struct {
 	attempts   int
 	attemptErr error
 	queries    []store.ViewerSummaryQuery
+	// backfillProfiles 是 BackfillViewers 返回的候选（与 ActiveViewers 分离）。
+	backfillProfiles []store.ViewerProfile
+	backfillQueries  []store.ViewerSummaryQuery
+	backfillErr      error
 }
 
 type summaryJobFailure struct {
@@ -44,6 +48,14 @@ func (f *fakeSummaryStore) ActiveViewers(_ context.Context, q store.ViewerSummar
 		return nil, f.listErr
 	}
 	return append([]store.ViewerProfile(nil), f.profiles...), nil
+}
+
+func (f *fakeSummaryStore) BackfillViewers(_ context.Context, q store.ViewerSummaryQuery) ([]store.ViewerProfile, error) {
+	f.backfillQueries = append(f.backfillQueries, q)
+	if f.backfillErr != nil {
+		return nil, f.backfillErr
+	}
+	return append([]store.ViewerProfile(nil), f.backfillProfiles...), nil
 }
 
 func (f *fakeSummaryStore) ExpireProfileSummaryRecent(context.Context, time.Time) ([]string, error) {
@@ -919,5 +931,75 @@ func TestFallbackSummaryCapsSamples(t *testing.T) {
 	}
 	if got := fallbackSummary(nil, "统计"); !strings.Contains(got, "仅统计") || strings.Contains(got, "最近说过") {
 		t.Fatalf("无发言不应拼最近说过：%q", got)
+	}
+}
+
+// TestSummarizerRunBackfillOnlyFirstTimers 手动回填只走 BackfillViewers，
+// 不混入更新/撤回/投影路径，并把人数上限原样下传。
+func TestSummarizerRunBackfillOnlyFirstTimers(t *testing.T) {
+	profiles := []store.ViewerProfile{testProfile("61"), testProfile("62")}
+	st := &fakeSummaryStore{backfillProfiles: profiles}
+	es := &fakeEventSource{byUID: map[string][]event.Event{
+		"61": testMessages("61"),
+		"62": testMessages("62"),
+	}}
+	llm := &scriptedLLM{reply: `{"personality":{"value":"话痨","basis":"observed","evidence":"最新一句"}}`}
+
+	stats, err := newTestSummarizer(t, st, es, llm, nil).RunBackfill(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("回填失败：%v", err)
+	}
+	if stats.Candidates != 2 || stats.Summarized != 2 || stats.Failed != 0 {
+		t.Fatalf("回填统计不符：%+v", stats)
+	}
+	if len(st.queries) != 0 {
+		t.Errorf("回填不应走定时轮 ActiveViewers：%+v", st.queries)
+	}
+	if len(st.backfillQueries) != 1 {
+		t.Fatalf("回填查询次数 = %d", len(st.backfillQueries))
+	}
+	q := st.backfillQueries[0]
+	if q.Limit != 7 || q.BackfillLimit != 7 || q.MinHits != 2 || !q.Now.Equal(testNow().UTC()) {
+		t.Fatalf("回填查询参数不符：%+v", q)
+	}
+	if len(st.saved) != 2 || len(st.revoked) != 0 || len(st.expired) != 0 {
+		t.Fatalf("回填不应触发撤回/过期：saved=%d revoked=%v expired=%v", len(st.saved), st.revoked, st.expired)
+	}
+}
+
+// TestSummarizerRunBackfillValidation 人数必须在 1..500。
+func TestSummarizerRunBackfillValidation(t *testing.T) {
+	st := &fakeSummaryStore{}
+	s := newTestSummarizer(t, st, &fakeEventSource{}, nil, nil)
+	for _, limit := range []int{0, -1, summaryBackfillMaxRequest + 1} {
+		if _, err := s.RunBackfill(context.Background(), limit); err == nil {
+			t.Errorf("limit=%d 应拒绝", limit)
+		}
+	}
+	if len(st.backfillQueries) != 0 {
+		t.Errorf("非法参数不应查库：%+v", st.backfillQueries)
+	}
+}
+
+// TestSummarizerRunBackfillYieldsToForeground 前台正在回复时整轮回填让路。
+func TestSummarizerRunBackfillYieldsToForeground(t *testing.T) {
+	st := &fakeSummaryStore{
+		backfillProfiles: []store.ViewerProfile{testProfile("63"), testProfile("64")},
+		busy:             true,
+	}
+	stats, err := newTestSummarizer(t, st, &fakeEventSource{}, nil, nil).RunBackfill(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("让路不应报错：%v", err)
+	}
+	if stats.BusySkipped != 2 || len(st.saved) != 0 {
+		t.Fatalf("前台繁忙应全部让路：stats=%+v saved=%d", stats, len(st.saved))
+	}
+}
+
+// TestSummarizerRunBackfillListError 读取候选失败要上抛，不静默当空。
+func TestSummarizerRunBackfillListError(t *testing.T) {
+	st := &fakeSummaryStore{backfillErr: errors.New("库挂了")}
+	if _, err := newTestSummarizer(t, st, &fakeEventSource{}, nil, nil).RunBackfill(context.Background(), 10); err == nil {
+		t.Fatal("读取候选失败应报错")
 	}
 }

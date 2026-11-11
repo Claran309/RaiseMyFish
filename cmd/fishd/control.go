@@ -144,7 +144,7 @@ func newRuntimeControl(ctx context.Context, cfg config.Config, deps runtimeDeps,
 			c.mu.Lock()
 			videos := append([]string{}, c.commentVideos...)
 			c.mu.Unlock()
-			return newCommentCollector(cfg, videos, log)
+			return newCommentSource(cfg, videos, deps.Accounts, log)
 		})
 	c.dm = newCollectorController("dm", ctx, deps.Bus, deps.Timeout, log, now, deps.DM,
 		func() (collector.Collector, error) { return newDMCollector(cfg, deps.Accounts, log) })
@@ -266,9 +266,12 @@ func (c *runtimeControl) Status() web.RuntimeStatus {
 	c.mu.Unlock()
 
 	comment := web.CommentState{
-		CollectorState: c.comment.status(),
-		Videos:         videos,
-		AutoDiscover:   c.base.Collector.Comment.AutoDiscover,
+		CollectorState:      c.comment.status(),
+		FeedEnabled:         c.base.Collector.Comment.FeedEnabled,
+		FeedIntervalSeconds: c.base.Collector.Comment.FeedIntervalSeconds,
+		DynamicPollEnabled:  c.base.Collector.Comment.DynamicPollEnabled,
+		Videos:              videos,
+		AutoDiscover:        c.base.Collector.Comment.AutoDiscover,
 	}
 	dm := c.dm.status()
 	allFollowers := false
@@ -320,8 +323,8 @@ func (c *runtimeControl) SetComment(enabled bool, videos []string) error {
 		}
 		target = normalized
 	}
-	// 自动发现开启时允许手动列表为空（完全靠空间视频/动态发现）。
-	if enabled && len(target) == 0 && !c.base.Collector.Comment.AutoDiscover {
+	// 自动发现开启时允许手动列表为空；消息监听模式完全不看视频列表。
+	if enabled && len(target) == 0 && !c.base.Collector.Comment.FeedEnabled && !c.base.Collector.Comment.AutoDiscover {
 		return errors.New("评论监听需要至少一个视频 oid（或开启 auto_discover）")
 	}
 	changed := !equalStrings(previous, target)

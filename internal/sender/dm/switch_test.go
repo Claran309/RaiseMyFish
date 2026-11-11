@@ -26,16 +26,22 @@ type dmHTTPFixture struct {
 func newDMBiliClient(t *testing.T, fixture *dmHTTPFixture) *bili.Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		fixture.mu.Lock()
-		fixture.calls++
-		fixture.cookie = r.Header.Get("Cookie")
-		fixture.form = r.PostForm
-		fixture.mu.Unlock()
 		switch r.URL.Path {
+		case "/x/web-interface/nav":
+			// 私信发送需要 WBI 签名；nav 用当前请求的凭据应答。
+			_, _ = w.Write([]byte(`{"code":0,"data":{"wbi_img":{"img_url":"https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
 		case "/web_im/v1/web_im/send_msg":
-			_, _ = w.Write([]byte(`{"code":0,"data":{"msg_key":"mk-1"}}`))
+			_ = r.ParseForm()
+			fixture.mu.Lock()
+			fixture.calls++
+			fixture.cookie = r.Header.Get("Cookie")
+			fixture.form = r.PostForm
+			fixture.mu.Unlock()
+			_, _ = w.Write([]byte(`{"code":0,"data":{"msg_key":"90001"}}`))
 		case "/x/relation":
+			fixture.mu.Lock()
+			fixture.cookie = r.Header.Get("Cookie")
+			fixture.mu.Unlock()
 			_, _ = w.Write([]byte(`{"code":0,"data":{"attribute":6}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -68,7 +74,7 @@ func TestSendDMUsesActorSnapshot(t *testing.T) {
 	ctx := bili.WithActor(context.Background(), oldActor())
 
 	msgID, err := transporter.SendDM(ctx, "2002", "旧号回复")
-	if err != nil || msgID != "mk-1" {
+	if err != nil || msgID != "90001" {
 		t.Fatalf("发送失败：%q %v", msgID, err)
 	}
 	fixture.mu.Lock()

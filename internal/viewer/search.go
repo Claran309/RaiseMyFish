@@ -32,6 +32,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"RaiseMyFish/internal/llmmeta"
 	"RaiseMyFish/internal/store"
 )
 
@@ -890,6 +891,8 @@ func stripQuestionShell(text string) string {
 }
 
 func (s *Searcher) embedQuery(ctx context.Context, text string) ([]float64, error) {
+	// 账本用途：查询向量化；关联标识只写索引名。
+	ctx = llmmeta.WithCall(ctx, llmmeta.Call{Purpose: llmmeta.PurposeEmbedQuery, CorrelationID: "viewer"})
 	vectors, err := s.embedder.Embed(ctx, []string{text})
 	if err != nil {
 		return nil, err

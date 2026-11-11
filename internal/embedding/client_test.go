@@ -201,6 +201,77 @@ func TestEmbedContextCanceled(t *testing.T) {
 	}
 }
 
+// TestEmbedUsageSink 每次真实 HTTP 尝试都上报用量：成功带服务端声明的 token 与缓存命中，失败记 ok=false。
+func TestEmbedUsageSink(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		attempts int
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		attempts++
+		n := attempts
+		mu.Unlock()
+		if n == 2 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"embedding":[1,2,3]}],"usage":{"prompt_tokens":10,"prompt_tokens_details":{"cached_tokens":4}}}`))
+	}))
+	defer server.Close()
+
+	var (
+		sinkMu sync.Mutex
+		got    []Usage
+	)
+	client := newTestClient(t, server.URL, Options{
+		BatchSize: 1,
+		OnUsage: func(_ context.Context, u Usage) {
+			sinkMu.Lock()
+			defer sinkMu.Unlock()
+			got = append(got, u)
+		},
+	})
+
+	if _, err := client.Embed(context.Background(), []string{"a", "b"}); err == nil {
+		t.Fatal("第二批 429 应失败")
+	}
+
+	sinkMu.Lock()
+	defer sinkMu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("应上报 2 次尝试，实际 %d：%+v", len(got), got)
+	}
+	first, second := got[0], got[1]
+	if !first.OK || first.InputTokens == nil || *first.InputTokens != 10 ||
+		first.CachedInputTokens == nil || *first.CachedInputTokens != 4 ||
+		first.At.IsZero() || first.Milliseconds < 0 {
+		t.Fatalf("成功尝试上报不符：%+v", first)
+	}
+	if second.OK || second.InputTokens != nil || second.CachedInputTokens != nil {
+		t.Fatalf("失败尝试应 ok=false 且 token 未知：%+v", second)
+	}
+}
+
+// TestEmbedUsageKeptOnMalformedVectors 向量结构错误时，服务端已声明的 token 仍要上报（ok=false）。
+func TestEmbedUsageKeptOnMalformedVectors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[],"usage":{"prompt_tokens":7}}`))
+	}))
+	defer server.Close()
+
+	var got []Usage
+	client := newTestClient(t, server.URL, Options{
+		OnUsage: func(_ context.Context, u Usage) { got = append(got, u) },
+	})
+	if _, err := client.Embed(context.Background(), []string{"a"}); err == nil {
+		t.Fatal("条数不符应失败")
+	}
+	if len(got) != 1 || got[0].OK || got[0].InputTokens == nil || *got[0].InputTokens != 7 {
+		t.Fatalf("已知用量在结构错误时丢失：%+v", got)
+	}
+}
+
 // TestNewRejectsUnsafeOptions 拒绝非本机 HTTP、空模型与非法维度/批量。
 func TestNewRejectsUnsafeOptions(t *testing.T) {
 	for _, opts := range []Options{

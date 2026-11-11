@@ -10,7 +10,6 @@ package web
 //   - 列表统一截断正文，响应里不出现任何凭据/完整 prompt。
 
 import (
-	"net/http/pprof"
 	"context"
 	"embed"
 	"encoding/json"
@@ -20,6 +19,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"strconv"
 	"strings"
 	"time"
@@ -72,6 +72,12 @@ type Options struct {
 	ViewerSummary ViewerSummaryControl
 	// Logs 可选：日志读取口；nil 时日志接口返回 503。
 	Logs LogSource
+	// Injections 可选：看板注入读写口；nil 时注入接口返回 503。
+	Injections store.InjectionRepo
+	// Diary 可选：日报读写口；nil 时日报接口返回 503。
+	Diary store.DiaryRepo
+	// DiaryGenerator 可选：手动生成日报；nil 时生成接口返回 503。
+	DiaryGenerator DiaryGenerator
 	// Token 可选：写接口的本地令牌；为空时每次启动随机生成。
 	Token string
 }
@@ -87,6 +93,9 @@ type Server struct {
 	control       RuntimeController
 	viewerSummary ViewerSummaryControl
 	logs          LogSource
+	injections    store.InjectionRepo
+	diary         store.DiaryRepo
+	diaryGen      DiaryGenerator
 	// token 是本地写接口令牌（O04）：页面从 HTML 读、CLI 从 /api/token 取。
 	token string
 	// port 是面板端口，Host/Origin 校验必须与它一致。
@@ -126,6 +135,7 @@ func New(o Options) (*Server, error) {
 	return &Server{
 		addr: addr, repo: o.Repo, log: o.Log, now: now,
 		knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts, control: o.Control, viewerSummary: o.ViewerSummary, logs: o.Logs,
+		injections: o.Injections, diary: o.Diary, diaryGen: o.DiaryGenerator,
 		token: token, port: port,
 	}, nil
 }
@@ -168,6 +178,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/token", s.guard(s.handleToken))
 	mux.HandleFunc("/api/status", s.guard(s.handleStatus))
 	mux.HandleFunc("/api/embedding/status", s.guard(s.handleEmbeddingStatus))
+	mux.HandleFunc("/api/inject", s.guard(s.handleInject))
+	mux.HandleFunc("/api/inject/", s.guard(s.handleInjectItem))
+	mux.HandleFunc("/api/diary", s.guard(s.handleDiary))
+	mux.HandleFunc("/api/diary/", s.guard(s.handleDiaryItem))
 	mux.HandleFunc("/api/memory", s.guard(s.handleMemory))
 	mux.HandleFunc("/api/memory/", s.guard(s.handleMemoryDelete))
 	mux.HandleFunc("/api/events", s.guard(s.handleEvents))
@@ -175,6 +189,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/comment/recent", s.guard(s.handleCommentRecent))
 	mux.HandleFunc("/api/dm/recent", s.guard(s.handleDMRecent))
 	mux.HandleFunc("/api/errors", s.guard(s.handleErrors))
+	mux.HandleFunc("/api/errors/clear", s.guard(s.handleErrorsClear))
+	mux.HandleFunc("/api/errors/", s.guard(s.handleErrorItem))
 	mux.HandleFunc("/api/send_log", s.guard(s.handleSendLog))
 	mux.HandleFunc("/api/accounts", s.guard(s.handleAccounts))
 	mux.HandleFunc("/api/accounts/", s.guard(s.handleAccountAction))
@@ -257,6 +273,8 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		name = "static/config.html"
 	case "/logs":
 		name = "static/logs.html"
+	case "/diary":
+		name = "static/diary.html"
 	default:
 		http.NotFound(w, r)
 		return
@@ -359,8 +377,18 @@ func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "只支持 GET")
 		return
 	}
+	// 排序只接受白名单值，未知参数直接拒绝，避免把 SQL 排序交给用户输入。
+	order := strings.TrimSpace(r.URL.Query().Get("sort"))
+	switch order {
+	case "":
+		order = "time"
+	case "time", "importance":
+	default:
+		writeError(w, http.StatusBadRequest, "排序仅支持 time 或 importance")
+		return
+	}
 	limit := limitParam(r, defaultLimit)
-	rows, err := s.repo.Memory(r.Context(), r.URL.Query().Get("kind"), r.URL.Query().Get("q"), limit)
+	rows, err := s.repo.Memory(r.Context(), r.URL.Query().Get("kind"), r.URL.Query().Get("q"), order, limit)
 	if err != nil {
 		s.fail(w, "读取记忆失败", err)
 		return
@@ -378,7 +406,7 @@ func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 			"created_at":      m.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": len(items)})
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": len(items), "sort": order})
 }
 
 // handleMemoryDelete 处理 DELETE /api/memory/{id}?confirm=yes。
@@ -679,6 +707,72 @@ func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": len(items)})
 }
 
+// handleErrorItem 处理 DELETE /api/errors/{id}?confirm=yes：单条标记已清理。
+func (s *Server) handleErrorItem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		writeError(w, http.StatusMethodNotAllowed, "只支持 DELETE")
+		return
+	}
+	id := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/errors/"))
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, http.StatusBadRequest, "缺少异常事件 id")
+		return
+	}
+	if !confirmYes(w, r, "清理异常") {
+		return
+	}
+	if err := s.repo.ClearError(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrWebNotFound) {
+			writeError(w, http.StatusNotFound, "异常不存在或已清理")
+			return
+		}
+		s.fail(w, "清理异常失败", err)
+		return
+	}
+	s.log.Info("面板清理异常事件", zap.String("action", "web_error_clear"), zap.String("id", id))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
+}
+
+// handleErrorsClear 处理 POST /api/errors/clear?confirm=yes：清理 N 天前的异常。
+func (s *Server) handleErrorsClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "只支持 POST")
+		return
+	}
+	if !confirmYes(w, r, "批量清理异常") {
+		return
+	}
+	var body struct {
+		Days int `json:"days"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Days == 0 {
+		body.Days = 7
+	}
+	if body.Days < 1 || body.Days > 365 {
+		writeError(w, http.StatusBadRequest, "清理天数需在 1 至 365 之间")
+		return
+	}
+	before := s.now().AddDate(0, 0, -body.Days)
+	cleared, err := s.repo.ClearErrorsBefore(r.Context(), before)
+	if err != nil {
+		if errors.Is(err, store.ErrInvalid) {
+			writeError(w, http.StatusBadRequest, "清理时间无效")
+			return
+		}
+		s.fail(w, "批量清理异常失败", err)
+		return
+	}
+	s.log.Info("面板批量清理异常事件",
+		zap.String("action", "web_error_clear"),
+		zap.Int("days", body.Days),
+		zap.Int64("cleared", cleared),
+	)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "days": body.Days, "cleared": cleared})
+}
+
 // handleSendLog 返回发送记录。
 func (s *Server) handleSendLog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -697,7 +791,9 @@ func (s *Server) handleSendLog(w http.ResponseWriter, r *http.Request) {
 			"event_id": e.EventID,
 			"channel":  e.Channel,
 			"ok":       e.OK,
+			"verified": e.Verified,
 			"msg_id":   clip(e.MsgID),
+			"error":    clip(e.Error),
 			"at":       e.At.UTC().Format(time.RFC3339),
 		})
 	}

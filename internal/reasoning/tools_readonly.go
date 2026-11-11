@@ -1,7 +1,7 @@
 package reasoning
 
-// 本文件实现 7 个固定只读工具：查观众史、查自己回复、直播间状态、额度、时间、画面、搜索。
-// 观众档案语义检索（viewer_search）在注入依赖时额外注册。
+// 本文件实现固定只读工具：查观众史、查自己回复、直播间状态、额度、时间、画面、搜索。
+// 观众档案语义检索（viewer_search）与看直播（watch_live）在注入依赖时额外注册。
 //
 // 共同约束（派发单）：只读、不写库、参数校验、结果截断 ≤500 字。
 
@@ -27,6 +27,8 @@ const (
 	ToolNow          = "now"
 	ToolVision       = "vision"
 	ToolWebSearch    = "web_search"
+	// ToolWatchLive 是「看直播」：读取本轮已采集的画面/声音/最近弹幕。
+	ToolWatchLive = "watch_live"
 )
 
 // maxReadOnlyRunes 是非结构化只读工具（档案/直播/画面/搜索）的统一截断长度；
@@ -83,6 +85,14 @@ type FrameReader interface {
 	Describe(ctx context.Context, framePath string) (string, error)
 }
 
+// LiveViewSource 返回本轮已采集的直播感知（画面/声音/最近弹幕）。
+//
+// 采样由主动弹幕完成；工具只读缓存，不现场录制（ReAct 只有 3 步/8 秒，
+// 现录 30 秒会直接把预算耗光）。
+type LiveViewSource interface {
+	LiveView(ctx context.Context) (string, error)
+}
+
 // ReadOnlyDeps 是只读工具的数据来源；为 nil 的工具仍会注册，
 // 但调用时明确返回「未配置」，让模型知道「这条路走不通」而不是「没有数据」。
 type ReadOnlyDeps struct {
@@ -97,6 +107,8 @@ type ReadOnlyDeps struct {
 	Frame     FrameSource
 	FrameRead FrameReader
 	Search    WebSearcher
+	// LiveView 为 nil 时不注册 watch_live（被动回复没有现成感知缓存）。
+	LiveView LiveViewSource
 	// Room 是本会话房间号；空串时直播类工具返回未配置。
 	Room string
 	// SpeakerUID 是本条事件的发送者 UID（可信平台身份），用于「我是谁」。
@@ -114,7 +126,7 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 		now = time.Now
 	}
 	room := strings.TrimSpace(d.Room)
-	tools := make([]Tool, 0, 7)
+	tools := make([]Tool, 0, 8)
 
 	tools = append(tools, Tool{
 		Name: ToolViewerMemory,
@@ -239,6 +251,20 @@ func BuildReadOnlyTools(d ReadOnlyDeps) (*Toolbox, error) {
 			return clip(out, maxReadOnlyRunes), nil
 		},
 	})
+
+	if d.LiveView != nil {
+		tools = append(tools, Tool{
+			Name: ToolWatchLive,
+			Desc: "看当前直播：直播画面+主播刚说+最近观众弹幕；args 忽略",
+			Run: func(ctx context.Context, _ string) (string, error) {
+				out, err := d.LiveView.LiveView(ctx)
+				if err != nil {
+					return "", err
+				}
+				return clip(out, maxReadOnlyRunes), nil
+			},
+		})
+	}
 
 	tools = append(tools, Tool{
 		Name: ToolQuota,

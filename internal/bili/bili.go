@@ -332,36 +332,12 @@ func (c *Client) Like(ctx context.Context, room string, count int) error {
 }
 
 // SendDM 发私信（只允许由工具层白名单放行后的调用）。
+//
+// 复用 SendMessage 的完整签名与设备号逻辑，避免工具层与 sender 通道出现两套
+// 请求参数（历史上旧实现缺 dev_id/时间戳，导致私信请求被平台拒绝）。
 func (c *Client) SendDM(ctx context.Context, mid, text string) error {
-	if !isDigits(mid) {
-		return errors.New("mid 必须是纯数字")
-	}
-	if strings.TrimSpace(text) == "" {
-		return errors.New("私信内容不能为空")
-	}
-	cred, err := c.resolve(ctx)
-	if err != nil {
-		return wrapResolveError("dm", err)
-	}
-	if err := requireCSRF("dm", cred.csrf); err != nil {
-		return err
-	}
-	if cred.selfMID == "" || !isDigits(cred.selfMID) {
-		return errors.New("缺少本账号UID，无法发私信")
-	}
-	content, err := json.Marshal(map[string]string{"content": text})
-	if err != nil {
-		return errors.New("私信内容编码失败")
-	}
-	form := url.Values{}
-	form.Set("msg[sender_uid]", cred.selfMID)
-	form.Set("msg[receiver_id]", mid)
-	form.Set("msg[receiver_type]", strconv.Itoa(receiverTypeUser))
-	form.Set("msg[msg_type]", strconv.Itoa(msgTypeText))
-	form.Set("msg[content]", string(content))
-	form.Set("csrf", cred.csrf)
-	form.Set("csrf_token", cred.csrf)
-	return c.send(ctx, cred, "dm", http.MethodPost, c.vc+"/web_im/v1/web_im/send_msg", form, nil)
+	_, err := c.SendMessage(ctx, mid, text)
+	return err
 }
 
 // PostDynamic 发一条纯文本动态（默认由工具层开关关掉）。
@@ -423,8 +399,16 @@ func (c *Client) do(ctx context.Context, op, method, endpoint string, form url.V
 // B站按 Referer 校验来源：直播接口要求 live.bilibili.com，空间/用户主页接口
 // 要求 space.bilibili.com；用错来源会被风控返回 412（实测 space_videos）。
 func refererFor(op string) string {
+	// 实测：space_dynamics 带 space.bilibili.com referer 会 412，不带 referer 反而 200。
+	if op == "space_dynamics" {
+		return ""
+	}
 	if strings.HasPrefix(op, "space_") || op == "wbi_keys" {
 		return "https://space.bilibili.com/"
+	}
+	// 私信发送来自消息中心页面；带直播站 Referer 会被来源校验拦下。
+	if strings.HasPrefix(op, "msgfeed_") || op == "dm_send" || op == "dm" {
+		return "https://message.bilibili.com/"
 	}
 	return "https://live.bilibili.com/"
 }
@@ -440,8 +424,11 @@ func (c *Client) send(ctx context.Context, cred credential, op, method, endpoint
 		return &Error{Op: op, Cause: errors.New("构造请求失败")}
 	}
 	req.Header.Set("Cookie", cred.cookie)
-	req.Header.Set("Referer", refererFor(op))
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) RaiseMyFish/0.22")
+	if ref := refererFor(op); ref != "" {
+		req.Header.Set("Referer", ref)
+	}
+	// UA 与浏览器一致：带自定义后缀（如 RaiseMyFish）会被 B站风控判定为机器人（space 接口 412）。
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}

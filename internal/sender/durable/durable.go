@@ -395,6 +395,18 @@ func (s *Sender) deliver(ctx context.Context, c event.Claim, planAccount string,
 			// 平台接受且有稳定回执：恢复只会再次返回同一事实。
 			return sender.Result{OK: true, MsgID: a.MsgID, Verified: true}, nil
 		}
+		if stableReceipt(a.MsgID) {
+			// 平台已接受且有稳定回执，只是没完成核验：按「已发送（未确认）」保留，
+			// 不重投也不冒充已验证。
+			s.log.Warn("恢复：平台已接受且有稳定回执，按已发送（未确认）保留",
+				zap.String("action", "planned_sent_unconfirmed"),
+				zap.String("event_id", c.Event.ID),
+				zap.String("ch", string(s.channel)),
+				zap.String("attempt_id", a.ID),
+				zap.String("msg_id", a.MsgID),
+			)
+			return sender.Result{OK: true, MsgID: a.MsgID, Error: "unconfirmed"}, &sender.Error{Kind: sender.KindUncertain, Cause: errors.New("平台已接受但回执未核验")}
+		}
 		// 平台明确接受但缺稳定回执（含旧数据伪造的 Verified）：不冒充完成，也不再重投。
 		// 旧数据输入还没结清时交给上层按不确定停止。
 		return sender.Result{OK: true, MsgID: a.MsgID, Error: "unconfirmed"}, &sender.Error{Kind: sender.KindUncertain, Cause: errors.New("平台已接受但缺少稳定回执")}
@@ -405,6 +417,7 @@ func (s *Sender) deliver(ctx context.Context, c event.Claim, planAccount string,
 			zap.String("ch", string(s.channel)),
 			zap.String("attempt_id", a.ID),
 			zap.String("state", a.State),
+			zap.String("error_kind", a.ErrorKind),
 		)
 		return sender.Result{Error: "unknown_manual"}, &sender.Error{Kind: sender.KindUncertain, Cause: errors.New("投递结果未知，恢复不重发")}
 	case sender.StateDead, sender.StateManual:
@@ -484,7 +497,27 @@ func (s *Sender) deliver(ctx context.Context, c event.Claim, planAccount string,
 	switch outcome.State {
 	case sender.StateAccepted:
 		if !outcome.Verified {
-			// 计划事务已把输入结清为 dead（不伪造 done）：返回已结清的「接受但未验证」。
+			// 计划事务已按回执情况结清输入：回执稳定记「已发送（未确认）」，
+			// 没有回执保持 unknown；两者都不再重投。
+			if stableReceipt(outcome.MsgID) {
+				s.log.Warn("平台已接受且有稳定回执，按已发送（未确认）记录",
+					zap.String("action", "planned_sent_unconfirmed"),
+					zap.String("event_id", c.Event.ID),
+					zap.String("ch", string(s.channel)),
+					zap.String("attempt_id", armed.ID),
+					zap.String("msg_id", outcome.MsgID),
+				)
+				return sender.Result{OK: true, MsgID: outcome.MsgID, Error: "unconfirmed"}, &sender.Error{Kind: sender.KindUncertain, Settled: true, Cause: errors.New("平台已接受但回执未核验")}
+			}
+			// 平台明确接受却没有可核验回执：输入按 dead 停止自动处理，
+			// 这里必须留下原因，否则事件看起来「静默死亡」。
+			s.log.Warn("平台已接受但缺少稳定回执，停止自动处理",
+				zap.String("action", "planned_unknown_no_receipt"),
+				zap.String("event_id", c.Event.ID),
+				zap.String("ch", string(s.channel)),
+				zap.String("attempt_id", armed.ID),
+				zap.String("error_kind", outcome.ErrorKind),
+			)
 			return sender.Result{OK: true, MsgID: outcome.MsgID, Error: "unconfirmed"}, &sender.Error{Kind: sender.KindUncertain, Settled: true, Cause: errors.New("平台已接受但缺少稳定回执")}
 		}
 		return sender.Result{OK: true, MsgID: outcome.MsgID, Verified: true}, nil
@@ -495,6 +528,7 @@ func (s *Sender) deliver(ctx context.Context, c event.Claim, planAccount string,
 			zap.String("ch", string(s.channel)),
 			zap.String("attempt_id", armed.ID),
 			zap.String("error_kind", outcome.ErrorKind),
+			causeField(sendErr),
 		)
 		if sendErr != nil {
 			return sender.Result{Error: outcome.ErrorKind}, sendErr
@@ -507,6 +541,7 @@ func (s *Sender) deliver(ctx context.Context, c event.Claim, planAccount string,
 			zap.String("ch", string(s.channel)),
 			zap.String("attempt_id", armed.ID),
 			zap.String("error_kind", outcome.ErrorKind),
+			causeField(sendErr),
 		)
 		return sender.Result{Error: outcome.ErrorKind}, terminalError(outcome.ErrorKind)
 	default:
@@ -516,6 +551,7 @@ func (s *Sender) deliver(ctx context.Context, c event.Claim, planAccount string,
 			zap.String("ch", string(s.channel)),
 			zap.String("attempt_id", armed.ID),
 			zap.String("error_kind", outcome.ErrorKind),
+			causeField(sendErr),
 		)
 		return sender.Result{Error: outcome.ErrorKind}, &sender.Error{Kind: sender.KindUncertain, Cause: errors.New("投递结果未知")}
 	}
@@ -562,6 +598,40 @@ func stableReceipt(id string) bool {
 		return false
 	}
 	return strings.Trim(id, "0") != ""
+}
+
+// causeField 把内层发送错误的完整链放进日志字段。
+//
+// 项目内错误类型的 Error() 都承诺不含凭据与正文；这里只做展开，不打印结构化字段。
+// err 为空时返回 zap.Skip，避免日志里出现空的 cause。
+func causeField(err error) zap.Field {
+	if err == nil {
+		return zap.Skip()
+	}
+	return zap.String("cause", errorChain(err))
+}
+
+// errorChain 展开错误链的逐层展示文本（含 errors.Join 的多分支）。
+func errorChain(err error) string {
+	const maxParts = 8
+	parts := make([]string, 0, maxParts)
+	var walk func(error)
+	walk = func(e error) {
+		if e == nil || len(parts) >= maxParts {
+			return
+		}
+		parts = append(parts, e.Error())
+		switch wrapped := e.(type) {
+		case interface{ Unwrap() []error }:
+			for _, child := range wrapped.Unwrap() {
+				walk(child)
+			}
+		case interface{ Unwrap() error }:
+			walk(wrapped.Unwrap())
+		}
+	}
+	walk(err)
+	return strings.Join(parts, "：")
 }
 
 // trustedNotPosted 判断一次失败能否断言「平台没有收到」。

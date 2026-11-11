@@ -316,6 +316,8 @@ func TestRuntimeControlStatus(t *testing.T) {
 		Sender: &config.Sender{DM: config.DMSender{AllowedMIDs: []string{"42"}}},
 	}
 	cfg.Collector.Comment.AutoDiscover = true
+	cfg.Collector.Comment.FeedEnabled = true
+	cfg.Collector.Comment.FeedIntervalSeconds = 45
 	gate := &atomic.Bool{}
 	control, err := newRuntimeControl(context.Background(), cfg, runtimeDeps{
 		Bus:         &recordingBus{},
@@ -339,8 +341,8 @@ func TestRuntimeControlStatus(t *testing.T) {
 	if len(st.DM.AllowedMIDs) != 2 || st.DM.WhitelistAvailable || !st.DM.AllFollowers {
 		t.Errorf("私信状态不符：%+v", st.DM)
 	}
-	if !st.Comment.AutoDiscover {
-		t.Errorf("评论自动发现状态不符：%+v", st.Comment)
+	if !st.Comment.AutoDiscover || !st.Comment.FeedEnabled || st.Comment.FeedIntervalSeconds != 45 {
+		t.Errorf("评论监听状态不符：%+v", st.Comment)
 	}
 	if !st.Gift.Enabled || st.Gift.DailyLimit != 5 || st.Gift.Day == "" {
 		t.Errorf("礼物状态不符：%+v", st.Gift)

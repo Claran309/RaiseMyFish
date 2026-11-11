@@ -64,6 +64,7 @@ func TestVisionUsageReachesPanelStats(t *testing.T) {
 
 	var row struct {
 		Channel      string   `gorm:"column:channel"`
+		Purpose      string   `gorm:"column:purpose"`
 		Model        string   `gorm:"column:model"`
 		InputTokens  *int     `gorm:"column:in_tokens"`
 		OutputTokens *int     `gorm:"column:out_tokens"`
@@ -71,11 +72,11 @@ func TestVisionUsageReachesPanelStats(t *testing.T) {
 		OK           bool     `gorm:"column:ok"`
 	}
 	if err := db.WithContext(ctx).Raw(
-		`SELECT channel, model, in_tokens, out_tokens, cost_usd, ok FROM llm_usage WHERE model = ?`,
+		`SELECT channel, purpose, model, in_tokens, out_tokens, cost_usd, ok FROM llm_usage WHERE model = ?`,
 		"vision-model").Scan(&row).Error; err != nil {
 		t.Fatal(err)
 	}
-	if row.Channel != "live" || !row.OK {
+	if row.Channel != "live" || !row.OK || row.Purpose != "vision" {
 		t.Fatalf("视觉账本行不符：%+v", row)
 	}
 	if row.InputTokens == nil || *row.InputTokens != 1000 || row.OutputTokens == nil || *row.OutputTokens != 500 {
@@ -91,10 +92,14 @@ func TestVisionUsageReachesPanelStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("统计失败：%v", err)
 	}
-	if counts.CostUSD == nil {
+	if counts.KnownCostUSD == nil {
 		t.Fatal("费用总览应为已知值，实际 unknown")
 	}
-	if *counts.CostUSD < 0.0019999 {
-		t.Fatalf("费用总览未包含视觉调用：%v", *counts.CostUSD)
+	if *counts.KnownCostUSD < 0.0019999 {
+		t.Fatalf("费用总览未包含视觉调用：%v", *counts.KnownCostUSD)
+	}
+	if counts.UnknownCalls != 0 || counts.TotalCalls < 1 || counts.Coverage != 1 {
+		t.Fatalf("账本口径不符：unknown=%d total=%d coverage=%v",
+			counts.UnknownCalls, counts.TotalCalls, counts.Coverage)
 	}
 }

@@ -44,7 +44,7 @@ tr.ev:hover{background:#1b2029}
 <body>
 <header>
   <b>🐟 大肥鱼面板</b>
-  <nav><a href="/">概览</a><a href="/live">直播</a><a href="/message">消息</a><a class="on" href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
+  <nav><a href="/">概览</a><a href="/live">直播</a><a href="/message">消息</a><a class="on" href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a href="/diary">日报</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
 </header>
 <main>
   <div class="bar">
@@ -101,9 +101,9 @@ tr.ev:hover{background:#1b2029}
     <tbody id="like-log"></tbody>
   </table>
 
-  <h3>最近发送</h3>
+  <h3>最近发送 <span class="tag">「已发送（未确认）」= 平台已接受，但没有核验到回执</span></h3>
   <table>
-    <thead><tr><th>时间</th><th>通道</th><th>OK</th><th>msg_id</th><th>事件</th></tr></thead>
+    <thead><tr><th>时间</th><th>通道</th><th>状态</th><th>msg_id</th><th>错误</th><th>事件</th></tr></thead>
     <tbody id="sends"></tbody>
   </table>
 </main>
@@ -137,7 +137,13 @@ async function loadEvents() {
   var limit = document.getElementById('limit').value;
   var d = await (await fetch('/api/events?dir=' + dir + '&limit=' + limit)).json();
   document.getElementById('cnt').textContent = (d.count || 0) + ' 条';
-  document.getElementById('rows').innerHTML = (d.items || []).map(function (e) {
+  var items = d.items || [];
+  if (!items.length) {
+    document.getElementById('rows').innerHTML =
+      '<tr><td colspan="7" class="muted">暂无事件：换个方向筛选，或等待新的弹幕/评论/私信</td></tr>';
+    return;
+  }
+  document.getElementById('rows').innerHTML = items.map(function (e) {
     return '<tr class="ev" data-id="' + esc(e.id) + '" onclick="showDetail(this.dataset.id)">' +
       '<td class="tag">' + esc(e.at) + '</td><td class="tag">' + esc(e.dir) + '</td>' +
       '<td class="tag">' + esc(e.channel) + '</td><td class="tag">' + esc(e.session) + '</td>' +
@@ -198,13 +204,17 @@ async function loadLogs() {
   var like = await (await fetch('/api/like/log?limit=20')).json();
   document.getElementById('like-log').innerHTML = logRows(like.items);
 }
+function sendState(e) {
+  if (!e.ok) return '失败';
+  return e.verified ? '已发送' : '已发送（未确认）';
+}
 async function loadSends() {
   var s = await (await fetch('/api/send_log?limit=20')).json();
   document.getElementById('sends').innerHTML = (s.items || []).map(function (e) {
     return '<tr><td class="tag">' + esc(e.at) + '</td><td class="tag">' + esc(e.channel) + '</td>' +
-      '<td>' + (e.ok ? '✅' : '❌') + '</td><td class="tag">' + esc(e.msg_id) + '</td>' +
-      '<td class="tag">' + esc(e.event_id) + '</td></tr>';
-  }).join('');
+      '<td>' + esc(sendState(e)) + '</td><td class="tag">' + esc(e.msg_id) + '</td>' +
+      '<td class="tag">' + esc(e.error) + '</td><td class="tag">' + esc(e.event_id) + '</td></tr>';
+  }).join('') || '<tr><td colspan="6" class="muted">暂无发送记录</td></tr>';
 }
 function load() {
   loadEvents();

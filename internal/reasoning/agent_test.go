@@ -81,7 +81,67 @@ func newTestAgent(t *testing.T, llm LLM, opts Options, tools ...Tool) *Agent {
 	return agent
 }
 
-// TestSystemPromptDistinguishesWhoIsWho 防止「XX 是谁」被一律当成观众或一律解释成自己。
+// TestRunRecordsSentDanmaku 单轮可连发多条；已发弹幕记进 Result，且不算查证证据。
+func TestRunRecordsSentDanmaku(t *testing.T) {
+	sender := &fakeDanmakuSender{}
+	box, err := BuildDanmakuTool(DanmakuDeps{Sender: sender, Now: steppingClock()})
+	if err != nil {
+		t.Fatalf("装配弹幕工具失败：%v", err)
+	}
+	llm := &scriptedLLM{replies: []string{
+		`{"thought":"先吐槽","action":"send_danmaku","args":"{\"text\":\"第一条\"}"}`,
+		`{"thought":"补一句","action":"send_danmaku","args":"{\"text\":\"第二条\"}"}`,
+		`{"thought":"够了","action":"final","final":"收尾"}`,
+	}}
+	agent, err := New(llm, box, DefaultOptions(), zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配 Agent 失败：%v", err)
+	}
+	res, err := agent.Run(context.Background(), Input{Question: "在吗"})
+	if err != nil {
+		t.Fatalf("Run 失败：%v", err)
+	}
+	if len(res.Danmaku) != 2 || res.Danmaku[0] != "第一条" || res.Danmaku[1] != "第二条" {
+		t.Fatalf("Result.Danmaku 不符：%+v", res.Danmaku)
+	}
+	if res.Text != "收尾" {
+		t.Errorf("final 正文应保留：%q", res.Text)
+	}
+	if len(res.Evidence) != 0 {
+		t.Errorf("发送弹幕不是查证，不应进证据：%+v", res.Evidence)
+	}
+	if got := sender.sent(); len(got) != 2 {
+		t.Errorf("实际发送 %d 条，期望 2：%+v", len(got), got)
+	}
+}
+
+// TestRunDegradeKeepsSentDanmaku 降级不能抹掉已经发出去的弹幕。
+func TestRunDegradeKeepsSentDanmaku(t *testing.T) {
+	sender := &fakeDanmakuSender{}
+	box, err := BuildDanmakuTool(DanmakuDeps{Sender: sender, Now: steppingClock()})
+	if err != nil {
+		t.Fatalf("装配弹幕工具失败：%v", err)
+	}
+	llm := &scriptedLLM{
+		replies: []string{`{"thought":"先发","action":"send_danmaku","args":"{\"text\":\"已发的那条\"}"}`},
+		errs:    map[int]error{1: errors.New("模型挂了")},
+	}
+	agent, err := New(llm, box, Options{MaxSteps: 2, Timeout: time.Second}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("装配 Agent 失败：%v", err)
+	}
+	res, err := agent.Run(context.Background(), Input{Question: "在吗"})
+	if err != nil {
+		t.Fatalf("Run 失败：%v", err)
+	}
+	if !res.Degraded || res.Reason != DegradeLLMError {
+		t.Fatalf("应走模型错误降级：%+v", res)
+	}
+	if len(res.Danmaku) != 1 || res.Danmaku[0] != "已发的那条" {
+		t.Fatalf("降级后仍应保留已发弹幕：%+v", res.Danmaku)
+	}
+}
+
 func TestSystemPromptDistinguishesWhoIsWho(t *testing.T) {
 	tool := &countingTool{name: ToolViewerSearch, out: "档案"}
 	agent := newTestAgent(t, &scriptedLLM{}, DefaultOptions(), tool.tool())
@@ -96,6 +156,10 @@ func TestSystemPromptDistinguishesWhoIsWho(t *testing.T) {
 		"memory_search 的 args 传昵称或关键词",
 		"corrections",
 		"搜索状态：已完成（已联网）",
+		"正确示例",
+		"错误示例",
+		"args 必须是字符串",
+		"第一个字符必须是 {",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("ReAct system prompt 缺少规则 %q：%s", want, prompt)
@@ -233,12 +297,13 @@ func TestTimeoutAfterToolKeepsEvidence(t *testing.T) {
 	}
 }
 
-// TestParseFailureDegrades 模型输出不是合法 JSON → 解析失败降级。
-func TestParseFailureDegrades(t *testing.T) {
+// TestParseFailureUsesPlainText 模型直接给自然语言（没按 JSON 协议）→ 当作最终回复，
+// 不再多花一次降级调用，回复仍是正常文本。
+func TestParseFailureUsesPlainText(t *testing.T) {
 	tool := &countingTool{name: ToolHistory, out: "x"}
 	llm := &scriptedLLM{replies: []string{
 		`我觉得应该先查一下历史（没有 JSON）`,
-		`直接回答：不知道`,
+		`不应该走到这一步`,
 	}}
 	agent := newTestAgent(t, llm, Options{MaxSteps: 3, Timeout: 2 * time.Second}, tool.tool())
 
@@ -246,14 +311,47 @@ func TestParseFailureDegrades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run 失败：%v", err)
 	}
-	if !got.Degraded || got.Reason != DegradeParse {
-		t.Errorf("应为解析失败降级，实际 degraded=%v reason=%q", got.Degraded, got.Reason)
+	if got.Text != "我觉得应该先查一下历史（没有 JSON）" {
+		t.Errorf("自然语言应直接作为回复：%q", got.Text)
 	}
-	if got.Text != "直接回答：不知道" {
-		t.Errorf("降级回复 = %q", got.Text)
+	if got.Degraded || got.Reason != "" {
+		t.Errorf("自然语言收尾不应记为降级：%+v", got)
+	}
+	if llm.calls != 1 {
+		t.Errorf("不应再发起降级调用，实际 %d 次", llm.calls)
 	}
 	if tool.calls != 0 {
 		t.Errorf("解析失败不应执行工具，实际 %d 次", tool.calls)
+	}
+}
+
+// TestParseFailureInternalJSONDegrades JSON 形状/含内部字段的输出不能当正文：
+// 走降级调用，降级提示要求正常文本，最终回复可用。
+func TestParseFailureInternalJSONDegrades(t *testing.T) {
+	tool := &countingTool{name: ToolHistory, out: "x"}
+	llm := &scriptedLLM{replies: []string{
+		`{"thought":"内部推理","action":"history","args":"10"`, // 截断 JSON，缺收尾括号
+		`在吃面包`,
+	}}
+	agent := newTestAgent(t, llm, Options{MaxSteps: 3, Timeout: 2 * time.Second}, tool.tool())
+
+	got, err := agent.Run(context.Background(), Input{Question: "问"})
+	if err != nil {
+		t.Fatalf("Run 失败：%v", err)
+	}
+	if !got.Degraded || got.Reason != DegradeParse {
+		t.Errorf("内部 JSON 应走 parse 降级：%+v", got)
+	}
+	if got.Text != "在吃面包" {
+		t.Errorf("降级回复应为正常文本：%q", got.Text)
+	}
+	if tool.calls != 0 {
+		t.Errorf("解析失败不应执行工具，实际 %d 次", tool.calls)
+	}
+	// 降级提示不能再要求 ReAct JSON 协议，否则模型仍可能回协议块。
+	last := llm.prompts[len(llm.prompts)-1]
+	if !strings.Contains(last, "不要 JSON") || strings.Contains(last, "每一步只输出一个 JSON 对象") {
+		t.Errorf("降级提示应改为正常文本要求：%s", last)
 	}
 }
 
@@ -304,6 +402,10 @@ func TestParseStepToleratesFences(t *testing.T) {
 		"```json\n{\"thought\":\"t\",\"action\":\"final\",\"final\":\"好\"}\n```",
 		"先说一句废话 {\"thought\":\"t\",\"action\":\"final\",\"final\":\"好\"} 尾巴",
 		`{"thought":"t","action":"final","final":"好"}`,
+		// 尾巴里带 } 也不能把截取带到最后一个括号
+		`{"thought":"t","action":"final","final":"好"} 后面还有 } 符号`,
+		// 代码块前面有废话
+		"说明：```JSON\n{\"thought\":\"t\",\"action\":\"final\",\"final\":\"好\"}\n```",
 	}
 	for _, raw := range cases {
 		step, err := ParseStep(raw)
@@ -320,6 +422,60 @@ func TestParseStepToleratesFences(t *testing.T) {
 	}
 	if _, err := ParseStep(""); err == nil {
 		t.Error("空输出应当报错")
+	}
+	if _, err := ParseStep(`{"thought":"没闭合","action":"final","final":"好"`); err == nil {
+		t.Error("残缺 JSON 不应靠猜闭合来解析")
+	}
+}
+
+// TestParseStepRepairsCommonFormats 常见格式问题要修好，而不是降级。
+func TestParseStepRepairsCommonFormats(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want Step
+	}{
+		{
+			name: "尾逗号",
+			raw:  `{"thought":"t","action":"final","final":"好",}`,
+			want: Step{Thought: "t", Action: "final", Final: "好"},
+		},
+		{
+			name: "字符串裸换行",
+			raw:  "{\"thought\":\"t\",\"action\":\"final\",\"final\":\"第一行\n第二行\"}",
+			want: Step{Thought: "t", Action: "final", Final: "第一行\n第二行"},
+		},
+		{
+			name: "args是对象",
+			raw:  `{"thought":"t","action":"history","args":{"keyword":"鱼"}}`,
+			want: Step{Thought: "t", Action: "history", Args: `{"keyword":"鱼"}`},
+		},
+		{
+			name: "text别名",
+			raw:  `{"thought":"t","action":"final","text":"好"}`,
+			want: Step{Thought: "t", Action: "final", Final: "好"},
+		},
+		{
+			name: "漏action但有final",
+			raw:  `{"thought":"t","final":"好"}`,
+			want: Step{Thought: "t", Action: "final", Final: "好"},
+		},
+		{
+			name: "Final大小写",
+			raw:  `{"thought":"t","action":"FINAL","final":"好"}`,
+			want: Step{Thought: "t", Action: "final", Final: "好"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseStep(tc.raw)
+			if err != nil {
+				t.Fatalf("解析失败：%v", err)
+			}
+			if got != tc.want {
+				t.Errorf("解析结果不符：got=%+v want=%+v", got, tc.want)
+			}
+		})
 	}
 }
 

@@ -1,9 +1,11 @@
-// Package comment 轮询视频评论区并把新评论写入事件总线。
+// Package comment 轮询视频/动态评论区并把新评论写入事件总线。
 //
 // 边界：只做 HTTP 采集与事件构造，不调用模型、不发送回复；
 // 去重以 rpid 为键，事件 ID 使用契约里的 `comment:{oid}:{rpid}`。
 //
 // 覆盖承诺：
+//   - 视频用 type=1；动态评论区以平台 basic.comment_type 为准（图文动态=11、普通动态=17），
+//     共用同一套评论区翻页与事件规整。
 //   - 顶层评论按时间倒序翻页，每个对象每轮最多 MaxPages 页；到上限时用
 //     comment_page_limit 记录截断，只保证已翻页前缀内不漏。
 //   - 仍有楼中楼的根评论进入有界跟踪表；每轮先看首页并优先追新增区间，
@@ -39,6 +41,11 @@ const (
 	maxTextRunes   = 4000
 	maxSeen        = 8192
 	maxBodyBytes   = 1 << 20
+	// maxCommentPics 限制进入 Meta 的图片数量，避免一条评论撑爆事件行；
+	// 识别侧还会按自己的上限再取前几张。
+	maxCommentPics  = 4
+	maxPictureURL   = 1024
+	pictureOnlyText = "[图片]"
 
 	defaultMaxPages      = 5
 	maxPagesUpper        = 50
@@ -77,9 +84,11 @@ func (e *Error) Error() string {
 }
 func (e *Error) Unwrap() error { return e.Cause }
 
-// 评论对象类型：视频用 type=1，动态用 type=17。
+// 评论对象类型：视频=1、图文动态=11、普通动态=17。
+// 动态卡片的类型不能只看动态 ID：平台用 basic.comment_type 指明评论区类型。
 const (
 	TypeVideo   = 1
+	TypeDraw    = 11
 	TypeDynamic = 17
 )
 
@@ -106,6 +115,8 @@ type BiliDiscoverer struct {
 	MID          string
 	VideoLimit   int
 	DynamicLimit int
+	// SkipDynamics 只发现视频（dynamic_poll_enabled=false 的轮询模式）。
+	SkipDynamics bool
 }
 
 // Discover 拉两类列表；任意一类成功就返回可用的 target（部分失败不拖垮另一类）。
@@ -129,17 +140,87 @@ func (d BiliDiscoverer) Discover(ctx context.Context) ([]Target, error) {
 			targets = append(targets, Target{OID: v.AID, Type: TypeVideo})
 		}
 	}
-	if dynamics, err := d.Client.SpaceDynamics(ctx, d.MID, dynamicLimit); err != nil {
-		errs = append(errs, err)
-	} else {
-		for _, dyn := range dynamics {
-			targets = append(targets, Target{OID: dyn.ID, Type: TypeDynamic})
+	if !d.SkipDynamics {
+		if dynamics, err := d.Client.SpaceDynamics(ctx, d.MID, dynamicLimit); err != nil {
+			errs = append(errs, err)
+		} else {
+			for _, dyn := range dynamics {
+				if target, ok := dynamicTarget(dyn); ok {
+					targets = append(targets, target)
+				}
+			}
 		}
 	}
 	if len(targets) == 0 && len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
 	return targets, nil
+}
+
+// DynamicDiscoverer 只拉账号动态列表，供消息监听旁路的动态评论轮询使用。
+type DynamicDiscoverer struct {
+	Client SpaceSource
+	MID    string
+	// Limit 是单次拉取的动态条数（<=0 用 20，平台上限 50）。
+	Limit int
+}
+
+// Discover 按平台给出的评论区类型/OID 映射动态 target。
+//
+// 只接受动态自己的评论区（11/17）：视频/专栏动态的评论区属于被转发内容，
+// 交给视频轮询或人工处理，避免把原作者视频下的全部评论当动态评论采。
+func (d DynamicDiscoverer) Discover(ctx context.Context) ([]Target, error) {
+	if d.Client == nil {
+		return nil, errors.New("动态列表来源不能为 nil")
+	}
+	limit := d.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	dynamics, err := d.Client.SpaceDynamics(ctx, d.MID, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Target, 0, len(dynamics))
+	seen := make(map[string]struct{}, len(dynamics))
+	for _, dyn := range dynamics {
+		target, ok := dynamicTarget(dyn)
+		if !ok {
+			continue
+		}
+		key := targetKey(target)
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, target)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// dynamicTarget 把动态卡片映射成评论 target。
+//
+// 平台在 basic.comment_type / basic.comment_id_str 里直接给出评论区；
+// 旧报文缺字段时才回落到「动态 ID + type=17」。
+func dynamicTarget(dyn bili.SpaceDynamic) (Target, bool) {
+	commentType := dyn.CommentType
+	if commentType == 0 {
+		commentType = TypeDynamic
+	}
+	if commentType != TypeDraw && commentType != TypeDynamic {
+		return Target{}, false
+	}
+	oid, ok := canonicalID(dyn.CommentID)
+	if !ok {
+		oid, ok = canonicalID(dyn.ID)
+	}
+	if !ok {
+		return Target{}, false
+	}
+	return Target{OID: oid, Type: commentType}, true
 }
 
 // Options 由可信装配提供；CookieFile 只保存路径，内容不进日志。
@@ -163,6 +244,9 @@ type Options struct {
 	MaxRoots int
 	// MaxReplyPages 限制单个根评论每轮最多翻多少页楼中楼（0 用默认 3，至少 2）。
 	MaxReplyPages int
+	// RecentSince 只产出不早于该时间的评论；零值不限制。
+	// 动态评论没有持久水位，首轮用它挡住历史评论，避免重启后回刷旧账。
+	RecentSince time.Time
 }
 
 func DefaultOptions() Options {
@@ -188,9 +272,17 @@ type targetState struct {
 	frontierID string
 	// truncatedCount 避免页数上限日志每轮重复刷屏；列表变化时再记一次。
 	truncatedCount int
-	roots          map[string]*rootState
-	rootOrder      []string
-	clock          uint64
+	// polled 表示已经成功拉过一轮；首轮记一条目标级日志，便于确认动态评论确实在轮询。
+	polled    bool
+	roots     map[string]*rootState
+	rootOrder []string
+	clock     uint64
+}
+
+// pollCount 是单个 target 本轮顶层评论的拉取/产出计数。
+type pollCount struct {
+	fetched int
+	emitted int
 }
 
 // rootState 是单个根评论的楼中楼回填进度。
@@ -414,7 +506,7 @@ func mergeTargets(manual, discovered []Target) []Target {
 	for _, group := range [][]Target{manual, discovered} {
 		for _, target := range group {
 			oid, ok := canonicalID(target.OID)
-			if !ok || (target.Type != TypeVideo && target.Type != TypeDynamic) {
+			if !ok || (target.Type != TypeVideo && target.Type != TypeDraw && target.Type != TypeDynamic) {
 				continue
 			}
 			key := fmt.Sprintf("%d:%s", target.Type, oid)
@@ -483,9 +575,20 @@ func (c *Collector) cycle(ctx context.Context, cookie string, targets []Target, 
 			return nil
 		}
 		st := c.stateFor(target)
-		fatal, healthy := c.pollTop(ctx, cookie, target, st, out, errc)
+		fatal, healthy, count := c.pollTop(ctx, cookie, target, st, out, errc)
 		if !healthy {
 			ok = false
+		}
+		if !st.polled && healthy && ctx.Err() == nil {
+			st.polled = true
+			c.log.Info("评论轮询目标已拉取",
+				zap.String("action", "comment_target_poll"),
+				zap.String("oid", target.OID),
+				zap.Int("comment_type", target.Type),
+				zap.Int("fetched", count.fetched),
+				zap.Int("emitted", count.emitted),
+				zap.Bool("recent_since", !c.options.RecentSince.IsZero()),
+			)
 		}
 		if fatal != nil {
 			return fatal
@@ -506,31 +609,42 @@ func (c *Collector) cycle(ctx context.Context, cookie string, targets []Target, 
 }
 
 // pollTop 按时间倒序翻页顶层评论；(ctime,rpid) 水位确认追平后早停。
-func (c *Collector) pollTop(ctx context.Context, cookie string, target Target, st *targetState, out chan<- event.Event, errc chan<- error) (*Error, bool) {
+func (c *Collector) pollTop(ctx context.Context, cookie string, target Target, st *targetState, out chan<- event.Event, errc chan<- error) (*Error, bool, pollCount) {
 	healthy := true
+	var count pollCount
 	for pn := 1; pn <= c.options.MaxPages; pn++ {
 		page, err := c.fetchPage(ctx, cookie, target, "", pn)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, healthy
+				return nil, healthy, count
 			}
 			healthy = false
-			c.report(errc, err)
 			st.resume = true
+			// 视频/动态拉取失败必须留痕：否则页面无事件时无法判断是「没评论」还是「没拉到」。
+			c.log.Warn("评论页拉取失败",
+				zap.String("action", "comment_fetch"),
+				zap.String("oid", target.OID),
+				zap.Int("comment_type", target.Type),
+				zap.Int("page", pn),
+				zap.String("kind", string(err.Kind)),
+			)
+			c.report(errc, err)
 			if err.Kind == KindAuth {
-				return err, healthy
+				return err, healthy, count
 			}
-			return nil, healthy
+			return nil, healthy, count
 		}
-		_, done, stopped := c.processTopPage(ctx, target, st, page, out, errc)
+		count.fetched += len(page.Replies)
+		emitted, done, stopped := c.processTopPage(ctx, target, st, page, out, errc)
+		count.emitted += emitted
 		if stopped {
-			return nil, healthy
+			return nil, healthy, count
 		}
 		if done {
 			st.covered = true
 			st.resume = false
 			st.truncatedCount = 0
-			return nil, healthy
+			return nil, healthy, count
 		}
 		if pn < c.options.MaxPages {
 			continue
@@ -562,7 +676,7 @@ func (c *Collector) pollTop(ctx context.Context, cookie string, target Target, s
 		st.covered = true
 		st.resume = false
 	}
-	return nil, healthy
+	return nil, healthy, count
 }
 
 // processTopPage 处理一页顶层评论，返回本页新事件数、是否已到列表末尾、是否因取消停止。
@@ -895,8 +1009,14 @@ type apiReply struct {
 		UName string  `json:"uname"`
 	} `json:"member"`
 	Content struct {
-		Message string `json:"message"`
+		Message string       `json:"message"`
+		Pics    []apiPicture `json:"pics"`
 	} `json:"content"`
+}
+
+// apiPicture 是评论附图；B站字段名是 img_src。
+type apiPicture struct {
+	URL string `json:"img_src"`
 }
 
 type envelope struct {
@@ -1001,14 +1121,27 @@ func (c *Collector) normalize(target Target, r apiReply) (event.Event, bool, *Er
 	if !positiveID.MatchString(rpid) || !positiveID.MatchString(mid) {
 		return invalid()
 	}
+	if r.Ctime <= 0 {
+		return invalid()
+	}
+	if !c.options.RecentSince.IsZero() && r.Ctime < c.options.RecentSince.Unix() {
+		return event.Event{}, false, nil
+	}
 	if !c.firstSeen(target, rpid) {
 		return event.Event{}, false, nil
 	}
 	if mid == c.options.SelfID {
 		return event.Event{}, false, nil
 	}
+	pics := pictureURLs(r.Content.Pics)
 	text := r.Content.Message
-	if strings.TrimSpace(text) == "" || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
+	if strings.TrimSpace(text) == "" {
+		// 纯图片评论没有正文；给一个占位，保证事件正文与 ReAct 问题非空。
+		if len(pics) == 0 {
+			return invalid()
+		}
+		text = pictureOnlyText
+	} else if !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
 		return invalid()
 	}
 	if runes := []rune(text); len(runes) > maxTextRunes {
@@ -1021,15 +1154,13 @@ func (c *Collector) normalize(target Target, r apiReply) (event.Event, bool, *Er
 	if utf8.RuneCountInString(name) > 128 {
 		name = string([]rune(name)[:128])
 	}
-	if r.Ctime <= 0 {
-		return invalid()
-	}
 	meta, err := json.Marshal(struct {
-		Source      string `json:"source"`
-		CommentType int    `json:"comment_type"`
-		Root        string `json:"root,omitempty"`
-		Parent      string `json:"parent,omitempty"`
-	}{"bili-comment", target.Type, string(r.Root), string(r.Parent)})
+		Source      string   `json:"source"`
+		CommentType int      `json:"comment_type"`
+		Root        string   `json:"root,omitempty"`
+		Parent      string   `json:"parent,omitempty"`
+		Pics        []string `json:"pics,omitempty"`
+	}{"bili-comment", target.Type, string(r.Root), string(r.Parent), pics})
 	if err != nil {
 		return invalid()
 	}
@@ -1047,6 +1178,59 @@ func (c *Collector) normalize(target Target, r apiReply) (event.Event, bool, *Er
 		Status:   event.StatusPending,
 		Meta:     meta,
 	}, true, nil
+}
+
+// pictureURLs 抽取可用的评论图片地址：https、长度受限、无控制字符，去重保序。
+//
+// 只做静态过滤，不下载；域名白名单与大小限制由识别侧执行。
+func pictureURLs(pics []apiPicture) []string {
+	out := make([]string, 0, len(pics))
+	seen := make(map[string]struct{}, len(pics))
+	for _, pic := range pics {
+		raw := strings.TrimSpace(pic.URL)
+		if raw == "" || len(raw) > maxPictureURL || strings.ContainsAny(raw, "\r\n\x00") {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+			continue
+		}
+		if _, duplicate := seen[raw]; duplicate {
+			continue
+		}
+		seen[raw] = struct{}{}
+		out = append(out, raw)
+		if len(out) >= maxCommentPics {
+			break
+		}
+	}
+	return out
+}
+
+// Pics 返回事件 Meta 里的评论图片地址；没有或格式不符时返回 nil。
+func Pics(meta json.RawMessage) []string {
+	if len(meta) == 0 {
+		return nil
+	}
+	var m struct {
+		Pics []string `json:"pics"`
+	}
+	if err := json.Unmarshal(meta, &m); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(m.Pics))
+	for _, raw := range m.Pics {
+		if raw = strings.TrimSpace(raw); raw != "" {
+			out = append(out, raw)
+		}
+		if len(out) >= maxCommentPics {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // firstSeen 以 type:oid:rpid 为键去重；超过上限清空重来，持久化层仍会按事件 ID 幂等。

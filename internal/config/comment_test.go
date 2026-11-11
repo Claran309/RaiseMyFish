@@ -16,6 +16,18 @@ func TestCommentDefaultsOff(t *testing.T) {
 	if cfg.Collector.Comment.Enabled {
 		t.Error("评论采集默认应关闭")
 	}
+	if !cfg.Collector.Comment.FeedEnabled {
+		t.Error("消息监听默认应开启（替代视频轮询）")
+	}
+	if cfg.Collector.Comment.FeedIntervalSeconds != 60 {
+		t.Errorf("默认消息监听间隔 = %d，期望 60", cfg.Collector.Comment.FeedIntervalSeconds)
+	}
+	if cfg.Collector.Comment.FeedStatePath != "state/msgfeed-cursors.json" {
+		t.Errorf("默认消息水位路径 = %q", cfg.Collector.Comment.FeedStatePath)
+	}
+	if !cfg.Collector.Comment.DynamicPollEnabled {
+		t.Error("动态评论轮询默认应开启")
+	}
 	if cfg.Collector.Comment.IntervalSeconds != 60 {
 		t.Errorf("默认轮询间隔 = %d，期望 60", cfg.Collector.Comment.IntervalSeconds)
 	}
@@ -39,6 +51,7 @@ self_id = "8"
 enabled = true
 [collector.comment]
 enabled = true
+feed_enabled = false
 videos = ["123", "456"]
 interval_seconds = 30
 [sender.comment]
@@ -47,6 +60,9 @@ enabled = true
 	cfg, err := loadWithScheduler(t, body)
 	if err != nil {
 		t.Fatalf("加载失败：%v", err)
+	}
+	if cfg.Collector.Comment.FeedEnabled {
+		t.Error("feed_enabled=false 应切回视频轮询")
 	}
 	if !cfg.Collector.Comment.Enabled || len(cfg.Collector.Comment.Videos) != 2 || cfg.Collector.Comment.IntervalSeconds != 30 {
 		t.Errorf("评论采集配置不符：%+v", cfg.Collector.Comment)
@@ -81,14 +97,19 @@ func TestCommentCollectorRejects(t *testing.T) {
 		body string
 		want string
 	}{
-		{"关闭发现且缺videos", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nauto_discover=false\n", "videos"},
-		{"发现间隔过小", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\ndiscover_interval_seconds=5\n", "discover_interval_seconds"},
-		{"发现间隔过大", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\ndiscover_interval_seconds=86401\n", "discover_interval_seconds"},
-		{"非法oid", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nvideos=['abc']\n", "oid"},
-		{"零oid", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nvideos=['000']\n", "oid"},
-		{"重复oid", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nvideos=['1','01']\n", "重复"},
-		{"间隔过小", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nvideos=['1']\ninterval_seconds=5\n", "interval_seconds"},
-		{"间隔过大", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nvideos=['1']\ninterval_seconds=3601\n", "interval_seconds"},
+		{"关闭发现且缺videos", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=false\nauto_discover=false\n", "videos"},
+		{"发现间隔过小", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=false\ndiscover_interval_seconds=5\n", "discover_interval_seconds"},
+		{"发现间隔过大", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=false\ndiscover_interval_seconds=86401\n", "discover_interval_seconds"},
+		{"非法oid", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=false\nvideos=['abc']\n", "oid"},
+		{"零oid", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=false\nvideos=['000']\n", "oid"},
+		{"重复oid", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=false\nvideos=['1','01']\n", "重复"},
+		{"轮询间隔过小", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=false\nvideos=['1']\ninterval_seconds=5\n", "interval_seconds"},
+		{"轮询间隔过大", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=false\nvideos=['1']\ninterval_seconds=3601\n", "interval_seconds"},
+		{"监听间隔过小", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_interval_seconds=5\n", "feed_interval_seconds"},
+		{"监听间隔过大", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_interval_seconds=3601\n", "feed_interval_seconds"},
+		{"监听水位路径非法", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_state_path=\"state\\nmsgfeed.json\"\n", "feed_state_path"},
+		{"动态轮询间隔过小", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\ninterval_seconds=5\n", "interval_seconds"},
+		{"关闭动态轮询且缺videos", self + "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=false\nauto_discover=true\ndynamic_poll_enabled=false\nvideos=[]\n", "videos"},
 		{"未开通道", self + "[collector.comment]\nenabled=true\nvideos=['1']\n", "channels.comment"},
 	}
 	for _, tc := range cases {
@@ -102,7 +123,7 @@ func TestCommentCollectorRejects(t *testing.T) {
 
 func TestCommentAutoDiscoverAllowsEmptyVideos(t *testing.T) {
 	t.Setenv("FISH_BILI_COOKIE", "SESSDATA=x")
-	cfg, err := loadWithScheduler(t, "[collector.live]\nself_id='8'\n[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nvideos=[]\n")
+	cfg, err := loadWithScheduler(t, "[collector.live]\nself_id='8'\n[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=false\nvideos=[]\n")
 	if err != nil {
 		t.Fatalf("自动发现开启时应允许空 videos：%v", err)
 	}
@@ -111,10 +132,39 @@ func TestCommentAutoDiscoverAllowsEmptyVideos(t *testing.T) {
 	}
 }
 
+func TestCommentFeedModeValidWithoutVideos(t *testing.T) {
+	t.Setenv("FISH_BILI_COOKIE", "SESSDATA=x")
+	body := "[collector.live]\nself_id='8'\n[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=true\nfeed_interval_seconds=30\nfeed_state_path='state/feed.json'\n"
+	cfg, err := loadWithScheduler(t, body)
+	if err != nil {
+		t.Fatalf("消息监听模式应合法：%v", err)
+	}
+	c := cfg.Collector.Comment
+	if !c.FeedEnabled || c.FeedIntervalSeconds != 30 || c.FeedStatePath != "state/feed.json" {
+		t.Errorf("消息监听配置不符：%+v", c)
+	}
+	if !c.AutoDiscover || len(c.Videos) != 0 {
+		t.Errorf("监听模式不应影响轮询默认值：%+v", c)
+	}
+}
+
+// TestCommentDynamicPollCanBeDisabled 显式关闭动态轮询后，消息监听仍是合法来源。
+func TestCommentDynamicPollCanBeDisabled(t *testing.T) {
+	t.Setenv("FISH_BILI_COOKIE", "SESSDATA=x")
+	body := "[collector.live]\nself_id='8'\n[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=true\ndynamic_poll_enabled=false\n"
+	cfg, err := loadWithScheduler(t, body)
+	if err != nil {
+		t.Fatalf("关闭动态轮询应合法：%v", err)
+	}
+	if cfg.Collector.Comment.DynamicPollEnabled {
+		t.Error("dynamic_poll_enabled=false 未生效")
+	}
+}
+
 func TestCommentRequiresCredential(t *testing.T) {
 	t.Setenv("FISH_BILI_COOKIE", "")
 	t.Setenv("FISH_BILI_COOKIE_FILE", "")
-	body := "[collector.live]\nself_id='8'\n[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nvideos=['1']\n"
+	body := "[collector.live]\nself_id='8'\n[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=false\nvideos=['1']\n"
 	if _, err := loadWithScheduler(t, body); err == nil || !strings.Contains(err.Error(), "凭据") {
 		t.Fatalf("无凭据应拒绝采集，实际 %v", err)
 	}
@@ -127,9 +177,13 @@ func TestCommentRequiresCredential(t *testing.T) {
 func TestCommentCollectorRequiresSelfID(t *testing.T) {
 	t.Setenv("FISH_BILI_COOKIE", "SESSDATA=x")
 	t.Setenv("FISH_BILI_SELF_ID", "")
-	body := "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nvideos=['1']\n"
-	if _, err := loadWithScheduler(t, body); err == nil || !strings.Contains(err.Error(), "self_id") {
-		t.Fatalf("缺 self_id 应拒绝采集，实际 %v", err)
+	poll := "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\nfeed_enabled=false\nvideos=['1']\n"
+	if _, err := loadWithScheduler(t, poll); err == nil || !strings.Contains(err.Error(), "self_id") {
+		t.Fatalf("轮询模式缺 self_id 应拒绝采集，实际 %v", err)
+	}
+	feed := "[channels.comment]\nenabled=true\n[collector.comment]\nenabled=true\n"
+	if _, err := loadWithScheduler(t, feed); err == nil || !strings.Contains(err.Error(), "self_id") {
+		t.Fatalf("监听模式缺 self_id 应拒绝采集，实际 %v", err)
 	}
 }
 

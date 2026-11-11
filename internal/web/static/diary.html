@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="panel-token" content="__PANEL_TOKEN__">
+<title>日报 · 大肥鱼面板</title>
+<style>
+:root{--bg:#0f1115;--fg:#e6e6e6;--muted:#8b93a1;--card:#171a21;--line:#232833;--accent:#4ea1ff;--bad:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.6 -apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header b{font-size:15px}
+nav a{color:var(--muted);text-decoration:none;margin-right:14px}
+nav a.on{color:var(--accent)}
+main{padding:20px;max-width:1180px;margin:0 auto}
+.cols{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start}
+@media (max-width:860px){.cols{grid-template-columns:1fr}}
+input,button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+button{cursor:pointer}
+a{color:var(--accent)}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.panel .head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted)}
+.panel .head b{color:var(--fg);font-size:13px}
+.panel .body{padding:12px 14px}
+.bar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.muted{color:var(--muted)}
+.tag{font-size:12px;color:var(--muted)}
+.row{padding:9px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.row:last-child{border-bottom:0}
+.row:hover{background:#1c2029}
+.row.on{background:#1d2735}
+.row .day{font-weight:600}
+.row .meta{font-size:11px;color:var(--muted);margin-top:2px}
+.group{padding:8px 0 4px;font-size:11px;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--line);background:#141821}
+.empty{padding:12px;color:var(--muted);font-size:13px}
+#diary-content{white-space:pre-wrap;word-break:break-word;font:13px/1.75 -apple-system,"Segoe UI",sans-serif;margin:0;background:#11141a;border:1px solid var(--line);border-radius:8px;padding:14px;min-height:200px}
+#diary-title{font-size:16px;margin:0}
+#diary-meta{font-size:12px;color:var(--muted);margin-bottom:10px}
+</style>
+</head>
+<body>
+<header>
+  <b>🐟 大肥鱼面板</b>
+  <nav><a href="/">概览</a><a href="/live">直播</a><a href="/message">消息</a><a href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a href="/diary" class="on">日报</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
+</header>
+<main>
+  <div class="bar">
+    <input id="diary-day" type="date" title="生成日期，留空表示昨天">
+    <button onclick="generate()">生成日报</button>
+    <button onclick="load()">刷新</button>
+    <span class="muted" id="diary-msg"></span>
+  </div>
+  <div class="cols">
+    <section class="panel">
+      <div class="head">📰 <b>最近日报</b><span style="flex:1"></span><span class="tag" id="diary-count"></span></div>
+      <div class="body" id="diary-list"><div class="empty">读取中…</div></div>
+    </section>
+    <section class="panel">
+      <div class="head">🗒️ <b>日报正文</b><span style="flex:1"></span><a id="diary-export" href="#" style="display:none">导出 Markdown</a></div>
+      <div class="body">
+        <h2 id="diary-title">选择左侧日报</h2>
+        <div id="diary-meta"></div>
+        <pre id="diary-content">还没有选择日报。</pre>
+      </div>
+    </section>
+  </div>
+</main>
+<script>
+function panelToken() {
+  var m = document.querySelector('meta[name="panel-token"]');
+  return m ? m.content : '';
+}
+function esc(s) {
+  return (s || '').replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+var currentDay = '';
+async function load() {
+  var box = document.getElementById('diary-list');
+  var r = await fetch('/api/diary?limit=60');
+  if (!r.ok) {
+    box.innerHTML = '<div class="empty">日报功能未启用</div>';
+    return;
+  }
+  var d = await r.json();
+  var items = d.items || [];
+  document.getElementById('diary-count').textContent = (d.count || 0) + ' 篇';
+  if (!items.length) {
+    box.innerHTML = '<div class="empty">还没有日报。每天会自动总结前一天，也可以选日期后点「生成日报」。</div>';
+    return;
+  }
+  // 按月份分组，只影响展示顺序；后端仍按日期倒序返回。
+  var months = [], byMonth = {};
+  items.forEach(function (x) {
+    var m = (x.day || '').slice(0, 7) || '未标注月份';
+    if (!byMonth[m]) { byMonth[m] = []; months.push(m); }
+    byMonth[m].push(x);
+  });
+  function row(x) {
+    var on = x.day === currentDay ? ' on' : '';
+    return '<div class="row' + on + '" onclick="show(\'' + esc(x.day) + '\')">' +
+      '<div class="day">' + esc(x.day) + '</div>' +
+      '<div class="meta">' + (x.event_count || 0) + ' 条事件 · ' + esc(x.model || '') + '</div>' +
+      '<div class="meta">更新 ' + esc(x.updated_at || '') + '</div></div>';
+  }
+  box.innerHTML = months.map(function (m) {
+    return '<div class="group">' + esc(m) + ' · ' + byMonth[m].length + ' 篇</div>' +
+      byMonth[m].map(row).join('');
+  }).join('');
+  if (!currentDay) show(items[0].day);
+}
+async function show(day) {
+  var r = await fetch('/api/diary/' + encodeURIComponent(day));
+  if (!r.ok) { alert('读取日报失败'); return; }
+  var d = await r.json();
+  currentDay = d.day;
+  document.getElementById('diary-title').textContent = '日报 · ' + d.day;
+  document.getElementById('diary-meta').textContent =
+    (d.event_count || 0) + ' 条事件 · 模型 ' + (d.model || '—') + ' · 更新 ' + (d.updated_at || '—');
+  document.getElementById('diary-content').textContent = d.content || '';
+  var link = document.getElementById('diary-export');
+  link.href = '/api/diary/' + encodeURIComponent(d.day) + '/export';
+  link.style.display = 'inline';
+  document.querySelectorAll('#diary-list .row').forEach(function (row) {
+    row.classList.toggle('on', row.querySelector('.day').textContent === d.day);
+  });
+}
+async function generate() {
+  var day = document.getElementById('diary-day').value;
+  if (!confirm('确认生成 ' + (day || '昨天') + ' 的日报？会调用一次模型。')) return;
+  var url = '/api/diary/generate?confirm=yes' + (day ? '&day=' + encodeURIComponent(day) : '');
+  document.getElementById('diary-msg').textContent = '生成中…';
+  var r = await fetch(url, { method: 'POST', headers: { 'X-Panel-Token': panelToken() } });
+  var d = await r.json().catch(function () { return {}; });
+  document.getElementById('diary-msg').textContent = '';
+  if (!r.ok) { alert(d.error || '生成失败'); return; }
+  currentDay = d.item.day;
+  await load();
+  await show(d.item.day);
+}
+load();
+</script>
+</body>
+</html>

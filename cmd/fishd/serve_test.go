@@ -1816,7 +1816,7 @@ func newFakeReactFactory(t *testing.T, llm *fakeReactLLM) (*reactRuntime, *int) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory := func(_ memory.Scope, _ string, _ bool) (*reasoning.Agent, error) {
+	factory := func(_ memory.Scope, _ string, _ bool, _ event.Channel) (*reasoning.Agent, error) {
 		calls++
 		return reasoning.New(llm, box, reasoning.Options{MaxSteps: 3, Timeout: 2 * time.Second}, zap.NewNop())
 	}
@@ -1841,13 +1841,47 @@ func TestShouldUseReActByDefault(t *testing.T) {
 		{"刚才那个梗是什么意思", true}, // 长句
 	}
 	for _, tc := range cases {
-		if got := shouldUseReAct(tc.text, true); got != tc.want {
+		if got := shouldUseReAct(event.ChLive, tc.text, true); got != tc.want {
 			t.Errorf("%q → %v，期望 %v", tc.text, got, tc.want)
 		}
 	}
 	// 全量 ReAct 下空白短句同样进 ReAct。
-	if got := shouldUseReAct("  在吗  ", true); !got {
+	if got := shouldUseReAct(event.ChLive, "  在吗  ", true); !got {
 		t.Error("全量 ReAct 下短句（含空白）也应进入")
+	}
+}
+
+// TestReasoningOptionsPerChannel 弹幕保持 3 步/8 秒；评论/私信按配置放宽。
+func TestReasoningOptionsPerChannel(t *testing.T) {
+	r := config.DefaultReasoning()
+	if got := reasoningOptionsForChannel(r, event.ChLive); got.MaxSteps != 3 || got.Timeout != 8*time.Second {
+		t.Errorf("弹幕预算 = %+v，期望 3 步/8 秒", got)
+	}
+	if got := reasoningOptionsForChannel(r, event.ChComment); got.MaxSteps != 5 || got.Timeout != 45*time.Second {
+		t.Errorf("评论默认预算 = %+v，期望 5 步/45 秒", got)
+	}
+	r.Comment = config.ReasoningChannel{MaxSteps: 8, TimeoutMS: 60000}
+	r.DM = config.ReasoningChannel{MaxSteps: 10, TimeoutMS: 30000}
+	if got := reasoningOptionsForChannel(r, event.ChComment); got.MaxSteps != 8 || got.Timeout != time.Minute {
+		t.Errorf("评论配置未生效：%+v", got)
+	}
+	if got := reasoningOptionsForChannel(r, event.ChDM); got.MaxSteps != 10 || got.Timeout != 30*time.Second {
+		t.Errorf("私信配置未生效：%+v", got)
+	}
+	// 弹幕不受评论/私信配置影响。
+	if got := reasoningOptionsForChannel(r, event.ChLive); got.MaxSteps != 3 || got.Timeout != 8*time.Second {
+		t.Errorf("弹幕预算被评论/私信配置污染：%+v", got)
+	}
+}
+
+// TestShouldUseReActForcesCommentAndDM 评论/私信无论 default_react 与否都必须走思考式 ReAct。
+func TestShouldUseReActForcesCommentAndDM(t *testing.T) {
+	for _, ch := range []event.Channel{event.ChComment, event.ChDM} {
+		for _, text := range []string{"好", "晚安", "图里是什么"} {
+			if !shouldUseReAct(ch, text, false) {
+				t.Errorf("%s %q：default_react=false 也必须走 ReAct", ch, text)
+			}
+		}
 	}
 }
 
@@ -1864,7 +1898,7 @@ func TestShouldUseReActLegacyCueMode(t *testing.T) {
 		{"何意味", true},
 	}
 	for _, tc := range cases {
-		if got := shouldUseReAct(tc.text, false); got != tc.want {
+		if got := shouldUseReAct(event.ChLive, tc.text, false); got != tc.want {
 			t.Errorf("%q → %v，期望 %v", tc.text, got, tc.want)
 		}
 	}
@@ -1910,6 +1944,7 @@ func TestComplexMessageUsesReAct(t *testing.T) {
 	llm := &fakeReactLLM{replies: []string{
 		`{"thought":"查历史","action":"history","args":"5"}`,
 		`{"thought":"够了","action":"final","final":"刚才在聊吃鱼"}`,
+		`{"thought":"复盘","action":"final","final":"刚才在聊吃鱼"}`,
 	}}
 	factory, calls := newFakeReactFactory(t, llm)
 
@@ -1927,8 +1962,8 @@ func TestComplexMessageUsesReAct(t *testing.T) {
 	if *calls != 1 {
 		t.Errorf("ReAct 工厂调用 %d 次，期望 1", *calls)
 	}
-	if llm.calls != 2 {
-		t.Errorf("ReAct 模型调用 %d 次，期望 2（一次工具 + 一次 final）", llm.calls)
+	if llm.calls != 3 {
+		t.Errorf("ReAct 模型调用 %d 次，期望 3（工具 + final + 反思）", llm.calls)
 	}
 	if engine.calls != 0 {
 		t.Errorf("走 ReAct 时不应再调单步 Brain，实际 %d 次", engine.calls)
@@ -1946,7 +1981,7 @@ func TestReactFailureFallsBackToSingleStep(t *testing.T) {
 	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
 
 	// 工厂直接报错，模拟工具装配失败
-	factory := reactFactory(func(memory.Scope, string, bool) (*reasoning.Agent, error) {
+	factory := reactFactory(func(memory.Scope, string, bool, event.Channel) (*reasoning.Agent, error) {
 		return nil, errors.New("工具装配失败")
 	})
 	react := &reactRuntime{factory: factory, defaultReact: true}
@@ -2009,7 +2044,9 @@ func TestReactDoesNotCacheFinalAnswer(t *testing.T) {
 	snd := &fakeSender{sendResult: sender.Result{OK: true, Verified: true}}
 	llm := &fakeReactLLM{replies: []string{
 		`{"thought":"够了","action":"final","final":"第一次答案"}`,
+		`{"thought":"复盘","action":"final","final":"第一次答案"}`,
 		`{"thought":"够了","action":"final","final":"第二次答案"}`,
+		`{"thought":"复盘","action":"final","final":"第二次答案"}`,
 	}}
 	runtime, calls := newFakeReactFactory(t, llm)
 
@@ -2028,8 +2065,8 @@ func TestReactDoesNotCacheFinalAnswer(t *testing.T) {
 			t.Fatalf("Generate 失败：%v", err)
 		}
 	}
-	if *calls != 2 || llm.calls != 2 {
-		t.Errorf("不应复用最终答案：factory=%d llm=%d，期望都 2 次", *calls, llm.calls)
+	if *calls != 2 || llm.calls != 4 {
+		t.Errorf("不应复用最终答案：factory=%d llm=%d，期望 2 / 4（每条各含一次反思）", *calls, llm.calls)
 	}
 	if snd.sendCalls != 2 || snd.gotReply.Text != "第二次答案" {
 		t.Errorf("第二条弹幕结果不符：send=%d text=%q", snd.sendCalls, snd.gotReply.Text)

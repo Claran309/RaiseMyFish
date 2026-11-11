@@ -71,7 +71,7 @@ func captureLLM(p *captureProvider) *providerLLM {
 
 func captureReactRuntime(t *testing.T, p *captureProvider, box *reasoning.Toolbox) *reactRuntime {
 	t.Helper()
-	factory := func(memory.Scope, string, bool) (*reasoning.Agent, error) {
+	factory := func(memory.Scope, string, bool, event.Channel) (*reasoning.Agent, error) {
 		return reasoning.New(captureLLM(p), box, reasoning.Options{MaxSteps: 3, Timeout: 2 * time.Second}, zap.NewNop())
 	}
 	return &reactRuntime{factory: factory, defaultReact: true}
@@ -391,8 +391,8 @@ func TestSmartQuestionSubjectRoutesToDifferentEvidence(t *testing.T) {
 			runSmartEvent(t, workers, tc.id, "1001", "观众A", tc.text, base.Add(2*time.Minute))
 
 			requests := prov.snapshot()
-			if len(requests) != 2 {
-				t.Fatalf("模型请求数 = %d，期望 2（首步选工具 + 拿到观察后回答）", len(requests))
+			if len(requests) != 3 {
+				t.Fatalf("模型请求数 = %d，期望 3（首步选工具 + 拿到观察后回答 + 反思）", len(requests))
 			}
 			first := requests[0].Messages[1].Content
 			if !strings.Contains(first, tc.wantKind) {
@@ -461,8 +461,8 @@ func TestSmartCorrectionRetractsAndReanswers(t *testing.T) {
 	runSmartEvent(t, workers, "live:30308220:smart", "1001", "A", "那到底谁说的", base.Add(3*time.Minute))
 
 	requests := prov.snapshot()
-	if len(requests) != 1 {
-		t.Fatalf("模型请求数 = %d，期望 1", len(requests))
+	if len(requests) != 2 {
+		t.Fatalf("模型请求数 = %d，期望 2（回答 + 反思）", len(requests))
 	}
 	user := requests[0].Messages[1].Content
 	for _, want := range []string{
@@ -587,8 +587,8 @@ func TestSmartSearchStatusReachesModelInput(t *testing.T) {
 			runSmartEvent(t, workers, "live:30308220:smart", "1001", "观众A", "贞德是谁", base)
 
 			requests := prov.snapshot()
-			if len(requests) != 2 {
-				t.Fatalf("模型请求数 = %d，期望 2", len(requests))
+			if len(requests) != 3 {
+				t.Fatalf("模型请求数 = %d，期望 3（工具步 + 收尾 + 反思）", len(requests))
 			}
 			system := requests[0].Messages[0].Content
 			if !strings.Contains(system, "只有工具结果以「搜索状态：已完成（已联网）」开头时才能说联网查到了") {

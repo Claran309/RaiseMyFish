@@ -8,6 +8,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"RaiseMyFish/internal/llmmeta"
 )
 
 const testEmbedFingerprint = "test-fingerprint"
@@ -47,10 +49,12 @@ type fakeEmbedWorker struct {
 	failTimes int
 	calls     int
 	gotInputs [][]string
+	call      llmmeta.Call
 }
 
-func (f *fakeEmbedWorker) Embed(_ context.Context, inputs []string) ([][]float64, error) {
+func (f *fakeEmbedWorker) Embed(ctx context.Context, inputs []string) ([][]float64, error) {
 	f.calls++
+	f.call = llmmeta.From(ctx)
 	f.gotInputs = append(f.gotInputs, inputs)
 	if f.failTimes > 0 {
 		f.failTimes--
@@ -151,6 +155,9 @@ func TestRunEmbeddingSkipsPerKind(t *testing.T) {
 	}
 	if len(store.upserts) != 1 {
 		t.Fatalf("只应写回 1 条：%+v", store.upserts)
+	}
+	if embedder.call.Purpose != llmmeta.PurposeEmbedIndex || embedder.call.CorrelationID != "viewer" {
+		t.Fatalf("索引向量化用途未标注：%+v", embedder.call)
 	}
 	record := store.upserts[0]
 	if record.UID != "u-b" || record.Kind != KindFacts {

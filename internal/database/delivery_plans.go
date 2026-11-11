@@ -431,7 +431,8 @@ func (r *PlannedRepo) ArmPlan(ctx context.Context, c event.Claim, key store.Plan
 //
 // 正文取计划快照（平台实际收到的文字），平台ID进 send_log.msg_id；
 // 只有验收到稳定回执才算「已发言」：未验证的接受事实让 out 保持 retry，
-// 不把「可能发出」写成 done。
+// 不把「可能发出」写成 done。平台已接受且回执稳定、只是没完成核验的，
+// 标 sent_unconfirmed（已发送（未确认）），与真正没有回执的 unknown_manual 区分。
 func planAuditAccepted(tx *gorm.DB, p deliveryPlanRow, a deliveryAttemptRow) error {
 	at := a.CreatedAt
 	atKind := "local_attempt"
@@ -439,8 +440,9 @@ func planAuditAccepted(tx *gorm.DB, p deliveryPlanRow, a deliveryAttemptRow) err
 		at = *a.ArmedAt
 		atKind = "permit_observed"
 	}
+	receipt := planReceiptStable(a.MsgID)
 	evidence := "none"
-	if a.Verified {
+	if a.Verified || receipt {
 		evidence = "platform_receipt"
 	}
 	outStatus := event.StatusDone
@@ -462,7 +464,11 @@ func planAuditAccepted(tx *gorm.DB, p deliveryPlanRow, a deliveryAttemptRow) err
 		if err := json.Unmarshal(meta, &fields); err != nil {
 			return err
 		}
-		fields["unknown_manual"] = true
+		if receipt {
+			fields["sent_unconfirmed"] = true
+		} else {
+			fields["unknown_manual"] = true
+		}
 		if meta, err = json.Marshal(fields); err != nil {
 			return err
 		}
@@ -478,8 +484,9 @@ func planAuditAccepted(tx *gorm.DB, p deliveryPlanRow, a deliveryAttemptRow) err
 
 // planSettleAccepted 在同一事务里结清输入事件。
 //
-// POST 期间租约可能刚好过期：审计事实仍要落库，输入交给恢复流程补结算，
-// 不能用过期租约强行改写别人的行。
+// 平台已接受且有稳定回执时按 done 结清（含未完成核验的「已发送（未确认）」），
+// 不再重投；POST 期间租约可能刚好过期，审计事实仍要落库，输入交给恢复流程
+// 补结算，不能用过期租约强行改写别人的行。
 func planSettleAccepted(tx *gorm.DB, c event.Claim, p deliveryPlanRow) error {
 	return planSettleInput(tx, c, p, event.StatusDone)
 }
@@ -562,7 +569,9 @@ func (r *PlannedRepo) RecordPlan(ctx context.Context, c event.Claim, key store.P
 			if err := planAuditAccepted(tx, p, a); err != nil {
 				return err
 			}
-			if a.Verified {
+			// 有稳定回执就是已发送（未确认），输入按 done 结清；只有真正
+			// 没有回执的接受事实才保持 unknown，停止自动处理等人工核对。
+			if a.Verified || planReceiptStable(a.MsgID) {
 				if err := planSettleAccepted(tx, c, p); err != nil {
 					return err
 				}
@@ -617,7 +626,7 @@ func (r *PlannedRepo) RecordPlan(ctx context.Context, c event.Claim, key store.P
 			if err := planAuditAccepted(tx, p, a); err != nil {
 				return err
 			}
-			if a.Verified {
+			if a.Verified || planReceiptStable(a.MsgID) {
 				if err := planSettleAccepted(tx, c, p); err != nil {
 					return err
 				}

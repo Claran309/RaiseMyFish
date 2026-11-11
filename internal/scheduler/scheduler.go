@@ -86,6 +86,13 @@ func New(bus event.Bus, repo store.SchedulerRepo, o Options, workers Workers, lo
 		if !ch.Valid() || strings.TrimSpace(p.Brain) == "" || math.IsNaN(p.RatePerMinute) || math.IsInf(p.RatePerMinute, 0) || p.RatePerMinute <= 0 || p.Burst < 1 || p.DailyQuota < 1 || p.Cooldown < 0 || p.MinRunes < 0 || p.RepeatWindow < 0 {
 			return nil, store.ErrInvalid
 		}
+		// routing_mode 只属于 live；未知取值直接拒绝，避免配错静默变成「全部回复」。
+		if p.RoutingMode != "" && p.RoutingMode != RoutingMentionOnly && p.RoutingMode != RoutingFilter && p.RoutingMode != RoutingAll {
+			return nil, store.ErrInvalid
+		}
+		if ch != event.ChLive && p.RoutingMode != "" {
+			return nil, store.ErrInvalid
+		}
 		if p.MinRunes == 0 {
 			p.MinRunes = 2
 		}
@@ -318,9 +325,9 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 		if c.Event.Channel == event.ChLive && s.options.MaxEventAge > 0 && !c.Event.At.IsZero() && now.Sub(c.Event.At) > s.options.MaxEventAge {
 			return s.skip(ctx, c)
 		}
-		// 未 @ 鱼的 live 弹幕在准入前跳过：这是唯一合法的 queued→skipped 阶段，
-		// 放在这里也保证不进 Admit、不生成 Task、不调用模型。
-		if noiseReason(c.Event, policy.ChannelPolicy) != "" || mentionMiss(c.Event, policy.ChannelPolicy) || s.repeats[repetition(c.Event)].After(now) {
+		// 弹幕路由在准入前决定：mention_only 只回 @，filter 走规则筛选；
+		// 这是唯一合法的 queued→skipped 阶段，放在这里也保证不进 Admit、不生成 Task、不调用模型。
+		if noiseReason(c.Event, policy.ChannelPolicy) != "" || routingSkip(c.Event, policy.ChannelPolicy) || s.repeats[repetition(c.Event)].After(now) {
 			return s.skip(ctx, c)
 		}
 	}

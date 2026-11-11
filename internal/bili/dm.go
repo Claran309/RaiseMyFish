@@ -6,12 +6,16 @@ package bili
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // DMSession 是一条「会话 + 最近消息」。
@@ -247,6 +251,21 @@ func parseDMContent(raw string) string {
 	return raw
 }
 
+// dmDeviceID 是本进程固定的私信设备号。
+//
+// 平台要求 msg[dev_id] 且会按设备号做风控；每次请求换一个设备号容易触发
+// 校验失败，进程内复用同一值即可（重启换新不影响已发出的消息）。
+var dmDeviceID = sync.OnceValue(func() string {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// 随机源不可用时用时间戳兜底：这里只要求格式稳定，不承担鉴权。
+		return fmt.Sprintf("%032X", time.Now().UnixNano())
+	}
+	buf[6] = (buf[6] & 0x0f) | 0x40
+	buf[8] = (buf[8] & 0x3f) | 0x80
+	return strings.ToUpper(fmt.Sprintf("%x-%x-%x-%x-%x", buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:16]))
+})
+
 // SendMessage 发一条私信，返回平台 msg_key。
 func (c *Client) SendMessage(ctx context.Context, mid, text string) (string, error) {
 	if !isDigits(mid) {
@@ -270,19 +289,33 @@ func (c *Client) SendMessage(ctx context.Context, mid, text string) (string, err
 	if err != nil {
 		return "", errors.New("私信内容编码失败")
 	}
+	devID := dmDeviceID()
 	form := url.Values{}
 	form.Set("msg[sender_uid]", cred.selfMID)
 	form.Set("msg[receiver_id]", mid)
 	form.Set("msg[receiver_type]", strconv.Itoa(receiverTypeUser))
 	form.Set("msg[msg_type]", strconv.Itoa(msgTypeText))
+	form.Set("msg[msg_status]", "0")
+	form.Set("msg[dev_id]", devID)
+	form.Set("msg[timestamp]", strconv.FormatInt(time.Now().Unix(), 10))
 	form.Set("msg[content]", string(content))
 	form.Set("csrf", cred.csrf)
 	form.Set("csrf_token", cred.csrf)
 
+	// 2026 web 端 send_msg 走 WBI 签名：查询串里的 w_sender_uid/w_receiver_id/w_dev_id
+	// 与 body 的 msg[...] 必须一致；缺签名或设备号会被平台直接拒绝（历史上全量 unknown）。
+	params := url.Values{}
+	params.Set("w_sender_uid", cred.selfMID)
+	params.Set("w_receiver_id", mid)
+	params.Set("w_dev_id", devID)
+	endpoint, err := c.signWBI(ctx, "dm_send", c.vc+"/web_im/v1/web_im/send_msg", params)
+	if err != nil {
+		return "", err
+	}
 	var data struct {
 		MsgKey json.RawMessage `json:"msg_key"`
 	}
-	if err := c.send(ctx, cred, "dm_send", http.MethodPost, c.vc+"/web_im/v1/web_im/send_msg", form, &data); err != nil {
+	if err := c.send(ctx, cred, "dm_send", http.MethodPost, endpoint, form, &data); err != nil {
 		return "", err
 	}
 	// code=0 只说明平台明确接受；缺/零/非法 msg_key 是「接受但未验证」，

@@ -8,7 +8,7 @@ import (
 	channelcomment "RaiseMyFish/internal/channel/comment"
 	channeldm "RaiseMyFish/internal/channel/dm"
 	channellive "RaiseMyFish/internal/channel/live"
-	commentcollector "RaiseMyFish/internal/collector/comment"
+	"RaiseMyFish/internal/collector"
 	dmcollector "RaiseMyFish/internal/collector/dm"
 	livecollector "RaiseMyFish/internal/collector/live"
 	"RaiseMyFish/internal/config"
@@ -55,7 +55,7 @@ func newLiveCollector(cfg config.Config, log *zap.Logger) (*livecollector.Collec
 // buildChannelRegistry 注册当前启用的通道；两个采集器都为 nil 时返回空注册表。
 //
 // snd 允许为 nil（只采集、未装配消费循环），此时通道的 Send 会明确报错。
-func buildChannelRegistry(live *livecollector.Collector, comments *commentcollector.Collector, dms *dmcollector.Collector, snd sender.Sender, timeout time.Duration, log *zap.Logger) (*channel.Registry, error) {
+func buildChannelRegistry(live *livecollector.Collector, comments collector.Collector, dms *dmcollector.Collector, snd sender.Sender, timeout time.Duration, log *zap.Logger) (*channel.Registry, error) {
 	registry := channel.NewRegistry()
 	if live != nil {
 		ch, err := channellive.New(live, snd, timeout, log)

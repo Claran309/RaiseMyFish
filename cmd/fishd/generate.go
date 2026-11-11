@@ -146,7 +146,9 @@ type generateDeps struct {
 	channels   *channelSet
 	presence   *presence.Table
 	react      *reactRuntime
-	log        *zap.Logger
+	// commentVision 是评论附图识别；nil 表示未开启或未装配，按无图处理。
+	commentVision *commentVision
+	log           *zap.Logger
 }
 
 // generateHandler 返回 Generate 阶段的调度 handler。
@@ -184,7 +186,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		// 一轮预算：ReAct 路径把「读取/召回/embedding/Prepare/工具」都压进
 		// prepCtx（父 deadline 减 finalReserve），父 ctx 的最后一段留给最终正文。
 		// 单步路径不拆预算：读取与生成本来就共享同一个父 deadline。
-		useReact := deps.react != nil && deps.react.factory != nil && shouldUseReAct(ev.Text, deps.react.defaultReact)
+		useReact := deps.react != nil && deps.react.factory != nil && shouldUseReAct(ev.Channel, ev.Text, deps.react.defaultReact)
 		prepCtx, cancelPrep := ctx, context.CancelFunc(func() {})
 		if useReact {
 			prepCtx, cancelPrep = prepareDeadline(ctx, deps.react.finalReserve)
@@ -192,6 +194,12 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		defer cancelPrep()
 		// 统一快照：近期记忆默认注入，知识按意图补充（与 ReAct/主动弹幕同源）。
 		input, decision := buildPassiveInput(prepCtx, deps.context, ev)
+		// 评论附图：下载 + 视觉转述后注入 Visual；失败只降级为无图，不阻塞回复。
+		if deps.commentVision != nil && ev.Channel == event.ChComment {
+			if visual := deps.commentVision.Describe(prepCtx, ev); visual != "" {
+				input.Visual = visual
+			}
+		}
 		deps.log.Info("意图判断完成",
 			zap.String("action", "reasoning"),
 			zap.Bool("need_memory", decision.NeedMemory),
@@ -217,6 +225,26 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 				)
 				reactResult = reasoning.Result{}
 			}
+		}
+		if len(reactResult.Danmaku) > 0 {
+			// 工具已经把回复投递出去了（sender 已写出事件审计），不再发普通回复；
+			// 输入事件仍要按 replying→sent→done 结清，否则调度器会判定未结清。
+			deps.log.Info("ReAct 已用 send_danmaku 回复，跳过普通发送",
+				zap.String("action", "react_danmaku"),
+				zap.String("event_id", ev.ID),
+				zap.Int("danmaku", len(reactResult.Danmaku)),
+				zap.Int("steps", reactResult.Steps),
+			)
+			if err := deps.bus.Mark(ctx, w.Claim, []event.Status{event.StatusReplying}, event.StatusSent); err != nil {
+				if errors.Is(err, event.ErrLeaseLost) {
+					return scheduler.Result{Replied: true}, nil
+				}
+				return scheduler.Result{}, fmt.Errorf("标记弹幕投递完成失败：%w", err)
+			}
+			if err := settleDelivered(ctx, deps.bus, w.Claim, true, deps.retryDelay); err != nil {
+				return scheduler.Result{}, err
+			}
+			return scheduler.Result{Replied: true}, nil
 		}
 		if strings.TrimSpace(reactResult.Text) != "" {
 			reply = brain.Reply{Text: reactResult.Text}
@@ -273,7 +301,9 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 			}
 			// 事件已结清（dead/retry），返回 nil 让消费循环继续：发送失败是
 			// 可预期错误，不能因为一条私信/评论发失败就终止整个消费者。
-			// 错误详情已由 withErrorLog 记录（error_kind/error_chain）。
+			// 结清后 handler 返回 nil，withErrorLog 不会触发，这里必须自己留痕，
+			// 否则 dead 只剩通道内部日志，定位时看不到调度层的错误链。
+			logWorkFailure(deps.log, "send_settled", w, err)
 			return scheduler.Result{Replied: res.OK}, nil
 		}
 

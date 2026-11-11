@@ -21,7 +21,7 @@ heartbeat_like_seconds = 0
 [channels.live]
 enabled = true
 [channels.comment]
-enabled = false
+enabled = true
 [channels.dm]
 enabled = true
 [channels.qq]
@@ -29,7 +29,7 @@ enabled = false
 
 # 启用live前需明确房间与自身UID；Cookie仅从环境或显式文件读取。
 [collector.live]
-room_id = "30308220"
+room_id = "1992099976"
 self_id = "3747574135655903"
 node_path = "node"
 script_path = "tools/bili-whale/danmaku-await.mjs"
@@ -43,15 +43,25 @@ backoff_max_ms = 60000
 stable_after_ms = 30000
 max_failures = 8
 
-# 评论采集（P1）：轮询自己账号的视频/动态评论区（最新回复优先），
-# 按 rpid 去重后写 channel=comment 事件。
+# 评论采集（P1）：消息监听 + 动态评论轮询，按 rpid 去重后写 channel=comment 事件。
 # 默认关闭；启用需要 [channels.comment] enabled=true、FISH_BILI_COOKIE/_FILE 凭据，
 # 以及本账号 UID（[sender].self_id 或 [collector.live].self_id）用于跳过自己发的评论。
+# 动态评论轮询复用下面的 interval_seconds（单条动态轮询间隔）与
+# discover_interval_seconds（动态列表刷新间隔）；首轮只补最近 24 小时的评论，避免回刷旧账。
 # auto_discover=true 时按 discover_interval_seconds 刷新自己账号的视频+动态列表；
 # videos 是手动追加的固定 oid（可为空）；发现失败只退回手动列表，不报错。
 # interval_seconds 范围 10-3600；discover_interval_seconds 范围 60-86400。
 [collector.comment]
-enabled = false
+enabled = true
+# feed_enabled=true：监听账号消息（回复我的 / @我的），覆盖别人视频下的 @；主力来源。
+# 关闭后走下面的视频轮询（代码保留，可切换备用）。
+feed_enabled = true
+feed_interval_seconds = 60
+feed_state_path = "state/msgfeed-cursors.json"
+# dynamic_poll_enabled=true：并行轮询自己动态的评论区（msgfeed 不含「评论我的动态」）。
+# feed_enabled=false 时它也决定自动发现是否包含动态；关闭后轮询模式只轮视频。
+dynamic_poll_enabled = true
+# 以下四项用于动态轮询与 feed_enabled=false 的视频轮询。
 auto_discover = true
 videos = []
 interval_seconds = 60
@@ -65,11 +75,12 @@ script_path = "tools/bili-whale/danmaku.mjs"
 self_id = "3747574135655903"
 http_timeout_ms = 35000
 
-# 评论回复发送（P1）：独立开关，默认关闭。
+# 评论回复发送（P1）：独立开关。
 # 不主动限速，由队列按到达顺序处理；只有平台返回限流/频繁（412/429/「操作太快」）
 # 才退避重试（30 秒起指数翻倍）。凭据与 csrf（bili_jct）复用同一账号 Cookie。
+# 回复线程由 root/parent 表达（平台自动显示「回复 @xxx」），正文不再手写 @，避免重复 @。
 [sender.comment]
-enabled = false
+enabled = true
 
 # 只装配Brain与无调用诊断；通道仍必须关闭。
 [llm]
@@ -176,9 +187,9 @@ enabled = false
 # 例：allowed_tools = ["memory_search", "knowledge_search", "now", "web_search"]
 allowed_tools = []
 
-# ReAct 思考链（C 档）：默认全部弹幕走多步（可用性优先），
-# 只有短句（少于 6 个字符，如「哈哈」「在吗」）保持单步。
+# ReAct 思考链（C 档）：default_react=true 时全部弹幕走多步（可用性优先）。
 # 预算纪律：步数 3、总超时 8 秒；步数/超时/解析失败一律降级，不拖成半分钟。
+# default_react=false 回到旧两段式：命中召回词表才走。
 # 只有 [llm] enabled 且路由存在时才会真正装配。
 [reasoning]
 enabled = true
@@ -188,14 +199,36 @@ max_steps = 3
 timeout_ms = 8000
 # 副作用工具（送礼/关注/点赞/私信/发动态）总开关：默认关，开了模型才看得见这些工具。
 allow_side_effect_tools = false
+# 弹幕工具（send_danmaku）：开了一条事件里可直接发 1-3 条弹幕（每条≤40字，
+# 同一轮去重+限频），发过弹幕后不再额外发普通回复。执行走主动弹幕的 Node 投递通道。
+allow_danmaku_tool = true
+
+# 评论/私信没有直播节奏约束，允许更长思考（5-10 步 / 30-60 秒）；恒走 ReAct，
+# 不受 default_react 影响。弹幕仍用上面的 3 步 / 8 秒。
+[reasoning.comment]
+max_steps = 5
+timeout_ms = 45000
+
+[reasoning.dm]
+max_steps = 5
+timeout_ms = 45000
+
+# 评论附图识别：采集到图片 URL 后下载 → 视觉模型描述/OCR → 注入上下文。
+# 默认关闭；开启需同时启用 [llm] 且 llm_route 可解析。
+# 单条评论最多看 max_images 张图，所有图共用 timeout_ms；失败只按无图继续。
+[comment_vision]
+enabled = true
+llm_route = "default"
+timeout_ms = 20000
+max_images = 2
 
 # 看直播（0.12 MVP）：录一段 → 抽帧 → 视觉描述 + ASR 转写；默认关闭。
 # 启用需同时启用 [llm]，并从 cookie_env 指向的环境变量读取 B站凭据。
 [watch]
 enabled = false
 # 状态注入：告诉 Brain 此刻在看谁的直播；Presence 有 watching 时以实时房间为准。
-current_room = "30308220" # 当前观看的直播间；留空则不注入配置兜底
-streamer_name = "Claran309" # 主播名；留空则只报房间号
+current_room = "1992099976" # 当前观看的直播间；留空则不注入配置兜底
+streamer_name = "娇娇" # 主播名；留空则只报房间号
 source = "stream"
 interval_seconds = 600 # 直播采集运行期间，每隔多少秒看一次
 seconds = 10
@@ -271,6 +304,16 @@ owner_name = "Claran309"
 # 只读公开非 DM 弹幕；模型失败时回落到统计聚合（旧家效果）。0 表示关闭。
 viewer_summary_interval_seconds = 3600
 
+# 每日总结（#76）：每天 hour:minute（东八区）总结前一天的弹幕/回复/评论/私信，
+# 结果写 daily_summaries 表，面板 /diary 可查看与导出。只在 [llm] enabled 时生效；
+# 面板手动生成不受 enabled 控制（方便补历史日报）。
+[summary]
+enabled = true
+hour = 0
+minute = 10
+max_events = 300
+max_tokens = 900
+
 # 消费循环（Claim → Scheduler → Brain → Sender）。
 # 整段缺失表示「只采集不回复」；这里保留默认值，实际是否回复还取决于 [llm] enabled 与路由。
 [scheduler]
@@ -281,7 +324,9 @@ poll_interval_ms = 500
 retry_delay_ms = 5000
 max_event_age_seconds = 60 # 积压超过多少秒直接丢弃（不回复过期弹幕）；0=不限制
 operation_timeout_ms = 10000
-worker_timeout_ms = 30000
+# 单事件预算：评论/私信 ReAct 最长 60 秒，还要给回落单步留时间；
+# 弹幕自身的 ReAct 仍是 8 秒，不受这里放大影响。
+worker_timeout_ms = 120000
 
 [scheduler.channels.live]
 brain = "default"
@@ -290,10 +335,11 @@ burst = 2
 daily_quota = 10000 # 测试期放宽（原200，接近满导致 retry 到次日）
 cooldown_ms = 10000
 min_runes = 2
-# 只回复 @ 鱼的弹幕；未 @ 的在 schedule 阶段直接 skipped，不调 LLM。
+# 弹幕路由：mention_only（只回 @）/ filter（规则筛选：@、叫名字、提问、请求、上下文指代）/
+# all（全回）。filter 不依赖未读或视频轮询，纯闲聊在 schedule 阶段直接 skipped，不调 LLM。
 # B站回复/@弹幕正文可能没有 @，采集器会把 reply_mid/reply_uname 写入事件 Meta，
 # 这里用 self_ids（最可靠，不受改名影响）与 self_names 共同匹配。
-reply_only_mention = true
+routing_mode = "filter"
 # 被结构化 @（回复目标是自己）时，回复前缀带「@对方昵称 」；正文含前缀截到 40 rune。
 reply_mention_back = true
 max_reply_runes = 40

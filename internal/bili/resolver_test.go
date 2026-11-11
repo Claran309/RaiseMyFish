@@ -44,6 +44,11 @@ func TestResolverCredentialPerRequest(t *testing.T) {
 		mu.Lock()
 		cookies = append(cookies, r.Header.Get("Cookie"))
 		mu.Unlock()
+		if r.URL.Path == "/x/web-interface/nav" {
+			// 私信发送需要 WBI 签名，nav 用当前凭据应答。
+			_, _ = w.Write([]byte(`{"code":0,"data":{"wbi_img":{"img_url":"https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
+			return
+		}
 		_ = r.ParseForm()
 		if r.URL.Path == "/web_im/v1/web_im/send_msg" {
 			mu.Lock()
@@ -82,8 +87,14 @@ func TestResolverCredentialPerRequest(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(cookies) != 2 || !strings.Contains(cookies[0], "first") || !strings.Contains(cookies[1], "second") {
-		t.Fatalf("凭据未按请求解析：%v", cookies)
+	if len(cookies) < 2 || !strings.Contains(cookies[0], "first") {
+		t.Fatalf("首次请求未用旧凭据：%v", cookies)
+	}
+	// 切号后 SendDM 先取 WBI 密钥再发送，两步都必须用新凭据。
+	for _, cookie := range cookies[1:] {
+		if !strings.Contains(cookie, "second") {
+			t.Fatalf("切号后仍用旧凭据：%v", cookies)
+		}
 	}
 	if len(senders) != 1 || senders[0] != "2002" {
 		t.Fatalf("sender_uid 未用最新 UID：%v", senders)

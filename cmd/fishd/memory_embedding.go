@@ -22,6 +22,7 @@ import (
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/embedding"
 	"RaiseMyFish/internal/memory"
+	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/viewer"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -39,9 +40,20 @@ const defaultMemoryRefreshInterval = 5 * time.Minute
 //
 // 返回 nil 表示「未启用或装配失败」：调用方一律降级为纯关键词检索，
 // 不允许因为向量服务不可用而挡住主链路。
-func buildEmbeddingClient(cfg config.Config, logger *zap.Logger) *embedding.Client {
+// usage 为 nil 时仍返回可用客户端，只是调用不进成本账本。
+func buildEmbeddingClient(cfg config.Config, usage store.UsageRepo, logger *zap.Logger) *embedding.Client {
 	if !cfg.Embedding.Enabled {
 		return nil
+	}
+	var onError func(error)
+	if logger != nil {
+		onError = func(err error) {
+			logger.Warn("embedding调用记账失败",
+				zap.String("action", "embed_usage"),
+				zap.String("result", "failed"),
+				zap.Error(err),
+			)
+		}
 	}
 	client, err := embedding.New(embedding.Options{
 		URL:       cfg.Embedding.URL,
@@ -50,6 +62,7 @@ func buildEmbeddingClient(cfg config.Config, logger *zap.Logger) *embedding.Clie
 		Dimension: cfg.Embedding.Dimension,
 		BatchSize: cfg.Embedding.BatchSize,
 		Timeout:   embedding.DefaultTimeout,
+		OnUsage:   embedding.UsageSinkFor(usage, cfg.Embedding.Model, onError),
 	})
 	if err != nil {
 		if logger != nil {
@@ -141,7 +154,14 @@ func startMemoryEmbeddingRefresh(ctx context.Context, cfg config.Config, db *gor
 	if !cfg.Embedding.Enabled || !cfg.Embedding.AutoRefresh || db == nil || logger == nil {
 		return noop
 	}
-	client := buildEmbeddingClient(cfg, logger)
+	// 定时增量也要进成本账本；账本装配失败只降级为不记账，不挡向量化。
+	var usage store.UsageRepo
+	if repo, uerr := database.NewUsageRepo(db); uerr == nil {
+		usage = repo
+	} else {
+		logger.Warn("向量刷新账本装配失败，本次调用不记成本", zap.String("action", "embed_usage"), zap.Error(uerr))
+	}
+	client := buildEmbeddingClient(cfg, usage, logger)
 	if client == nil {
 		return noop
 	}

@@ -25,6 +25,8 @@ const (
 	PurposeMemeLearn Purpose = "meme_learn"
 	// PurposeViewerSummary 是观众侧写定时总结。
 	PurposeViewerSummary Purpose = "viewer_summary"
+	// PurposeDailySummary 是每日总结（日报生成）。
+	PurposeDailySummary Purpose = "daily_summary"
 	// PurposeEmbedIndex 是写索引的批量向量化。
 	PurposeEmbedIndex Purpose = "embed_index"
 	// PurposeEmbedQuery 是查询时的单条向量化。
@@ -42,6 +44,7 @@ var knownPurposes = map[Purpose]bool{
 	PurposeMemoryExtract: true,
 	PurposeMemeLearn:     true,
 	PurposeViewerSummary: true,
+	PurposeDailySummary:  true,
 	PurposeEmbedIndex:    true,
 	PurposeEmbedQuery:    true,
 	PurposeUnknown:       true,

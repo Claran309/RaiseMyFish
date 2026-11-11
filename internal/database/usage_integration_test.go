@@ -6,6 +6,7 @@ import (
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/brain/provider"
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/llmmeta"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/store"
@@ -32,15 +33,17 @@ func TestUsageRepoRealPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unknown := store.Usage{At: time.Now(), Channel: event.ChLive, Model: "fake:model", Milliseconds: 10, OK: false}
+	unknown := store.Usage{At: time.Now(), Channel: event.ChLive, Purpose: string(llmmeta.PurposeReply), Model: "fake:model", Milliseconds: 10, OK: false}
 	if err := repo.RecordUsage(ctx, unknown); err != nil {
 		t.Fatal(err)
 	}
-	in, out := 10, 3
+	in, out, cached := 10, 3, 4
 	cost := .000123
 	known := unknown
 	known.InputTokens = &in
 	known.OutputTokens = &out
+	known.CachedInputTokens = &cached
+	known.CorrelationID = "live:room:integration"
 	known.CostUSD = &cost
 	known.OK = true
 	var wg sync.WaitGroup
@@ -55,6 +58,12 @@ func TestUsageRepoRealPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// 后台向量化没有对话通道与关联 ID：两列都要写 NULL 而不是空串。
+	inTokens := 64
+	background := store.Usage{At: time.Now(), Purpose: string(llmmeta.PurposeEmbedIndex), Model: "fake:model", InputTokens: &inTokens, Milliseconds: 2, OK: true}
+	if err := repo.RecordUsage(ctx, background); err != nil {
+		t.Fatal(err)
+	}
 	var total, nulls, success int64
 	if err := db.Table("llm_usage").Count(&total).Error; err != nil {
 		t.Fatal(err)
@@ -65,8 +74,41 @@ func TestUsageRepoRealPostgres(t *testing.T) {
 	if err := db.Table("llm_usage").Where("in_tokens=? AND out_tokens=? AND cost_usd=? AND ok=true", in, out, cost).Count(&success).Error; err != nil {
 		t.Fatal(err)
 	}
-	if total != 5 || nulls != 1 || success != 4 {
+	if total != 6 || nulls != 1 || success != 4 {
 		t.Fatalf("账本结果错误：%d/%d/%d", total, nulls, success)
+	}
+
+	var replyRow struct {
+		Channel     string  `gorm:"column:channel"`
+		Purpose     string  `gorm:"column:purpose"`
+		Correlation *string `gorm:"column:correlation_id"`
+		Cached      *int    `gorm:"column:cached_in_tokens"`
+	}
+	if err := db.Table("llm_usage").Where("purpose = ? AND ok = true", string(llmmeta.PurposeReply)).Take(&replyRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if replyRow.Channel != "live" || replyRow.Correlation == nil || *replyRow.Correlation != known.CorrelationID {
+		t.Fatalf("现场调用的通道/关联 ID 错误：%+v", replyRow)
+	}
+	if replyRow.Cached == nil || *replyRow.Cached != cached {
+		t.Fatalf("缓存命中 token 未落账：%v", replyRow.Cached)
+	}
+
+	var backgroundRow struct {
+		Channel     *string `gorm:"column:channel"`
+		Correlation *string `gorm:"column:correlation_id"`
+	}
+	if err := db.Table("llm_usage").Where("purpose = ?", string(llmmeta.PurposeEmbedIndex)).Take(&backgroundRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if backgroundRow.Channel != nil || backgroundRow.Correlation != nil {
+		t.Fatalf("后台调用应写 NULL 通道与关联 ID：%+v", backgroundRow)
+	}
+
+	badPurpose := known
+	badPurpose.Purpose = "made_up"
+	if err := repo.RecordUsage(ctx, badPurpose); err == nil {
+		t.Fatal("接受未知用途")
 	}
 	canceled, stop := context.WithCancel(ctx)
 	stop()
@@ -101,7 +143,7 @@ func TestBrainHTTPAttemptsReachRealUsageLedger(t *testing.T) {
 			_, _ = io.WriteString(w, "untrusted-error-body")
 			return
 		}
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"鱼鱼鱼鱼鱼鱼鱼鱼鱼鱼"}}],"usage":{"prompt_tokens":100,"completion_tokens":10}}`)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"鱼鱼鱼鱼鱼鱼鱼鱼鱼鱼"}}],"usage":{"prompt_tokens":100,"completion_tokens":10,"prompt_tokens_details":{"cached_tokens":30}}}`)
 	}))
 	defer server.Close()
 	p, err := provider.NewOpenAI("fake", server.URL, "not-real-key", server.Client(), time.Second)
@@ -132,16 +174,30 @@ func TestBrainHTTPAttemptsReachRealUsageLedger(t *testing.T) {
 		t.Fatal("HTTP重试链路失败")
 	}
 	var rows []struct {
-		Model  string
-		OK     bool
-		Input  *int     `gorm:"column:in_tokens"`
-		Output *int     `gorm:"column:out_tokens"`
-		Cost   *float64 `gorm:"column:cost_usd"`
+		Model       string
+		OK          bool
+		Purpose     string
+		Correlation *string  `gorm:"column:correlation_id"`
+		Input       *int     `gorm:"column:in_tokens"`
+		Output      *int     `gorm:"column:out_tokens"`
+		Cached      *int     `gorm:"column:cached_in_tokens"`
+		Cost        *float64 `gorm:"column:cost_usd"`
 	}
 	if err := db.Table("llm_usage").Order("id").Find(&rows).Error; err != nil {
 		t.Fatal(err)
 	}
 	if len(rows) != 2 || rows[0].OK || !rows[1].OK || rows[0].Input != nil || rows[1].Input == nil || *rows[1].Input != 100 || rows[0].Cost != nil || rows[1].Cost != nil || rows[1].Model != "fake:model" {
 		t.Fatalf("实际HTTP尝试的PG账本错误：%+v", rows)
+	}
+	for i, row := range rows {
+		if row.Purpose != string(llmmeta.PurposeReply) || row.Correlation == nil || *row.Correlation != task.EventID {
+			t.Fatalf("第%d行用途/关联ID错误：%+v", i, row)
+		}
+	}
+	if rows[0].Cached != nil {
+		t.Fatalf("失败尝试没有响应体，缓存命中应为 nil：%v", *rows[0].Cached)
+	}
+	if rows[1].Cached == nil || *rows[1].Cached != 30 {
+		t.Fatalf("服务端声明的缓存命中未落账：%v", rows[1].Cached)
 	}
 }

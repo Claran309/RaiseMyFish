@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"RaiseMyFish/internal/llmmeta"
 )
 
 const testEmbedFingerprint = "test-fingerprint"
@@ -51,10 +53,12 @@ type fakeEmbedWorker struct {
 	failTimes int
 	calls     int
 	gotInputs [][]string
+	call      llmmeta.Call
 }
 
-func (f *fakeEmbedWorker) Embed(_ context.Context, inputs []string) ([][]float64, error) {
+func (f *fakeEmbedWorker) Embed(ctx context.Context, inputs []string) ([][]float64, error) {
 	f.calls++
+	f.call = llmmeta.From(ctx)
 	f.gotInputs = append(f.gotInputs, inputs)
 	if f.failTimes > 0 {
 		f.failTimes--
@@ -104,6 +108,9 @@ func TestRunEmbeddingIncrementalSkipsUnchanged(t *testing.T) {
 	}
 	if embedder.calls != 1 {
 		t.Errorf("embedding 调用次数 = %d，期望 1", embedder.calls)
+	}
+	if embedder.call.Purpose != llmmeta.PurposeEmbedIndex || embedder.call.CorrelationID != "memory" {
+		t.Fatalf("索引向量化用途未标注：%+v", embedder.call)
 	}
 	if len(store.upserts) != 2 {
 		t.Fatalf("写回条数 = %d，期望 2", len(store.upserts))

@@ -47,17 +47,23 @@ func readReq(target string) *http.Request {
 }
 
 type fakeRepo struct {
-	status        store.WebStatus
-	embedding     store.WebEmbeddingStatus
-	memory        []store.WebMemory
-	events        []store.WebEvent
-	channelEvents map[string][]store.WebEvent
-	details       map[string]store.WebEventDetail
-	detailErr     error
-	errors        []store.WebEvent
-	sends         []store.WebSend
-	archived      []string
-	archiveErr    error
+	status         store.WebStatus
+	embedding      store.WebEmbeddingStatus
+	memory         []store.WebMemory
+	events         []store.WebEvent
+	channelEvents  map[string][]store.WebEvent
+	details        map[string]store.WebEventDetail
+	detailErr      error
+	errors         []store.WebEvent
+	sends          []store.WebSend
+	archived       []string
+	archiveErr     error
+	memoryOrder    string
+	clearErr       error
+	cleared        []string
+	clearBefore    time.Time
+	clearCount     int64
+	clearBeforeErr error
 }
 
 func (f *fakeRepo) Status(context.Context) (store.WebStatus, error) { return f.status, nil }
@@ -66,7 +72,8 @@ func (f *fakeRepo) EmbeddingStatus(context.Context) (store.WebEmbeddingStatus, e
 	return f.embedding, nil
 }
 
-func (f *fakeRepo) Memory(context.Context, string, string, int) ([]store.WebMemory, error) {
+func (f *fakeRepo) Memory(_ context.Context, _, _, order string, _ int) ([]store.WebMemory, error) {
+	f.memoryOrder = order
 	return f.memory, nil
 }
 
@@ -104,6 +111,22 @@ func (f *fakeRepo) Event(_ context.Context, id string) (store.WebEventDetail, er
 }
 
 func (f *fakeRepo) Errors(context.Context, int) ([]store.WebEvent, error) { return f.errors, nil }
+
+func (f *fakeRepo) ClearError(_ context.Context, id string) error {
+	if f.clearErr != nil {
+		return f.clearErr
+	}
+	f.cleared = append(f.cleared, id)
+	return nil
+}
+
+func (f *fakeRepo) ClearErrorsBefore(_ context.Context, before time.Time) (int64, error) {
+	if f.clearBeforeErr != nil {
+		return 0, f.clearBeforeErr
+	}
+	f.clearBefore = before
+	return f.clearCount, nil
+}
 
 func (f *fakeRepo) SendLogs(context.Context, int) ([]store.WebSend, error) { return f.sends, nil }
 
@@ -392,18 +415,29 @@ func TestEventsJSON(t *testing.T) {
 	}
 }
 
-// TestSendLogJSON 发送记录结构。
+// TestSendLogJSON 发送记录结构：ok 但未核验要能标成「已发送（未确认）」。
 func TestSendLogJSON(t *testing.T) {
-	repo := &fakeRepo{sends: []store.WebSend{{EventID: "e1", Channel: "live", OK: true, MsgID: "m", At: time.Now()}}}
+	repo := &fakeRepo{sends: []store.WebSend{{
+		EventID: "e1", Channel: "live", OK: true, Verified: false,
+		MsgID: "m", Error: "unconfirmed", At: time.Now(),
+	}}}
 	srv := newTestServer(t, repo)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, readReq("/api/send_log?limit=5"))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "event_id") {
-		t.Fatalf("响应不符：%d %s", rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, "event_id") ||
+		!strings.Contains(body, `"verified":false`) || !strings.Contains(body, `"error":"unconfirmed"`) {
+		t.Fatalf("响应不符：%d %s", rec.Code, body)
+	}
+	// 页面渲染「已发送（未确认）」而不是只给一个 ✅。
+	page := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(page, readReq("/activity"))
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "已发送（未确认）") {
+		t.Fatalf("活动页缺少未确认文案：%d", page.Code)
 	}
 }
 
-// TestPagesRender 四个页面都能 200 且含内联样式。
+// TestPagesRender 主要页面都能 200 且含内联样式。
 func TestPagesRender(t *testing.T) {
 	srv := newTestServer(t, &fakeRepo{})
 	for _, path := range []string{"/", "/memory", "/knowledge", "/activity", "/accounts"} {

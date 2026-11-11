@@ -29,9 +29,17 @@ type Scheduler struct {
 	Channels           map[event.Channel]ChannelPolicy `toml:"channels"`
 }
 
+// 弹幕路由模式（只对 live 生效）：mention_only 只回 @/结构化回复；filter 走规则筛选；all 全部回复。
+const (
+	RoutingMentionOnly = "mention_only"
+	RoutingFilter      = "filter"
+	RoutingAll         = "all"
+)
+
 // ChannelPolicy 是单通道的准入策略；ID 只来自可信配置，不从消息正文推断。
 //
-// ReplyOnlyMention / ReplyMentionBack 用指针区分「未写」与「显式 false」：live 通道未写时默认 true。
+// RoutingMode 是新键；未写时按旧 reply_only_mention 推导（默认 true → mention_only）。
+// ReplyOnlyMention / ReplyMentionBack 用指针区分「未写」与「显式 false」。
 type ChannelPolicy struct {
 	Brain            string   `toml:"brain"`
 	RatePerMinute    float64  `toml:"rate_per_minute"`
@@ -40,6 +48,7 @@ type ChannelPolicy struct {
 	CooldownMS       int      `toml:"cooldown_ms"`
 	MinRunes         int      `toml:"min_runes"`
 	RepeatWindowMS   int      `toml:"repeat_window_ms"`
+	RoutingMode      string   `toml:"routing_mode"`
 	ReplyOnlyMention *bool    `toml:"reply_only_mention"`
 	ReplyMentionBack *bool    `toml:"reply_mention_back"`
 	MaxReplyRunes    int      `toml:"max_reply_runes"`
@@ -104,18 +113,29 @@ func (s *Scheduler) ApplyDefaults() {
 		if p.MinRunes == 0 {
 			p.MinRunes = 2
 		}
-		// live 默认只回 @ 鱼的弹幕；显式 false 才保持全量回复。
-		if p.ReplyOnlyMention == nil && ch == event.ChLive {
-			enabled := true
-			p.ReplyOnlyMention = &enabled
-		}
-		// live 默认在被结构化 @ 时回带 @对方；长度上限按 B站弹幕 40 字兜底。
-		if p.ReplyMentionBack == nil && ch == event.ChLive {
-			enabled := true
-			p.ReplyMentionBack = &enabled
-		}
-		if p.MaxReplyRunes == 0 && ch == event.ChLive {
-			p.MaxReplyRunes = defaultMaxReplyRunes
+		if ch == event.ChLive {
+			p.RoutingMode = strings.TrimSpace(p.RoutingMode)
+			if p.RoutingMode == "" {
+				// 兼容旧键：未写 routing_mode 时按 reply_only_mention 推导；
+				// 旧配置默认只回 @，显式 false 才保持全量回复。
+				enabled := p.ReplyOnlyMention == nil || *p.ReplyOnlyMention
+				if p.ReplyOnlyMention == nil {
+					p.ReplyOnlyMention = &enabled
+				}
+				if enabled {
+					p.RoutingMode = RoutingMentionOnly
+				} else {
+					p.RoutingMode = RoutingAll
+				}
+			}
+			// live 默认在被结构化 @ 时回带 @对方；长度上限按 B站弹幕 40 字兜底。
+			if p.ReplyMentionBack == nil {
+				enabled := true
+				p.ReplyMentionBack = &enabled
+			}
+			if p.MaxReplyRunes == 0 {
+				p.MaxReplyRunes = defaultMaxReplyRunes
+			}
 		}
 		for i, name := range p.SelfNames {
 			p.SelfNames[i] = strings.TrimSpace(name)
@@ -182,12 +202,38 @@ func (s *Scheduler) Validate() error {
 		if p.ReplyMentionBack != nil && *p.ReplyMentionBack && ch != event.ChLive {
 			return fmt.Errorf("通道 %s 不支持 reply_mention_back（只对 live 生效）", ch)
 		}
-		if p.ReplyOnlyMention != nil && *p.ReplyOnlyMention {
-			if ch != event.ChLive {
+		mode := strings.TrimSpace(p.RoutingMode)
+		switch mode {
+		case "", RoutingMentionOnly, RoutingFilter, RoutingAll:
+		default:
+			return fmt.Errorf("通道 %s 的 routing_mode %q 无效（可选 mention_only/filter/all）", ch, p.RoutingMode)
+		}
+		if ch != event.ChLive {
+			if mode != "" {
+				return fmt.Errorf("通道 %s 不支持 routing_mode（只对 live 生效）", ch)
+			}
+			if p.ReplyOnlyMention != nil && *p.ReplyOnlyMention {
 				return fmt.Errorf("通道 %s 不支持 reply_only_mention（只对 live 生效）", ch)
 			}
+			continue
+		}
+		// live：新旧键同时写且语义相悖时报错，避免「写了 filter 却以为还在 mention_only」。
+		if p.ReplyOnlyMention != nil {
+			switch mode {
+			case RoutingFilter, RoutingAll:
+				if *p.ReplyOnlyMention {
+					return fmt.Errorf("live 的 routing_mode=%s 与 reply_only_mention=true 冲突", mode)
+				}
+			case RoutingMentionOnly:
+				if !*p.ReplyOnlyMention {
+					return errors.New("live 的 routing_mode=mention_only 与 reply_only_mention=false 冲突")
+				}
+			}
+		}
+		if mode == RoutingMentionOnly || mode == RoutingFilter ||
+			(mode == "" && p.ReplyOnlyMention != nil && *p.ReplyOnlyMention) {
 			if len(p.SelfNames) == 0 {
-				return errors.New("live 通道开启 reply_only_mention 时必须配置 self_names")
+				return errors.New("live 通道开启 mention_only/filter 路由时必须配置 self_names")
 			}
 			for _, name := range p.SelfNames {
 				if name == "" || utf8.RuneCountInString(name) > 32 || strings.ContainsAny(name, "\r\n\x00@＠") {

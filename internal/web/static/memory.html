@@ -26,12 +26,13 @@ button.danger{color:var(--bad);border-color:#3a2a2a}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:16px}
 .card h2{font-size:14px;margin:0 0 6px;display:flex;gap:10px;align-items:center}
 .card .bar{margin:8px 0 0}
+.empty{padding:18px;text-align:center;color:var(--muted)}
 </style>
 </head>
 <body>
 <header>
   <b>🐟 大肥鱼面板</b>
-  <nav><a href="/">概览</a><a href="/live">直播</a><a href="/message">消息</a><a href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a class="on" href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
+  <nav><a href="/">概览</a><a href="/live">直播</a><a href="/message">消息</a><a href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a href="/diary">日报</a><a class="on" href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
 </header>
 <main>
   <section class="card" id="vs-card">
@@ -57,6 +58,12 @@ button.danger{color:var(--bad);border-color:#3a2a2a}
       <option value="promise">promise</option>
       <option value="first_seen">first_seen</option>
     </select>
+    <select id="sort" onchange="load()">
+      <option value="time">按时间</option>
+      <option value="importance">按重要度</option>
+    </select>
+    <label class="muted"><input id="group" type="checkbox" onchange="load()"> 按类型分组</label>
+    <span class="tag">分组只影响排版，不改变排序</span>
     <button onclick="load()">查询</button>
     <span class="muted" id="cnt"></span>
   </div>
@@ -76,18 +83,46 @@ function esc(s) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
   });
 }
+function memRow(m) {
+  return '<tr><td class="tag">' + esc(m.kind) + '</td><td>' + esc(m.title) + '</td>' +
+    '<td class="muted">' + esc(m.summary) + '</td><td>' + Number(m.importance).toFixed(2) + '</td>' +
+    '<td class="tag">' + esc(m.created_at) + '</td>' +
+    '<td><button class="danger" onclick="del(\'' + esc(m.id) + '\')">删除</button></td></tr>';
+}
+function render(items) {
+  var box = document.getElementById('rows');
+  if (!items.length) {
+    var filtering = document.getElementById('q').value.trim() || document.getElementById('kind').value;
+    box.innerHTML = '<tr><td colspan="6" class="empty">' +
+      (filtering ? '没有匹配的记忆：清空搜索或类型筛选再试' : '还没有记忆：等提炼跑完再来看看') +
+      '</td></tr>';
+    return;
+  }
+  if (!document.getElementById('group').checked) {
+    box.innerHTML = items.map(memRow).join('');
+    return;
+  }
+  // 保持后端排序，只把相同类型归到一段；类型顺序按首条出现位置。
+  var order = [], groups = {};
+  items.forEach(function (m) {
+    var k = m.kind || '未分类';
+    if (!groups[k]) { groups[k] = []; order.push(k); }
+    groups[k].push(m);
+  });
+  box.innerHTML = order.map(function (k) {
+    return '<tr><td colspan="6" class="tag" style="background:#12151c">' + esc(k) + ' · ' + groups[k].length + ' 条</td></tr>' +
+      groups[k].map(memRow).join('');
+  }).join('');
+}
 async function load() {
   var q = encodeURIComponent(document.getElementById('q').value);
   var k = encodeURIComponent(document.getElementById('kind').value);
-  var r = await fetch('/api/memory?q=' + q + '&kind=' + k + '&limit=100');
+  var s = encodeURIComponent(document.getElementById('sort').value);
+  var r = await fetch('/api/memory?q=' + q + '&kind=' + k + '&sort=' + s + '&limit=100');
   var d = await r.json();
-  document.getElementById('cnt').textContent = (d.count || 0) + ' 条';
-  document.getElementById('rows').innerHTML = (d.items || []).map(function (m) {
-    return '<tr><td class="tag">' + esc(m.kind) + '</td><td>' + esc(m.title) + '</td>' +
-      '<td class="muted">' + esc(m.summary) + '</td><td>' + Number(m.importance).toFixed(2) + '</td>' +
-      '<td class="tag">' + esc(m.created_at) + '</td>' +
-      '<td><button class="danger" onclick="del(\'' + esc(m.id) + '\')">删除</button></td></tr>';
-  }).join('');
+  document.getElementById('cnt').textContent = (d.count || 0) + ' 条 · ' +
+    (d.sort === 'importance' ? '按重要度' : '按时间');
+  render(d.items || []);
 }
 async function del(id) {
   if (!confirm('确认删除这条记忆？')) return;

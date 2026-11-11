@@ -33,10 +33,12 @@ func TestWebEmbeddingStatusCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	synced := time.Now().UTC().Truncate(time.Microsecond)
-	if err := knowledgeRepo.UpsertEmbeddings(ctx, []knowledge.EmbeddingRecord{{
-		ID: "k1", Source: "lore.md", Title: "白饭", UpdatedAt: synced, Embedding: memoryVector(0),
-	}}); err != nil {
-		t.Fatalf("知识入库失败：%v", err)
+	if written, err := knowledgeRepo.UpsertEmbeddings(ctx, []knowledge.EmbeddingRecord{{
+		ID: "k1", Source: "lore.md", Title: "白饭", UpdatedAt: synced,
+		Hash: "k1-text", SourceHash: "k1-source", Fingerprint: testIndexFingerprint,
+		Embedding: memoryVector(0),
+	}}); err != nil || written != 1 {
+		t.Fatalf("知识入库失败：%d %v", written, err)
 	}
 
 	// 各制造一条待嵌入，验证 pending 与最后同步只统计已嵌入行。

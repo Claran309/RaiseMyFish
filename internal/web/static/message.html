@@ -36,7 +36,7 @@ th{color:var(--muted);font-weight:500}
 <body>
 <header>
   <b>🐟 大肥鱼面板</b>
-  <nav><a href="/">概览</a><a href="/live">直播</a><a class="on" href="/message">消息</a><a href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
+  <nav><a href="/">概览</a><a href="/live">直播</a><a class="on" href="/message">消息</a><a href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a href="/diary">日报</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
 </header>
 <main>
   <h2>消息管理</h2>
@@ -131,12 +131,16 @@ function render() {
   else { pill(cp, !!comment.running, comment.running ? '监听中' : (comment.enabled ? '已启用未运行' : '已停止')); }
   document.getElementById('comment-btn').textContent = comment.enabled ? '停止评论监听' : '启动评论监听';
   document.getElementById('comment-btn').disabled = !commentAvailable;
-  document.getElementById('videos').disabled = !commentAvailable;
-  document.getElementById('videos-save').disabled = !commentAvailable;
+  document.getElementById('videos').disabled = !commentAvailable || !!comment.feed_enabled;
+  document.getElementById('videos-save').disabled = !commentAvailable || !!comment.feed_enabled;
   if (!dirtyVideos) { document.getElementById('videos').value = (comment.videos || []).join('\n'); }
-  document.getElementById('comment-mode').textContent = comment.auto_discover
-    ? '自动发现：开启（自动轮询本账号视频 + 动态的评论区，手动列表可留空）'
-    : '自动发现：关闭（只轮询手动视频 oid）';
+  var dynamicPoll = comment.dynamic_poll_enabled !== false;
+  document.getElementById('comment-mode').textContent = comment.feed_enabled
+    ? '消息监听：账号消息（回复我的 / @我的，含别人视频），每 ' + (comment.feed_interval_seconds || 60) + ' 秒拉取；'
+      + (dynamicPoll ? '并行轮询动态评论（含评论我的动态）' : '动态评论轮询已关闭')
+    : (comment.auto_discover
+      ? '自动发现：开启（自动轮询本账号视频' + (dynamicPoll ? ' + 动态' : '') + '的评论区，手动列表可留空）'
+      : '自动发现：关闭（只轮询手动视频 oid）');
   document.getElementById('comment-sub').textContent = comment.last_error ? ('错误：' + comment.last_error) : (!commentAvailable ? '评论采集未装配' : '');
 
   var dp = document.getElementById('dm-pill');

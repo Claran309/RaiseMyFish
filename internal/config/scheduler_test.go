@@ -63,6 +63,9 @@ func TestSchedulerDefaultsFilled(t *testing.T) {
 	if p.ReplyOnlyMention == nil || !*p.ReplyOnlyMention {
 		t.Errorf("live 未写 reply_only_mention 时应默认 true：%+v", p)
 	}
+	if p.RoutingMode != RoutingMentionOnly {
+		t.Errorf("未写 routing_mode 时应按旧键推导为 mention_only，实际 %q", p.RoutingMode)
+	}
 	if p.ReplyMentionBack == nil || !*p.ReplyMentionBack {
 		t.Errorf("live 未写 reply_mention_back 时应默认 true：%+v", p)
 	}
@@ -100,6 +103,25 @@ func TestSchedulerReplyOnlyMentionExplicitFalse(t *testing.T) {
 	p := cfg.Scheduler.Channels[event.ChLive]
 	if p.ReplyOnlyMention == nil || *p.ReplyOnlyMention {
 		t.Fatalf("显式 false 被覆盖：%+v", p.ReplyOnlyMention)
+	}
+	if p.RoutingMode != RoutingAll {
+		t.Fatalf("reply_only_mention=false 应推导为 all，实际 %q", p.RoutingMode)
+	}
+}
+
+// TestSchedulerRoutingModeFilter filter 模式不需旧键，加载后路由为 filter。
+func TestSchedulerRoutingModeFilter(t *testing.T) {
+	body := "[scheduler.channels.live]\nbrain='default'\nrate_per_minute=6\nburst=1\ndaily_quota=10\nrouting_mode='filter'\nself_names=['大肥鱼']\n"
+	cfg, err := loadWithScheduler(t, body)
+	if err != nil {
+		t.Fatalf("filter 配置加载失败：%v", err)
+	}
+	p := cfg.Scheduler.Channels[event.ChLive]
+	if p.RoutingMode != RoutingFilter {
+		t.Fatalf("routing_mode 不符：%+v", p)
+	}
+	if p.ReplyOnlyMention != nil {
+		t.Fatalf("显式 routing_mode 不应回填旧键：%+v", p.ReplyOnlyMention)
 	}
 }
 
@@ -147,6 +169,10 @@ func TestSchedulerValidationRejects(t *testing.T) {
 		{"mention缺名字", "[scheduler.channels.live]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nreply_only_mention = true\n", "self_names"},
 		{"mention名字含@", "[scheduler.channels.live]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nself_names = [\"@鱼\"]\n", "self_names"},
 		{"mention用于非live", "[scheduler.channels.comment]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nreply_only_mention = true\nself_names = [\"大肥鱼\"]\n", "reply_only_mention"},
+		{"filter缺名字", "[scheduler.channels.live]\nbrain='default'\nrate_per_minute=6\nburst=1\ndaily_quota=10\nrouting_mode='filter'\n", "self_names"},
+		{"filter与旧键冲突", "[scheduler.channels.live]\nbrain='default'\nrate_per_minute=6\nburst=1\ndaily_quota=10\nrouting_mode='filter'\nreply_only_mention=true\nself_names=['大肥鱼']\n", "冲突"},
+		{"未知routing_mode", "[scheduler.channels.live]\nbrain='default'\nrate_per_minute=6\nburst=1\ndaily_quota=10\nrouting_mode='smart'\n", "routing_mode"},
+		{"routing用于非live", "[scheduler.channels.comment]\nbrain='default'\nrate_per_minute=6\nburst=1\ndaily_quota=10\nrouting_mode='filter'\nself_names=['大肥鱼']\n", "routing_mode"},
 		{"mention回带用于非live", "[scheduler.channels.comment]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nreply_mention_back = true\n", "reply_mention_back"},
 		{"回复上限超40", "[scheduler.channels.live]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nmax_reply_runes = 41\n", "max_reply_runes"},
 		{"回复上限为负", "[scheduler.channels.live]\nbrain = \"default\"\nrate_per_minute = 6\nburst = 1\ndaily_quota = 10\nmax_reply_runes = -1\n", "max_reply_runes"},

@@ -54,8 +54,14 @@ type ContextInput struct {
 	State string
 	// Visual 是画面描述（主动弹幕/看直播注入）；空则不出现 <visual> 段。
 	Visual string
+	// Audio 是主播声音的 ASR 转写（主动弹幕「声音」）；空则不出现 <audio> 段。
+	Audio string
+	// LiveChat 是最近观众弹幕（每行一条，已去鱼自己）；空则不出现 <live_chat> 段。
+	LiveChat string
 	// Viewer 是对方档案片段（认人用）；空则不出现 <viewer> 段（陌生人）。
 	Viewer string
+	// Injection 是看板操作人写入的临时设定；空则不出现 <injection> 段。
+	Injection string
 	// Soul 是长期设定（灵魂记忆），每行一条；空则不出现 <longterm> 段。
 	Soul []string
 }

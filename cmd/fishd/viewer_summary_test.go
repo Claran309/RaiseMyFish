@@ -20,9 +20,11 @@ import (
 )
 
 type scriptedViewerSummaryWorker struct {
-	mu    sync.Mutex
-	calls int
-	seen  chan int
+	mu            sync.Mutex
+	calls         int
+	backfillCalls []int
+	seen          chan int
+	backfillSeen  chan int
 }
 
 func (w *scriptedViewerSummaryWorker) RunOnce(context.Context) (viewer.SummaryStats, error) {
@@ -35,6 +37,23 @@ func (w *scriptedViewerSummaryWorker) RunOnce(context.Context) (viewer.SummarySt
 	default:
 	}
 	return viewer.SummaryStats{Candidates: 2, Summarized: 1, Fallback: 1}, nil
+}
+
+func (w *scriptedViewerSummaryWorker) RunBackfill(_ context.Context, limit int) (viewer.SummaryStats, error) {
+	w.mu.Lock()
+	w.backfillCalls = append(w.backfillCalls, limit)
+	w.mu.Unlock()
+	select {
+	case w.backfillSeen <- limit:
+	default:
+	}
+	return viewer.SummaryStats{Candidates: limit, Summarized: limit}, nil
+}
+
+func (w *scriptedViewerSummaryWorker) backfillRequests() []int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]int(nil), w.backfillCalls...)
 }
 
 func TestRunViewerSummaryImmediateAndStop(t *testing.T) {
@@ -424,5 +443,180 @@ func TestRuntimeControlViewerSummaryControl(t *testing.T) {
 	disabled.base.Viewer.Enabled = false
 	if disabled.ViewerSummaryStatus(context.Background()).Enabled {
 		t.Fatal("观众档案停用后仍标记启用")
+	}
+}
+
+// TestViewerSummaryRuntimeBackfillQueue 同一时间只允许一个手动回填请求。
+func TestViewerSummaryRuntimeBackfillQueue(t *testing.T) {
+	state := &viewerSummaryRuntime{}
+	if err := state.QueueBackfill(10); err != nil {
+		t.Fatalf("排队失败：%v", err)
+	}
+	if snap := state.snapshot(); snap.backfillPending != 10 || snap.backfillRunning {
+		t.Fatalf("排队状态不符：%+v", snap)
+	}
+	if err := state.QueueBackfill(11); err == nil {
+		t.Fatal("已有请求时应拒绝重复排队")
+	}
+	select {
+	case limit := <-state.BackfillRequests():
+		if limit != 10 {
+			t.Fatalf("队列请求 = %d", limit)
+		}
+	default:
+		t.Fatal("队列里没有回填请求")
+	}
+	state.beginBackfill()
+	if snap := state.snapshot(); snap.backfillPending != 0 || !snap.backfillRunning {
+		t.Fatalf("执行状态不符：%+v", snap)
+	}
+	if err := state.QueueBackfill(5); err == nil {
+		t.Fatal("执行中应拒绝新请求")
+	}
+	state.finishBackfill()
+	if state.snapshot().backfillRunning {
+		t.Fatal("结束后仍标记执行中")
+	}
+}
+
+// TestRuntimeControlTriggerBackfill 面板触发只排队，不阻塞请求。
+func TestRuntimeControlTriggerBackfill(t *testing.T) {
+	state := &viewerSummaryRuntime{}
+	c := &runtimeControl{log: zap.NewNop(), now: time.Now, viewerSummary: state}
+	ctx := context.Background()
+	if err := c.TriggerViewerBackfill(ctx, 0); err == nil {
+		t.Fatal("limit=0 应拒绝")
+	}
+	if err := c.TriggerViewerBackfill(ctx, 501); err == nil {
+		t.Fatal("limit 超上限应拒绝")
+	}
+	if err := c.TriggerViewerBackfill(ctx, 50); err != nil {
+		t.Fatalf("触发失败：%v", err)
+	}
+	if err := c.TriggerViewerBackfill(ctx, 50); err == nil {
+		t.Fatal("重复触发应拒绝")
+	}
+	if snap := state.snapshot(); snap.backfillPending != 50 {
+		t.Fatalf("排队人数不符：%+v", snap)
+	}
+	<-state.BackfillRequests()
+}
+
+// TestRunViewerSummaryManualBackfill 面板请求由同一循环串行执行并记录快照。
+func TestRunViewerSummaryManualBackfill(t *testing.T) {
+	core, logs := observer.New(zapcore.InfoLevel)
+	worker := &scriptedViewerSummaryWorker{seen: make(chan int, 8), backfillSeen: make(chan int, 8)}
+	state := &viewerSummaryRuntime{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runViewerSummary(ctx, worker, time.Hour, viewerSummaryFreeze{}, state, zap.New(core))
+	}()
+	select {
+	case <-worker.seen:
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("首轮未执行")
+	}
+	if err := state.QueueBackfill(25); err != nil {
+		cancel()
+		<-done
+		t.Fatal(err)
+	}
+	select {
+	case limit := <-worker.backfillSeen:
+		if limit != 25 {
+			cancel()
+			<-done
+			t.Fatalf("回填人数 = %d", limit)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("回填请求未执行")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && logs.FilterMessage("观众侧写完成").Len() < 2 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if got := worker.backfillRequests(); len(got) != 1 || got[0] != 25 {
+		t.Fatalf("回填调用不符：%v", got)
+	}
+	if snap := state.snapshot(); snap.backfillRunning || snap.backfillPending != 0 || snap.lastStats.Candidates != 25 {
+		t.Fatalf("回填快照不符：%+v", snap)
+	}
+}
+
+// TestRunViewerSummaryBackfillIgnoresPause 手动回填是显式操作，暂停只停定时轮。
+func TestRunViewerSummaryBackfillIgnoresPause(t *testing.T) {
+	core, logs := observer.New(zapcore.InfoLevel)
+	worker := &scriptedViewerSummaryWorker{seen: make(chan int, 8), backfillSeen: make(chan int, 8)}
+	state := &viewerSummaryRuntime{}
+	state.SetPaused(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runViewerSummary(ctx, worker, time.Hour, viewerSummaryFreeze{}, state, zap.New(core))
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && logs.FilterMessage("观众侧写已暂停，本轮跳过").Len() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := state.QueueBackfill(3); err != nil {
+		cancel()
+		<-done
+		t.Fatal(err)
+	}
+	select {
+	case limit := <-worker.backfillSeen:
+		if limit != 3 {
+			cancel()
+			<-done
+			t.Fatalf("回填人数 = %d", limit)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("暂停期间手动回填未执行")
+	}
+	cancel()
+	<-done
+	if len(worker.seen) != 0 {
+		t.Fatal("暂停期间仍执行了定时轮")
+	}
+}
+
+// TestRunViewerSummaryBackfillRespectsFreeze 冻结优先：手动回填请求被消费但不写侧写。
+func TestRunViewerSummaryBackfillRespectsFreeze(t *testing.T) {
+	core, _ := observer.New(zapcore.InfoLevel)
+	worker := &scriptedViewerSummaryWorker{seen: make(chan int, 8), backfillSeen: make(chan int, 8)}
+	state := &viewerSummaryRuntime{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runViewerSummary(ctx, worker, time.Hour, viewerSummaryFreeze{cfgFrozen: true}, state, zap.New(core))
+	}()
+	if err := state.QueueBackfill(3); err != nil {
+		cancel()
+		<-done
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && state.snapshot().backfillPending != 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if got := worker.backfillRequests(); len(got) != 0 {
+		t.Fatalf("冻结期间执行了回填：%v", got)
+	}
+	if snap := state.snapshot(); snap.backfillPending != 0 || snap.backfillRunning {
+		t.Fatalf("冻结后回填状态未复位：%+v", snap)
 	}
 }

@@ -34,8 +34,8 @@ func seedSend(t *testing.T, db *gorm.DB, eventID, channel string, ok *bool, at t
 	}
 }
 
-// seedUsage 插入一条用量记录。
-func seedUsage(t *testing.T, db *gorm.DB, at time.Time, cost float64) {
+// seedUsage 插入一条用量记录；cost 为 nil 表示未配置报价（账本里的 unknown）。
+func seedUsage(t *testing.T, db *gorm.DB, at time.Time, cost *float64) {
 	t.Helper()
 	if err := db.Exec(`INSERT INTO llm_usage(at,channel,model,in_tokens,out_tokens,cost_usd,ms,ok) VALUES(?,?,?,?,?,?,?,?)`,
 		at, "live", "test", 10, 20, cost, 5, true).Error; err != nil {
@@ -44,6 +44,8 @@ func seedUsage(t *testing.T, db *gorm.DB, at time.Time, cost float64) {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+func costPtr(v float64) *float64 { return &v }
 
 // TestStatsCountsRealPostgres 口径验证：收到/跳过/回复/失败/费用 + 多通道细分。
 func TestStatsCountsRealPostgres(t *testing.T) {
@@ -79,10 +81,11 @@ func TestStatsCountsRealPostgres(t *testing.T) {
 	// 窗口内的入向事件、发送时刻在窗口外：新口径按**事件时间**归属，仍算这条被回复了
 	seedSend(t, db, "live:r:left", "live", boolPtr(true), from.Add(-time.Minute))
 
-	// 费用：窗口内 0.01+0.02，窗口外 9.99 不计
-	seedUsage(t, db, from.Add(time.Minute), 0.01)
-	seedUsage(t, db, from.Add(2*time.Minute), 0.02)
-	seedUsage(t, db, from.Add(-time.Minute), 9.99)
+	// 费用：窗口内 0.01+0.02+1 条未计价，窗口外 9.99 不计
+	seedUsage(t, db, from.Add(time.Minute), costPtr(0.01))
+	seedUsage(t, db, from.Add(2*time.Minute), costPtr(0.02))
+	seedUsage(t, db, from.Add(3*time.Minute), nil)
+	seedUsage(t, db, from.Add(-time.Minute), costPtr(9.99))
 
 	got, err := stats.Counts(ctx, from, to)
 	if err != nil {
@@ -102,11 +105,18 @@ func TestStatsCountsRealPostgres(t *testing.T) {
 	if got.Failed != 1 {
 		t.Errorf("Failed = %d，期望 1", got.Failed)
 	}
-	if got.CostUSD == nil {
-		t.Fatal("CostUSD 为 nil，期望 0.03")
+	if got.KnownCostUSD == nil {
+		t.Fatal("KnownCostUSD 为 nil，期望 0.03")
 	}
-	if math.Abs(*got.CostUSD-0.03) > 1e-9 {
-		t.Errorf("CostUSD = %v，期望 0.03", *got.CostUSD)
+	if math.Abs(*got.KnownCostUSD-0.03) > 1e-9 {
+		t.Errorf("KnownCostUSD = %v，期望 0.03", *got.KnownCostUSD)
+	}
+	// 与 Web 面板同口径：已知合计 + 未知条数 + 总条数
+	if got.UnknownCalls != 1 || got.TotalCalls != 3 {
+		t.Errorf("账本口径 = unknown %d / total %d，期望 1/3", got.UnknownCalls, got.TotalCalls)
+	}
+	if math.Abs(got.Coverage-2.0/3.0) > 1e-9 {
+		t.Errorf("Coverage = %v，期望 2/3", got.Coverage)
 	}
 
 	// 通道细分：总量必须等于各通道之和
@@ -209,6 +219,58 @@ func TestStatsFailedOnlyCountsInWindowInbound(t *testing.T) {
 	}
 }
 
+// TestStatsCostLedgerRealPostgres 费用账本四态：空账本 / 明确免费 / 全未知 / 混合。
+func TestStatsCostLedgerRealPostgres(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	stats, err := NewStats(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	from := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+
+	// 空账本：没有调用时 known 必须是 nil，不能是 0。
+	empty, err := stats.Counts(ctx, from, from.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("空账本 Counts 失败：%v", err)
+	}
+	if empty.KnownCostUSD != nil || empty.UnknownCalls != 0 || empty.TotalCalls != 0 || empty.Coverage != 0 {
+		t.Errorf("空账本应全零且 known=nil，实际 %+v", empty)
+	}
+
+	// 只有明确免费（$0）与全未知，不含窗口外数据。
+	seedUsage(t, db, from.Add(time.Minute), costPtr(0))
+	seedUsage(t, db, from.Add(time.Hour), nil) // 右边界排除
+	free, err := stats.Counts(ctx, from, from.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("免费账本 Counts 失败：%v", err)
+	}
+	if free.KnownCostUSD == nil || *free.KnownCostUSD != 0 {
+		t.Errorf("明确免费应为 known=0，实际 %v", free.KnownCostUSD)
+	}
+	if free.UnknownCalls != 0 || free.TotalCalls != 1 || free.Coverage != 1 {
+		t.Errorf("免费账本口径不符：%+v", free)
+	}
+
+	// 追加两条未计价 + 一条 0.5，形成混合账本。
+	seedUsage(t, db, from.Add(2*time.Minute), nil)
+	seedUsage(t, db, from.Add(3*time.Minute), nil)
+	seedUsage(t, db, from.Add(4*time.Minute), costPtr(0.5))
+	mixed, err := stats.Counts(ctx, from, from.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("混合账本 Counts 失败：%v", err)
+	}
+	if mixed.KnownCostUSD == nil || math.Abs(*mixed.KnownCostUSD-0.5) > 1e-9 {
+		t.Errorf("混合账本 known = %v，期望 0.5", mixed.KnownCostUSD)
+	}
+	if mixed.UnknownCalls != 2 || mixed.TotalCalls != 4 {
+		t.Errorf("混合账本口径 = unknown %d / total %d，期望 2/4", mixed.UnknownCalls, mixed.TotalCalls)
+	}
+	if math.Abs(mixed.Coverage-0.5) > 1e-9 {
+		t.Errorf("Coverage = %v，期望 0.5", mixed.Coverage)
+	}
+}
+
 // TestStatsEmptyDatabase 空库：全 0、费用未知（nil）、无通道。
 func TestStatsEmptyDatabase(t *testing.T) {
 	db, ctx := repositoryDB(t)
@@ -225,8 +287,12 @@ func TestStatsEmptyDatabase(t *testing.T) {
 	if got.Received != 0 || got.Replied != 0 || got.Skipped != 0 || got.Failed != 0 {
 		t.Errorf("空库计数应全 0，实际 %+v", got)
 	}
-	if got.CostUSD != nil {
-		t.Errorf("空库费用应为 nil（未知），实际 %v", *got.CostUSD)
+	if got.KnownCostUSD != nil {
+		t.Errorf("空库费用应为 nil（未知），实际 %v", *got.KnownCostUSD)
+	}
+	if got.UnknownCalls != 0 || got.TotalCalls != 0 || got.Coverage != 0 {
+		t.Errorf("空库账本口径应全 0，实际 unknown=%d total=%d coverage=%v",
+			got.UnknownCalls, got.TotalCalls, got.Coverage)
 	}
 	if len(got.Channels) != 0 {
 		t.Errorf("空库不应有通道细分，实际 %+v", got.Channels)

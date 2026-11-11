@@ -18,6 +18,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"RaiseMyFish/internal/llmmeta"
 )
 
 // EmbeddingDimension 与 migrations/0007 的 vector(1024) 对齐。
@@ -124,6 +126,8 @@ func RunEmbedding(ctx context.Context, store EmbeddingStore, embedder Embedder, 
 	if err := ctx.Err(); err != nil {
 		return EmbedStats{}, err
 	}
+	// 账本用途：批量写记忆索引（关联标识只用索引名，不带记忆正文）。
+	ctx = llmmeta.WithCall(ctx, llmmeta.Call{Purpose: llmmeta.PurposeEmbedIndex, CorrelationID: "memory"})
 	if store == nil || embedder == nil {
 		return EmbedStats{}, errors.New("记忆向量化依赖不能为空")
 	}

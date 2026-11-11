@@ -16,23 +16,27 @@ import (
 
 // Config 是当前阶段实际装配的配置。
 type Config struct {
-	Database  Database   `toml:"db"`
-	Log       Log        `toml:"log"`
-	Runtime   Runtime    `toml:"runtime"`
-	Presence  Presence   `toml:"presence"`
-	Channels  Channels   `toml:"channels"`
-	LLM       LLM        `toml:"llm"`
-	Knowledge Knowledge  `toml:"knowledge"`
-	Embedding Embedding  `toml:"embedding"`
-	Reasoning Reasoning  `toml:"reasoning"`
-	Viewer    Viewer     `toml:"viewer"`
-	Watch     Watch      `toml:"watch"`
-	Proactive Proactive  `toml:"proactive"`
-	Gift      Gift       `toml:"gift"`
-	Memory    Memory     `toml:"memory"`
-	Web       Web        `toml:"web"`
-	MCP       MCP        `toml:"mcp"`
-	Watchdog  Watchdog   `toml:"watchdog"`
+	Database  Database  `toml:"db"`
+	Log       Log       `toml:"log"`
+	Runtime   Runtime   `toml:"runtime"`
+	Presence  Presence  `toml:"presence"`
+	Channels  Channels  `toml:"channels"`
+	LLM       LLM       `toml:"llm"`
+	Knowledge Knowledge `toml:"knowledge"`
+	Embedding Embedding `toml:"embedding"`
+	Reasoning Reasoning `toml:"reasoning"`
+	// CommentVision 是评论附图识别（下载图片 → 视觉模型转述 → 注入上下文）。
+	CommentVision CommentVision `toml:"comment_vision"`
+	Viewer        Viewer        `toml:"viewer"`
+	Watch         Watch         `toml:"watch"`
+	Proactive     Proactive     `toml:"proactive"`
+	Gift          Gift          `toml:"gift"`
+	Memory        Memory        `toml:"memory"`
+	Web           Web           `toml:"web"`
+	MCP           MCP           `toml:"mcp"`
+	Watchdog      Watchdog      `toml:"watchdog"`
+	// Summary 是每日总结（默认关闭）；手动生成入口仍要看面板与 LLM 是否可用。
+	Summary   Summary    `toml:"summary"`
 	Collector Collectors `toml:"collector"`
 	// Scheduler 为 nil 表示「不接消费循环」，只采集。
 	Scheduler *Scheduler `toml:"scheduler"`
@@ -191,14 +195,17 @@ func load(path, envPath string) (Config, error) {
 		Knowledge: defaultKnowledge(),
 		Embedding: defaultEmbedding(),
 		Reasoning: DefaultReasoning(),
-		Viewer:    defaultViewer(),
-		Watch:     defaultWatch(),
-		Proactive: defaultProactive(),
-		Gift:      defaultGift(),
-		Memory:    defaultMemory(),
-		Web:       defaultWeb(),
-		MCP:       defaultMCP(),
-		Watchdog:  defaultWatchdog(),
+		// 评论附图识别默认关闭；开启后缺省走 default 路由、20 秒、最多 2 张。
+		CommentVision: defaultCommentVision(),
+		Viewer:        defaultViewer(),
+		Watch:         defaultWatch(),
+		Proactive:     defaultProactive(),
+		Gift:          defaultGift(),
+		Memory:        defaultMemory(),
+		Web:           defaultWeb(),
+		MCP:           defaultMCP(),
+		Watchdog:      defaultWatchdog(),
+		Summary:       defaultSummary(),
 		// 评论采集默认关闭；interval 先补默认值，开启后省略也能工作。
 		Collector: Collectors{Live: defaultLiveCollector(), Comment: defaultCommentCollector(), DM: defaultDMCollector()},
 	}
@@ -217,6 +224,7 @@ func load(path, envPath string) (Config, error) {
 	cfg.Sender.ApplyDefaults()
 	// [reasoning] 是值结构：缺字段补默认（默认开启，显式 enabled=false 才关）。
 	cfg.Reasoning.ApplyDefaults()
+	cfg.CommentVision.ApplyDefaults()
 	// soul_path 未显式配置时跟随人格包，多 persona 各用各的。
 	cfg.Memory.deriveSoulPath(cfg.LLM.PersonaDir)
 	local := map[string]string{}
@@ -328,6 +336,17 @@ func (c Config) validateStructure(strictLive bool) error {
 	if err := c.Reasoning.Validate(); err != nil {
 		return err
 	}
+	if err := c.CommentVision.Validate(); err != nil {
+		return err
+	}
+	if c.CommentVision.Enabled {
+		if !c.LLM.Enabled {
+			return errors.New("评论图片识别启用需要先启用LLM")
+		}
+		if _, _, _, err := c.LLM.Resolve(c.CommentVision.LLMRoute); err != nil {
+			return errors.New("评论图片识别的视觉模型路由不可用")
+		}
+	}
 	if err := c.Viewer.Validate(); err != nil {
 		return err
 	}
@@ -361,8 +380,14 @@ func (c Config) validateStructure(strictLive bool) error {
 	if err := c.Watchdog.Validate(); err != nil {
 		return err
 	}
+	if err := c.Summary.Validate(); err != nil {
+		return err
+	}
 	if err := c.LLM.Validate(); err != nil {
 		return err
+	}
+	if c.Summary.Enabled && !c.LLM.Enabled {
+		return errors.New("每日总结启用需要先启用LLM")
 	}
 	if c.Watch.Enabled {
 		if !c.LLM.Enabled {

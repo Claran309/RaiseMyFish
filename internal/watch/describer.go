@@ -213,6 +213,9 @@ func readFrame(path string) ([]byte, string, error) {
 		mime = "image/jpeg"
 	case ".png":
 		mime = "image/png"
+	case ".webp":
+		// 评论图床常见 webp；data URI 直接带 image/webp 即可。
+		mime = "image/webp"
 	default:
 		return nil, "", fmt.Errorf("不支持的帧格式：%s", filepath.Ext(path))
 	}

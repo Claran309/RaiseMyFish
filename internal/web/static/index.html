@@ -48,6 +48,18 @@ h2:first-child{margin-top:0}
 .row .st.retry{color:var(--warn);border-color:#3a331d}
 .empty{padding:14px;color:var(--muted);font-size:13px}
 button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 12px;font:inherit;cursor:pointer}
+textarea,select{background:#12151c;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+textarea{width:100%;resize:vertical}
+.inj-bar{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+.inj-group,.err-group{font-size:11px;color:var(--muted);letter-spacing:.04em}
+.inj-group{padding:8px 0 2px;border-top:1px dashed var(--line);margin-top:6px}
+.inj-group:first-child{border-top:0;margin-top:0;padding-top:2px}
+.err-group{padding:6px 14px;background:#12151c;border-bottom:1px solid var(--line)}
+.err-group .muted{letter-spacing:0}
+.inj-item{padding:8px 0;border-bottom:1px solid var(--line)}
+.inj-item:last-child{border-bottom:0}
+.inj-item .txt{white-space:pre-wrap;word-break:break-word}
+.inj-item .meta{display:flex;gap:8px;align-items:center;margin-top:4px;font-size:11px;color:var(--muted)}
 .muted{color:var(--muted)}
 .tag{font-size:12px;color:var(--muted)}
 </style>
@@ -55,7 +67,7 @@ button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-ra
 <body>
 <header>
   <b>🐟 大肥鱼面板</b>
-  <nav><a class="on" href="/">概览</a><a href="/live">直播</a><a href="/message">消息</a><a href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
+  <nav><a class="on" href="/">概览</a><a href="/live">直播</a><a href="/message">消息</a><a href="/activity">活动</a><a href="/config">配置</a><a href="/logs">日志</a><a href="/diary">日报</a><a href="/memory">记忆</a><a href="/knowledge">知识</a><a href="/accounts">账号</a></nav>
   <span class="spacer"></span>
   <span class="pill" id="health">检测中…</span>
   <button onclick="load()">刷新</button>
@@ -69,6 +81,27 @@ button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-ra
       <h2>数据统计</h2>
       <div class="grid" id="data-cards"></div>
 
+      <h2>操作人注入</h2>
+      <div class="panel">
+        <div class="head">📝 <b>临时设定</b><span class="spacer"></span><span class="tag" id="inj-count"></span></div>
+        <div style="padding:10px 14px">
+          <textarea id="inj-content" rows="3" maxlength="500" placeholder="例如：加个设定：你其实是一只猫，说话要偶尔喵一下"></textarea>
+          <div class="tag" style="margin-top:4px">临时注入会进入下一轮回复的上下文，不写入长期记忆；保存后立即生效。</div>
+          <div class="inj-bar">
+            <select id="inj-ttl">
+              <option value="3600">1 小时</option>
+              <option value="21600">6 小时</option>
+              <option value="86400">24 小时</option>
+              <option value="0">永久</option>
+            </select>
+            <button id="inj-submit" onclick="injectSubmit()">注入</button>
+            <button id="inj-cancel" onclick="injectReset()" style="display:none">取消编辑</button>
+            <span class="tag" id="inj-msg"></span>
+          </div>
+          <div id="inj-list"></div>
+        </div>
+      </div>
+
       <h2>向量入库</h2>
       <div class="grid" id="embed-cards"></div>
     </section>
@@ -80,7 +113,9 @@ button{background:#12151c;color:var(--fg);border:1px solid var(--line);border-ra
         <div id="events"></div>
       </div>
       <div class="panel" style="margin-top:12px">
-        <div class="head">⚠️ <b>最近错误</b><span class="spacer"></span><span class="tag" id="err-count"></span></div>
+        <div class="head">⚠️ <b>最近错误</b><span class="spacer"></span>
+          <button id="err-clear-old" onclick="clearOldErrors()" title="只清理面板列表，不改事件状态">清理7天前</button>
+          <span class="tag" id="err-count"></span></div>
         <div id="errors"></div>
       </div>
     </section>
@@ -191,19 +226,136 @@ async function loadEvents() {
   }).join('');
 }
 async function loadErrors() {
-  var d = await (await fetch('/api/errors?limit=5')).json();
-  document.getElementById('err-count').textContent = (d.count || 0) + ' 条';
+  var d = await (await fetch('/api/errors?limit=10')).json();
+  var items = d.items || [];
   var box = document.getElementById('errors');
-  if (!d.items || !d.items.length) { box.innerHTML = '<div class="empty">没有异常，稳 🎉</div>'; return; }
-  box.innerHTML = d.items.map(function (e) {
-    var cls = e.status === 'dead' ? 'dead' : 'retry';
+  var count = document.getElementById('err-count');
+  if (!items.length) {
+    count.textContent = '0 条';
+    box.innerHTML = '<div class="empty">没有异常，稳 🎉</div>';
+    return;
+  }
+  var dead = items.filter(function (e) { return e.status === 'dead'; });
+  var retry = items.filter(function (e) { return e.status !== 'dead'; });
+  count.textContent = '共 ' + items.length + ' 条' +
+    (dead.length ? ' · dead ' + dead.length : '') + (retry.length ? ' · retry ' + retry.length : '');
+  function errRow(e) {
     return '<div class="row err"><span class="t">' + hhmmss(e.at) + '</span>' +
-      '<span class="st ' + cls + '">' + esc(e.status) + '</span>' +
+      '<span class="st ' + (e.status === 'dead' ? 'dead' : 'retry') + '">' + esc(e.status) + '</span>' +
       '<span class="who">' + esc(e.from_name || e.channel) + '</span>' +
-      '<span class="txt">' + esc(e.text) + '</span></div>';
-  }).join('');
+      '<span class="txt">' + esc(e.text) + '</span>' +
+      '<button onclick="clearError(\'' + esc(e.id) + '\')">清理</button></div>';
+  }
+  function section(title, hint, list) {
+    if (!list.length) return '';
+    return '<div class="err-group">' + esc(title) + ' · ' + list.length + ' 条' +
+      ' <span class="muted">' + esc(hint) + '</span></div>' + list.map(errRow).join('');
+  }
+  // 分组只影响展示：dead 已停止自动重试，retry 仍会按退避继续。
+  box.innerHTML = section('需人工处理（dead）', '自动重试已停止，修好后可重新入队', dead) +
+    section('自动重试中（retry）', '程序会按退避继续重试', retry);
 }
-function load() { loadStatus(); loadEmbeddingStatus(); loadEvents(); loadErrors(); }
+async function clearError(id) {
+  if (!confirm('确认清理这条异常？只影响面板列表，不改事件状态。')) return;
+  var r = await fetch('/api/errors/' + encodeURIComponent(id) + '?confirm=yes', {
+    method: 'DELETE', headers: { 'X-Panel-Token': panelToken() }
+  });
+  if (!r.ok) { var e = await r.json(); alert(e.error || '清理失败'); return; }
+  loadErrors();
+}
+async function clearOldErrors() {
+  if (!confirm('确认清理 7 天前的 dead/retry 异常？只影响面板列表，不改事件状态。')) return;
+  var r = await fetch('/api/errors/clear?confirm=yes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Panel-Token': panelToken() },
+    body: JSON.stringify({ days: 7 })
+  });
+  var d = await r.json();
+  if (!r.ok) { alert(d.error || '清理失败'); return; }
+  alert('已清理 ' + (d.cleared || 0) + ' 条');
+  loadErrors();
+}
+var injections = [];
+var editingInjection = 0;
+function injectMsg(text) {
+  document.getElementById('inj-msg').textContent = text || '';
+}
+async function loadInjections() {
+  var box = document.getElementById('inj-list');
+  var count = document.getElementById('inj-count');
+  var r = await fetch('/api/inject');
+  if (!r.ok) { box.innerHTML = '<div class="empty">注入功能未启用</div>'; count.textContent = ''; return; }
+  var d = await r.json();
+  injections = d.items || [];
+  if (!injections.length) {
+    count.textContent = '0 条';
+    box.innerHTML = '<div class="empty">当前没有注入；写一条会在下一次回复生效</div>';
+    return;
+  }
+  var permanent = injections.filter(function (x) { return x.permanent; });
+  var timed = injections.filter(function (x) { return !x.permanent; });
+  count.textContent = '共 ' + injections.length + ' 条' +
+    (permanent.length ? ' · 永久 ' + permanent.length : '') + (timed.length ? ' · 临时 ' + timed.length : '');
+  function injItem(x) {
+    var exp = x.permanent ? '永久有效' : ('到期 ' + when(x.expires_at));
+    return '<div class="inj-item"><div class="txt">' + esc(x.content) + '</div>' +
+      '<div class="meta"><span>' + esc(exp) + '</span><span class="spacer"></span>' +
+      '<button onclick="injectEdit(' + x.id + ')">编辑</button>' +
+      '<button onclick="injectDelete(' + x.id + ')">删除</button></div></div>';
+  }
+  function section(title, hint, list) {
+    if (!list.length) return '';
+    return '<div class="inj-group">' + esc(title) + ' · ' + list.length + ' 条' +
+      ' <span class="muted">' + esc(hint) + '</span></div>' + list.map(injItem).join('');
+  }
+  box.innerHTML = section('永久设定', '一直生效，直到手动删除', permanent) +
+    section('临时设定', '到期后自动失效', timed);
+}
+function injectEdit(id) {
+  var item = injections.filter(function (x) { return x.id === id; })[0];
+  if (!item) return;
+  editingInjection = id;
+  document.getElementById('inj-content').value = item.content;
+  document.getElementById('inj-submit').textContent = '保存';
+  document.getElementById('inj-cancel').style.display = '';
+  var ttl = item.permanent ? '0' : (item.remaining_seconds > 21600 ? '86400' : (item.remaining_seconds > 3600 ? '21600' : '3600'));
+  document.getElementById('inj-ttl').value = ttl;
+  injectMsg('正在编辑 #' + id);
+}
+function injectReset() {
+  editingInjection = 0;
+  document.getElementById('inj-content').value = '';
+  document.getElementById('inj-submit').textContent = '注入';
+  document.getElementById('inj-cancel').style.display = 'none';
+  injectMsg('');
+}
+async function injectSubmit() {
+  var content = document.getElementById('inj-content').value.trim();
+  if (!content) { injectMsg('内容不能为空'); return; }
+  var ttl = parseInt(document.getElementById('inj-ttl').value, 10);
+  var method = editingInjection ? 'PUT' : 'POST';
+  var url = editingInjection ? ('/api/inject/' + editingInjection) : '/api/inject';
+  var r = await fetch(url + '?confirm=yes', {
+    method: method,
+    headers: { 'Content-Type': 'application/json', 'X-Panel-Token': panelToken() },
+    body: JSON.stringify({ content: content, ttl_seconds: ttl })
+  });
+  var d = await r.json();
+  if (!r.ok) { injectMsg(d.error || '提交失败'); return; }
+  injectReset();
+  loadInjections();
+}
+async function injectDelete(id) {
+  if (!confirm('确认删除这条注入？')) return;
+  var r = await fetch('/api/inject/' + id + '?confirm=yes', {
+    method: 'DELETE',
+    headers: { 'X-Panel-Token': panelToken() }
+  });
+  if (!r.ok) { var e = await r.json(); injectMsg(e.error || '删除失败'); return; }
+  if (editingInjection === id) injectReset();
+  loadInjections();
+}
+function load() { loadStatus(); loadEmbeddingStatus(); loadEvents(); loadErrors(); loadInjections(); }
 load();
 setInterval(load, 15000);
 </script>

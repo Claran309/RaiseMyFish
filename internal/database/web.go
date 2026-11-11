@@ -103,7 +103,7 @@ func (r *WebRepo) Status(ctx context.Context) (store.WebStatus, error) {
 // Memory 按 kind/关键词过滤公开记忆。
 //
 // 面板记忆页是公开导出视角：私密 DM 摘要与其错误降密行都不展示。
-func (r *WebRepo) Memory(ctx context.Context, kind, query string, limit int) ([]store.WebMemory, error) {
+func (r *WebRepo) Memory(ctx context.Context, kind, query, order string, limit int) ([]store.WebMemory, error) {
 	if ctx == nil || limit < 1 || limit > webMaxLimit {
 		return nil, store.ErrInvalid
 	}
@@ -126,8 +126,17 @@ func (r *WebRepo) Memory(ctx context.Context, kind, query string, limit int) ([]
 		ValidFrom  time.Time
 		CreatedAt  time.Time
 	}
+	// 排序在 SQL 层做：面板只取一页，不能先取再排丢数据。
+	switch strings.TrimSpace(order) {
+	case "", "time":
+		q = q.Order("created_at DESC, id ASC")
+	case "importance":
+		q = q.Order("importance DESC, created_at DESC, id ASC")
+	default:
+		return nil, store.ErrInvalid
+	}
 	if err := q.Select("id, kind, title, summary, importance, valid_from, created_at").
-		Order("created_at DESC, id ASC").Limit(limit).Find(&rows).Error; err != nil {
+		Limit(limit).Find(&rows).Error; err != nil {
 		return nil, &safeError{"查询记忆失败", err}
 	}
 	out := make([]store.WebMemory, 0, len(rows))
@@ -358,6 +367,7 @@ func (r *WebRepo) Errors(ctx context.Context, limit int) ([]store.WebEvent, erro
 	}
 	if err := r.db.WithContext(ctx).Table("events").
 		Where("status IN ?", []string{"dead", "retry"}).
+		Where("cleared_at IS NULL").
 		Where("NOT private AND channel <> ?", "dm").
 		Select("id, COALESCE(channel,'') AS channel, dir, COALESCE(session,'') AS session, COALESCE(from_name,'') AS from_name, COALESCE(text,'') AS text, at, status").
 		Order("at DESC, id ASC").Limit(limit).Find(&rows).Error; err != nil {
@@ -373,6 +383,37 @@ func (r *WebRepo) Errors(ctx context.Context, limit int) ([]store.WebEvent, erro
 	return out, nil
 }
 
+// ClearError 标记单条 dead/retry 事件已清理；状态机保持原样，只隐藏面板行。
+func (r *WebRepo) ClearError(ctx context.Context, id string) error {
+	if ctx == nil || strings.TrimSpace(id) == "" {
+		return store.ErrInvalid
+	}
+	res := r.db.WithContext(ctx).Exec(
+		"UPDATE events SET cleared_at = now() WHERE id = ? AND status IN ? AND cleared_at IS NULL",
+		id, []string{"dead", "retry"})
+	if res.Error != nil {
+		return &safeError{"清理异常失败", res.Error}
+	}
+	if res.RowsAffected == 0 {
+		return store.ErrWebNotFound
+	}
+	return nil
+}
+
+// ClearErrorsBefore 批量清理 before 之前的 dead/retry 事件，返回受影响条数。
+func (r *WebRepo) ClearErrorsBefore(ctx context.Context, before time.Time) (int64, error) {
+	if ctx == nil || before.IsZero() || before.After(time.Now().Add(24*time.Hour)) {
+		return 0, store.ErrInvalid
+	}
+	res := r.db.WithContext(ctx).Exec(
+		"UPDATE events SET cleared_at = now() WHERE status IN ? AND cleared_at IS NULL AND at < ?",
+		[]string{"dead", "retry"}, before)
+	if res.Error != nil {
+		return 0, &safeError{"批量清理异常失败", res.Error}
+	}
+	return res.RowsAffected, nil
+}
+
 // round2 保留两位小数（展示用）。
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
 
@@ -382,20 +423,22 @@ func (r *WebRepo) SendLogs(ctx context.Context, limit int) ([]store.WebSend, err
 		return nil, store.ErrInvalid
 	}
 	var rows []struct {
-		EventID string
-		Channel string
-		OK      bool
-		MsgID   string
-		At      time.Time
+		EventID  string
+		Channel  string
+		OK       bool
+		Verified bool
+		MsgID    string
+		Error    string
+		At       time.Time
 	}
 	if err := r.db.WithContext(ctx).Table("send_log").
-		Select("COALESCE(event_id,'') AS event_id, COALESCE(channel,'') AS channel, COALESCE(msg_id,'') AS msg_id, at, ok").
+		Select("COALESCE(event_id,'') AS event_id, COALESCE(channel,'') AS channel, COALESCE(msg_id,'') AS msg_id, COALESCE(error,'') AS error, at, COALESCE(ok,false) AS ok, COALESCE(verified,false) AS verified").
 		Order("at DESC, id DESC").Limit(limit).Find(&rows).Error; err != nil {
 		return nil, &safeError{"查询发送记录失败", err}
 	}
 	out := make([]store.WebSend, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, store.WebSend{EventID: row.EventID, Channel: row.Channel, OK: row.OK, MsgID: row.MsgID, At: row.At})
+		out = append(out, store.WebSend{EventID: row.EventID, Channel: row.Channel, OK: row.OK, Verified: row.Verified, MsgID: row.MsgID, Error: row.Error, At: row.At})
 	}
 	return out, nil
 }

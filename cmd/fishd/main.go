@@ -143,7 +143,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if err != nil {
 		return err
 	}
-	commentCollector, err := buildComment(cfg, logger)
+	commentCollector, err := buildComment(cfg, accountService, logger)
 	if err != nil {
 		return err
 	}
@@ -273,8 +273,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	}
 	defer control.Close()
 
+	// 每日总结：定时开关独立于面板；只要 LLM 可用，面板就能手动补生成。
+	diaryGen, stopDailySummary := startDailySummary(ctx, cfg, resources.DB, usage, logger)
+	defer stopDailySummary()
+
 	// 运维面板（只监听回环）：默认关，开启后独立 goroutine 跑。
-	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, accountService, control, control, logview.NewSource(cfg.Log.Dir, nil), logger)
+	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, accountService, control, control, diaryGen, logview.NewSource(cfg.Log.Dir, nil), logger)
 	defer stopWeb()
 
 	// 主循环先就绪（running 状态落盘）再启动采集：外部不会先看到事件、后看到服务状态。

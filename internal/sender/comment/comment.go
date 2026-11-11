@@ -35,8 +35,9 @@ const (
 	backoffBase       = 30 * time.Second
 	backoffMax        = 10 * time.Minute
 	maxBackoffEntries = 1024
-	// 评论类型：视频 / 动态；事件 Meta 缺省时按视频处理。
+	// 评论类型：视频 / 专栏 / 图文动态(11) / 普通动态(17)；事件 Meta 缺省时按视频处理。
 	commentTypeVideo   = 1
+	commentTypeDraw    = 11
 	commentTypeArticle = 12
 	commentTypeDynamic = 17
 )
@@ -229,7 +230,7 @@ func replyType(e event.Event) int {
 		return commentTypeVideo
 	}
 	switch meta.CommentType {
-	case commentTypeVideo, commentTypeArticle, commentTypeDynamic:
+	case commentTypeVideo, commentTypeDraw, commentTypeArticle, commentTypeDynamic:
 		return meta.CommentType
 	default:
 		return commentTypeVideo

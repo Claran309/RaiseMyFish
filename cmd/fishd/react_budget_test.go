@@ -85,7 +85,7 @@ func TestReasonerFactorySkipsKnowledgeToolWhenPreloaded(t *testing.T) {
 		Revision: strings.Repeat("a", 64),
 		Items:    []knowledge.Item{{ID: "k1", Source: "test:public", Text: "拉拉是梗", Scenes: []string{"live"}, Priority: 50}},
 	}}
-	factory, err := buildReasonerFactory(cfg, nil, know, nil, nil, nil, nil, toolExecutors{}, nil, nil, nil, zap.NewNop())
+	factory, err := buildReasonerFactory(cfg, nil, know, nil, nil, nil, nil, nil, toolExecutors{}, nil, nil, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("装配失败：%v", err)
 	}
@@ -95,7 +95,7 @@ func TestReasonerFactorySkipsKnowledgeToolWhenPreloaded(t *testing.T) {
 	scope := memory.Scope{Channel: event.ChLive, Session: "30308220"}
 	run := func(preloaded bool) string {
 		t.Helper()
-		agent, err := factory(scope, "", preloaded)
+		agent, err := factory(scope, "", preloaded, event.ChLive)
 		if err != nil {
 			t.Fatalf("创建 agent 失败：%v", err)
 		}
@@ -150,7 +150,7 @@ func TestReactTimeoutFallbackKeepsEvidence(t *testing.T) {
 	}
 	llm := &timeoutAfterToolLLM{}
 	runtime := &reactRuntime{
-		factory: func(memory.Scope, string, bool) (*reasoning.Agent, error) {
+		factory: func(memory.Scope, string, bool, event.Channel) (*reasoning.Agent, error) {
 			return reasoning.New(llm, box, reasoning.Options{MaxSteps: 3, Timeout: 40 * time.Millisecond}, zap.NewNop())
 		},
 		defaultReact: true,
@@ -188,7 +188,7 @@ func TestGeneratePassesKnowledgePreloadedToFactory(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		factory := func(_ memory.Scope, _ string, preloaded bool) (*reasoning.Agent, error) {
+		factory := func(_ memory.Scope, _ string, preloaded bool, _ event.Channel) (*reasoning.Agent, error) {
 			*got = preloaded
 			return reasoning.New(llm, box, reasoning.Options{MaxSteps: 2, Timeout: time.Second}, zap.NewNop())
 		}
@@ -317,7 +317,7 @@ func TestGeneratePrepBudgetAndFallbackUseParentDeadline(t *testing.T) {
 	llm := &timeoutAfterToolLLM{}
 	const reserve = 400 * time.Millisecond
 	runtime := &reactRuntime{
-		factory: func(memory.Scope, string, bool) (*reasoning.Agent, error) {
+		factory: func(memory.Scope, string, bool, event.Channel) (*reasoning.Agent, error) {
 			return reasoning.New(llm, box, reasoning.Options{MaxSteps: 3, Timeout: 30 * time.Millisecond}, zap.NewNop())
 		},
 		defaultReact: true,

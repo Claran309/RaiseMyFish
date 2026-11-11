@@ -61,7 +61,7 @@ func TestReasonerFactorySharesSideEffectLimiterAcrossEvents(t *testing.T) {
 	}
 	social := &factorySocial{}
 	factory, err := buildReasonerFactory(
-		cfg, nil, nil, nil, nil, nil, nil,
+		cfg, nil, nil, nil, nil, nil, nil, nil,
 		toolExecutors{Social: social}, nil, nil,
 		reasoning.NewSideEffectLimiter(), zap.NewNop(),
 	)
@@ -74,7 +74,7 @@ func TestReasonerFactorySharesSideEffectLimiterAcrossEvents(t *testing.T) {
 
 	scope := memory.Scope{Channel: event.ChLive, Session: "30308220"}
 	for i := 1; i <= 2; i++ {
-		agent, err := factory(scope, "313591854", false)
+		agent, err := factory(scope, "313591854", false, event.ChLive)
 		if err != nil {
 			t.Fatalf("第 %d 个事件创建 agent 失败：%v", i, err)
 		}

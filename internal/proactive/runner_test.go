@@ -361,6 +361,7 @@ func TestNewRejectsMissingDeps(t *testing.T) {
 // ---------- ReAct 分流 ----------
 
 // stubLLM 是 ReAct 用的假模型：固定回放一条 final，或固定报错。
+// 开启反思后会调用两次，首轮（ReAct）与首轮 user 单独留存供断言。
 type stubLLM struct {
 	reply string
 	err   error
@@ -368,10 +369,16 @@ type stubLLM struct {
 
 	system string
 	user   string
+	// firstSystem/firstUser 是第一次调用的 prompt（反思调用不会覆盖）。
+	firstSystem string
+	firstUser   string
 }
 
 func (s *stubLLM) Complete(_ context.Context, system, user string) (string, error) {
 	s.calls++
+	if s.calls == 1 {
+		s.firstSystem, s.firstUser = system, user
+	}
 	s.system, s.user = system, user
 	if s.err != nil {
 		return "", s.err
@@ -380,7 +387,7 @@ func (s *stubLLM) Complete(_ context.Context, system, user string) (string, erro
 }
 
 // reactFixture 造一个「真 Agent + 假模型」的工厂，并记录工厂被调次数。
-func reactFixture(t *testing.T, llm *stubLLM) (ReactFactory, *int) {
+func reactFixture(t *testing.T, llm reasoning.LLM) (ReactFactory, *int) {
 	t.Helper()
 	box, err := reasoning.NewToolbox(reasoning.Tool{
 		Name: reasoning.ToolHistory, Desc: "测试工具",
@@ -766,7 +773,7 @@ func TestRunOnceReactUsesUnifiedSnapshot(t *testing.T) {
 	if !got.React || f.engine.calls != 0 {
 		t.Fatalf("应走 ReAct：result=%+v brain=%d", got, f.engine.calls)
 	}
-	if !strings.HasPrefix(llm.system, testPack().SystemPrompt()) || !strings.Contains(llm.system, "你在回答一条直播弹幕") {
+	if !strings.HasPrefix(llm.firstSystem, testPack().SystemPrompt()) || !strings.Contains(llm.firstSystem, "你在回答一条直播弹幕") {
 		t.Error("ReAct system 不是「人格 prompt + 协议」")
 	}
 	for _, want := range []string{
@@ -778,8 +785,8 @@ func TestRunOnceReactUsesUnifiedSnapshot(t *testing.T) {
 		"<visual>",
 		f.vision.text,
 	} {
-		if !strings.Contains(llm.user, want) {
-			t.Errorf("ReAct 上下文缺少 %q：\n%s", want, llm.user)
+		if !strings.Contains(llm.firstUser, want) {
+			t.Errorf("ReAct 上下文缺少 %q：\n%s", want, llm.firstUser)
 		}
 	}
 
@@ -792,7 +799,7 @@ func TestRunOnceReactUsesUnifiedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("准备统一生成输入失败：%v", err)
 	}
-	if !strings.HasPrefix(llm.user, strings.TrimSpace(prepared.Context)) {
-		t.Errorf("主动 ReAct 与统一快照不同源：\nwant prefix:\n%s\ngot:\n%s", prepared.Context, llm.user)
+	if !strings.HasPrefix(llm.firstUser, strings.TrimSpace(prepared.Context)) {
+		t.Errorf("主动 ReAct 与统一快照不同源：\nwant prefix:\n%s\ngot:\n%s", prepared.Context, llm.firstUser)
 	}
 }

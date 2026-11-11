@@ -9,6 +9,7 @@ package reasoning
 //   - 解析失败/步数耗尽/超时/模型报错 → 用已有观察降级生成，绝不让调用方等成 30 秒。
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -54,6 +55,12 @@ func appendEvidence(list []Evidence, e Evidence) []Evidence {
 	return list
 }
 
+// 反思预算：只在步数与剩余时间都够时追加一次自检，不能把 8 秒拖长。
+const (
+	reflectMinRemaining  = 1500 * time.Millisecond
+	maxReflectDraftRunes = 300
+)
+
 // LLM 是 ReAct 需要的单次文本补全；由 provider 适配，测试用 mock。
 type LLM interface {
 	Complete(ctx context.Context, system, user string) (string, error)
@@ -79,10 +86,17 @@ type Input struct {
 	Context string
 	// Question 是这次要回答的事件正文。
 	Question string
+	// Label 是回复对象称呼（弹幕/评论/私信）；空串等价于「弹幕」。
+	Label string
 	// PromptBudget 是单次模型调用的保守字节上限（含消息框架）；0 表示不限制。
 	// 每次实际调用前都按它裁剪观察段，超限时从最旧的整条观察开始丢，
 	// 当前问题与 Context（含本轮焦点）不参与裁剪。
 	PromptBudget int
+	// ThinkDeep 要求 thought 先过三层（字面/关联/表达）再决定 action；
+	// 弹幕通道开启，评论/私信保持原协议。
+	ThinkDeep bool
+	// Reflect 在收尾后追加一次自检，预算内才执行；失败保留原稿。
+	Reflect bool
 }
 
 // Usage 是底层模型调用累计的实际用量；Known* 分别表示服务端是否给出对应统计。
@@ -128,6 +142,9 @@ type Result struct {
 	Tools []string
 	// Evidence 是本轮成功的工具查证结果；降级/超时也保留，供回落单步复用。
 	Evidence []Evidence
+	// Danmaku 是本轮通过 send_danmaku 成功发出的弹幕正文（按发送顺序）。
+	// 非空表示回复已经投递出去，调用方不应再发一条普通回复。
+	Danmaku []string
 	// Degraded 表示走了降级路径。
 	Degraded bool
 	// Reason 是降级原因，取自 Degrade* 常量。
@@ -165,6 +182,14 @@ func New(llm LLM, tools *Toolbox, o Options, log *zap.Logger) (*Agent, error) {
 	return &Agent{llm: llm, tools: tools, opts: o, log: log}, nil
 }
 
+// HasTool 判断本轮是否注册了某个工具；调用方据此选择主动查证还是被动注入。
+func (a *Agent) HasTool(name string) bool {
+	if a == nil || a.tools == nil {
+		return false
+	}
+	return a.tools.Has(name)
+}
+
 // Run 执行一次 ReAct。
 //
 // 返回值约定：即使降级也返回 nil error——调用方（serve.go）在 Text 为空时回落单步生成；
@@ -183,41 +208,48 @@ func (a *Agent) Run(ctx context.Context, in Input) (Result, error) {
 	var (
 		observations []string
 		evidence     []Evidence
+		danmaku      []string
 		used         []string
 		steps        int
 	)
 
 	for step := 1; step <= a.opts.MaxSteps; step++ {
 		if runCtx.Err() != nil {
-			return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeTimeout)
+			return a.degrade(runCtx, in, observations, evidence, danmaku, used, steps, DegradeTimeout)
 		}
 		// 每次实际调用前统一按预算裁剪：观察按整条证据丢，问题与资料段不动。
 		system, user, kept, ok := a.fitPrompt(a.systemPrompt(in), in, observations)
 		if !ok {
-			return budgetResult(evidence, used, steps), nil
+			return budgetResult(evidence, danmaku, used, steps), nil
 		}
 		observations = kept
 		out, err := a.llm.Complete(runCtx, system, user)
 		steps++
 		if err != nil {
 			if runCtx.Err() != nil {
-				return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeTimeout)
+				return a.degrade(runCtx, in, observations, evidence, danmaku, used, steps, DegradeTimeout)
 			}
-			return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeLLMError)
+			return a.degrade(runCtx, in, observations, evidence, danmaku, used, steps, DegradeLLMError)
 		}
 
 		decision, perr := ParseStep(out)
 		if perr != nil {
-			return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeParse)
+			// 模型有时直接给自然语言回复（没按协议包 JSON）：能过正文校验就当作 final，
+			// 不再白花一次降级调用；JSON 形状/内部字段仍会被 replyBody 拒绝。
+			if text := replyBody(out); text != "" {
+				a.log.Info("ReAct 未按 JSON 协议输出，已按自然语言采用", zap.String("action", "react_plain_reply"))
+				return a.finish(runCtx, in, text, steps, observations, evidence, danmaku, used, promptBytes(system, user))
+			}
+			return a.degrade(runCtx, in, observations, evidence, danmaku, used, steps, DegradeParse)
 		}
 		if decision.Action == "final" {
 			// action=final 时正文可放 final 或 args（协议约定），但必须过正文校验
 			text := replyBody(finalBody(decision))
 			if text == "" {
 				// 说 final 却没给可用正文：走降级，绝不把内部内容当回复
-				return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeEmpty)
+				return a.degrade(runCtx, in, observations, evidence, danmaku, used, steps, DegradeEmpty)
 			}
-			return Result{Text: text, Steps: steps, Tools: used, Evidence: evidence, PromptBytes: promptBytes(system, user)}, nil
+			return a.finish(runCtx, in, text, steps, observations, evidence, danmaku, used, promptBytes(system, user))
 		}
 
 		// action 是工具名：执行并把结果回填进下一轮
@@ -225,6 +257,11 @@ func (a *Agent) Run(ctx context.Context, in Input) (Result, error) {
 		if toolErr != nil {
 			// 工具失败不终止循环：把失败也当成一条观察，让模型自己决定换招
 			out2 = "工具失败：" + toolErr.Error()
+		} else if decision.Action == ToolSendDanmaku {
+			// 发送弹幕是动作不是查证：记进 Result 供调用方抑制重复回复，不进证据。
+			if text := danmakuText(decision.Args); text != "" {
+				danmaku = append(danmaku, text)
+			}
 		} else if observed := strings.TrimSpace(out2); observed != "" {
 			// 只有成功的查证才是可复用证据；失败结果只进观察，不进证据。
 			evidence = appendEvidence(evidence, Evidence{Tool: decision.Action, Args: clip(decision.Args, maxEvidenceArgsRunes), Result: observed})
@@ -233,12 +270,85 @@ func (a *Agent) Run(ctx context.Context, in Input) (Result, error) {
 		observations = append(observations, fmt.Sprintf("%s(%s) → %s", decision.Action, clip(decision.Args, maxObservationArgsRunes), clip(out2, maxObservationRunes)))
 	}
 
-	return a.degrade(runCtx, in, observations, evidence, used, steps, DegradeSteps)
+	return a.degrade(runCtx, in, observations, evidence, danmaku, used, steps, DegradeSteps)
 }
 
-// budgetResult 表示预算不足、本轮没发模型请求：调用方看到空正文会回落单步。
-func budgetResult(evidence []Evidence, used []string, steps int) Result {
-	return Result{Steps: steps, Tools: used, Evidence: evidence, Degraded: true, Reason: DegradeBudget}
+// finish 收尾：Reflect 开启且预算允许时追加一次自检，任何失败都保留原稿。
+func (a *Agent) finish(ctx context.Context, in Input, draft string, steps int, observations []string, evidence []Evidence, danmaku []string, used []string, bytes int) (Result, error) {
+	result := Result{Text: draft, Steps: steps, Tools: used, Evidence: evidence, Danmaku: danmaku, PromptBytes: bytes}
+	if !in.Reflect || draft == "" {
+		return result, nil
+	}
+	text, called, promptSize := a.reflect(ctx, in, draft, steps, observations)
+	if !called {
+		return result, nil
+	}
+	result.Steps = steps + 1
+	result.PromptBytes = promptSize
+	if text != "" {
+		result.Text = text
+	}
+	return result, nil
+}
+
+// reflect 用一次自检改写草稿；只在步数与剩余时间都够时调用。
+//
+// 反思是锦上添花：装不进预算、模型报错、回空都保留原稿，绝不因此降级或外发内部字段。
+// called 表示是否真的发了请求（发了就算一步），promptSize 是该次调用的字节估计。
+func (a *Agent) reflect(ctx context.Context, in Input, draft string, steps int, observations []string) (text string, called bool, promptSize int) {
+	if ctx.Err() != nil {
+		return "", false, 0
+	}
+	if steps >= a.opts.MaxSteps {
+		a.log.Info("ReAct 反思跳过：步数预算已用尽", zap.String("action", "react_reflect_skip"))
+		return "", false, 0
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < reflectMinRemaining {
+		a.log.Info("ReAct 反思跳过：剩余时间不足", zap.String("action", "react_reflect_skip"))
+		return "", false, 0
+	}
+	system := a.reflectPrompt(in)
+	user := a.reflectUserPrompt(in, observations, draft)
+	promptSize = promptBytes(system, user)
+	if in.PromptBudget > 0 && promptSize > in.PromptBudget {
+		a.log.Info("ReAct 反思跳过：prompt 超预算", zap.String("action", "react_reflect_skip"))
+		return "", false, 0
+	}
+	out, err := a.llm.Complete(ctx, system, user)
+	if err != nil {
+		a.log.Info("ReAct 反思失败，保留原稿", zap.String("action", "react_reflect_error"))
+		return "", true, promptSize
+	}
+	return replyBody(out), true, promptSize
+}
+
+// reflectPrompt 是自检调用的系统提示：保留人设，只要求检查并改写草稿。
+func (a *Agent) reflectPrompt(in Input) string {
+	var sb strings.Builder
+	if s := strings.TrimSpace(in.System); s != "" {
+		sb.WriteString(s)
+		sb.WriteString("\n\n")
+	}
+	fmt.Fprintf(&sb, "你在自检一条即将发出的%s回复。\n", inputLabel(in))
+	sb.WriteString("检查三件事：有没有答非所问、有没有编造没查到的事实、有没有把内部推理或格式写进正文。\n")
+	sb.WriteString("只输出改写后的回复正文：不要 JSON，不要 thought/action/args 字段，不要代码块，不要解释你改了什么。\n")
+	sb.WriteString("草稿已经合适就原样输出草稿。")
+	return sb.String()
+}
+
+// reflectUserPrompt 在原有上下文与观察后附上草稿，供模型自检。
+func (a *Agent) reflectUserPrompt(in Input, observations []string, draft string) string {
+	var sb strings.Builder
+	sb.WriteString(a.userPrompt(in, observations))
+	sb.WriteString("\n草稿：\n")
+	sb.WriteString(clip(draft, maxReflectDraftRunes))
+	return sb.String()
+}
+
+// budgetResult 表示预算不足、本轮没发模型请求：调用方看到空正文会回落单步；
+// 已发出的弹幕仍然保留，调用方据此跳过重复回复。
+func budgetResult(evidence []Evidence, danmaku []string, used []string, steps int) Result {
+	return Result{Steps: steps, Tools: used, Evidence: evidence, Danmaku: danmaku, Degraded: true, Reason: DegradeBudget}
 }
 
 // promptBytes 按 provider.EstimatorVersion 口径估算一次调用的 prompt 大小。
@@ -303,15 +413,17 @@ func (a *Agent) Usage() (Usage, bool) {
 }
 
 // degrade 用已有观察再要一次回复；预算已耗尽则直接返回空，交给调用方回落。
-func (a *Agent) degrade(ctx context.Context, in Input, observations []string, evidence []Evidence, used []string, steps int, reason string) (Result, error) {
-	result := Result{Steps: steps, Tools: used, Degraded: true, Reason: reason, Evidence: evidence}
+// 已发出的弹幕始终保留在 Result.Danmaku 里，降级不能把它抹掉。
+func (a *Agent) degrade(ctx context.Context, in Input, observations []string, evidence []Evidence, danmaku []string, used []string, steps int, reason string) (Result, error) {
+	result := Result{Steps: steps, Tools: used, Degraded: true, Reason: reason, Evidence: evidence, Danmaku: danmaku}
 
 	// 超时已经把预算花光：不再调用模型，避免把 8 秒拖成 16 秒
 	if ctx.Err() != nil {
 		return result, nil //nolint:nilerr // 超时是预期内的降级路径，不是要上抛的错误
 	}
 
-	system := a.systemPrompt(in) + "\n现在不要再调用工具，直接给出最终回复。"
+	// 降级不再要求 ReAct 协议：去掉工具清单与 JSON 约束，直接要一句人话。
+	system := a.finalPrompt(in)
 	system, user, _, ok := a.fitPrompt(system, in, observations)
 	if !ok {
 		// 连降级 prompt 都装不进预算：不发请求，交给调用方回落单步
@@ -375,7 +487,7 @@ func (a *Agent) systemPrompt(in Input) string {
 		sb.WriteString(s)
 		sb.WriteString("\n\n")
 	}
-	sb.WriteString("你在回答一条直播弹幕。需要事实就先查，查到够了再回答。\n")
+	fmt.Fprintf(&sb, "你在回答一条%s。需要事实就先查，查到够了再回答。\n", inputLabel(in))
 	sb.WriteString("「XX 是谁」不一定是在问观众：先看 current_event.question_subject 的 kind，别一律查观众，也别一律解释成本鱼自己。\n")
 	sb.WriteString("kind=room_candidate 才优先用 viewer_search 按昵称/uid 查档案；kind=unresolved 不要假定是观众，先查记忆/知识库（只用本轮工具清单里注册的召回工具，必要时 web_search），viewer_search 没查到只表示档案里没有，不代表「世上没这个人」；kind=self 是问本鱼自己；kind=speaker 是问当前发言人。只有「你是谁」才是问你自己。\n")
 	sb.WriteString("question_subject.check=true 表示这是「记得XX吗/认识XX/跟XX聊过/XX喂过饭」类回忆核查：先 viewer_search 查该观众档案与侧写，再 memory_search 查本会话互动记忆；昵称不在当前房间窗口里也要先查档案。\n")
@@ -384,8 +496,30 @@ func (a *Agent) systemPrompt(in Input) string {
 	sb.WriteString("查记忆时 memory_search 的 args 传昵称或关键词（如「弓长三益」），不要传整句问题。\n")
 	sb.WriteString("可用工具：\n")
 	sb.WriteString(a.tools.Descriptions())
-	sb.WriteString("每一步只输出一行 JSON，不要多余文字：\n")
-	sb.WriteString(`{"thought":"你在想什么","action":"工具名或 final","args":"工具参数；action=final 时这里或 final 字段放回复正文"}`)
+	if in.ThinkDeep {
+		sb.WriteString("thought 必须写完三层再决定 action：①字面（这句话在说什么、在问谁）｜②关联（和当前直播画面、主播声音、最近弹幕、长期设定有什么关系）｜③表达（这一条该用什么语气、说什么才自然）。三层写在同一行，用「｜」分隔。\n")
+	}
+	sb.WriteString("每一步只输出一个 JSON 对象，第一个字符必须是 {，最后一个字符必须是 }，前后不要任何文字或代码块标记。\n")
+	sb.WriteString(`正确示例：{"thought":"先查历史","action":"history","args":"10"}`)
+	sb.WriteString("\n")
+	sb.WriteString(`正确示例（收尾）：{"thought":"够了","action":"final","final":"记得，你说想吃鱼"}`)
+	sb.WriteString("\n")
+	sb.WriteString("错误示例：先查一下 {\"action\":\"history\",\"args\":\"10\"}（JSON 前面不能有废话）\n")
+	sb.WriteString("错误示例：{\"thought\":\"t\",\"action\":\"history\",\"args\":{\"count\":10}}（args 必须是字符串）\n")
+	sb.WriteString("错误示例：```json {\"action\":\"final\",\"final\":\"好\"} ```（不要代码块包裹）\n")
+	sb.WriteString(`action=final 时，final 字段（或 args）直接写要发出去的自然语言正文。`)
+	return sb.String()
+}
+
+// finalPrompt 是降级调用的系统提示：保留人设，去掉 ReAct 协议，只要求正常文本。
+func (a *Agent) finalPrompt(in Input) string {
+	var sb strings.Builder
+	if s := strings.TrimSpace(in.System); s != "" {
+		sb.WriteString(s)
+		sb.WriteString("\n\n")
+	}
+	fmt.Fprintf(&sb, "直接回答这条%s，用一句自然语言。\n", inputLabel(in))
+	sb.WriteString("只输出要发出去的回复正文：不要 JSON，不要 thought/action/args 字段，不要代码块，不要解释你在做什么。")
 	return sb.String()
 }
 
@@ -398,7 +532,7 @@ func (a *Agent) userPrompt(in Input, observations []string) string {
 		sb.WriteString(contextText)
 		sb.WriteString("\n")
 	}
-	fmt.Fprintf(&sb, "弹幕：%s\n", clip(in.Question, 300))
+	fmt.Fprintf(&sb, "%s：%s\n", inputLabel(in), clip(in.Question, 300))
 	if len(observations) == 0 {
 		sb.WriteString("（还没有查证）")
 		return sb.String()
@@ -410,32 +544,195 @@ func (a *Agent) userPrompt(in Input, observations []string) string {
 	return sb.String()
 }
 
-// ParseStep 解析模型输出的一行 JSON，容忍代码块包裹。
+// ParseStep 宽松解析模型输出的一步决策。
+//
+// 容错范围（都只做确定性修复，不猜缺失内容）：
+//   - 代码块包裹与 JSON 前后废话；
+//   - 对象内尾逗号、字符串里的裸换行/制表符等控制字符；
+//   - args 写成对象/数组（摊平成紧凑 JSON 字符串交给工具）；
+//   - final 写成 text 别名，或漏了 action 但给了 final（按收尾处理）。
 func ParseStep(raw string) (Step, error) {
 	text := strings.TrimSpace(raw)
 	if text == "" {
 		return Step{}, errors.New("模型输出为空")
 	}
-	// 去掉 ```json ... ``` 包裹
-	if strings.HasPrefix(text, "```") {
-		text = strings.TrimPrefix(text, "```")
-		text = strings.TrimPrefix(text, "json")
-		text = strings.TrimSuffix(strings.TrimSpace(text), "```")
+	obj := extractStepObject(text)
+	if obj == "" {
+		return Step{}, errors.New("找不到完整的 JSON 对象")
 	}
-	// 只取第一个 { 到最后一个 }，容忍前后废话
-	if start := strings.Index(text, "{"); start >= 0 {
-		if end := strings.LastIndex(text, "}"); end > start {
-			text = text[start : end+1]
+	var payload struct {
+		Thought json.RawMessage `json:"thought"`
+		Action  json.RawMessage `json:"action"`
+		Args    json.RawMessage `json:"args"`
+		Final   json.RawMessage `json:"final"`
+		Text    json.RawMessage `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(obj), &payload); err != nil {
+		fixed := repairStepJSON(obj)
+		if fixed == obj || json.Unmarshal([]byte(fixed), &payload) != nil {
+			return Step{}, err
 		}
 	}
-	var step Step
-	if err := json.Unmarshal([]byte(text), &step); err != nil {
-		return Step{}, err
+	step := Step{
+		Thought: rawText(payload.Thought),
+		Action:  strings.TrimSpace(rawText(payload.Action)),
+		Args:    rawText(payload.Args),
+		Final:   rawText(payload.Final),
 	}
-	if strings.TrimSpace(step.Action) == "" {
+	if step.Final == "" {
+		step.Final = rawText(payload.Text)
+	}
+	if step.Action == "" && step.Final != "" {
+		// 直接给了正文却漏写 action：按 final 收尾，不为省一个字段降级。
+		step.Action = "final"
+	}
+	if strings.EqualFold(step.Action, "final") {
+		step.Action = "final"
+	}
+	if step.Action == "" {
 		return Step{}, errors.New("缺少 action")
 	}
 	return step, nil
+}
+
+// extractStepObject 提取第一个完整的 JSON 对象：
+// 先剥代码块围栏，再按字符串/转义感知的括号配平截取，避免被前后废话里的 } 带偏。
+func extractStepObject(text string) string {
+	text = stripFence(text)
+	start := strings.IndexByte(text, '{')
+	if start < 0 {
+		return ""
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(text); i++ {
+		c := text[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch c {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return text[start : i+1]
+			}
+		}
+	}
+	return ""
+}
+
+// stripFence 去掉代码块围栏，返回围栏内的内容；没有围栏时原样返回。
+func stripFence(text string) string {
+	open := strings.Index(text, "```")
+	if open < 0 {
+		return text
+	}
+	body := strings.TrimSpace(text[open+3:])
+	if len(body) >= 4 && strings.EqualFold(body[:4], "json") {
+		body = strings.TrimSpace(body[4:])
+	}
+	if end := strings.Index(body, "```"); end >= 0 {
+		body = body[:end]
+	}
+	return strings.TrimSpace(body)
+}
+
+// repairStepJSON 修复常见格式问题：对象/数组收尾前的多余逗号、
+// 字符串里的裸换行/制表符等控制字符。修完仍不合法则按解析失败处理。
+func repairStepJSON(text string) string {
+	out := make([]byte, 0, len(text))
+	inString := false
+	escaped := false
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if inString {
+			if escaped {
+				escaped = false
+				out = append(out, c)
+				continue
+			}
+			switch c {
+			case '\\':
+				escaped = true
+				out = append(out, c)
+			case '"':
+				inString = false
+				out = append(out, c)
+			case '\n':
+				out = append(out, '\\', 'n')
+			case '\r':
+				out = append(out, '\\', 'r')
+			case '\t':
+				out = append(out, '\\', 't')
+			default:
+				if c < 0x20 {
+					out = append(out, []byte(fmt.Sprintf(`\u%04x`, c))...)
+				} else {
+					out = append(out, c)
+				}
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '}', ']':
+			for len(out) > 0 && (out[len(out)-1] == ' ' || out[len(out)-1] == '\t' || out[len(out)-1] == '\r' || out[len(out)-1] == '\n') {
+				out = out[:len(out)-1]
+			}
+			if len(out) > 0 && out[len(out)-1] == ',' {
+				out = out[:len(out)-1]
+			}
+		}
+		out = append(out, c)
+	}
+	return string(out)
+}
+
+// rawText 把任意 JSON 值摊平成字符串：字符串取值，对象/数组保留紧凑 JSON，
+// 数字/布尔取字面量；缺失或 null 返回空串。
+func rawText(raw json.RawMessage) string {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" {
+		return ""
+	}
+	if value[0] == '"' {
+		var s string
+		if json.Unmarshal([]byte(value), &s) == nil {
+			return s
+		}
+		return ""
+	}
+	if value[0] == '{' || value[0] == '[' {
+		var buf bytes.Buffer
+		if json.Compact(&buf, []byte(value)) == nil {
+			return buf.String()
+		}
+	}
+	return value
+}
+
+// inputLabel 返回提示词里的回复对象称呼；未指定时按弹幕处理。
+func inputLabel(in Input) string {
+	if label := strings.TrimSpace(in.Label); label != "" {
+		return label
+	}
+	return "弹幕"
 }
 
 func firstNonEmpty(values ...string) string {

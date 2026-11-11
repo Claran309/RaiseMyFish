@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/llmmeta"
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -55,6 +56,9 @@ func TestUsageSinkForRecordsLiveRow(t *testing.T) {
 	row := rows[0]
 	if row.Channel != event.ChLive || row.Model != "vision-model" || !row.OK {
 		t.Fatalf("基础字段不符：%+v", row)
+	}
+	if row.Purpose != string(llmmeta.PurposeVision) {
+		t.Fatalf("用途应为 vision，实际 %q", row.Purpose)
 	}
 	// (100*1 + 20*2) / 1e6 = 0.00014
 	if row.CostUSD == nil || *row.CostUSD < 0.0001399 || *row.CostUSD > 0.0001401 {

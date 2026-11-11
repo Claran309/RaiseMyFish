@@ -16,6 +16,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const testFishdFingerprint = "test-fishd-knowledge-fingerprint"
+
 type fishdEmbedder struct {
 	mu    sync.Mutex
 	calls int
@@ -44,10 +46,11 @@ func (e *fishdEmbedder) callCount() int {
 }
 
 type fishdEmbeddingStore struct {
-	mu       sync.Mutex
-	existing map[string]knowledge.EmbeddingMeta
-	records  []knowledge.EmbeddingRecord
-	upserted chan struct{}
+	mu        sync.Mutex
+	existing  map[string]knowledge.EmbeddingMeta
+	records   []knowledge.EmbeddingRecord
+	upserted  chan struct{}
+	rejectAll bool
 }
 
 func newFishdEmbeddingStore() *fishdEmbeddingStore {
@@ -64,21 +67,25 @@ func (s *fishdEmbeddingStore) ExistingEmbeddings(context.Context) (map[string]kn
 	return result, nil
 }
 
-func (s *fishdEmbeddingStore) UpsertEmbeddings(_ context.Context, records []knowledge.EmbeddingRecord) error {
+func (s *fishdEmbeddingStore) UpsertEmbeddings(_ context.Context, records []knowledge.EmbeddingRecord) (int, error) {
 	s.mu.Lock()
+	if s.rejectAll {
+		s.mu.Unlock()
+		return 0, nil
+	}
 	for _, record := range records {
 		s.records = append(s.records, record)
-		s.existing[record.ID] = knowledge.EmbeddingMeta{Source: record.Source, Title: record.Title, UpdatedAt: record.UpdatedAt}
+		s.existing[record.ID] = knowledge.EmbeddingMeta{TextHash: record.Hash, SourceHash: record.SourceHash, Fingerprint: record.Fingerprint}
 	}
 	s.mu.Unlock()
 	select {
 	case s.upserted <- struct{}{}:
 	default:
 	}
-	return nil
+	return len(records), nil
 }
 
-func (s *fishdEmbeddingStore) SemanticSearch(context.Context, []float64, int) ([]knowledge.SemanticHit, error) {
+func (s *fishdEmbeddingStore) SemanticSearch(context.Context, []float64, string, int) ([]knowledge.SemanticHit, error) {
 	return nil, nil
 }
 
@@ -144,6 +151,9 @@ func TestAttachKnowledgeSemanticWrapsBaseReader(t *testing.T) {
 	if _, ok := assembly.Reader.(*knowledge.HybridReader); !ok || assembly.Embedder == nil || assembly.Store == nil {
 		t.Fatal("语义装配未包装为混合召回")
 	}
+	if assembly.Fingerprint == "" {
+		t.Fatal("装配未记录索引指纹")
+	}
 	if assembly.Base != reader {
 		t.Fatal("Base快照被替换")
 	}
@@ -181,7 +191,8 @@ func TestKnowledgeEmbeddingRefresherOnlyOnRevisionChange(t *testing.T) {
 	embedder := &fishdEmbedder{}
 	store := newFishdEmbeddingStore()
 	refresher := &knowledgeEmbeddingRefresher{
-		reader: reader, embedder: embedder, store: store, batchSize: 1, logger: zap.NewNop(),
+		reader: reader, embedder: embedder, store: store, fingerprint: testFishdFingerprint,
+		batchSize: 1, logger: zap.NewNop(),
 	}
 	if err := refresher.runOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -215,8 +226,8 @@ func TestKnowledgeEmbeddingRefresherRetriesAfterFailure(t *testing.T) {
 	embedder := &fishdEmbedder{err: errors.New("embedding不可用")}
 	store := newFishdEmbeddingStore()
 	refresher := &knowledgeEmbeddingRefresher{
-		reader: reader, embedder: embedder, store: store, batchSize: 32,
-		logger: zap.NewNop(),
+		reader: reader, embedder: embedder, store: store, fingerprint: testFishdFingerprint,
+		batchSize: 32, logger: zap.NewNop(),
 	}
 	if err := refresher.runOnce(context.Background()); err == nil {
 		t.Fatal("失败未返回")
@@ -233,10 +244,34 @@ func TestKnowledgeEmbeddingRefresherRetriesAfterFailure(t *testing.T) {
 	}
 }
 
+// TestKnowledgeEmbeddingRefresherRetriesRejectedWrites CAS 拒绝后不推进 revision。
+func TestKnowledgeEmbeddingRefresherRetriesRejectedWrites(t *testing.T) {
+	reader, _ := newFishdKnowledge(t, "甲鱼")
+	store := newFishdEmbeddingStore()
+	store.rejectAll = true
+	refresher := &knowledgeEmbeddingRefresher{
+		reader: reader, embedder: &fishdEmbedder{}, store: store, fingerprint: testFishdFingerprint,
+		batchSize: 32, logger: zap.NewNop(),
+	}
+	if err := refresher.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if refresher.lastRevision != "" {
+		t.Fatal("CAS 拒绝后不应推进 revision")
+	}
+	store.rejectAll = false
+	if err := refresher.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if refresher.lastRevision == "" || store.recordCount() != 1 {
+		t.Fatalf("恢复后未重试成功：revision=%q records=%d", refresher.lastRevision, store.recordCount())
+	}
+}
+
 func TestStartKnowledgeEmbeddingRefreshRunsAndStops(t *testing.T) {
 	reader, _ := newFishdKnowledge(t, "甲鱼")
 	store := newFishdEmbeddingStore()
-	assembly := knowledgeAssembly{Base: reader, Embedder: &fishdEmbedder{}, Store: store}
+	assembly := knowledgeAssembly{Base: reader, Embedder: &fishdEmbedder{}, Store: store, Fingerprint: testFishdFingerprint}
 	cfg := config.Config{Embedding: config.Embedding{Enabled: true, AutoRefresh: true, RefreshIntervalSeconds: 3600, BatchSize: 32}}
 	stop := startKnowledgeEmbeddingRefresh(context.Background(), cfg, assembly, zap.NewNop())
 	select {

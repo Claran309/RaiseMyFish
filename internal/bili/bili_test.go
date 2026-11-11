@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,9 +17,18 @@ import (
 const testCookie = "SESSDATA=secret-sess; bili_jct=csrf-token-123; DedeUserID=42"
 
 // newTestClient 起一个模拟平台并把三个根地址都指向它。
+//
+// 私信发送需要 WBI 签名，统一在 mock 里应答 nav，各用例不用重复处理。
 func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
-	srv := httptest.NewServer(handler)
+	wrapped := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/x/web-interface/nav" {
+			_, _ = w.Write([]byte(`{"code":0,"data":{"wbi_img":{"img_url":"https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
+			return
+		}
+		handler(w, r)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(wrapped))
 	t.Cleanup(srv.Close)
 	c, err := New(Options{
 		APIRoot:  srv.URL,
@@ -152,9 +162,9 @@ func TestLikeRequest(t *testing.T) {
 	}
 }
 
-// TestSendDMRequest 私信：sender/receiver/content 结构正确。
+// TestSendDMRequest 私信：sender/receiver/content 结构正确，且带设备号/WBI 签名/消息站 Referer。
 func TestSendDMRequest(t *testing.T) {
-	var path, sender, receiver, msgType, content, csrf string
+	var path, sender, receiver, msgType, content, csrf, devID, timestamp, queryDevID, wRID, referer string
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		path = r.URL.Path
@@ -163,6 +173,11 @@ func TestSendDMRequest(t *testing.T) {
 		msgType = r.PostForm.Get("msg[msg_type]")
 		content = r.PostForm.Get("msg[content]")
 		csrf = r.PostForm.Get("csrf")
+		devID = r.PostForm.Get("msg[dev_id]")
+		timestamp = r.PostForm.Get("msg[timestamp]")
+		queryDevID = r.URL.Query().Get("w_dev_id")
+		wRID = r.URL.Query().Get("w_rid")
+		referer = r.Header.Get("Referer")
 		writeEnvelope(w, 0, nil)
 	})
 
@@ -181,6 +196,19 @@ func TestSendDMRequest(t *testing.T) {
 	}
 	if csrf == "" {
 		t.Error("缺少 csrf")
+	}
+	if devID == "" || queryDevID != devID {
+		t.Errorf("设备号缺失或与签名参数不一致：body=%q query=%q", devID, queryDevID)
+	}
+	ts, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil || time.Since(time.Unix(ts, 0)) > time.Minute {
+		t.Errorf("时间戳不符：%q", timestamp)
+	}
+	if wRID == "" {
+		t.Error("缺少 WBI 签名 w_rid")
+	}
+	if referer != "https://message.bilibili.com/" {
+		t.Errorf("Referer 不符：%q", referer)
 	}
 }
 

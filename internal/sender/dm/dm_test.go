@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -310,6 +311,37 @@ func TestClassifyBiliError(t *testing.T) {
 	}
 	if classifyBiliError(errors.New("普通错误")) != nil {
 		t.Error("非B站错误应返回 nil 交给通用分类")
+	}
+}
+
+// TestClassifyPreservesCause 分类后的错误仍能展开到原平台错误/本地前置原因，
+// 让 dead/unknown 日志能看到平台 code 或「缺 bili_jct」这类根因。
+func TestClassifyPreservesCause(t *testing.T) {
+	original := &bili.Error{Op: "dm_send", Code: -400}
+	got := classifyBiliError(original)
+	var apiErr *bili.Error
+	if !errors.As(got, &apiErr) || apiErr.Code != -400 {
+		t.Fatalf("分类丢失平台错误：%v", got)
+	}
+	var classified *Error
+	if !errors.As(got, &classified) || classified.Cause == nil ||
+		!strings.Contains(classified.Cause.Error(), "私信平台错误") ||
+		!strings.Contains(classified.Cause.Error(), "code -400") {
+		t.Fatalf("分类文案未保留平台 code：%v", got)
+	}
+
+	local := classify(errors.New("凭据缺少bili_jct，无法执行写操作"))
+	var typed *Error
+	if !errors.As(local, &typed) || typed.Kind != KindAuth {
+		t.Fatalf("本地缺凭据应归 auth：%v", local)
+	}
+	if typed.Cause == nil || !strings.Contains(typed.Cause.Error(), "bili_jct") {
+		t.Fatalf("鉴权分类未保留根因：%v", local)
+	}
+
+	badInput := classify(errors.New("mid 必须是纯数字"))
+	if !errors.As(badInput, &typed) || typed.Kind != KindInput {
+		t.Fatalf("非法参数应归 input：%v", badInput)
 	}
 }
 

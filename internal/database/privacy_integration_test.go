@@ -374,7 +374,7 @@ func TestPublicProjectionExcludesPrivateSources(t *testing.T) {
 	}
 
 	// --- 面板导出：公开视角 ---
-	panelMemory, err := web.Memory(ctx, "", "", 50)
+	panelMemory, err := web.Memory(ctx, "", "", "", 50)
 	if err != nil || len(panelMemory) != 1 || panelMemory[0].ID != "fact:public" {
 		t.Fatalf("面板记忆导出泄漏私密来源：%+v / %v", panelMemory, err)
 	}

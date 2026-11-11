@@ -132,6 +132,26 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取观众侧写状态迁移：%w", err)
 	}
 	viewerSummaryStateHash := sha256.Sum256(viewerSummaryState)
+	viewerSummaryLayers, err := migrations.Files.ReadFile("0020_viewer_summary_layers.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取观众侧写分层迁移：%w", err)
+	}
+	viewerSummaryLayersHash := sha256.Sum256(viewerSummaryLayers)
+	contextInjections, err := migrations.Files.ReadFile("0021_context_injections.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取看板注入迁移：%w", err)
+	}
+	contextInjectionsHash := sha256.Sum256(contextInjections)
+	dailySummaries, err := migrations.Files.ReadFile("0022_daily_summaries.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取每日总结迁移：%w", err)
+	}
+	dailySummariesHash := sha256.Sum256(dailySummaries)
+	eventClearance, err := migrations.Files.ReadFile("0023_event_clearance.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取异常清理迁移：%w", err)
+	}
+	eventClearanceHash := sha256.Sum256(eventClearance)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -152,6 +172,10 @@ func migrationSteps() ([]migrationStep, error) {
 		{17, string(viewerProfileSummary), hex.EncodeToString(viewerProfileSummaryHash[:])},
 		{18, string(sendWireSnapshot), hex.EncodeToString(sendWireSnapshotHash[:])},
 		{19, string(viewerSummaryState), hex.EncodeToString(viewerSummaryStateHash[:])},
+		{20, string(viewerSummaryLayers), hex.EncodeToString(viewerSummaryLayersHash[:])},
+		{21, string(contextInjections), hex.EncodeToString(contextInjectionsHash[:])},
+		{22, string(dailySummaries), hex.EncodeToString(dailySummariesHash[:])},
+		{23, string(eventClearance), hex.EncodeToString(eventClearanceHash[:])},
 	}, nil
 }
 
@@ -287,6 +311,12 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	if err := db.Exec("SELECT uid,action,attempts,next_retry_at,created_at,updated_at FROM " + table("viewer_summary_jobs") + " LIMIT 0").Error; err != nil {
 		return &safeError{"观众侧写投影任务表不完整", err}
 	}
+	if err := db.Exec("SELECT profile_summary_stable,profile_summary_recent,profile_summary_recent_until,profile_summary_fields FROM " + table("viewer_profiles") + " LIMIT 0").Error; err != nil {
+		return &safeError{"观众侧写分层字段不完整", err}
+	}
+	if err := db.Exec("SELECT derived_by,evidence FROM " + table("memory_records") + " LIMIT 0").Error; err != nil {
+		return &safeError{"记忆派生字段不完整", err}
+	}
 	if err := db.Exec("SELECT reply_mid,reply_name,text_version FROM " + table("send_plans") + " LIMIT 0").Error; err != nil {
 		return &safeError{"发送快照字段不完整", err}
 	}
@@ -298,6 +328,15 @@ func Ready(ctx context.Context, db *gorm.DB) error {
 	}
 	if err := db.Exec("SELECT purpose,correlation_id,cached_in_tokens FROM " + table("llm_usage") + " LIMIT 0").Error; err != nil {
 		return &safeError{"LLM账本字段不完整", err}
+	}
+	if err := db.Exec("SELECT id,content,created_at,updated_at,expires_at FROM " + table("context_injections") + " LIMIT 0").Error; err != nil {
+		return &safeError{"看板注入表不完整", err}
+	}
+	if err := db.Exec("SELECT day,content,model,event_count,created_at,updated_at FROM " + table("daily_summaries") + " LIMIT 0").Error; err != nil {
+		return &safeError{"每日总结表不完整", err}
+	}
+	if err := db.Exec("SELECT cleared_at FROM " + table("events") + " LIMIT 0").Error; err != nil {
+		return &safeError{"异常清理字段不完整", err}
 	}
 	return nil
 }

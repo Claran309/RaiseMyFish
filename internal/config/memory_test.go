@@ -117,3 +117,93 @@ func TestMemoryOwnerUIDValidation(t *testing.T) {
 		}
 	}
 }
+
+// TestViewerSummaryInterval 默认每小时；0 关闭；启用时限制在 60-86400 秒。
+func TestViewerSummaryInterval(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	cfg, err := Load("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Memory.ViewerSummaryIntervalSeconds != 3600 {
+		t.Fatalf("观众侧写默认间隔不符：%d", cfg.Memory.ViewerSummaryIntervalSeconds)
+	}
+
+	cfg, err = loadMemoryConfig(t, "[memory]\nenabled=true\nviewer_summary_interval_seconds=7200\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Memory.ViewerSummaryIntervalSeconds != 7200 {
+		t.Fatalf("观众侧写间隔覆盖失败：%d", cfg.Memory.ViewerSummaryIntervalSeconds)
+	}
+
+	cfg, err = loadMemoryConfig(t, "[memory]\nenabled=true\nviewer_summary_interval_seconds=0\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Memory.ViewerSummaryIntervalSeconds != 0 {
+		t.Fatalf("0 应表示关闭：%d", cfg.Memory.ViewerSummaryIntervalSeconds)
+	}
+
+	for _, interval := range []string{"59", "86401", "-1"} {
+		t.Run(interval, func(t *testing.T) {
+			_, err := loadMemoryConfig(t, "[memory]\nenabled=true\nviewer_summary_interval_seconds="+interval+"\n")
+			if err == nil || !strings.Contains(err.Error(), "观众侧写间隔") {
+				t.Fatalf("interval=%s 未按范围拒绝：%v", interval, err)
+			}
+		})
+	}
+}
+
+// TestViewerSummaryBudgetDefaults R09 默认小批试跑：每轮 10 位、每次回填 2 位、
+// 新发言 3 条才更新、近期层 7 天、每日预算 50 位。
+func TestViewerSummaryBudgetDefaults(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	cfg, err := Load("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := cfg.Memory
+	if m.ViewerSummaryMaxPerRun != 10 || m.ViewerSummaryBackfillLimit != 2 ||
+		m.ViewerSummaryMinNewMessages != 3 || m.ViewerSummaryRecentTTLSeconds != 604800 ||
+		m.ViewerSummaryDailyViewers != 50 {
+		t.Fatalf("观众侧写预算默认值不符：%+v", m)
+	}
+
+	cfg, err = loadMemoryConfig(t, "[memory]\nenabled=true\nviewer_summary_max_per_run=4\nviewer_summary_backfill_limit=0\n"+
+		"viewer_summary_min_new_messages=5\nviewer_summary_recent_ttl_seconds=86400\nviewer_summary_daily_viewers=20\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = cfg.Memory
+	if m.ViewerSummaryMaxPerRun != 4 || m.ViewerSummaryBackfillLimit != 0 ||
+		m.ViewerSummaryMinNewMessages != 5 || m.ViewerSummaryRecentTTLSeconds != 86400 ||
+		m.ViewerSummaryDailyViewers != 20 {
+		t.Fatalf("观众侧写预算覆盖失败：%+v", m)
+	}
+}
+
+// TestViewerSummaryBudgetRange 预算字段超出范围必须拒绝，避免误配成无限跑。
+func TestViewerSummaryBudgetRange(t *testing.T) {
+	cases := []struct {
+		key   string
+		bad   []string
+		match string
+	}{
+		{"viewer_summary_max_per_run", []string{"0", "101", "-1"}, "每轮上限"},
+		{"viewer_summary_backfill_limit", []string{"101", "-1"}, "回填上限"},
+		{"viewer_summary_min_new_messages", []string{"0", "101", "-1"}, "触发消息数"},
+		{"viewer_summary_recent_ttl_seconds", []string{"3599", "2592001", "-1"}, "近期层有效期"},
+		{"viewer_summary_daily_viewers", []string{"0", "501", "-1"}, "每日观众预算"},
+	}
+	for _, tc := range cases {
+		for _, value := range tc.bad {
+			t.Run(tc.key+"="+value, func(t *testing.T) {
+				_, err := loadMemoryConfig(t, "[memory]\nenabled=true\n"+tc.key+"="+value+"\n")
+				if err == nil || !strings.Contains(err.Error(), tc.match) {
+					t.Fatalf("%s=%s 未按范围拒绝：%v", tc.key, value, err)
+				}
+			})
+		}
+	}
+}

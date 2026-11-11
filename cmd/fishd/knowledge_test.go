@@ -123,7 +123,7 @@ func TestBrainAssemblyUsesConfiguredKnowledgePercent(t *testing.T) {
 		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"本鱼在"}}]}`)
 	}))
 	defer server.Close()
-	cfg := config.Config{Knowledge: config.Knowledge{Enabled: true, Dir: "../../personas/dafeiyu/knowledge", BudgetPercent: 0}, LLM: config.LLM{Enabled: true, PersonaDir: "../../personas/dafeiyu", MaxPromptTokens: 32768, MaxReplyTokens: 128, AttemptTimeoutMS: 1000, TotalTimeoutMS: 5000, BackoffMS: 1, MaxConcurrent: 1, Temperature: .7, Providers: map[string]config.Provider{"fake": {Type: "openai", BaseURL: server.URL, APIKey: "unit-only", Models: []string{"model"}}}, Routing: map[string]string{"default": "fake:model"}}}
+	cfg := config.Config{Knowledge: config.Knowledge{Enabled: true, Dir: "../../personas/dafeiyu/knowledge", BudgetPercent: 0}, LLM: config.LLM{Enabled: true, PersonaDir: "../../personas/dafeiyu", MaxPromptTokens: 65536, MaxReplyTokens: 128, AttemptTimeoutMS: 1000, TotalTimeoutMS: 5000, BackoffMS: 1, MaxConcurrent: 1, Temperature: .7, Providers: map[string]config.Provider{"fake": {Type: "openai", BaseURL: server.URL, APIKey: "unit-only", Models: []string{"model"}}}, Routing: map[string]string{"default": "fake:model"}}}
 	routes, pack, err := buildBrains(context.Background(), cfg, &diagnosticUsage{}, zap.NewNop())
 	if err != nil {
 		t.Fatal(err)

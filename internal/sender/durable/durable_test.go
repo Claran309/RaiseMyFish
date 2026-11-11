@@ -3,6 +3,7 @@ package durable
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"RaiseMyFish/internal/sender"
 	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 const testAccount = "10001"
@@ -567,5 +570,60 @@ func TestSendValidateFailureNeverPrepares(t *testing.T) {
 	}
 	if repo.prepareCalls != 0 || inner.sends != 0 {
 		t.Fatal("校验失败仍然落计划或 POST")
+	}
+}
+
+// TestUnknownLogsCauseChain dead/unknown 的日志必须展开到平台 code，
+// 否则事件「静默死亡」，只剩一句笼统的投递结果未知。
+func TestUnknownLogsCauseChain(t *testing.T) {
+	core, logs := observer.New(zapcore.WarnLevel)
+	repo := &fakeRepo{}
+	inner := &fakeSender{err: fmt.Errorf("私信平台错误：%w", &bili.Error{Op: "dm_send", Code: -400})}
+	s, err := New(repo, inner, Options{
+		Channel: event.ChComment, AccountID: testAccount, Validate: normalize, MaxAttempts: 3,
+	}, zap.New(core))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := commentClaim()
+	if _, err := s.Send(context.Background(), c, replyFor(c, "正文")); err == nil {
+		t.Fatal("未知结果应返回错误交给上层结清")
+	}
+	entries := logs.FilterField(zap.String("action", "planned_unknown")).All()
+	if len(entries) != 1 {
+		t.Fatalf("planned_unknown 日志条数 = %d，期望 1", len(entries))
+	}
+	cause, _ := entries[0].ContextMap()["cause"].(string)
+	if !strings.Contains(cause, "dm_send") || !strings.Contains(cause, "-400") {
+		t.Fatalf("dead 原因未展开平台 code：%q", cause)
+	}
+}
+
+// TestAcceptedWithoutReceiptLogsReason 平台接受但没有稳定回执会让输入 dead，
+// 必须留下 planned_unknown_no_receipt 说明，而不是静默停止。
+func TestAcceptedWithoutReceiptLogsReason(t *testing.T) {
+	core, logs := observer.New(zapcore.WarnLevel)
+	repo := &fakeRepo{}
+	inner := &fakeSender{result: sender.Result{OK: true}}
+	s, err := New(repo, inner, Options{
+		Channel: event.ChComment, AccountID: testAccount, Validate: normalize, MaxAttempts: 3,
+	}, zap.New(core))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := commentClaim()
+	res, err := s.Send(context.Background(), c, replyFor(c, "正文"))
+	if !res.OK || res.Error != "unconfirmed" {
+		t.Fatalf("结果 = %+v，期望已接受未确认", res)
+	}
+	if kindOf(t, err) != sender.KindUncertain || !sender.Handled(err) {
+		t.Fatalf("应已结清为不确定：%v", err)
+	}
+	entries := logs.FilterField(zap.String("action", "planned_unknown_no_receipt")).All()
+	if len(entries) != 1 {
+		t.Fatalf("缺回执日志条数 = %d，期望 1", len(entries))
+	}
+	if got, _ := entries[0].ContextMap()["attempt_id"].(string); got != "attempt-1" {
+		t.Fatalf("attempt_id = %q", got)
 	}
 }

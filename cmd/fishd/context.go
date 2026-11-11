@@ -62,16 +62,20 @@ type profileFinder interface {
 	Find(ctx context.Context, query string, limit int) (viewer.Result, error)
 }
 
+// injectionMaxItems 是单轮最多拼接的看板注入条数；新的优先。
+const injectionMaxItems = 5
+
 // contextBuilder 组装一次生成所需的全部资料。
 type contextBuilder struct {
-	pack      persona.Pack
-	memory    memory.Reader
-	knowledge knowledge.Reader
-	viewers   store.ViewerRepo
-	soul      *soulCache
-	state     func(time.Time) string
-	finder    profileFinder
-	log       *zap.Logger
+	pack       persona.Pack
+	memory     memory.Reader
+	knowledge  knowledge.Reader
+	viewers    store.ViewerRepo
+	soul       *soulCache
+	state      func(time.Time) string
+	finder     profileFinder
+	injections store.InjectionReader
+	log        *zap.Logger
 }
 
 // newContextBuilder 构造快照装配器；可选依赖为 nil 时对应区块留空。
@@ -117,11 +121,48 @@ func (b *contextBuilder) BuildContext(ctx context.Context, ev event.Event, visua
 		Knowledge: knowCtx,
 		State:     stateText,
 		Visual:    strings.TrimSpace(visual),
+		Injection: b.injectionText(ctx),
 		Soul:      b.soul.load(ctx),
 	}
 	// Viewer 段依赖问题主体（甲问乙）与记忆快照，必须最后组装。
 	input.Viewer = b.viewerText(ctx, input)
 	return input
+}
+
+// injectionText 读取当前有效的看板注入，按新旧拼接并压到 prompt 预算内。
+//
+// 注入是增强能力：读库失败只记日志并返回空串，绝不阻塞回复。
+func (b *contextBuilder) injectionText(ctx context.Context) string {
+	if b.injections == nil {
+		return ""
+	}
+	rows, err := b.injections.ActiveInjections(ctx, time.Now())
+	if err != nil {
+		b.log.Warn("看板注入读取失败，本轮不注入",
+			zap.String("action", "injection_context"),
+			zap.Error(err),
+		)
+		return ""
+	}
+	parts := make([]string, 0, injectionMaxItems)
+	used := 0
+	for _, row := range rows {
+		content := strings.TrimSpace(row.Content)
+		if content == "" {
+			continue
+		}
+		cost := utf8.RuneCountInString(content)
+		if len(parts) > 0 {
+			cost++
+		}
+		// 与 brain.maxInjectionRunes 同口径；放不下的旧条目直接省略。
+		if len(parts) >= injectionMaxItems || used+cost > store.MaxInjectionRunes {
+			break
+		}
+		parts = append(parts, content)
+		used += cost
+	}
+	return strings.Join(parts, "\n")
 }
 
 // viewerText 组装 Viewer 段：当前观众档案 > 历史记忆 > 时间窗 > 乙档案 > 名单，

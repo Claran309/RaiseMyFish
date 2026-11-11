@@ -74,7 +74,7 @@ func TestRunReactEveryRequestWithinPromptBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := &reactRuntime{
-		factory: func(memory.Scope, string, bool) (*reasoning.Agent, error) {
+		factory: func(memory.Scope, string, bool, event.Channel) (*reasoning.Agent, error) {
 			return reasoning.New(captureLLM(prov), box, reasoning.Options{MaxSteps: 3, Timeout: 2 * time.Second}, zap.NewNop())
 		},
 		defaultReact:  true,
@@ -90,8 +90,8 @@ func TestRunReactEveryRequestWithinPromptBudget(t *testing.T) {
 		t.Fatalf("应正常收尾：text=%q degraded=%v reason=%q", res.Text, res.Degraded, res.Reason)
 	}
 	requests := prov.snapshot()
-	if len(requests) != 2 {
-		t.Fatalf("模型请求数 = %d，期望 2（首步工具 + 带观察收尾）", len(requests))
+	if len(requests) != 3 {
+		t.Fatalf("模型请求数 = %d，期望 3（首步工具 + 带观察收尾 + 反思）", len(requests))
 	}
 	limit := maxPrompt - outputReserve
 	for i, req := range requests {
@@ -113,8 +113,8 @@ func TestRunReactEveryRequestWithinPromptBudget(t *testing.T) {
 	if strings.Contains(first, "第000条") {
 		t.Fatalf("超预算时最旧的近期记忆应先被裁掉：\n%s", first)
 	}
-	if last := requests[1].Messages[1].Content; !strings.Contains(last, "已经查到") || !strings.Contains(last, "吃鱼") {
-		t.Fatalf("带观察的请求丢失工具结果：\n%s", last)
+	if last := requests[2].Messages[1].Content; !strings.Contains(last, "已经查到") || !strings.Contains(last, "吃鱼") {
+		t.Fatalf("反思请求丢失工具结果：\n%s", last)
 	}
 	if res.PromptBytes != provider.EstimateMessages(requests[len(requests)-1].Messages) {
 		t.Fatalf("PromptBytes=%d 与实际最后一次请求估计不符", res.PromptBytes)
@@ -133,7 +133,7 @@ func TestRunReactOutputReserveExhaustedDegrades(t *testing.T) {
 	prov := &captureProvider{}
 	factoryCalls := 0
 	runtime := &reactRuntime{
-		factory: func(memory.Scope, string, bool) (*reasoning.Agent, error) {
+		factory: func(memory.Scope, string, bool, event.Channel) (*reasoning.Agent, error) {
 			factoryCalls++
 			return nil, nil
 		},

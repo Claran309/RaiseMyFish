@@ -781,8 +781,8 @@ WHERE schemaname = current_schema() AND indexname = 'idx_events_public_from_at')
 	if err := db.WithContext(ctx).Raw("SELECT MAX(version) FROM schema_migrations").Scan(&version).Error; err != nil {
 		t.Fatal(err)
 	}
-	if version != 20 {
-		t.Fatalf("迁移版本 = %d，期望 20", version)
+	if version != 23 {
+		t.Fatalf("迁移版本 = %d，期望 23", version)
 	}
 }
 

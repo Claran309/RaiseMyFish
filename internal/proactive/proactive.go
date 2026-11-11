@@ -90,6 +90,16 @@ type Options struct {
 	ReactTrigger string
 	// Builder 是统一上下文快照装配器；nil 时退回本包的最小召回（仅供测试/旧装配）。
 	Builder ContextBuilder
+	// Audio 是主动弹幕的声音采样器；nil 表示本轮没有声音。
+	Audio AudioListener
+	// Chat 是最近观众弹幕来源；nil 表示不注入最近弹幕。
+	Chat ChatSource
+	// Senses 是本轮感知缓存：ReAct 的 watch_live 工具从这里读，nil 时不写。
+	Senses SenseCache
+	// SelfID 是本鱼账号 UID，用于把鱼自己的事件从「最近弹幕」里剔除。
+	SelfID string
+	// AudioTimeout 是等待声音采样的上限；零值取 DefaultAudioTimeout。
+	AudioTimeout time.Duration
 	// Budget 是 ReAct 与单步 Brain 共用的生成预算；零值取默认 token 上限。
 	Budget brain.Budget
 	Logger *zap.Logger
@@ -126,6 +136,12 @@ type Runner struct {
 	sender   Sender
 	room     string
 	trigger  string
+	// audio/chat/senses 是主动弹幕的「声音 + 最近弹幕」感知装配；nil 表示该路不可用。
+	audio        AudioListener
+	chat         ChatSource
+	senses       SenseCache
+	selfID       string
+	audioTimeout time.Duration
 	// minVisualRunes 是 always 模式下的描述长度门槛（默认 10）。
 	minVisualRunes int
 	limiter        *gapLimiter
@@ -172,6 +188,13 @@ func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack 
 	if now == nil {
 		now = time.Now
 	}
+	audioTimeout := opts.AudioTimeout
+	if audioTimeout == 0 {
+		audioTimeout = DefaultAudioTimeout
+	}
+	if audioTimeout < 0 {
+		return nil, errors.New("主动弹幕声音等待超时不能为负")
+	}
 	return &Runner{
 		snapshot:       snapshot,
 		vision:         vision,
@@ -184,6 +207,11 @@ func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack 
 		sender:         snd,
 		room:           opts.RoomID,
 		trigger:        trigger,
+		audio:          opts.Audio,
+		chat:           opts.Chat,
+		senses:         opts.Senses,
+		selfID:         strings.TrimSpace(opts.SelfID),
+		audioTimeout:   audioTimeout,
 		minVisualRunes: 10,
 		limiter:        newGapLimiter(gap),
 		recent:         newRecent(recentLimit),
@@ -213,15 +241,22 @@ func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 		return Result{Action: ActionStaySilent, Reason: reason}, nil
 	}
 
-	// 2. 截帧（临时文件用完即删）；观察时间取截帧时刻，而不是模型返回时刻。
+	// 2. 截帧前先并发启动声音与最近弹幕：声音要和截帧/识图同时跑，
+	//    否则一轮会多等 30 秒。两路失败都只降级，不阻断画面主线。
 	capturedAt := r.now()
+	audioCtx, audioCancel := context.WithCancel(ctx)
+	defer audioCancel()
+	audioCh := r.startAudio(audioCtx)
+	chatLines := r.recentChat(ctx)
+
+	// 3. 截帧（临时文件用完即删）；观察时间取截帧时刻，而不是模型返回时刻。
 	path, err := r.snapshot.Snapshot(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("截取直播画面失败：%w", err)
 	}
 	defer func() { _ = os.Remove(path) }()
 
-	// 3. 详细识图：产出的是「上下文」，不是弹幕，所以不限 15 字
+	// 4. 详细识图：产出的是「上下文」，不是弹幕，所以不限 15 字
 	visual, err := r.vision.Describe(ctx, path)
 	if err != nil {
 		return Result{}, fmt.Errorf("识别直播画面失败：%w", err)
@@ -230,17 +265,22 @@ func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 	if visual == "" {
 		return Result{}, errors.New("画面描述为空")
 	}
+	// 声音最多等到 AudioTimeout：超时就取消录音，本轮按「没有声音」继续。
+	audio := r.waitAudio(ctx, audioCh, audioCancel)
 	if err := ctx.Err(); err != nil {
 		return Result{Visual: visual}, err
 	}
 	obs := r.newObservation(capturedAt, visual)
+	// 写入本轮感知缓存：ReAct 的 watch_live 从这里主动读取；
+	// ASR 失败时 audio 为空，会清掉上一轮的旧声音。
+	r.updateSenses(visual, audio, chatLines, capturedAt)
 
-	// 4. 构造统一快照：合成事件 + 画面描述；档案/双方对话/状态/长期设定
+	// 5. 构造统一快照：合成事件 + 画面/声音/最近弹幕；档案/双方对话/状态/长期设定
 	//    与被动回复走同一个 ContextBuilder，单步与 ReAct 都吃这份资料。
 	//    事件 ID 直接绑定观察 ID，后续日志/去重可追溯到这一帧。
 	ev := r.syntheticEvent(obs)
 	scope := memory.Scope{Channel: ev.Channel, Session: ev.Session}
-	input := r.buildInput(ctx, ev, visual)
+	input := r.buildInput(ctx, ev, visual, audio, chatLines)
 	task := brain.Task{ID: ev.ID, EventID: ev.ID, Channel: ev.Channel, Session: ev.Session}
 	conversation := conversationFrom(input.Memory)
 	obs.ConversationKey = conversation.key
@@ -409,26 +449,46 @@ func (r *Runner) shouldUseReAct(visual string) bool {
 
 // buildInput 组装本轮统一快照；注入 Builder 时与被动回复同源，
 // 否则退回本包的最小召回（保留给测试与旧装配）。
-func (r *Runner) buildInput(ctx context.Context, ev event.Event, visual string) brain.ContextInput {
+func (r *Runner) buildInput(ctx context.Context, ev event.Event, visual, audio string, chat []string) brain.ContextInput {
+	var input brain.ContextInput
 	if r.builder != nil {
 		// 主动路径不额外召回知识：事实查询由 ReAct 工具按需发起，保持既有成本。
-		return r.builder.BuildContext(ctx, ev, visual, false)
+		input = r.builder.BuildContext(ctx, ev, visual, false)
+	} else {
+		scope := memory.Scope{Channel: ev.Channel, Session: ev.Session}
+		memCtx, shared := r.recall(ctx, scope)
+		input = brain.ContextInput{
+			Event:   ev,
+			Persona: r.pack,
+			Memory:  memCtx,
+			Shared:  shared,
+			Visual:  visual,
+		}
 	}
-	scope := memory.Scope{Channel: ev.Channel, Session: ev.Session}
-	memCtx, shared := r.recall(ctx, scope)
-	return brain.ContextInput{
-		Event:   ev,
-		Persona: r.pack,
-		Memory:  memCtx,
-		Shared:  shared,
-		Visual:  visual,
-	}
+	// 声音与最近弹幕由本包采集：Builder 只负责档案/记忆/状态等固定资料。
+	input.Audio = audio
+	input.LiveChat = strings.Join(chat, "\n")
+	return input
 }
 
 // runReact 调 ReAct 循环拿回复；输入经 brain.Prepare 完成与单步 Brain
 // 相同的校验/预算裁剪，画面只通过统一资料段的 <visual> 进入，
 // 不再把原始视觉文本拼进 Question。准备失败明确返回错误，由 generate 回落单步。
+//
+// 注册了 watch_live 时改成「主动看直播」：画面/声音/最近弹幕不再被动注入，
+// 由模型先调用工具读取本轮缓存再判断；未注册时保持旧行为。
 func (r *Runner) runReact(ctx context.Context, scope memory.Scope, input brain.ContextInput, task brain.Task) (string, error) {
+	agent, err := r.react(scope)
+	if err != nil {
+		return "", err
+	}
+	if agent == nil {
+		return "", errors.New("ReAct 未装配")
+	}
+	activeView := agent.HasTool(reasoning.ToolWatchLive)
+	if activeView {
+		input.Visual, input.Audio, input.LiveChat = "", "", ""
+	}
 	prepared, err := brain.Prepare(ctx, task, input, r.budget)
 	if err != nil {
 		return "", fmt.Errorf("准备主动弹幕 ReAct 输入失败：%w", err)
@@ -438,18 +498,17 @@ func (r *Runner) runReact(ctx context.Context, scope memory.Scope, input brain.C
 			zap.String("action", "proactive_react"),
 		)
 	}
-	agent, err := r.react(scope)
-	if err != nil {
-		return "", err
-	}
-	if agent == nil {
-		return "", errors.New("ReAct 未装配")
-	}
 	question := prepared.Question
+	if activeView {
+		question += "\n先调用 watch_live 看当前直播的画面、主播声音和最近观众弹幕，再决定说什么。"
+	}
 	res, err := agent.Run(ctx, reasoning.Input{
-		System:   prepared.Messages[0].Content,
-		Context:  prepared.Context,
-		Question: question,
+		System:    prepared.Messages[0].Content,
+		Context:   prepared.Context,
+		Question:  question,
+		Label:     "直播弹幕",
+		ThinkDeep: true,
+		Reflect:   true,
 	})
 	r.log.Info("主动弹幕 ReAct 完成",
 		zap.String("action", "proactive_react"),

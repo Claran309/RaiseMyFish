@@ -172,7 +172,7 @@ func TestLiveAPI(t *testing.T) {
 
 func TestMessageAPI(t *testing.T) {
 	control := &fakeControl{status: RuntimeStatus{
-		Comment: CommentState{CollectorState: CollectorState{Available: true}, Videos: []string{"12"}, AutoDiscover: true},
+		Comment: CommentState{CollectorState: CollectorState{Available: true}, FeedEnabled: true, FeedIntervalSeconds: 60, DynamicPollEnabled: true, Videos: []string{"12"}, AutoDiscover: true},
 		DM:      DMState{AllowedMIDs: []string{"42"}, AllFollowers: true, WhitelistAvailable: true},
 	}}
 	srv := newTestServerWithRuntime(t, &fakeRepo{}, control, nil)
@@ -181,6 +181,8 @@ func TestMessageAPI(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, readReq("/api/message"))
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, `"videos":["12"]`) || !strings.Contains(body, `"allowed_mids":["42"]`) ||
+		!strings.Contains(body, `"feed_enabled":true`) || !strings.Contains(body, `"feed_interval_seconds":60`) ||
+		!strings.Contains(body, `"dynamic_poll_enabled":true`) ||
 		!strings.Contains(body, `"auto_discover":true`) || !strings.Contains(body, `"all_followers":true`) {
 		t.Fatalf("消息状态不符：%d %s", rec.Code, body)
 	}
@@ -203,6 +205,22 @@ func TestMessageAPI(t *testing.T) {
 	rec = postJSON(t, srv, "/api/message?confirm=yes", `{"action":"nope"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("未知 action 应 400，实际 %d", rec.Code)
+	}
+}
+
+// TestMessagePageShowsFeedMode 面板必须同时保留「消息监听」与「视频轮询」两种文案。
+func TestMessagePageShowsFeedMode(t *testing.T) {
+	srv := newTestServer(t, &fakeRepo{})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, readReq("/message"))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/message 状态码 = %d", rec.Code)
+	}
+	for _, want := range []string{"消息监听：账号消息", "并行轮询动态评论", "feed_interval_seconds", "自动发现：开启", "自动发现：关闭"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/message 页面缺少 %q", want)
+		}
 	}
 }
 
