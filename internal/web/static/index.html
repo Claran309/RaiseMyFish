@@ -71,6 +71,7 @@ textarea{width:100%;resize:vertical}
   <span class="spacer"></span>
   <span class="pill" id="health">检测中…</span>
   <button onclick="load()">刷新</button>
+  <button onclick="shutdownFishd()" style="color:#e5484d" title="停止 fishd 服务">关闭 fishd</button>
 </header>
 <main>
   <div class="cols">
@@ -180,6 +181,18 @@ function costCard(d) {
   // cost_usd 按美元计价；面板显示人民币换算（×7.2），避免主人误读美元符号。
   var cny = Number(d.known_cost) * 7.2;
   return card(unknown > 0 ? 'warn' : 'info', '💸', '已知费用(¥)', cny.toFixed(2), sub);
+}
+async function shutdownFishd() {
+  if (!confirm('确认关闭 fishd？关闭后需要重新启动。')) return;
+  try {
+    var r = await fetch('/api/shutdown?confirm=yes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Panel-Token': (document.querySelector('meta[name=panel-token]')||{}).content || '' }
+    });
+    var d = await r.json();
+    if (d.ok) { alert('fishd 正在关闭——可以关掉本页面了'); }
+    else { alert('关闭失败：' + (d.error || '未知')); }
+  } catch (e) { alert('关闭失败：' + e); }
 }
 async function loadStatus() {
   var r = await fetch('/api/status');

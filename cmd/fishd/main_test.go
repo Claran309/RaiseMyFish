@@ -134,10 +134,10 @@ func TestServeDatabaseFailure(t *testing.T) {
 }
 
 func TestRunRejectsUnknownCommandAndMissingConfig(t *testing.T) {
-	if err := run(context.Background(), []string{"unknown"}, io.Discard, io.Discard); err == nil {
+	if err := run(context.Background(), []string{"unknown"}, io.Discard, io.Discard, func(){}); err == nil {
 		t.Fatal("接受未知命令")
 	}
-	if err := run(context.Background(), []string{"--config", filepath.Join(t.TempDir(), "missing")}, io.Discard, io.Discard); err == nil {
+	if err := run(context.Background(), []string{"--config", filepath.Join(t.TempDir(), "missing")}, io.Discard, io.Discard, func(){}); err == nil {
 		t.Fatal("接受缺失配置")
 	}
 }

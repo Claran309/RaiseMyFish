@@ -70,6 +70,8 @@ type Options struct {
 	Control RuntimeController
 	// ViewerSummary 可选：观众侧写控制面；nil 时侧写接口返回 503。
 	ViewerSummary ViewerSummaryControl
+	// Shutdown 是关闭 fishd 的回调（面板按钮用，可空）。
+	Shutdown func()
 	// Logs 可选：日志读取口；nil 时日志接口返回 503。
 	Logs LogSource
 	// Injections 可选：看板注入读写口；nil 时注入接口返回 503。
@@ -100,6 +102,8 @@ type Server struct {
 	token string
 	// port 是面板端口，Host/Origin 校验必须与它一致。
 	port string
+	// shutdown 是面板「关闭 fishd」入口（main 注入：cancel 根 ctx 优雅退出）。
+	shutdown func()
 }
 
 // New 校验地址与依赖；非回环地址直接拒绝。
@@ -135,6 +139,7 @@ func New(o Options) (*Server, error) {
 	return &Server{
 		addr: addr, repo: o.Repo, log: o.Log, now: now,
 		knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts, control: o.Control, viewerSummary: o.ViewerSummary, logs: o.Logs,
+		shutdown: o.Shutdown,
 		injections: o.Injections, diary: o.Diary, diaryGen: o.DiaryGenerator,
 		token: token, port: port,
 	}, nil
@@ -179,6 +184,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/status", s.guard(s.handleStatus))
 	mux.HandleFunc("/api/embedding/status", s.guard(s.handleEmbeddingStatus))
 	mux.HandleFunc("/api/inject", s.guard(s.handleInject))
+	mux.HandleFunc("/api/shutdown", s.guard(s.handleShutdown))
 	mux.HandleFunc("/api/inject/", s.guard(s.handleInjectItem))
 	mux.HandleFunc("/api/diary", s.guard(s.handleDiary))
 	mux.HandleFunc("/api/diary/", s.guard(s.handleDiaryItem))

@@ -40,7 +40,7 @@ const memoryFreezePath = memory.DefaultFreezePath
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr, stop)
 	stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -48,7 +48,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result error) {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, shutdown func()) (result error) {
 	fs := flag.NewFlagSet("fishd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	path := fs.String("config", "config/fishd.toml", "TOML配置文件")
@@ -278,7 +278,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	defer stopDailySummary()
 
 	// 运维面板（只监听回环）：默认关，开启后独立 goroutine 跑。
-	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, accountService, control, control, diaryGen, logview.NewSource(cfg.Log.Dir, nil), logger)
+	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, accountService, control, control, diaryGen, logview.NewSource(cfg.Log.Dir, nil), shutdown, logger)
 	defer stopWeb()
 
 	// 主循环先就绪（running 状态落盘）再启动采集：外部不会先看到事件、后看到服务状态。
