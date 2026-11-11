@@ -65,8 +65,35 @@
 
 **验收**：主人动态的新评论（如 13:43 那条）能被采到并回复。
 
+## 批 F：#85 动态评论轮询没出事件（紧急）
+
+**现状**（DSH 已验证）：
+- ✅ `space_dynamics` 412 已修（referer 去掉——发现 12 个动态）
+- ✅ `comment_dynamic_setup` 装配（Group(feed, dynamics)）
+- ✅ 视频评论采集正常（auto_discover）
+- ❌ **动态评论事件 = 0**（14:57 主人发的「动态评论回复 test 柿崎」没采到）
+
+**排查线索**：
+1. `Group.run`（group.go:96）启动 children——确认 dynamics 采集器真的 run 了
+2. `DynamicDiscoverer.Discover` 返回 12 个动态——但 `Collector.Fetch` 对每个动态拉评论是否执行/失败（**需要日志**——当前静默）
+3. `RecentSince`（24h）——评论时间过滤
+4. 动态评论的 oid/type（draw 的 415114992）——项目拉评论的 API 是否正确（对比 `bili comment list 415114992 --type draw` 能拉 10 条）
+5. 最近日志有 `collector_error`（采集器暂时异常）——确认是哪个源报的
+
+**验收**：主人 14:57 的动态评论能被采到（events 出现 comment in）+ 能回复。
+
 ## 执行规则
 
 - **fishd 不重启**（本批纯代码，交付后 DSH 验证）
 - 不执行 git；不改 contracts（除必要）
 - 交付格式照旧（每批分开）
+
+## 交付状态（2026-11-11）
+
+- 批 A：已交付（msgfeed per-feed 基线 + 已处理游标拉取含已读；last_view_at 只观测不推进）。
+- 批 B：已交付（prompt 正反例 + 宽松解析/修复 + 自然语言直采 + 降级改要纯文本）。
+- 批 C：已交付（`routing_mode = filter` 规则筛选；普通 @ 也回带；非 live 不受影响）。
+- 批 D：已交付（`send_danmaku` 工具：live、单轮≤3 条、每条≤40 字、去重/限频；发过弹幕后跳过普通回复）。
+- 批 E：已交付（`dynamic_poll_enabled` 默认开：feed 模式下 msgfeed + 动态评论轮询并行，组合器把落库回执转给产出子采集器；动态首轮只补最近 24h；事件沿用 `comment:{oid}:{rpid}`、type=17，sender 走 `x/v2/reply/add`；面板同步模式文案）。
+- 门禁：`go build ./...`、`go test ./...` 全绿；受影响包 `-race` 全绿；`go vet` 仅既有 `internal/memory/fact_test.go:47 unreachable code`。
+
