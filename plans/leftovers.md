@@ -8,10 +8,10 @@
 | # | 项 | 出处 | 状态 | 说明 | 建议 |
 |---|---|---|---|---|---|
 | 1 | **2 小时正式验收** | P0 退出标准 | ✅ 已验收（多日直播） | 需开播（真实直播 + 定时 + 异常注入） | 开播后跑 |
-| 2 | **点赞路径不确定** | 0.22 | ⏳ | 用 `room/v1/Room/like`；B站还有 `xlive/web-ucenter/v1/roomAdmin/like`，看 code≠0 就改常量 | 验收时确认 |
+| 2 | ~~点赞路径不确定~~ | 0.22 | ✅ | 旧 `room/v1/Room/like` code 1000003、`roomAdmin/like` 404；改用 `likeReportV3`（主播/本账号 UID） | — |
 | 3 | ~~当日收信人锁定进程内~~ | 1.11/1.12 | ✅ | 已落库（`state/dm-recipient.json` 跨重启持久化） | — |
-| 4 | **私信只取首屏 20 会话** | 1.12 | ⏳ | `get_sessions` 不翻页；消息多的会话要 `get_session_msgs` 拉详情 | 下一批补 |
-| 5 | **评论 root/parent 未用于多级回复** | 1.10 | ⏳ | 采集的真实 root/parent 仅存 Meta；回复统一 root=parent=rpid | 需要多级回复时改 |
+| 4 | ~~私信只取首屏 20 会话~~ | 1.12 | ✅ | `get_sessions` 按 `end_ts` 翻页（默认 5×100）+ 逐会话 `fetch_session_msgs` 拉详情 | — |
+| 5 | ~~评论 root/parent 未用于多级回复~~ | 1.10 | ✅ | 回复 `root=采集 Meta.root`、`parent=被回复评论 rpid` | — |
 
 ## 🟠 影响能力
 
@@ -19,7 +19,7 @@
 |---|---|---|---|---|---|
 | 6 | ~~知识 Reader 启动快照~~ | 1.7 | ✅ | 已做热重载（原子快照 30s 轮询） | — |
 | 7 | ~~Channel 无 Resume~~ | 1.9 | ✅ | 已收敛（发送也走 Channel，保留 sender 兜底） | — |
-| 8 | **soul_path 固定 dafeiyu** | 1.13 | ⏳ | 多 persona 时应按 pack 派生 | 多 persona 时改 |
+| 8 | ~~soul_path 固定 dafeiyu~~ | 1.13 | ✅ | `soul_path` 留空时按 `persona_dir` 派生 `<pack>/knowledge/soul-memories.md` | — |
 | 9 | ~~手工改 soul-memories.md 会被覆盖~~ | 1.13 | ✅ | 已做 Manual 标记 + MergeSoul（手写全留） | — |
 | 10 | **执行器缺配置返回「未配置」** | 0.21 | 📄 | 功能可用性依赖配置（凭据/URL） | 文档说明 |
 | 11 | **评论不配 scheduler 不回复** | 1.10 | 📄 | `[scheduler.channels.comment]` 未配则只采集不回复 | 文档/默认值 |
@@ -46,8 +46,8 @@
 | 29 | **两段式判断改默认 ReAct**（可用性优先） | 现在关键词判断错就查不到记忆 | Qoder/WorkBuddy |
 | 30 | **记忆/观众档案向量化召回** | memory_records + viewer_profiles 走语义检索（知识库 RAG 同套） | Qoder/WorkBuddy（等 K2 RAG） |
 | 31 | **定时任务框架（cron）** | 定时送礼/评论巡检/私信巡检（现在只有主动弹幕+点赞） | Qoder/WorkBuddy |
-| 32 | **私信翻页**（get_session_msgs） | 首屏 20 会话不够 | Qoder/WorkBuddy |
-| 33 | **评论多级回复** | root/parent 存了 Meta 但未用 | Qoder/WorkBuddy |
+| 32 | **私信翻页**（get_session_msgs） | ✅ 已做（#4） | — |
+| 33 | **评论多级回复** | ✅ 已做（#5） | — |
 | 34 | **web_search 搜索源** | 需配置 search_url（Serper/Bing/自建） | **主人** |
 | 35 | **常驻 Edge 截图** | 浏览器自动化 | Qoder/WorkBuddy（大） |
 | 36 | **pending_review 核对** | gift 不确定时人工核对 | 主人 + 工具 |
@@ -144,7 +144,7 @@
 
 
 | 76 | **每日总结模块** | 代替现有 DSH 总结（diary）：fishd 每天定时总结当天直播/弹幕/记忆/事件 → 生成日报（进 diary 或独立模块）。 | ✅ 已做（批K每日总结） |
-| 77 | **修评论** | 评论自动发现 412 风控（#75）+ 评论通道完整测试（采集/回复/楼中楼）。 | ⏳ 待修 |
+| 77 | **修评论** | 评论自动发现 412 风控（#75）+ 评论通道完整测试（采集/回复/楼中楼）。 | ✅ 已做（#75+P3多级+动态评论批F） |
 | 78 | **思考式 ReAct** | ReAct 加「思考阶段」（先想再回，degrade=parse 的根治）；见 #69 BCD。 | ✅ 已做（批2思考式） |
 | 79 | **发弹幕改为 tool** | 思考后发弹幕改为 tool（单轮思考可多次发弹幕——不是只能回一条）。 | ✅ 已做（批D弹幕tool） |
 | 80 | **弹幕筛选路由** | 代替 reply_only_mention：所有弹幕进筛选器，小模型判断「是否发给鱼/需回复/相关/上下文相关/直接@→true」；true 才回；@的带 @ 人，否则小模型判断 @ 谁或不 @。 | ✅ 已做（批C筛选路由） |
@@ -160,7 +160,7 @@
 |---|---|---|---|---|
 | 21 | 知识库 RAG（K2） | P2 | ✅ | pgvector(1024)+embedding-3 客户端；`fishctl knowledge embed` 增量入库；混合召回（关键词档位+α·余弦）与不可用降级；auto_refresh 按 revision 增量；真实 PG 集成通过（真实 6834 条入库待密钥） |
 | 22 | Watchdog（自愈） | P4 | ⏳ | 检测异常（冻结/崩溃）→ 重启 |
-| 23 | Web 面板（可视化） | P5 | ⏳ | status/记忆编辑/活动查看 |
+| 23 | Web 面板（可视化） | P5 | ✅ 已做（L/N/注入/日报/延迟卡） |
 | 24 | 常驻 Edge 截图 | 0.13c | ❌ 不需要（主人取消） | 浏览器自动化（大工程） |
 | 25 | MCP 工具层 / 编排 | P6 | ⏳ | Router/Worker、多会话并行 |
 | 26 | 退款/补偿 | 0.8 | ✅ | 确定失败退额度；结果不确定保留额度并标记 pending_review |
