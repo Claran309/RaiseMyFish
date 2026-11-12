@@ -1,25 +1,25 @@
 @echo off
 REM ============================================
-REM fishd ä¸€é”®å¯åŠ¨ï¼ˆå¤§è‚¥é±¼ï¼‰â€”â€”å½“å‰é¡¹ç›®
-REM åŒå‡» start-fishd.bat å³å¯
+REM fishd Ò»¼üÆô¶¯£¨´ó·ÊÓã£©¡ª¡ªµ±Ç°ÏîÄ¿
+REM Ë«»÷ start-fishd.bat ¼´¿É
 REM ============================================
 cd /d %~dp0
 
-REM 1. æ„é€  Bç«™ cookieï¼ˆä»æœ¬æœºå‡­æ®æ–‡ä»¶ï¼‰
+REM 1. ¹¹Ôì BÕ¾ cookie£¨´Ó±¾»úÆ¾¾İÎÄ¼ş£©
 for /f "delims=" %%i in ('python -c "import json;c=json.load(open(r'C:\Users\Claran\.bili-ai\credentials.json'));print('SESSDATA='+c['sessdata']+'; bili_jct='+c['bili_jct']+'; buvid3='+c['buvid3'])"') do set FISH_BILI_COOKIE=%%i
 
 if "%FISH_BILI_COOKIE%"=="" (
-  echo [é”™è¯¯] cookie æ„é€ å¤±è´¥â€”â€”æ£€æŸ¥ C:\Users\Claran\.bili-ai\credentials.json
+  echo [´íÎó] cookie ¹¹ÔìÊ§°Ü¡ª¡ª¼ì²é C:\Users\Claran\.bili-ai\credentials.json
   pause
   exit /b 1
 )
 
-REM 2. å¯åŠ¨ fishdï¼ˆä¼˜å…ˆç”¨ç¼–è¯‘å¥½çš„ exeï¼›æ²¡æœ‰åˆ™ go runï¼‰
+REM 2. Æô¶¯ fishd£¨ÓÅÏÈÓÃ±àÒëºÃµÄ exe£»Ã»ÓĞÔò go run£©
 if exist "fishd.exe" (
-  echo å¯åŠ¨ fishd.exe...
+  echo Æô¶¯ fishd.exe...
   fishd.exe --env-file .env
 ) else (
-  echo å¯åŠ¨ go runï¼ˆç¼–è¯‘ä¸­...ï¼‰...
+  echo Æô¶¯ go run£¨±àÒëÖĞ...£©...
   go run ./cmd/fishd --env-file .env
 )
 pause
