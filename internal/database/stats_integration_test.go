@@ -337,6 +337,64 @@ func TestStatsLastSeenRealPostgres(t *testing.T) {
 	}
 }
 
+// TestStatsLatencyRealPostgres 回复延迟口径：
+// 每条入向事件只取最早一次成功发送；失败尝试、out 事件、窗口外事件、
+// 发送早于事件的时钟异常都不进分位；未启用通道（qq）被过滤。
+func TestStatsLatencyRealPostgres(t *testing.T) {
+	db, ctx := repositoryDB(t)
+	stats, err := NewStats(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC)
+	from, to := base.Add(-time.Hour), base.Add(time.Hour)
+
+	// live：1 秒回；重试 9 秒的第二次成功不能覆盖首次延迟。
+	seedEvent(t, db, "live:lat:1", "live", "in", "done", base)
+	seedSend(t, db, "live:lat:1", "live", boolPtr(true), base.Add(9*time.Second))
+	seedSend(t, db, "live:lat:1", "live", boolPtr(true), base.Add(time.Second))
+	// comment：2 秒回；先失败一次不算延迟样本。
+	seedEvent(t, db, "comment:lat:1", "comment", "in", "done", base.Add(time.Minute))
+	seedSend(t, db, "comment:lat:1", "comment", boolPtr(false), base.Add(time.Minute+time.Second))
+	seedSend(t, db, "comment:lat:1", "comment", boolPtr(true), base.Add(time.Minute+2*time.Second))
+	// dm：send_log.channel 为空时回落到 events.channel。
+	seedEvent(t, db, "dm:lat:1", "dm", "in", "done", base.Add(2*time.Minute))
+	seedSend(t, db, "dm:lat:1", "", boolPtr(true), base.Add(2*time.Minute+500*time.Millisecond))
+	// 干扰项：out 事件、窗口外事件、发送早于事件、qq 通道。
+	seedEvent(t, db, "live:lat:out", "live", "out", "done", base.Add(3*time.Minute))
+	seedSend(t, db, "live:lat:out", "live", boolPtr(true), base.Add(3*time.Minute+time.Second))
+	seedEvent(t, db, "live:lat:early", "live", "in", "done", base.Add(-2*time.Hour))
+	seedSend(t, db, "live:lat:early", "live", boolPtr(true), base.Add(-time.Hour))
+	seedEvent(t, db, "live:lat:neg", "live", "in", "done", base.Add(4*time.Minute))
+	seedSend(t, db, "live:lat:neg", "live", boolPtr(true), base.Add(3*time.Minute))
+	seedEvent(t, db, "qq:lat:1", "qq", "in", "done", base.Add(5*time.Minute))
+	seedSend(t, db, "qq:lat:1", "qq", boolPtr(true), base.Add(5*time.Minute+time.Second))
+
+	got, err := stats.Latency(ctx, from, to)
+	if err != nil {
+		t.Fatalf("Latency 失败：%v", err)
+	}
+	live, ok := got["live"]
+	if !ok || live.Count != 1 || live.P50MS != 1000 || live.P90MS != 1000 || live.MaxMS != 1000 {
+		t.Errorf("live 延迟不符（只算首条成功、排除 out/窗口外/负延迟）：%+v", live)
+	}
+	comment, ok := got["comment"]
+	if !ok || comment.Count != 1 || comment.P50MS != 2000 {
+		t.Errorf("comment 延迟不符：%+v", comment)
+	}
+	dm, ok := got["dm"]
+	if !ok || dm.Count != 1 || dm.P50MS != 500 {
+		t.Errorf("dm 延迟不符（空 channel 应回落 events.channel）：%+v", dm)
+	}
+	if _, ok := got["qq"]; ok {
+		t.Errorf("qq 不该出现在业务延迟里：%+v", got)
+	}
+	if len(got) != 3 {
+		t.Errorf("通道数 = %d，期望 3：%+v", len(got), got)
+	}
+}
+
 // TestStatsRejectsBadInput 非法参数在查询前被拒绝。
 func TestStatsRejectsBadInput(t *testing.T) {
 	db, ctx := repositoryDB(t)
@@ -356,6 +414,9 @@ func TestStatsRejectsBadInput(t *testing.T) {
 	//nolint:staticcheck // 同上
 	if _, err := stats.LastSeen(nil); !errors.Is(err, store.ErrInvalid) {
 		t.Errorf("LastSeen nil ctx 应 ErrInvalid，实际 %v", err)
+	}
+	if _, err := stats.Latency(ctx, from.Add(time.Hour), from); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("Latency from > to 应 ErrInvalid，实际 %v", err)
 	}
 	if _, err := NewStats(nil); err == nil {
 		t.Error("nil db 应报错")

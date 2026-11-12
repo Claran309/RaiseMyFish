@@ -32,7 +32,9 @@ const (
 // multipart 必填 file，可选 model/language/response_format；响应 JSON {"text":...}。
 type HTTPTranscriber struct {
 	endpoint string
-	client   *http.Client
+	// host 只用于错误信息，帮助定位「ASR 没启动」还是「端口被别的服务占了」。
+	host   string
+	client *http.Client
 }
 
 // NewHTTPTranscriber 校验 ASR 地址与超时。
@@ -52,7 +54,7 @@ func NewHTTPTranscriber(endpoint string, client *http.Client, timeout time.Durat
 	copied := *base
 	copied.Timeout = timeout
 	copied.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &HTTPTranscriber{endpoint: endpoint, client: &copied}, nil
+	return &HTTPTranscriber{endpoint: endpoint, host: u.Host, client: &copied}, nil
 }
 
 // Transcribe 返回服务端真实转写；不可用或空结果都显式报错。
@@ -100,11 +102,13 @@ func (t *HTTPTranscriber) Transcribe(ctx context.Context, audioPath string) (str
 		if ctx.Err() != nil {
 			return "", fmt.Errorf("ASR调用被中止：%w", ctx.Err())
 		}
-		return "", errors.New("ASR服务不可用")
+		// 保留底层原因与端点主机：昨晚 167 次失败只显示「不可用」，
+		// 无法判断是服务没启动还是连接被拒。端点已校验无 userinfo，不含凭据。
+		return "", fmt.Errorf("ASR服务不可用（%s）：%w", t.host, err)
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return "", fmt.Errorf("ASR调用失败：HTTP %d", res.StatusCode)
+		return "", fmt.Errorf("ASR调用失败：HTTP %d（%s）", res.StatusCode, t.host)
 	}
 	payload, err := io.ReadAll(io.LimitReader(res.Body, asrMaxBytes+1))
 	if err != nil {

@@ -17,6 +17,8 @@ import (
 
 const (
 	defaultPlayInfoURL = "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo"
+	// 取流失败时用同一账号查开播状态，把「未开播」和「开播但无流」分开报。
+	defaultRoomInfoURL = "https://api.live.bilibili.com/room/v1/Room/get_info"
 	watchUserAgent     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) RaiseMyFish-watch/0.12"
 	maxPlayInfoBytes   = 2 << 20
 	// 录制在目标秒数之外多给的收尾时间；超时由 ctx 终止 ffmpeg。
@@ -67,6 +69,7 @@ type StreamRecorder struct {
 	client     *http.Client
 	cmd        Commander
 	playInfo   string
+	roomInfo   string
 }
 
 // NewStreamRecorder 校验静态参数并克隆 HTTP client（禁重定向、限超时）。
@@ -105,6 +108,7 @@ func NewStreamRecorder(opts StreamRecorderOptions) (*StreamRecorder, error) {
 		client:     &client,
 		cmd:        cmd,
 		playInfo:   defaultPlayInfoURL,
+		roomInfo:   defaultRoomInfoURL,
 	}, nil
 }
 
@@ -264,7 +268,7 @@ func (r *StreamRecorder) streamURL(ctx context.Context) (string, error) {
 	}
 	info := decoded.Data.PlayurlInfo
 	if info == nil {
-		return "", errors.New("获取直播流地址失败：直播未开播或没有可用流")
+		return "", r.streamUnavailable(ctx)
 	}
 	for _, stream := range info.Playurl.Stream {
 		for _, format := range stream.Format {
@@ -281,5 +285,93 @@ func (r *StreamRecorder) streamURL(ctx context.Context) (string, error) {
 			}
 		}
 	}
-	return "", errors.New("获取直播流地址失败：直播未开播或没有可用流")
+	return "", r.streamUnavailable(ctx)
+}
+
+type roomInfoResponse struct {
+	Code int `json:"code"`
+	Data struct {
+		LiveStatus int    `json:"live_status"`
+		Title      string `json:"title"`
+	} `json:"data"`
+}
+
+// RoomTitle 查 room/v1/Room/get_info 的直播标题（平台原样，可能为空）。
+// 它是直播间数据、不是人格设定：用于识别换人/代播，调用方自行决定何时注入。
+func (r *StreamRecorder) RoomTitle(ctx context.Context) (string, error) {
+	status, title, err := r.roomInfoQuery(ctx)
+	if err != nil {
+		return "", err
+	}
+	if status == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(title), nil
+}
+
+// streamUnavailable 在取流失败后补查开播状态，返回可区分的错误。
+//
+// 只有当确实是「没开播」时才这么说；开播但拿不到流是另一种故障
+// （清晰度/风控/CDN），混在一起会让人误以为不用处理。
+// 查不到状态时保留旧的合并措辞，并把底层原因带上，避免诊断信息被吞。
+func (r *StreamRecorder) streamUnavailable(ctx context.Context) error {
+	status, err := r.liveStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("获取直播流地址失败：直播未开播或没有可用流（开播状态查询失败：%w）", err)
+	}
+	if status == 0 {
+		return errors.New("获取直播流地址失败：直播未开播（live_status=0）")
+	}
+	return fmt.Errorf("获取直播流地址失败：直播进行中但没有可用流（live_status=%d）", status)
+}
+
+// liveStatus 查 room/v1/Room/get_info 的 live_status（0 未开播、1 直播中、2 轮播）。
+func (r *StreamRecorder) liveStatus(ctx context.Context) (int, error) {
+	status, _, err := r.roomInfoQuery(ctx)
+	return status, err
+}
+
+// roomInfoQuery 一次查开播状态与标题，避免两次请求。
+func (r *StreamRecorder) roomInfoQuery(ctx context.Context) (int, string, error) {
+	endpoint, err := url.Parse(r.roomInfo)
+	if err != nil || endpoint.Host == "" {
+		return 0, "", errors.New("开播状态接口配置无效")
+	}
+	query := endpoint.Query()
+	query.Set("room_id", r.roomID)
+	endpoint.RawQuery = query.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return 0, "", errors.New("构造开播状态请求失败")
+	}
+	req.Header.Set("Cookie", r.cookie)
+	req.Header.Set("Referer", "https://live.bilibili.com/"+r.roomID)
+	req.Header.Set("User-Agent", watchUserAgent)
+	res, err := r.client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return 0, "", fmt.Errorf("查询开播状态被中止：%w", ctx.Err())
+		}
+		return 0, "", fmt.Errorf("查询开播状态失败：%w", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return 0, "", fmt.Errorf("查询开播状态失败：HTTP %d", res.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxPlayInfoBytes+1))
+	if err != nil {
+		return 0, "", fmt.Errorf("读取开播状态响应失败：%w", err)
+	}
+	if len(body) > maxPlayInfoBytes {
+		return 0, "", errors.New("开播状态响应过大")
+	}
+	var decoded roomInfoResponse
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return 0, "", errors.New("开播状态响应格式无法识别")
+	}
+	if decoded.Code != 0 {
+		return 0, "", fmt.Errorf("开播状态接口代码 %d", decoded.Code)
+	}
+	return decoded.Data.LiveStatus, strings.TrimSpace(decoded.Data.Title), nil
 }

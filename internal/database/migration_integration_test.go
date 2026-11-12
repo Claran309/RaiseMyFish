@@ -47,7 +47,7 @@ func isolatedDB(t *testing.T) *gorm.DB {
 		t.Fatal("测试DSN格式错误")
 	}
 	pc.RuntimeParams["search_path"] = schema + ",public"
-	db, err := openConfig(ctx, pc, 5*time.Second)
+	db, err := openConfig(ctx, pc, 5*time.Second, PoolOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

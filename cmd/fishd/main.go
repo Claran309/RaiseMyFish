@@ -32,6 +32,10 @@ import (
 	"gorm.io/gorm"
 )
 
+// version 由构建时注入：go build -ldflags "-X main.version=0.1.0"。
+// 直接 go run / 未注入时显示 dev，避免把旧硬编码版本当成真实发布版本。
+var version = "dev"
+
 // memoryWatermarkPath 是提炼游标的持久化位置；state/ 不随日志轮转清理。
 const memoryWatermarkPath = "state/memory-watermark.json"
 
@@ -61,11 +65,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, shutdown 
 		return errors.New("命令参数无效")
 	}
 	action := fs.Args()
+	if len(action) == 1 && action[0] == "version" {
+		fmt.Fprintln(stdout, version)
+		return nil
+	}
 	migrate := len(action) == 2 && action[0] == "migrate" && action[1] == "up"
 	checkBrain := len(action) == 1 && action[0] == "check-brain"
 	checkAll := len(action) == 1 && action[0] == "check"
 	if len(action) > 0 && !migrate && !checkBrain && !checkAll {
-		return errors.New("用法：fishd [--config 路径] [--env-file 路径] [migrate up|check|check-brain]；不支持破坏性回滚")
+		return errors.New("用法：fishd [--config 路径] [--env-file 路径] [version|migrate up|check|check-brain]；不支持破坏性回滚")
 	}
 	// migrate 只操作数据库，不该被通道开关/B站/LLM 凭据拦住：
 	// 用 LoadForMigrate 只校验数据库与日志，保证首次部署能先建表。
@@ -85,7 +93,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, shutdown 
 		return err
 	}
 	defer func() { result = errors.Join(result, closeLog()) }()
-	resources, err := infra.Setup(ctx, cfg)
+	resources, err := infra.Setup(ctx, cfg, logger)
 	if err != nil {
 		logger.Error("基础设施初始化失败", zap.Error(err))
 		return err
@@ -122,6 +130,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, shutdown 
 	if err := cfg.ValidateCredentials(); err != nil {
 		logger.Error("B站凭据校验失败", zap.String("action", "account_credential"), zap.Error(err))
 		return fmt.Errorf("校验基础设施配置：%w", err)
+	}
+	// 声音链路（watch 音频采样/主动弹幕）依赖本机 ASR；启动时先探一次，
+	// 失败只告警，等 start-fishd.bat 或人工拉起后下一轮自动恢复。
+	if cfg.Watch.Enabled || cfg.Proactive.Enabled {
+		logASRHealth(ctx, cfg.Watch.ASRURL, logger)
 	}
 	usage, err := database.NewUsageRepo(resources.DB)
 	if err != nil {
@@ -341,11 +354,11 @@ func serve(ctx context.Context, path string, interval time.Duration, logger *zap
 		return presence[0](now)
 	}
 	now := time.Now()
-	state := infra.Status{PID: os.Getpid(), State: "running", Database: "ready", Version: "phase0.6-dev", Presence: summary(now), UpdatedAt: now.UTC()}
+	state := infra.Status{PID: os.Getpid(), State: "running", Database: "ready", Version: version, Presence: summary(now), UpdatedAt: now.UTC()}
 	if err := infra.WriteStatus(path, state); err != nil {
 		return err
 	}
-	logger.Info("fishd基础设施已启动", zap.String("action", "start"), zap.Int("pid", state.PID))
+	logger.Info("fishd基础设施已启动", zap.String("action", "start"), zap.Int("pid", state.PID), zap.String("version", version))
 	defer func() {
 		state.State = "stopped"
 		state.Presence = ""

@@ -23,6 +23,48 @@ import (
 	"RaiseMyFish/internal/store"
 )
 
+// testFactExtractor 模拟 LLM 的事实提炼：规则版已不再产 fact，
+// 而这些集成测试验证的是去重/范围/修订等持久化语义，必须让 worker 拿到 fact 候选。
+type testFactExtractor struct{}
+
+func (testFactExtractor) Extract(_ context.Context, ev event.Event, opts memory.ExtractOptions) ([]memory.Candidate, error) {
+	if ev.Private && !opts.AllowPrivate {
+		return nil, nil
+	}
+	text := strings.TrimSpace(ev.Text)
+	if text == "" {
+		return nil, nil
+	}
+	return []memory.Candidate{{
+		Kind:       memory.KindFact,
+		Title:      testFactTitle(text),
+		Summary:    testFactSummary(text),
+		Importance: 0.6,
+		Confidence: 0.85,
+		// 与规则版一致：事实关于发言人本人，说话人就是断言来源。
+		FromID: ev.FromID, FromName: ev.FromName,
+		AssertedByID: ev.FromID, AssertedByName: ev.FromName,
+		Subject: memory.SoulSubjectViewer,
+	}}, nil
+}
+
+// testFactTitle/testFactSummary 复刻规则版的截断：标题「事实：」+正文共 60 rune。
+func testFactTitle(text string) string { return testFactClip("事实：", text, 60) }
+
+func testFactSummary(text string) string { return testFactClip("", text, 200) }
+
+func testFactClip(head, body string, max int) string {
+	runes := []rune(strings.TrimSpace(body))
+	budget := max - len([]rune(head))
+	if len(runes) <= budget {
+		return head + string(runes)
+	}
+	if budget <= 1 {
+		return head + string(runes[:1])
+	}
+	return head + string(runes[:budget-1]) + "…"
+}
+
 // assertStoredFact 按主键读回记录，逐项核对范围与摘要。
 func assertStoredFact(t *testing.T, ctx context.Context, repo *MemoryRepo, id, summary string, private bool, ch event.Channel, session string, at time.Time) {
 	t.Helper()
@@ -76,7 +118,7 @@ func TestWorkerFactScopesDoNotOverwrite(t *testing.T) {
 		}
 	}
 
-	worker, err := extractworker.New(src, memRepo, extractworker.NewMemoryWatermark(), extractworker.Options{AllowPrivate: true})
+	worker, err := extractworker.New(src, memRepo, extractworker.NewMemoryWatermark(), extractworker.Options{AllowPrivate: true, Extractor: testFactExtractor{}})
 	if err != nil {
 		t.Fatalf("构造 worker 失败：%v", err)
 	}
@@ -244,7 +286,7 @@ func TestWorkerBackfillDoesNotOverwriteNewerFact(t *testing.T) {
 		t.Fatalf("插入新事件失败：%v", err)
 	}
 
-	first, err := extractworker.New(src, memRepo, extractworker.NewMemoryWatermark(), extractworker.Options{})
+	first, err := extractworker.New(src, memRepo, extractworker.NewMemoryWatermark(), extractworker.Options{Extractor: testFactExtractor{}})
 	if err != nil {
 		t.Fatalf("构造 worker 失败：%v", err)
 	}
@@ -261,7 +303,7 @@ func TestWorkerBackfillDoesNotOverwriteNewerFact(t *testing.T) {
 		t.Fatalf("插入旧事件失败：%v", err)
 	}
 
-	backfill, err := extractworker.New(src, memRepo, extractworker.NewMemoryWatermark(), extractworker.Options{})
+	backfill, err := extractworker.New(src, memRepo, extractworker.NewMemoryWatermark(), extractworker.Options{Extractor: testFactExtractor{}})
 	if err != nil {
 		t.Fatalf("构造补提炼 worker 失败：%v", err)
 	}

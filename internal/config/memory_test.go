@@ -52,6 +52,23 @@ func TestSoulPathDerivedFromPersonaDir(t *testing.T) {
 	}
 }
 
+// TestSoulPathFollowsEachPersonaPack 配置多个 personae 目录时各自派生自己的 soul 路径。
+func TestSoulPathFollowsEachPersonaPack(t *testing.T) {
+	cases := map[string]string{
+		"personas/dafeiyu":    "personas/dafeiyu/knowledge/soul-memories.md",
+		"personas/dafeiyu-v2": "personas/dafeiyu-v2/knowledge/soul-memories.md",
+	}
+	for dir, want := range cases {
+		cfg, err := loadMemoryConfig(t, "[llm]\npersona_dir=\""+dir+"\"\n")
+		if err != nil {
+			t.Fatalf("%s 加载失败：%v", dir, err)
+		}
+		if cfg.Memory.SoulPath != want {
+			t.Errorf("%s soul_path = %q，期望 %q", dir, cfg.Memory.SoulPath, want)
+		}
+	}
+}
+
 // TestSoulPathExplicitWins 显式配置优先于人格包派生。
 func TestSoulPathExplicitWins(t *testing.T) {
 	cfg, err := loadMemoryConfig(t, "[llm]\npersona_dir=\"personas/other\"\n[memory]\nsoul_path=\"custom/soul.md\"\n")

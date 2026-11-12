@@ -175,6 +175,18 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 		Chat:         events,
 		Senses:       senses,
 		SelfID:       wiring.Service.SelfID,
+		RoomTitle: func(ctx context.Context) string {
+			title, err := recorder.RoomTitle(ctx)
+			if err != nil {
+				logger.Debug("直播间标题查询失败，本轮不注入标题",
+					zap.String("action", "room_title"), zap.Error(err))
+				return ""
+			}
+			if title != "" {
+				senses.UpdateTitle(title, time.Now())
+			}
+			return title
+		},
 		AudioTimeout: proactive.DefaultAudioTimeout,
 		Budget:       brain.Budget{MaxPromptTokens: cfg.LLM.MaxPromptTokens, KnowledgeBudgetPercent: cfg.Knowledge.BudgetPercent},
 		Logger:       logger,

@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"RaiseMyFish/internal/config"
@@ -140,6 +141,28 @@ func runWatch(ctx context.Context, runner watchRunner, ticks <-chan time.Time, n
 			}
 		}
 	}
+}
+
+// logASRHealth 在启动时探测本机 ASR；不可用只告警，不阻塞主链路。
+//
+// 昨晚 167 次「转写失败」的根因就是 ASR 没启动，而日志只有一句「不可用」。
+// 这里把端点、耗时和底层原因打出来，配合 start-fishd.bat 的自动拉起。
+func logASRHealth(ctx context.Context, endpoint string, logger *zap.Logger) {
+	if strings.TrimSpace(endpoint) == "" || logger == nil {
+		return
+	}
+	started := time.Now()
+	err := watch.CheckASR(ctx, endpoint, nil, 2*time.Second)
+	fields := []zap.Field{
+		zap.String("action", "asr_health"),
+		zap.String("host", watch.ASRHost(endpoint)),
+		zap.Int64("latency_ms", time.Since(started).Milliseconds()),
+	}
+	if err != nil {
+		logger.Warn("ASR服务不可用，声音感知会降级", append(fields, zap.Error(err))...)
+		return
+	}
+	logger.Info("ASR服务可用", fields...)
 }
 
 // startWatch 仅在 [watch] enabled=true 时装配并启动；初始化失败只降级，不阻塞主链路。

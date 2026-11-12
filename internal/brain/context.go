@@ -67,7 +67,7 @@ func inputBounds(ctx context.Context, task Task, in ContextInput) error {
 	}
 	e := in.Event
 	key, _ := persona.ContextKey(string(e.Channel), e.Private)
-	bytes := len(task.ID) + len(e.ID) + len(e.Text) + len(e.Session) + len(e.FromID) + len(e.FromName) + len(in.State) + len(in.Visual) + len(in.Audio) + len(in.LiveChat) + len(in.Viewer) + len(in.Injection) + len(soulText(in.Soul)) + len(in.Persona.Soul) + len(in.Persona.Rules) + len(in.Persona.Samples) + len(in.Persona.Contexts[key])
+	bytes := len(task.ID) + len(e.ID) + len(e.Text) + len(e.Session) + len(e.FromID) + len(e.FromName) + len(in.State) + len(in.Visual) + len(in.Audio) + len(in.LiveChat) + len(in.LiveTitle) + len(in.Viewer) + len(in.Injection) + len(soulText(in.Soul)) + len(in.Persona.Soul) + len(in.Persona.Rules) + len(in.Persona.Samples) + len(in.Persona.Contexts[key])
 	for _, ev := range in.Evidence {
 		bytes += len(ev.Tool) + len(ev.Args) + len(ev.Result)
 	}
@@ -449,6 +449,33 @@ func liveChatPromptLine(liveChat string) string {
 	return "<live_chat>\n" + encodePromptText(liveChat) + "\n</live_chat>\n"
 }
 
+// maxLiveTitleRunes 是直播间标题长度上限（平台标题一般 ≤40 字，留余量）。
+const maxLiveTitleRunes = 120
+
+// liveTitlePromptLine 把直播间标题包成独立段落，并提示换人/代播的可能。
+// 标题是平台数据，不是人格设定：只说明「谁可能正在播」，不改变鱼对主播的判断。
+func liveTitlePromptLine(title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return ""
+	}
+	hint := ""
+	if mentionsStandIn(title) {
+		hint = "\n（标题暗示当前可能不是主播本人：照标题称呼，别默认是主播自己）"
+	}
+	return "<live_title>\n" + encodePromptText(title) + hint + "\n</live_title>\n"
+}
+
+// mentionsStandIn 判断标题是否暗示代播/家人代播。
+func mentionsStandIn(title string) bool {
+	for _, cue := range []string{"妈妈", "爸爸", "妈", "爸", "家长", "代播", "代班", "表妹", "表哥", "姐姐", "弟弟", "哥哥", "妹妹", "家里人"} {
+		if strings.Contains(title, cue) {
+			return true
+		}
+	}
+	return false
+}
+
 // soulText 把长期设定拼成一段（每行一条），空切片返回空串。
 func soulText(soul []string) string {
 	var lines []string
@@ -469,8 +496,8 @@ func longtermPromptLine(soul []string) string {
 	return "<longterm>\n" + encodePromptText(text) + "\n</longterm>\n"
 }
 
-func renderContext(ctx context.Context, p persona.Pack, section contextSection, eventJSON []byte, ch event.Channel, state, visual, audio, liveChat, viewer, injection string, soul []string) ([]provider.Message, string, error) {
-	body, err := contextBody(ctx, p, section, ch, state, visual, audio, liveChat, viewer, injection, soul)
+func renderContext(ctx context.Context, p persona.Pack, section contextSection, eventJSON []byte, ch event.Channel, state, visual, audio, liveTitle, liveChat, viewer, injection string, soul []string) ([]provider.Message, string, error) {
+	body, err := contextBody(ctx, p, section, ch, state, visual, audio, liveTitle, liveChat, viewer, injection, soul)
 	if err != nil {
 		return nil, "", err
 	}
@@ -507,7 +534,7 @@ func contextHints(section contextSection) string {
 
 // contextBody 渲染统一快照正文：场景/记忆/知识 + 状态/画面/声音/最近弹幕/档案/长期设定，
 // 不含当前事件与回复指令。Brain 的单步 prompt 与 ReAct 的 Context 共用这一段。
-func contextBody(ctx context.Context, p persona.Pack, section contextSection, ch event.Channel, state, visual, audio, liveChat, viewer, injection string, soul []string) (string, error) {
+func contextBody(ctx context.Context, p persona.Pack, section contextSection, ch event.Channel, state, visual, audio, liveTitle, liveChat, viewer, injection string, soul []string) (string, error) {
 	if err := pendingError(ctx); err != nil {
 		return "", contextFailure(err)
 	}
@@ -515,8 +542,8 @@ func contextBody(ctx context.Context, p persona.Pack, section contextSection, ch
 	if err != nil {
 		return "", &Error{Kind: KindInput, Cause: err}
 	}
-	return fmt.Sprintf("<context>\n%s\n</context>\n%s%s%s%s%s%s%s", data,
-		statePromptLine(state), injectionPromptLine(injection), visualPromptLine(visual), audioPromptLine(audio),
+	return fmt.Sprintf("<context>\n%s\n</context>\n%s%s%s%s%s%s%s%s", data,
+		statePromptLine(state), injectionPromptLine(injection), liveTitlePromptLine(liveTitle), visualPromptLine(visual), audioPromptLine(audio),
 		liveChatPromptLine(liveChat), viewerPromptLine(viewer), longtermPromptLine(soul)), nil
 }
 
@@ -776,13 +803,14 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 	p := in.Persona
 	visual := in.Visual
 	audio := in.Audio
+	liveTitle := in.LiveTitle
 	liveChat := in.LiveChat
 	viewer := in.Viewer
 	injection := in.Injection
 	soul := in.Soul
 	truncated := false
 	render := func() ([]provider.Message, string, error) {
-		return renderContext(ctx, p, section, eventJSON, e.Channel, in.State, visual, audio, liveChat, viewer, injection, soul)
+		return renderContext(ctx, p, section, eventJSON, e.Channel, in.State, visual, audio, liveTitle, liveChat, viewer, injection, soul)
 	}
 	finish := func(messages []provider.Message, body string, err error) (promptPlan, error) {
 		if err != nil {
@@ -791,7 +819,7 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 		if in.Knowledge == nil {
 			return promptPlan{Messages: messages, Context: body, Truncated: truncated}, nil
 		}
-		return finishKnowledge(ctx, in.Knowledge, p, section, eventJSON, e.Channel, in.State, visual, audio, liveChat, viewer, injection, soul, messages, limit, knowledgePercent, truncated)
+		return finishKnowledge(ctx, in.Knowledge, p, section, eventJSON, e.Channel, in.State, visual, audio, liveTitle, liveChat, viewer, injection, soul, messages, limit, knowledgePercent, truncated)
 	}
 	messages, body, err := render()
 	if err != nil {

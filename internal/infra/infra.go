@@ -11,6 +11,7 @@ import (
 
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -23,8 +24,25 @@ type Resources struct {
 }
 
 // Setup 打开并探测PG；不自动迁移或启动业务模块。
-func Setup(ctx context.Context, cfg config.Config) (*Resources, error) {
-	db, err := database.Open(ctx, cfg.Database.DSN, time.Duration(cfg.Database.TimeoutSeconds)*time.Second)
+//
+// logger 可选：传入时开启慢查询日志（阈值来自 [db] slow_query_ms）；
+// CLI 这类短进程不传，保持既有静默行为。
+func Setup(ctx context.Context, cfg config.Config, loggers ...*zap.Logger) (*Resources, error) {
+	var logger *zap.Logger
+	if len(loggers) > 0 {
+		logger = loggers[0]
+	}
+	opts := database.PoolOptions{
+		MaxOpenConns:    cfg.Database.MaxOpenConns,
+		MaxIdleConns:    cfg.Database.MaxIdleConns,
+		ConnMaxLifetime: time.Duration(cfg.Database.ConnMaxLifetimeSeconds) * time.Second,
+		// 0 表示关闭慢查询日志：不注入 logger。
+		SlowThreshold: time.Duration(cfg.Database.SlowQueryMS) * time.Millisecond,
+	}
+	if cfg.Database.SlowQueryMS > 0 {
+		opts.Logger = logger
+	}
+	db, err := database.Open(ctx, cfg.Database.DSN, time.Duration(cfg.Database.TimeoutSeconds)*time.Second, opts)
 	if err != nil {
 		return nil, fmt.Errorf("初始化PG：%w", err)
 	}

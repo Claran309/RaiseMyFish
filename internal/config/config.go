@@ -48,10 +48,17 @@ type Config struct {
 }
 
 // Database 的连接串只从环境/本地dotenv读取，不能序列化输出。
+//
+// 连接池与慢查询阈值都可调；默认值与原硬编码一致（30/10/30m/200ms），
+// 0 在加载后按默认值补齐，避免手工构造的 Config 意外把池配成 0。
 type Database struct {
-	DSNEnv         string `toml:"dsn_env"`
-	DSN            string `toml:"-" json:"-"`
-	TimeoutSeconds int    `toml:"timeout_seconds"`
+	DSNEnv                 string `toml:"dsn_env"`
+	DSN                    string `toml:"-" json:"-"`
+	TimeoutSeconds         int    `toml:"timeout_seconds"`
+	MaxOpenConns           int    `toml:"max_open"`
+	MaxIdleConns           int    `toml:"max_idle"`
+	ConnMaxLifetimeSeconds int    `toml:"conn_max_lifetime_seconds"`
+	SlowQueryMS            int    `toml:"slow_query_ms"`
 }
 
 // Log 控制JSON日志级别与目录。
@@ -188,7 +195,10 @@ func LoadForTail(path, envPath string) (Config, error) {
 
 func load(path, envPath string) (Config, error) {
 	cfg := Config{
-		Database:  Database{DSNEnv: "FISH_DB_DSN", TimeoutSeconds: 5},
+		Database: Database{
+			DSNEnv: "FISH_DB_DSN", TimeoutSeconds: 5,
+			MaxOpenConns: 30, MaxIdleConns: 10, ConnMaxLifetimeSeconds: 1800, SlowQueryMS: 200,
+		},
 		Log:       Log{Level: "info", Dir: "logs"},
 		Runtime:   Runtime{StateFile: "data/fishd-status.json", HeartbeatSeconds: 5, StaleSeconds: 20},
 		LLM:       defaultLLM(),
@@ -278,11 +288,8 @@ func (c Config) ValidateCredentials() error { return c.validateCredentials(true)
 
 // validateStructure 只校验非B站凭据部分：DB 活跃账号可能在本阶段之后才回填 cookie/self_id。
 func (c Config) validateStructure(strictLive bool) error {
-	if strings.TrimSpace(c.Database.DSNEnv) == "" || strings.TrimSpace(c.Database.DSN) == "" {
-		return errors.New("数据库环境变量未配置")
-	}
-	if c.Database.TimeoutSeconds < 1 || c.Database.TimeoutSeconds > 60 {
-		return errors.New("数据库超时必须为1至60秒")
+	if err := c.validateDatabase(); err != nil {
+		return err
 	}
 	var level zapcore.Level
 	if err := level.UnmarshalText([]byte(c.Log.Level)); err != nil {
@@ -418,14 +425,39 @@ func (c Config) validateStructure(strictLive bool) error {
 	return nil
 }
 
-// validateMigration 是 migrate 子命令的最小校验：能连库、能写日志即可。
-// 通道开关、LLM、B站凭据都可能有 DB 账号在运行期回填，不能挡住建表。
-func (c Config) validateMigration() error {
+// validateDatabase 校验数据库连接参数；三个入口（daemon/migrate/status）共用。
+// 0 表示沿用默认值（30/10/30m），避免手工构造的 Config 意外关掉连接池。
+func (c Config) validateDatabase() error {
 	if strings.TrimSpace(c.Database.DSNEnv) == "" || strings.TrimSpace(c.Database.DSN) == "" {
 		return errors.New("数据库环境变量未配置")
 	}
 	if c.Database.TimeoutSeconds < 1 || c.Database.TimeoutSeconds > 60 {
 		return errors.New("数据库超时必须为1至60秒")
+	}
+	maxOpen := c.Database.MaxOpenConns
+	if maxOpen == 0 {
+		maxOpen = 30
+	}
+	if maxOpen < 0 || maxOpen > 1000 {
+		return errors.New("连接池 max_open 必须在0至1000之间（0=默认30）")
+	}
+	if c.Database.MaxIdleConns < 0 || c.Database.MaxIdleConns > maxOpen {
+		return errors.New("连接池 max_idle 必须在0至max_open之间")
+	}
+	if c.Database.ConnMaxLifetimeSeconds < 0 || c.Database.ConnMaxLifetimeSeconds > 86400 {
+		return errors.New("连接池 conn_max_lifetime_seconds 必须在0至86400之间")
+	}
+	if c.Database.SlowQueryMS < 0 || c.Database.SlowQueryMS > 60000 {
+		return errors.New("慢查询阈值 slow_query_ms 必须在0至60000之间（0=关闭）")
+	}
+	return nil
+}
+
+// validateMigration 是 migrate 子命令的最小校验：能连库、能写日志即可。
+// 通道开关、LLM、B站凭据都可能有 DB 账号在运行期回填，不能挡住建表。
+func (c Config) validateMigration() error {
+	if err := c.validateDatabase(); err != nil {
+		return err
 	}
 	var level zapcore.Level
 	if err := level.UnmarshalText([]byte(c.Log.Level)); err != nil {
@@ -440,11 +472,8 @@ func (c Config) validateMigration() error {
 // validateStatus 是 fishctl status 的最小校验：只检查它实际读取的
 // 数据库与状态文件，不校验采集、发送、LLM 或B站凭据。
 func (c Config) validateStatus() error {
-	if strings.TrimSpace(c.Database.DSNEnv) == "" || strings.TrimSpace(c.Database.DSN) == "" {
-		return errors.New("数据库环境变量未配置")
-	}
-	if c.Database.TimeoutSeconds < 1 || c.Database.TimeoutSeconds > 60 {
-		return errors.New("数据库超时必须为1至60秒")
+	if err := c.validateDatabase(); err != nil {
+		return err
 	}
 	if strings.TrimSpace(c.Runtime.StateFile) == "" {
 		return errors.New("状态文件不能为空")

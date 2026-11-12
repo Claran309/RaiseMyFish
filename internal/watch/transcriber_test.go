@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -115,7 +116,15 @@ func TestHTTPTranscriberUnavailableService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := transcriber.Transcribe(context.Background(), audio); err == nil || !strings.Contains(err.Error(), "不可用") {
+	_, err = transcriber.Transcribe(context.Background(), audio)
+	if err == nil || !strings.Contains(err.Error(), "不可用") {
 		t.Fatalf("服务不可用未显式报错：%v", err)
+	}
+	// 诊断要求：错误里必须能看出连的是哪个端点，否则无法区分没启动/端口被占。
+	if !strings.Contains(err.Error(), "127.0.0.1:1") {
+		t.Fatalf("错误缺少端点主机：%v", err)
+	}
+	if errors.Unwrap(err) == nil {
+		t.Fatal("底层连接错误没有保留")
 	}
 }

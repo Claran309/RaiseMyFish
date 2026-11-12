@@ -310,6 +310,9 @@ func (c *Client) relation(ctx context.Context, mid, act string) error {
 }
 
 // Like 给直播间点赞。
+//
+// 旧接口 room/v1/Room/like 已下线（实测 code 1000003「方法like未找到」），
+// roomAdmin/like 返回 404；当前网页端走 likeReportV3，需要主播 UID 与本账号 UID。
 func (c *Client) Like(ctx context.Context, room string, count int) error {
 	if !isDigits(room) {
 		return errors.New("房间号必须是纯数字")
@@ -324,11 +327,37 @@ func (c *Client) Like(ctx context.Context, room string, count int) error {
 	if err := requireCSRF("like", cred.csrf); err != nil {
 		return err
 	}
+	uid := strings.TrimSpace(cred.selfMID)
+	if !isDigits(uid) || uid == "0" {
+		return &Error{Op: "like", Cause: errors.New("缺少本账号UID，无法点赞")}
+	}
+	anchor, err := c.roomAnchor(ctx, cred, room)
+	if err != nil {
+		return err
+	}
 	form := url.Values{}
+	form.Set("click_time", strconv.Itoa(count))
 	form.Set("room_id", room)
-	form.Set("count", strconv.Itoa(count))
+	form.Set("anchor_id", anchor)
+	form.Set("uid", uid)
 	form.Set("csrf", cred.csrf)
-	return c.send(ctx, cred, "like", http.MethodPost, c.live+"/room/v1/Room/like", form, nil)
+	return c.send(ctx, cred, "like", http.MethodPost, c.live+"/xlive/app-ucenter/v1/like_info_v3/like/likeReportV3", form, nil)
+}
+
+// roomAnchor 读取直播间主播 UID；点赞上报必须带 anchor_id。
+func (c *Client) roomAnchor(ctx context.Context, cred credential, room string) (string, error) {
+	var data struct {
+		UID json.RawMessage `json:"uid"`
+	}
+	endpoint := c.live + "/room/v1/Room/get_info?room_id=" + url.QueryEscape(room)
+	if err := c.send(ctx, cred, "like_room_info", http.MethodGet, endpoint, nil, &data); err != nil {
+		return "", err
+	}
+	anchor := rawJSONID(data.UID)
+	if !isDigits(anchor) || anchor == "0" {
+		return "", &Error{Op: "like", Cause: errors.New("直播间信息缺少主播UID")}
+	}
+	return anchor, nil
 }
 
 // SendDM 发私信（只允许由工具层白名单放行后的调用）。

@@ -98,6 +98,8 @@ type Options struct {
 	Senses SenseCache
 	// SelfID 是本鱼账号 UID，用于把鱼自己的事件从「最近弹幕」里剔除。
 	SelfID string
+	// RoomTitle 查当前直播间标题（直播间数据，不是人格设定）；nil 表示不注入。
+	RoomTitle func(ctx context.Context) string
 	// AudioTimeout 是等待声音采样的上限；零值取 DefaultAudioTimeout。
 	AudioTimeout time.Duration
 	// Budget 是 ReAct 与单步 Brain 共用的生成预算；零值取默认 token 上限。
@@ -141,6 +143,7 @@ type Runner struct {
 	chat         ChatSource
 	senses       SenseCache
 	selfID       string
+	roomTitleFn  func(ctx context.Context) string
 	audioTimeout time.Duration
 	// minVisualRunes 是 always 模式下的描述长度门槛（默认 10）。
 	minVisualRunes int
@@ -211,6 +214,7 @@ func New(snapshot Snapshotter, vision VisionDescriber, engine brain.Brain, pack 
 		chat:           opts.Chat,
 		senses:         opts.Senses,
 		selfID:         strings.TrimSpace(opts.SelfID),
+		roomTitleFn:    opts.RoomTitle,
 		audioTimeout:   audioTimeout,
 		minVisualRunes: 10,
 		limiter:        newGapLimiter(gap),
@@ -445,6 +449,14 @@ func (r *Runner) shouldUseReAct(visual string) bool {
 	// keyword：旧行为，靠静态词表
 	decision := reasoning.Decide(SyntheticEventText + " " + visual)
 	return decision.NeedMemory || decision.NeedKnowledge
+}
+
+// roomTitle 读取直播间当前标题；未配置或查询失败返回空（不阻塞本轮）。
+func (r *Runner) roomTitle(ctx context.Context) string {
+	if r.roomTitleFn == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.roomTitleFn(ctx))
 }
 
 // buildInput 组装本轮统一快照；注入 Builder 时与被动回复同源，

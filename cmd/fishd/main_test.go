@@ -18,6 +18,46 @@ import (
 	"go.uber.org/zap"
 )
 
+// TestVersionActionAndStatus 版本号可注入，status/version 输出同一值（不再硬编码 phase0.6-dev）。
+func TestVersionActionAndStatus(t *testing.T) {
+	old := version
+	version = "0.1.0-test"
+	t.Cleanup(func() { version = old })
+
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"version"}, &out, io.Discard, func() {}); err != nil {
+		t.Fatalf("version 子命令失败：%v", err)
+	}
+	if got := out.String(); got != "0.1.0-test\n" {
+		t.Fatalf("version 输出 = %q", got)
+	}
+
+	path := filepath.Join(t.TempDir(), "status.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- serve(ctx, path, time.Hour, zap.NewNop(), func(context.Context) error { return nil })
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		state, err := infra.ReadStatus(path)
+		if err == nil && state.State == "running" {
+			if state.Version != "0.1.0-test" {
+				t.Fatalf("状态文件版本 = %q", state.Version)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("状态文件未就绪：%v", err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestServeCancellationAndFinalState(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	path := filepath.Join(t.TempDir(), "status.json")
@@ -134,10 +174,10 @@ func TestServeDatabaseFailure(t *testing.T) {
 }
 
 func TestRunRejectsUnknownCommandAndMissingConfig(t *testing.T) {
-	if err := run(context.Background(), []string{"unknown"}, io.Discard, io.Discard, func(){}); err == nil {
+	if err := run(context.Background(), []string{"unknown"}, io.Discard, io.Discard, func() {}); err == nil {
 		t.Fatal("接受未知命令")
 	}
-	if err := run(context.Background(), []string{"--config", filepath.Join(t.TempDir(), "missing")}, io.Discard, io.Discard, func(){}); err == nil {
+	if err := run(context.Background(), []string{"--config", filepath.Join(t.TempDir(), "missing")}, io.Discard, io.Discard, func() {}); err == nil {
 		t.Fatal("接受缺失配置")
 	}
 }

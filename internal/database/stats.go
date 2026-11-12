@@ -7,6 +7,7 @@ package database
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"RaiseMyFish/internal/store"
@@ -179,6 +180,96 @@ func (s *Stats) Counts(ctx context.Context, from, to time.Time) (WindowCounts, e
 	}
 
 	return result, nil
+}
+
+// LatencyStat 是单通道回复延迟（毫秒）。
+//
+// 口径与 Replied 一致：只统计窗口内入向事件的第一条成功发送记录；
+// 重试多次不会把延迟重复计入，也不会把失败尝试算进来。
+type LatencyStat struct {
+	Count int64
+	P50MS int64
+	P90MS int64
+	AvgMS int64
+	MaxMS int64
+}
+
+// latencyChannels 是面板/日报关心的业务通道；qq 等未启用通道不混进结果。
+var latencyChannels = map[string]bool{"live": true, "comment": true, "dm": true}
+
+// latencyRowsSQL 计算「事件时间 → 首次成功发送时间」的延迟分位。
+//
+// DISTINCT ON 保证每个事件只取最早一次成功发送；过滤 l.at >= e.at
+// 防止时钟回拨造成负延迟污染分位。EXTRACT 返回 numeric，必须显式转 float8，
+// 否则 percentile_cont 会因没有 numeric 重载而报错。
+const latencyRowsSQL = `
+WITH first_ok AS (
+    SELECT DISTINCT ON (l.event_id)
+           l.event_id,
+           COALESCE(NULLIF(l.channel, ''), e.channel) AS channel,
+           l.at AS sent_at,
+           e.at AS event_at
+      FROM send_log l
+      JOIN events e ON e.id = l.event_id
+     WHERE l.ok IS TRUE AND e.dir = 'in'
+       AND e.at >= ? AND e.at < ?
+       AND l.at >= e.at
+     ORDER BY l.event_id, l.at ASC
+)
+SELECT channel,
+       COUNT(*) AS n,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8) AS p50_ms,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8) AS p90_ms,
+       AVG(EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8 AS avg_ms,
+       MAX(EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8 AS max_ms
+  FROM first_ok
+ GROUP BY channel`
+
+// Latency 返回 [from, to) 窗口内各通道回复延迟分位。
+func (s *Stats) Latency(ctx context.Context, from, to time.Time) (map[string]LatencyStat, error) {
+	return queryLatency(ctx, s.db, from, to)
+}
+
+// queryLatency 供 Stats 与 WebRepo 共用，避免两处 SQL 口径漂移。
+func queryLatency(ctx context.Context, db *gorm.DB, from, to time.Time) (map[string]LatencyStat, error) {
+	if ctx == nil || db == nil || to.Before(from) {
+		return nil, store.ErrInvalid
+	}
+	// 列别名带 _ms 后缀便于读 SQL，这里必须用 tag 显式映射；
+	// 靠字段名推导会去找 p50/p90/avg/max 列，扫出全 0。
+	var rows []struct {
+		Channel string  `gorm:"column:channel"`
+		N       int64   `gorm:"column:n"`
+		P50     float64 `gorm:"column:p50_ms"`
+		P90     float64 `gorm:"column:p90_ms"`
+		Avg     float64 `gorm:"column:avg_ms"`
+		Max     float64 `gorm:"column:max_ms"`
+	}
+	if err := db.WithContext(ctx).Raw(latencyRowsSQL, from, to).Scan(&rows).Error; err != nil {
+		return nil, &safeError{"统计回复延迟失败", err}
+	}
+	out := make(map[string]LatencyStat, len(rows))
+	for _, row := range rows {
+		if !latencyChannels[row.Channel] || row.N == 0 {
+			continue
+		}
+		out[row.Channel] = LatencyStat{
+			Count: row.N,
+			P50MS: roundMS(row.P50),
+			P90MS: roundMS(row.P90),
+			AvgMS: roundMS(row.Avg),
+			MaxMS: roundMS(row.Max),
+		}
+	}
+	return out, nil
+}
+
+// roundMS 把毫秒浮点夹到非负整数；NaN/Inf 属于上游算错，按 0 处理。
+func roundMS(v float64) int64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		return 0
+	}
+	return int64(math.Round(v))
 }
 
 // LastSeen 返回各通道最近一次「收到事件」的时间。

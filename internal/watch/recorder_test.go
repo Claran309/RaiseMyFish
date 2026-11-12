@@ -35,6 +35,8 @@ func newTestRecorder(t *testing.T, handler http.HandlerFunc) (*StreamRecorder, *
 		t.Fatal(err)
 	}
 	recorder.playInfo = server.URL
+	// 取流失败时还会查开播状态；测试必须打到同一个 httptest，不能访问真实接口。
+	recorder.roomInfo = server.URL + "/room_info"
 	return recorder, commander
 }
 
@@ -109,6 +111,45 @@ func TestStreamRecorderRejectsUnavailableStream(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "token") || strings.Contains(err.Error(), "secret") {
 				t.Fatal("错误泄露了流地址凭据")
+			}
+		})
+	}
+}
+
+// TestStreamRecorderDistinguishesOfflineAndNoStream 取流失败要能区分：
+// 没开播（live_status=0）与开播但拿不到流（live_status=1/2）是两种故障。
+func TestStreamRecorderDistinguishesOfflineAndNoStream(t *testing.T) {
+	cases := []struct {
+		name     string
+		roomBody string
+		roomCode int
+		want     string
+	}{
+		{"未开播", `{"code":0,"data":{"live_status":0}}`, http.StatusOK, "直播未开播（live_status=0）"},
+		{"直播中但无流", `{"code":0,"data":{"live_status":1}}`, http.StatusOK, "直播进行中但没有可用流（live_status=1）"},
+		{"轮播中但无流", `{"code":0,"data":{"live_status":2}}`, http.StatusOK, "直播进行中但没有可用流（live_status=2）"},
+		{"状态接口异常", `{"code":-500,"data":{}}`, http.StatusOK, "直播未开播或没有可用流"},
+		{"状态接口HTTP错误", ``, http.StatusInternalServerError, "直播未开播或没有可用流"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder, commander := newTestRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "room_info") {
+					w.WriteHeader(tc.roomCode)
+					fmt.Fprint(w, tc.roomBody)
+					return
+				}
+				fmt.Fprint(w, `{"code":0,"data":{"playurl_info":null}}`)
+			})
+			_, err := recorder.Record(context.Background(), 2)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("错误=%v，期望包含 %q", err, tc.want)
+			}
+			if commander.count("ffmpeg") != 0 {
+				t.Fatal("取流失败仍调用了ffmpeg")
+			}
+			if strings.Contains(err.Error(), "SESSDATA=test") {
+				t.Fatal("错误泄露了凭据")
 			}
 		})
 	}

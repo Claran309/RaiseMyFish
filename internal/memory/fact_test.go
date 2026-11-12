@@ -3,7 +3,6 @@ package memory
 // 本文件测 fact（自我陈述）规则：正例、反例、空文本、去重主键。
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -42,20 +41,6 @@ func TestFactSelfStatementsAreExtracted(t *testing.T) {
 		got := factCandidates(text)
 		if len(got) != 0 {
 			t.Fatalf("%q 规则版不应产 fact（交 LLM），实际 %d 条", text, len(got))
-		}
-		continue
-		c := got[0]
-		if c.Importance != factImportance {
-			t.Errorf("%q 重要度 = %v，期望 %v", text, c.Importance, factImportance)
-		}
-		if !strings.HasPrefix(c.Title, "事实") {
-			t.Errorf("%q 标题缺少前缀：%q", text, c.Title)
-		}
-		if len([]rune(c.Title)) > 60 {
-			t.Errorf("%q 标题超 60 字：%d", text, len([]rune(c.Title)))
-		}
-		if len([]rune(c.Summary)) > 200 {
-			t.Errorf("%q 摘要超 200 字", text)
 		}
 	}
 }

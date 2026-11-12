@@ -58,6 +58,8 @@ type ContextInput struct {
 	Audio string
 	// LiveChat 是最近观众弹幕（每行一条，已去鱼自己）；空则不出现 <live_chat> 段。
 	LiveChat string
+	// LiveTitle 是当前直播间标题（平台原样）；用于识别换人/代播，空则不出现 <live_title> 段。
+	LiveTitle string
 	// Viewer 是对方档案片段（认人用）；空则不出现 <viewer> 段（陌生人）。
 	Viewer string
 	// Injection 是看板操作人写入的临时设定；空则不出现 <injection> 段。

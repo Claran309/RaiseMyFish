@@ -182,6 +182,31 @@ function costCard(d) {
   var cny = Number(d.known_cost) * 7.2;
   return card(unknown > 0 ? 'warn' : 'info', '💸', '已知费用(¥)', cny.toFixed(2), sub);
 }
+function ms(v) {
+  v = Number(v) || 0;
+  return v >= 1000 ? (v / 1000).toFixed(1) + 's' : Math.round(v) + 'ms';
+}
+// 回复延迟：近24h，按每条入向事件的第一条成功发送记录计算（send_log.at - events.at）。
+// 无样本时显示 — 而不是 0，否则会被误读成「秒回」。
+function latencyCards(d) {
+  var lat = d.latency || {};
+  var names = [['live', '直播'], ['comment', '评论'], ['dm', '私信']];
+  return names.map(function (ns) {
+    var s = lat[ns[0]];
+    if (!s || !s.count) return card('info', '⏱️', ns[1] + '延迟', '—', '近24h无样本', true);
+    return card(s.p90_ms > 5000 ? 'warn' : 'ok', '⏱️', ns[1] + '延迟',
+      'p50 ' + ms(s.p50_ms) + ' · p90 ' + ms(s.p90_ms),
+      'n=' + s.count + ' · 均 ' + ms(s.avg_ms) + ' · 最大 ' + ms(s.max_ms), true);
+  }).join('');
+}
+// 连接池：in_use/max_open 是当前压力；等待次数长期大于 0 才需要调大 max_open。
+function poolCard(p) {
+  if (!p) return card('warn', '🔌', '连接池', '未知', '统计不可用', true);
+  var wait = Number(p.wait_count) || 0;
+  return card(wait > 0 ? 'warn' : 'info', '🔌', '连接池',
+    (p.in_use || 0) + '/' + (p.max_open || 0),
+    '已建 ' + (p.open || 0) + ' · 空闲 ' + (p.idle || 0) + ' · 等待 ' + wait + ' 次', true);
+}
 async function shutdownFishd() {
   if (!confirm('确认关闭 fishd？关闭后需要重新启动。')) return;
   try {
@@ -215,7 +240,7 @@ async function loadStatus() {
     card('info', '🧠', '记忆条数', d.memory_total || 0),
     card('info', '🏷️', '记忆分类', kinds, '', true),
     costCard(d)
-  ].join('');
+  ].join('') + latencyCards(d) + poolCard(d.db_pool);
 
   var health = document.getElementById('health');
   if (failed > 0 || pending > 10) {

@@ -139,7 +139,7 @@ func New(o Options) (*Server, error) {
 	return &Server{
 		addr: addr, repo: o.Repo, log: o.Log, now: now,
 		knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts, control: o.Control, viewerSummary: o.ViewerSummary, logs: o.Logs,
-		shutdown: o.Shutdown,
+		shutdown:   o.Shutdown,
 		injections: o.Injections, diary: o.Diary, diaryGen: o.DiaryGenerator,
 		token: token, port: port,
 	}, nil
@@ -312,6 +312,22 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "读取概览失败", err)
 		return
 	}
+	// 延迟按通道转成 snake_case；空 map 序列化为 {}，页面据此显示「无样本」。
+	latency := make(map[string]map[string]any, len(st.Latency))
+	for channel, stat := range st.Latency {
+		latency[channel] = map[string]any{
+			"count": stat.Count, "p50_ms": stat.P50MS, "p90_ms": stat.P90MS,
+			"avg_ms": stat.AvgMS, "max_ms": stat.MaxMS,
+		}
+	}
+	var pool any
+	if st.Pool != nil {
+		pool = map[string]any{
+			"open": st.Pool.Open, "in_use": st.Pool.InUse, "idle": st.Pool.Idle,
+			"max_open": st.Pool.MaxOpen, "wait_count": st.Pool.WaitCount,
+			"wait_duration_ms": st.Pool.WaitDurationMS,
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"events_total":   st.EventsTotal,
 		"events_pending": st.EventsPending,
@@ -323,6 +339,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"unknown_calls":  st.UnknownCalls,
 		"total_calls":    st.TotalCalls,
 		"coverage":       st.Coverage,
+		"latency":        latency,
+		"db_pool":        pool,
 		"generated_at":   st.GeneratedAt.UTC().Format(time.RFC3339),
 	})
 }

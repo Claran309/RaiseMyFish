@@ -101,7 +101,7 @@ func TestWorkerPublicFactRevisionAcrossLiveAndComment(t *testing.T) {
 		}
 	}
 
-	worker, err := extractworker.New(src, memRepo, extractworker.NewMemoryWatermark(), extractworker.Options{})
+	worker, err := extractworker.New(src, memRepo, extractworker.NewMemoryWatermark(), extractworker.Options{Extractor: testFactExtractor{}})
 	if err != nil {
 		t.Fatalf("构造 worker 失败：%v", err)
 	}
@@ -141,7 +141,7 @@ func TestWorkerPublicFactRevisionAcrossLiveAndComment(t *testing.T) {
 	if _, err := events.Insert(ctx, older); err != nil {
 		t.Fatalf("插入旧事件失败：%v", err)
 	}
-	backfill, err := extractworker.New(src, memRepo, extractworker.NewMemoryWatermark(), extractworker.Options{})
+	backfill, err := extractworker.New(src, memRepo, extractworker.NewMemoryWatermark(), extractworker.Options{Extractor: testFactExtractor{}})
 	if err != nil {
 		t.Fatalf("构造补提炼 worker 失败：%v", err)
 	}

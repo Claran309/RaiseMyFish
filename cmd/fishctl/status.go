@@ -27,6 +27,8 @@ type StatsSource interface {
 	Counts(ctx context.Context, from, to time.Time) (database.WindowCounts, error)
 	// LastSeen 返回各通道最后一次收到事件的时间；从未收到事件的通道不出现。
 	LastSeen(ctx context.Context) (map[string]time.Time, error)
+	// Latency 返回窗口内各通道回复延迟分位（live/comment/dm）。
+	Latency(ctx context.Context, from, to time.Time) (map[string]database.LatencyStat, error)
 }
 
 // 编译期断言：真实聚合实现必须满足本文件依赖的接口。
@@ -38,6 +40,8 @@ type StatusStats struct {
 	Report string `json:"report"`
 	// HeartbeatWarnings 是 observe.Check 的告警，每条一行、已按通道排序。
 	HeartbeatWarnings []string `json:"heartbeat_warnings"`
+	// Latency 是窗口内的回复延迟分位；没有样本时省略该字段。
+	Latency map[string]database.LatencyStat `json:"latency,omitempty"`
 }
 
 // empty 判断是否没有任何可输出的统计内容。
@@ -88,6 +92,10 @@ func collectStats(ctx context.Context, src StatsSource, now time.Time, window ti
 	if err != nil {
 		return StatusStats{}, fmt.Errorf("读取通道心跳失败：%w", err)
 	}
+	latency, err := src.Latency(ctx, from, to)
+	if err != nil {
+		return StatusStats{}, fmt.Errorf("读取回复延迟失败：%w", err)
+	}
 
 	snapshot := observe.Snapshot{
 		WindowStart:  from,
@@ -105,6 +113,7 @@ func collectStats(ctx context.Context, src StatsSource, now time.Time, window ti
 	return StatusStats{
 		Report:            observe.Render(snapshot),
 		HeartbeatWarnings: formatHeartbeat(observe.Check(now, lastSeen)),
+		Latency:           latency,
 	}, nil
 }
 

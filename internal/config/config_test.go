@@ -31,6 +31,51 @@ func TestLoadPrecedenceAndDefaults(t *testing.T) {
 	}
 }
 
+// TestDatabasePoolDefaultsAndValidation [db] 连接池参数：默认沿用 30/10/30m，
+// 非法值必须拒绝；0 表示默认而不是「把池关掉」。
+func TestDatabasePoolDefaultsAndValidation(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fish:private@localhost/fish")
+	cfg, err := Load("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Database.MaxOpenConns != 30 || cfg.Database.MaxIdleConns != 10 ||
+		cfg.Database.ConnMaxLifetimeSeconds != 1800 || cfg.Database.SlowQueryMS != 200 {
+		t.Fatalf("连接池默认值不符：%+v", cfg.Database)
+	}
+
+	path := filepath.Join(t.TempDir(), "fishd.toml")
+	content := "[db]\nmax_open=60\nmax_idle=20\nconn_max_lifetime_seconds=600\nslow_query_ms=50\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Database.MaxOpenConns != 60 || cfg.Database.MaxIdleConns != 20 ||
+		cfg.Database.ConnMaxLifetimeSeconds != 600 || cfg.Database.SlowQueryMS != 50 {
+		t.Fatalf("自定义连接池参数未生效：%+v", cfg.Database)
+	}
+
+	for _, bad := range []string{
+		"[db]\nmax_open=-1",
+		"[db]\nmax_open=5\nmax_idle=6",
+		"[db]\nconn_max_lifetime_seconds=-1",
+		"[db]\nslow_query_ms=-1",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "fishd.toml")
+			if err := os.WriteFile(p, []byte(bad), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(p, ""); err == nil {
+				t.Fatalf("非法连接池配置被接受：%s", bad)
+			}
+		})
+	}
+}
+
 func TestDotenvDoesNotMutateProcess(t *testing.T) {
 	const key = "FISH_TEST_CONFIG_DSN"
 	t.Setenv(key, "")

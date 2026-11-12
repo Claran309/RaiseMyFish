@@ -22,14 +22,17 @@ var statNow = time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
 
 // mockStats 是注入用的统计来源，记录收到的窗口参数。
 type mockStats struct {
-	counts    database.WindowCounts
-	lastSeen  map[string]time.Time
-	countsErr error
-	lastErr   error
+	counts     database.WindowCounts
+	lastSeen   map[string]time.Time
+	latency    map[string]database.LatencyStat
+	countsErr  error
+	lastErr    error
+	latencyErr error
 
 	gotFrom, gotTo time.Time
 	countCalls     int
 	lastCalls      int
+	latencyCalls   int
 }
 
 func (m *mockStats) Counts(_ context.Context, from, to time.Time) (database.WindowCounts, error) {
@@ -49,6 +52,15 @@ func (m *mockStats) LastSeen(_ context.Context) (map[string]time.Time, error) {
 	return m.lastSeen, nil
 }
 
+func (m *mockStats) Latency(_ context.Context, from, to time.Time) (map[string]database.LatencyStat, error) {
+	m.latencyCalls++
+	m.gotFrom, m.gotTo = from, to
+	if m.latencyErr != nil {
+		return nil, m.latencyErr
+	}
+	return m.latency, nil
+}
+
 // floatPtr 便于构造费用三态。
 func floatPtr(v float64) *float64 { return &v }
 
@@ -65,6 +77,9 @@ func TestCollectStatsWithData(t *testing.T) {
 			"live":    statNow.Add(-5 * time.Minute),  // 正常
 			"comment": statNow.Add(-45 * time.Minute), // 静默
 			"dm":      statNow.Add(-2 * time.Hour),    // 静默
+		},
+		latency: map[string]database.LatencyStat{
+			"live": {Count: 6, P50MS: 850, P90MS: 2100, AvgMS: 1200, MaxMS: 3000},
 		},
 	}
 
@@ -90,6 +105,9 @@ func TestCollectStatsWithData(t *testing.T) {
 		}
 	}
 
+	if got.Latency["live"].P50MS != 850 || got.Latency["live"].P90MS != 2100 {
+		t.Errorf("延迟统计未透传：%+v", got.Latency)
+	}
 	if len(got.HeartbeatWarnings) != 2 {
 		t.Fatalf("告警数 = %d，期望 2：%v", len(got.HeartbeatWarnings), got.HeartbeatWarnings)
 	}
@@ -189,6 +207,11 @@ func TestCollectStatsErrors(t *testing.T) {
 	if _, err := collectStats(context.Background(), src2, statNow, DefaultStatsWindow); !errors.Is(err, boom) {
 		t.Errorf("LastSeen 错误未透传：%v", err)
 	}
+
+	src3 := &mockStats{latencyErr: boom}
+	if _, err := collectStats(context.Background(), src3, statNow, DefaultStatsWindow); !errors.Is(err, boom) {
+		t.Errorf("Latency 错误未透传：%v", err)
+	}
 }
 
 // TestCollectStatsCanceledContext 取消要保留 context.Canceled，且不发起查询。
@@ -200,8 +223,8 @@ func TestCollectStatsCanceledContext(t *testing.T) {
 	if _, err := collectStats(ctx, src, statNow, DefaultStatsWindow); !errors.Is(err, context.Canceled) {
 		t.Fatalf("期望 context.Canceled，实际 %v", err)
 	}
-	if src.countCalls != 0 || src.lastCalls != 0 {
-		t.Errorf("取消后不应查询：counts=%d last=%d", src.countCalls, src.lastCalls)
+	if src.countCalls != 0 || src.lastCalls != 0 || src.latencyCalls != 0 {
+		t.Errorf("取消后不应查询：counts=%d last=%d latency=%d", src.countCalls, src.lastCalls, src.latencyCalls)
 	}
 }
 

@@ -50,7 +50,7 @@ func startHeartbeatLike(ctx context.Context, cfg config.Config, logger *zap.Logg
 		)
 		return noop
 	}
-	client, err := bili.New(bili.Options{Cookie: cfg.Collector.Live.Cookie, Resolver: cfg.BiliResolver, Timeout: heartbeatLikeTimeout})
+	client, err := bili.New(bili.Options{Cookie: cfg.Collector.Live.Cookie, Resolver: cfg.BiliResolver, SelfMID: selfMID(cfg), Timeout: heartbeatLikeTimeout})
 	if err != nil {
 		logger.Warn("常驻点赞未启动：凭据不可用",
 			zap.String("action", heartbeatLikeAction),

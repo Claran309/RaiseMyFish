@@ -141,24 +141,106 @@ func TestUnfollowUsesAct2(t *testing.T) {
 	}
 }
 
-// TestLikeRequest 点赞：路径 + room_id/count/csrf。
+// TestLikeRequest 点赞：likeReportV3 + 主播UID/本账号UID/csrf。
 func TestLikeRequest(t *testing.T) {
-	var path, room, count, csrf string
+	var (
+		infoRoom, anchor, room, clickTime, uid, csrf, referer string
+		infoCalls, likeCalls                                  int
+	)
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		path = r.URL.Path
-		room, count, csrf = r.PostForm.Get("room_id"), r.PostForm.Get("count"), r.PostForm.Get("csrf")
-		writeEnvelope(w, 0, nil)
+		switch r.URL.Path {
+		case "/room/v1/Room/get_info":
+			infoCalls++
+			infoRoom = r.URL.Query().Get("room_id")
+			writeEnvelope(w, 0, map[string]any{"uid": 3747573779139629})
+		case "/xlive/app-ucenter/v1/like_info_v3/like/likeReportV3":
+			likeCalls++
+			_ = r.ParseForm()
+			anchor = r.PostForm.Get("anchor_id")
+			room = r.PostForm.Get("room_id")
+			clickTime = r.PostForm.Get("click_time")
+			uid = r.PostForm.Get("uid")
+			csrf = r.PostForm.Get("csrf")
+			referer = r.Header.Get("Referer")
+			writeEnvelope(w, 0, nil)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
 	})
 
 	if err := c.Like(context.Background(), "30308220", 2); err != nil {
 		t.Fatalf("Like 失败：%v", err)
 	}
-	if path != "/room/v1/Room/like" || room != "30308220" || count != "2" || csrf != "csrf-token-123" {
-		t.Errorf("请求不符：path=%s room=%s count=%s csrf=%s", path, room, count, csrf)
+	if infoCalls != 1 || likeCalls != 1 {
+		t.Fatalf("请求次数不符：info=%d like=%d", infoCalls, likeCalls)
+	}
+	if infoRoom != "30308220" || room != "30308220" || anchor != "3747573779139629" ||
+		clickTime != "2" || uid != "3747574135655903" || csrf != "csrf-token-123" {
+		t.Errorf("请求不符：infoRoom=%s room=%s anchor=%s click_time=%s uid=%s csrf=%s",
+			infoRoom, room, anchor, clickTime, uid, csrf)
+	}
+	if referer != "https://live.bilibili.com/" {
+		t.Errorf("Referer 不符：%q", referer)
 	}
 	if err := c.Like(context.Background(), "30308220", 9); err == nil {
 		t.Error("count 越界应拒绝")
+	}
+}
+
+// TestLikeRequiresSelfMID 点赞上报必须带本账号 UID；缺失时不发请求。
+func TestLikeRequiresSelfMID(t *testing.T) {
+	var calls int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		writeEnvelope(w, 0, nil)
+	})
+	noMID, err := New(Options{APIRoot: c.api, LiveRoot: c.live, VCRoot: c.vc, Cookie: testCookie, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := noMID.Like(context.Background(), "30308220", 1); err == nil {
+		t.Fatal("缺少本账号UID 应拒绝")
+	}
+	if calls != 0 {
+		t.Fatalf("缺少本账号UID 仍发起了 %d 次请求", calls)
+	}
+}
+
+// TestLikeRoomInfoFailure 主播UID 拉取失败时不点赞。
+func TestLikeRoomInfoFailure(t *testing.T) {
+	var likeCalls int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/room/v1/Room/get_info" {
+			writeEnvelope(w, 1000003, nil)
+			return
+		}
+		likeCalls++
+		writeEnvelope(w, 0, nil)
+	})
+	if err := c.Like(context.Background(), "30308220", 1); err == nil {
+		t.Fatal("主播UID 拉取失败应返回错误")
+	}
+	if likeCalls != 0 {
+		t.Fatalf("主播UID 拉取失败仍点赞 %d 次", likeCalls)
+	}
+}
+
+// TestLikeRoomInfoMissingAnchor 直播间信息缺 uid 时拒绝点赞。
+func TestLikeRoomInfoMissingAnchor(t *testing.T) {
+	var likeCalls int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/room/v1/Room/get_info" {
+			writeEnvelope(w, 0, map[string]any{"uid": 0})
+			return
+		}
+		likeCalls++
+		writeEnvelope(w, 0, nil)
+	})
+	if err := c.Like(context.Background(), "30308220", 1); err == nil {
+		t.Fatal("缺主播UID 应返回错误")
+	}
+	if likeCalls != 0 {
+		t.Fatalf("缺主播UID 仍点赞 %d 次", likeCalls)
 	}
 }
 

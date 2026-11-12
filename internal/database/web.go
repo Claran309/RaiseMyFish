@@ -96,7 +96,30 @@ func (r *WebRepo) Status(ctx context.Context) (store.WebStatus, error) {
 	if usage.TotalCalls > 0 {
 		st.Coverage = float64(usage.TotalCalls-usage.UnknownCalls) / float64(usage.TotalCalls)
 	}
-	st.GeneratedAt = time.Now().UTC()
+	// 延迟只看近 24 小时：全量分位会被历史旧数据压住，看不出当前优化效果。
+	now := time.Now()
+	latency, err := queryLatency(ctx, r.db, now.Add(-24*time.Hour), now)
+	if err != nil {
+		return store.WebStatus{}, err
+	}
+	st.Latency = make(map[string]store.WebLatency, len(latency))
+	for channel, stat := range latency {
+		st.Latency[channel] = store.WebLatency{
+			Count: stat.Count, P50MS: stat.P50MS, P90MS: stat.P90MS,
+			AvgMS: stat.AvgMS, MaxMS: stat.MaxMS,
+		}
+	}
+	// 连接池状态直接从 database/sql 读取，不额外查库。
+	// 拿不到 DB 句柄只影响展示，不影响其它统计。
+	if sqlDB, poolErr := r.db.DB(); poolErr == nil {
+		stats := sqlDB.Stats()
+		st.Pool = &store.WebPool{
+			Open: stats.OpenConnections, InUse: stats.InUse, Idle: stats.Idle,
+			MaxOpen: stats.MaxOpenConnections, WaitCount: stats.WaitCount,
+			WaitDurationMS: stats.WaitDuration.Milliseconds(),
+		}
+	}
+	st.GeneratedAt = now.UTC()
 	return st, nil
 }
 

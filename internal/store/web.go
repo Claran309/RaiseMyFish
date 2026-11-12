@@ -26,7 +26,30 @@ type WebStatus struct {
 	UnknownCalls  int64
 	TotalCalls    int64
 	Coverage      float64
-	GeneratedAt   time.Time
+	// Latency 是近 24 小时各通道回复延迟分位（live/comment/dm）。
+	// 空 map 表示窗口内没有成功的入向回复，不是「延迟为 0」。
+	Latency     map[string]WebLatency
+	Pool        *WebPool
+	GeneratedAt time.Time
+}
+
+// WebLatency 是单通道回复延迟（毫秒）；口径为 send_log.at - events.at。
+type WebLatency struct {
+	Count int64
+	P50MS int64
+	P90MS int64
+	AvgMS int64
+	MaxMS int64
+}
+
+// WebPool 是连接池运行态（database/sql DBStats 的只读投影）。
+type WebPool struct {
+	Open           int
+	InUse          int
+	Idle           int
+	MaxOpen        int
+	WaitCount      int64
+	WaitDurationMS int64
 }
 
 // WebMemory 是记忆列表项（正文截断，不含凭据）。

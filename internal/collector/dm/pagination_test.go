@@ -211,10 +211,12 @@ func newFakeDMClient(t *testing.T, fake *fakeDM) *bili.Client {
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
 	client, err := bili.New(bili.Options{
-		VCRoot:  srv.URL,
-		Cookie:  "SESSDATA=fixture; bili_jct=csrf",
-		SelfMID: selfUID,
-		Timeout: 2 * time.Second,
+		APIRoot:  srv.URL, // nav（WBI 密钥）也走 mock
+		LiveRoot: srv.URL,
+		VCRoot:   srv.URL,
+		Cookie:   "SESSDATA=fixture; bili_jct=csrf",
+		SelfMID:  selfUID,
+		Timeout:  2 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("构造 bili 客户端失败：%v", err)
@@ -241,9 +243,10 @@ func messageIDs(messages []Message) map[string]int {
 }
 
 // TestBiliFetcherPaginatesSessionsAndResumes 25 个会话跨页拉完；重启后不再拉详情。
+//
+// 会话列表翻页与消息历史回填是两件事：本用例只验证 end_ts 翻页 + 逐会话拉详情，
+// 不依赖 fetch_session_msgs 的历史翻页能力。
 func TestBiliFetcherPaginatesSessionsAndResumes(t *testing.T) {
-	t.Skip("新版API限制：fetch_session_msgs 的 begin_seqno 只能向新，不支持向历史翻页/回填")
-
 	fake := newFakeDM()
 	for i := 0; i < 25; i++ {
 		peer := strconv.Itoa(2000 + i)

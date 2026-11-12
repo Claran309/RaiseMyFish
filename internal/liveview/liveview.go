@@ -13,6 +13,8 @@ import (
 )
 
 const (
+	// maxTitleRunes 是 watch_live 输出里标题的长度上限。
+	maxTitleRunes = 80
 	// DefaultTTL 是感知数据的最长有效期；主动弹幕间隔 80 秒，两轮内仍可复用。
 	DefaultTTL = 2 * time.Minute
 	// toolBudget 是 watch_live 工具结果的预算；Toolbox 统一按 400 字裁剪。
@@ -32,6 +34,8 @@ type Options struct {
 
 // View 是一次感知快照；零值字段表示该路数据不存在或已过期。
 type View struct {
+	Title   string
+	TitleAt time.Time
 	Frame   string
 	FrameAt time.Time
 	Audio   string
@@ -55,6 +59,7 @@ type Senses struct {
 	mu    sync.Mutex
 	ttl   time.Duration
 	now   func() time.Time
+	title observed
 	frame observed
 	audio observed
 	chat  chatSnapshot
@@ -71,6 +76,13 @@ func NewSenses(opts Options) *Senses {
 		now = time.Now
 	}
 	return &Senses{ttl: ttl, now: now}
+}
+
+// UpdateTitle 记录直播间当前标题（平台原样）；传空串表示清空。
+func (s *Senses) UpdateTitle(title string, at time.Time) {
+	s.update(func() {
+		s.title = observed{text: strings.TrimSpace(title), at: at}
+	})
 }
 
 // UpdateFrame 记录本轮画面描述；传空串表示清空。
@@ -118,6 +130,9 @@ func (s *Senses) Snapshot() View {
 	defer s.mu.Unlock()
 	now := s.now()
 	var view View
+	if s.fresh(s.title.at, now) && s.title.text != "" {
+		view.Title, view.TitleAt = s.title.text, s.title.at
+	}
 	if s.fresh(s.frame.at, now) && s.frame.text != "" {
 		view.Frame, view.FrameAt = s.frame.text, s.frame.at
 	}
@@ -145,10 +160,13 @@ func (s *Senses) LiveView(ctx context.Context) (string, error) {
 		return "", err
 	}
 	view := s.Snapshot()
-	if view.Frame == "" && view.Audio == "" && len(view.Chat) == 0 {
+	if view.Title == "" && view.Frame == "" && view.Audio == "" && len(view.Chat) == 0 {
 		return "本轮还没采集到直播内容（画面/声音/弹幕都不可用）", nil
 	}
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 4)
+	if view.Title != "" {
+		parts = append(parts, "直播间标题："+clipRunes(view.Title, maxTitleRunes))
+	}
 	if view.Frame != "" {
 		parts = append(parts, "画面："+clipRunes(view.Frame, maxFrameRunes))
 	}

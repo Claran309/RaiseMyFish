@@ -206,6 +206,10 @@ func TestStatusJSON(t *testing.T) {
 		MemoryByKind: map[string]int64{"fact": 4, "preference": 1},
 		SendTotal:    8, SendFailed: 1,
 		KnownCostUSD: &known, UnknownCalls: 1, TotalCalls: 5, Coverage: 0.8,
+		Latency: map[string]store.WebLatency{
+			"live": {Count: 6, P50MS: 850, P90MS: 2100, AvgMS: 1200, MaxMS: 3000},
+		},
+		Pool:        &store.WebPool{Open: 3, InUse: 1, Idle: 2, MaxOpen: 30, WaitCount: 4, WaitDurationMS: 12},
 		GeneratedAt: time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC),
 	}}
 	srv := newTestServer(t, repo)
@@ -219,7 +223,7 @@ func TestStatusJSON(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("响应不是 JSON：%v", err)
 	}
-	for _, k := range []string{"events_total", "events_pending", "memory_total", "memory_by_kind", "send_total", "send_failed", "known_cost", "unknown_calls", "total_calls", "coverage", "generated_at"} {
+	for _, k := range []string{"events_total", "events_pending", "memory_total", "memory_by_kind", "send_total", "send_failed", "known_cost", "unknown_calls", "total_calls", "coverage", "latency", "db_pool", "generated_at"} {
 		if _, ok := body[k]; !ok {
 			t.Errorf("缺少字段 %s", k)
 		}
@@ -231,6 +235,18 @@ func TestStatusJSON(t *testing.T) {
 		body["unknown_calls"].(float64) != 1 || body["total_calls"].(float64) != 5 ||
 		body["coverage"].(float64) != 0.8 {
 		t.Errorf("数值不符：%+v", body)
+	}
+	latency, ok := body["latency"].(map[string]any)
+	if !ok {
+		t.Fatalf("latency 结构不符：%+v", body["latency"])
+	}
+	live, ok := latency["live"].(map[string]any)
+	if !ok || live["p50_ms"].(float64) != 850 || live["p90_ms"].(float64) != 2100 || live["count"].(float64) != 6 {
+		t.Errorf("延迟数值不符：%+v", latency)
+	}
+	pool, ok := body["db_pool"].(map[string]any)
+	if !ok || pool["in_use"].(float64) != 1 || pool["max_open"].(float64) != 30 || pool["wait_count"].(float64) != 4 {
+		t.Errorf("连接池数值不符：%+v", body["db_pool"])
 	}
 }
 
@@ -603,6 +619,12 @@ func TestOverviewPageBlocks(t *testing.T) {
 	for _, want := range []string{"运行状态", "数据统计", "向量入库", "最近动态", "最近错误", "/api/errors", "最近事件"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("概览页缺少 %q", want)
+		}
+	}
+	// R1/R2：延迟与连接池卡片必须有渲染函数与空态，纯前端无编译期保护。
+	for _, want := range []string{"function latencyCards", "'p50 '", "近24h无样本", "function poolCard", "等待 "} {
+		if !strings.Contains(body, want) {
+			t.Errorf("概览页缺少延迟/连接池渲染 %q", want)
 		}
 	}
 
