@@ -49,6 +49,27 @@ button.danger{color:var(--bad);border-color:#3a2a2a}
       <button class="danger" onclick="vsAction('revoke')">撤回</button>
     </div>
   </section>
+  <h2>手动加记忆</h2>
+  <div class="bar" style="flex-wrap:wrap;gap:6px">
+    <select id="new-kind">
+      <option value="fact">fact（事实）</option>
+      <option value="preference">preference（偏好）</option>
+      <option value="promise">promise（承诺）</option>
+      <option value="summary">summary（总结）</option>
+      <option value="note">note（备注）</option>
+    </select>
+    <select id="new-subject">
+      <option value="fish">fish（本鱼）</option>
+      <option value="owner">owner（主人）</option>
+      <option value="viewer">viewer（观众）</option>
+    </select>
+    <input id="new-title" placeholder="标题（≤200）" size="22">
+    <input id="new-summary" placeholder="摘要（≤500，必填）" size="30">
+    <input id="new-body" placeholder="正文（可选）" size="30">
+    <input id="new-imp" placeholder="重要度 0-1" size="8" value="0.8">
+    <button onclick="createMemory()">写入记忆</button>
+    <span class="muted" id="new-msg"></span>
+  </div>
   <div class="bar">
     <input id="q" placeholder="搜索标题/摘要" size="26">
     <select id="kind">
@@ -83,6 +104,39 @@ function esc(s) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
   });
 }
+async function createMemory() {
+  var msg = document.getElementById('new-msg');
+  var title = document.getElementById('new-title').value.trim();
+  var summary = document.getElementById('new-summary').value.trim();
+  if (!title || !summary) { msg.textContent = '标题和摘要必填'; return; }
+  var body = {
+    kind: document.getElementById('new-kind').value,
+    subject: document.getElementById('new-subject').value,
+    title: title,
+    summary: summary,
+    body: document.getElementById('new-body').value.trim(),
+    importance: parseFloat(document.getElementById('new-imp').value) || 0.8
+  };
+  msg.textContent = '写入中…';
+  try {
+    var r = await fetch('/api/memory?confirm=yes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Panel-Token': panelToken() },
+      body: JSON.stringify(body)
+    });
+    var d = await r.json();
+    if (d.ok) {
+      msg.textContent = '已写入';
+      document.getElementById('new-title').value = '';
+      document.getElementById('new-summary').value = '';
+      document.getElementById('new-body').value = '';
+      load();
+    } else {
+      msg.textContent = '失败：' + (d.error || '未知');
+    }
+  } catch (e) { msg.textContent = '失败：' + e; }
+}
+
 function memRow(m) {
   return '<tr><td class="tag">' + esc(m.kind) + '</td><td>' + esc(m.title) + '</td>' +
     '<td class="muted">' + esc(m.summary) + '</td><td>' + Number(m.importance).toFixed(2) + '</td>' +

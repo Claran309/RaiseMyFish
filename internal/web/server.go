@@ -72,6 +72,8 @@ type Options struct {
 	ViewerSummary ViewerSummaryControl
 	// Shutdown 是关闭 fishd 的回调（面板按钮用，可空）。
 	Shutdown func()
+	// MemoryWriter 手动新增记忆（面板表单用；nil 时接口返回未启用）。
+	MemoryWriter MemoryWriter
 	// Logs 可选：日志读取口；nil 时日志接口返回 503。
 	Logs LogSource
 	// Injections 可选：看板注入读写口；nil 时注入接口返回 503。
@@ -104,6 +106,8 @@ type Server struct {
 	port string
 	// shutdown 是面板「关闭 fishd」入口（main 注入：cancel 根 ctx 优雅退出）。
 	shutdown func()
+	// memoryWriter 是面板手动新增记忆的写入口（区别于只读 WebRepo）。
+	memoryWriter MemoryWriter
 }
 
 // New 校验地址与依赖；非回环地址直接拒绝。
@@ -139,7 +143,7 @@ func New(o Options) (*Server, error) {
 	return &Server{
 		addr: addr, repo: o.Repo, log: o.Log, now: now,
 		knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts, control: o.Control, viewerSummary: o.ViewerSummary, logs: o.Logs,
-		shutdown:   o.Shutdown,
+		shutdown:   o.Shutdown, memoryWriter: o.MemoryWriter,
 		injections: o.Injections, diary: o.Diary, diaryGen: o.DiaryGenerator,
 		token: token, port: port,
 	}, nil
@@ -397,6 +401,10 @@ func embeddingSectionJSON(s store.WebEmbeddingSection) map[string]any {
 
 // handleMemory 列出记忆。
 func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		s.createMemory(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "只支持 GET")
 		return

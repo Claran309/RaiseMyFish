@@ -16,6 +16,18 @@ import (
 )
 
 // startWebPanel 启动面板；返回的 stop 会等待服务退出（未启用时是空函数）。
+// memoryRepoFrom 取记忆写入口（database.MemoryRepo 实现 InsertRecord）。
+func memoryRepoFrom(resources *infra.Resources) web.MemoryWriter {
+	if resources == nil || resources.DB == nil {
+		return nil
+	}
+	repo, err := database.NewMemoryRepo(resources.DB)
+	if err != nil {
+		return nil
+	}
+	return repo
+}
+
 func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Resources, runtime knowledgeAssembly, accounts *account.Service, control web.RuntimeController, viewerSummary web.ViewerSummaryControl, diaryGen web.DiaryGenerator, logs web.LogSource, shutdown func(), log *zap.Logger) func() {
 	if !cfg.Web.Enabled {
 		return func() {}
@@ -36,7 +48,8 @@ func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Reso
 			return info.Entries, info.Revision
 		}
 	}
-	srv, err := web.New(web.Options{Addr: cfg.Web.Addr, Repo: repo, Injections: repo, Diary: repo, DiaryGenerator: diaryGen, Log: log, KnowledgeInfo: knowledgeInfo, Accounts: accounts, Control: control, ViewerSummary: viewerSummary, Logs: logs, Shutdown: shutdown})
+	srv, err := web.New(web.Options{Addr: cfg.Web.Addr, Repo: repo, Injections: repo, Diary: repo, DiaryGenerator: diaryGen, Log: log, KnowledgeInfo: knowledgeInfo, Accounts: accounts, Control: control, ViewerSummary: viewerSummary, Logs: logs, Shutdown: shutdown,
+		MemoryWriter: memoryRepoFrom(resources)})
 	if err != nil {
 		log.Warn("面板未启动：参数不合法", zap.String("action", "web_setup"), zap.Error(err))
 		return func() {}
