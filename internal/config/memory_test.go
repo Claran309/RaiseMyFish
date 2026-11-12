@@ -224,3 +224,40 @@ func TestViewerSummaryBudgetRange(t *testing.T) {
 		}
 	}
 }
+
+// TestRepeatPromoteThreshold 重复度触发默认 5 次；0 关闭；启用时 2-100，其余拒绝。
+func TestRepeatPromoteThreshold(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	cfg, err := Load("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Memory.RepeatPromoteThreshold != 5 {
+		t.Fatalf("重复度触发阈值默认不符：%d", cfg.Memory.RepeatPromoteThreshold)
+	}
+
+	cfg, err = loadMemoryConfig(t, "[memory]\nenabled=true\nrepeat_promote_threshold=8\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Memory.RepeatPromoteThreshold != 8 {
+		t.Fatalf("重复度触发阈值覆盖失败：%d", cfg.Memory.RepeatPromoteThreshold)
+	}
+
+	cfg, err = loadMemoryConfig(t, "[memory]\nenabled=true\nrepeat_promote_threshold=0\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Memory.RepeatPromoteThreshold != 0 {
+		t.Fatalf("0 应表示关闭：%d", cfg.Memory.RepeatPromoteThreshold)
+	}
+
+	for _, value := range []string{"1", "101", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := loadMemoryConfig(t, "[memory]\nenabled=true\nrepeat_promote_threshold="+value+"\n")
+			if err == nil || !strings.Contains(err.Error(), "重复度触发阈值") {
+				t.Fatalf("repeat_promote_threshold=%s 未按范围拒绝：%v", value, err)
+			}
+		})
+	}
+}

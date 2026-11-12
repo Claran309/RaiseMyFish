@@ -74,6 +74,19 @@ func (r *scriptedWatchRunner) callCount() int {
 	return r.calls
 }
 
+// waitLog 等待指定日志出现；runWatch 在 Run 返回后才写完成日志，测试不能抢跑取消。
+func waitLog(t *testing.T, logs *observer.ObservedLogs, message string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if logs.FilterMessage(message).Len() > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("等待日志 %q 超时：%v", message, logs.All())
+}
+
 func waitTick(t *testing.T, seen <-chan int, want int) {
 	t.Helper()
 	select {
@@ -159,6 +172,7 @@ func TestRunWatchFailureDoesNotStopLoop(t *testing.T) {
 	waitTick(t, runner.seen, 1)
 	ticks <- clock.Now()
 	waitTick(t, runner.seen, 2)
+	waitLog(t, logs, "看直播完成（有降级）")
 	cancel()
 	<-done
 

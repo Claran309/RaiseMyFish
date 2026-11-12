@@ -2,6 +2,13 @@
 [db]
 dsn_env = "FISH_DB_DSN"
 timeout_seconds = 5
+# 连接池（R2）：省略或 0 时走默认 30 / 10 / 1800 秒。
+# 面板 /api/status 的 db_pool 显示实际 open/in_use/idle/max_open 与等待计数。
+# max_open = 30
+# max_idle = 10
+# conn_max_lifetime_seconds = 1800
+# 慢查询阈值（毫秒）：超过即用 zap 记 action=db_slow；0=关闭。SQL 参数会打码。
+# slow_query_ms = 200
 
 [log]
 level = "info"
@@ -168,9 +175,14 @@ memory_allow_private = false
 # 运维面板：开启；只允许监听回环地址（127.0.0.1 / ::1 / localhost）
 enabled = true
 addr = "127.0.0.1:8090"
-search_url = ""
-# 搜索协议：generic（默认，POST {"query"}）/ serper（X-API-KEY）/ bing（Ocp-Apim-Subscription-Key）。
-protocol = "generic"
+# 公共 SearXNG 多实例：主实例 + 备用（最多 8 个），总尝试 ≤6 次，单实例超时 8 秒。
+# 先请求 format=json；实例未开启 JSON 时自动退化 HTML 解析。429/反爬/网络错误换下一个，
+# 全部失败返回「搜索暂不可用（所有实例失败）」，不编造结果。
+search_url = "https://searx.be/search"
+search_fallbacks = ["https://search.inetol.net/search", "https://baresearch.org/search"]
+# 搜索协议：generic（POST {"query"}）/ serper（X-API-KEY）/ bing（Ocp-Apim-Subscription-Key）
+# / searxng（GET ?q=...&format=json，失败退化 HTML）。
+protocol = "searxng"
 # 结果 URL 域名白名单：留空不限；填写后只保留域名相同或子域的结果。
 # 例：allowed_domains = ["bilibili.com", "zhihu.com"]
 allowed_domains = []
@@ -205,13 +217,16 @@ allow_danmaku_tool = true
 
 # 评论/私信没有直播节奏约束，允许更长思考（5-10 步 / 30-60 秒）；恒走 ReAct，
 # 不受 default_react 影响。弹幕仍用上面的 3 步 / 8 秒。
+# R4 实测（近 24h llm_usage）：comment p50 1.32s / p90 1.69s，dm p50 1.36s / p90 1.70s；
+# 5 步最坏约 8.5s，45s 过于宽松，收到配置下限 30s（仍约 3.5 倍余量），
+# 让卡住的 worker 更早释放。延迟主要还是被采集轮询（feed/私信 60/120s）决定，不是模型。
 [reasoning.comment]
 max_steps = 5
-timeout_ms = 45000
+timeout_ms = 30000
 
 [reasoning.dm]
 max_steps = 5
-timeout_ms = 45000
+timeout_ms = 30000
 
 # 评论附图识别：采集到图片 URL 后下载 → 视觉模型描述/OCR → 注入上下文。
 # 默认关闭；开启需同时启用 [llm] 且 llm_route 可解析。
@@ -303,6 +318,10 @@ owner_name = "Claran309"
 # 写入 viewer_profiles.profile_summary + memory_records + viewers.md 公开知识条目。
 # 只读公开非 DM 弹幕；模型失败时回落到统计聚合（旧家效果）。0 表示关闭。
 viewer_summary_interval_seconds = 3600
+# 重复度触发：同一实体（别名表 / 观众档案名 / @ 目标）在 7 天窗口内被公开提及
+# 达到该次数就提升为一条 fact，importance 0.5 起步，同实体 24 小时最多触发一次。
+# 0 表示关闭；启用时范围 2-100。
+repeat_promote_threshold = 5
 
 # 每日总结（#76）：每天 hour:minute（东八区）总结前一天的弹幕/回复/评论/私信，
 # 结果写 daily_summaries 表，面板 /diary 可查看与导出。只在 [llm] enabled 时生效；

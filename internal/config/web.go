@@ -14,11 +14,13 @@ type Web struct {
 	// Addr 是面板监听地址，只允许回环（127.0.0.1 / ::1 / localhost）。
 	Addr      string `toml:"addr"`
 	SearchURL string `toml:"search_url"`
+	// SearchFallbacks 是备用搜索实例（最多 8 个），主实例 429/超时/验证码时轮换。
+	SearchFallbacks []string `toml:"search_fallbacks"`
 	// SearchKey 作为 Authorization: Bearer，不序列化、不记日志。
 	SearchKey string `toml:"search_key" json:"-"`
 	// SearchKeyEnv 是读 key 的环境变量名，优先于 SearchKey（推荐，避免明文落盘）。
 	SearchKeyEnv string `toml:"search_key_env" json:"-"`
-	// Protocol 是搜索协议：generic（默认）/ serper / bing。
+	// Protocol 是搜索协议：generic（默认）/ serper / bing / searxng。
 	Protocol string `toml:"protocol"`
 	// AllowedDomains 是结果 URL 域名白名单；空表示不限。
 	AllowedDomains []string `toml:"allowed_domains"`
@@ -81,6 +83,9 @@ func (w Web) ResolveKey() string {
 	return strings.TrimSpace(w.SearchKey)
 }
 
+// maxSearchFallbacks 是备用搜索实例数量上限；总尝试次数由 webtools 再压到 6。
+const maxSearchFallbacks = 8
+
 // Validate 只校验已配置的搜索源；空地址合法。
 func (w Web) Validate() error {
 	raw := strings.TrimSpace(w.SearchURL)
@@ -89,6 +94,17 @@ func (w Web) Validate() error {
 		// 明文 HTTP 窄授权（validServiceEndpoint），不泛化到其它私网地址。
 		if !validServiceEndpoint(raw) {
 			return errors.New("搜索服务地址必须是HTTPS、本机HTTP或host.docker.internal HTTP地址")
+		}
+	}
+	if len(w.SearchFallbacks) > maxSearchFallbacks {
+		return errors.New("搜索备用地址最多8个")
+	}
+	if raw == "" && len(w.SearchFallbacks) > 0 {
+		return errors.New("配置搜索备用地址前必须先配置search_url")
+	}
+	for _, fallback := range w.SearchFallbacks {
+		if value := strings.TrimSpace(fallback); value == "" || !validServiceEndpoint(value) {
+			return errors.New("搜索备用地址必须是HTTPS、本机HTTP或host.docker.internal HTTP地址")
 		}
 	}
 	if w.Enabled {
@@ -106,9 +122,9 @@ func (w Web) Validate() error {
 		return errors.New("搜索服务密钥不能包含控制字符")
 	}
 	switch protocol := strings.ToLower(strings.TrimSpace(w.Protocol)); protocol {
-	case "", "generic", "serper", "bing":
+	case "", "generic", "serper", "bing", "searxng":
 	default:
-		return errors.New("搜索协议必须是 generic、serper 或 bing")
+		return errors.New("搜索协议必须是 generic、serper、bing 或 searxng")
 	}
 	for _, domain := range w.AllowedDomains {
 		if _, ok := normalizeDomain(domain); !ok {

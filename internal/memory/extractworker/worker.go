@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
@@ -45,6 +46,8 @@ const (
 	jobRenewDivisor = 3
 	// defaultScanInterval 是定时扫描间隔；phase-0 计划里写的是「先每 5 分钟扫一次」。
 	defaultScanInterval = 5 * time.Minute
+	// evidenceTextRunes 与 store.MemoryEvidence.Text 的持久化上限一致。
+	evidenceTextRunes = 200
 )
 
 // Cursor 是水位：已处理到的「事件时间 + 事件 ID」位置。
@@ -135,6 +138,8 @@ type Options struct {
 	Soul SoulSource
 	// SoulOpts 是灵魂记忆参数（路径/条数/门槛/间隔）。
 	SoulOpts SoulOptions
+	// Repeats 是重复度触发依赖；nil 或阈值 <2 时不跑。
+	Repeats *RepeatPromotion
 }
 
 // RecentEventsSource 提供某会话最近的事件（database.EventRepo 满足）。
@@ -198,6 +203,22 @@ type Stats struct {
 	SoulEntries int
 	// SoulSkipped 是跳过原因（throttled / failed / none）。
 	SoulSkipped string
+	// RepeatScanned 是重复度窗口内读取的公开事件条数（-1 表示未跑）。
+	RepeatScanned int
+	// RepeatCandidates 是达到阈值、去重后的候选实体数。
+	RepeatCandidates int
+	// RepeatInserted 是重复度事实成功写入/修订的条数。
+	RepeatInserted int
+	// RepeatDuplicated 是内容未变、幂等命中的条数。
+	RepeatDuplicated int
+	// RepeatDebounced 是 24 小时内已触发过、本轮跳过的条数。
+	RepeatDebounced int
+	// RepeatArchived 是已归档、本轮跳过的条数。
+	RepeatArchived int
+	// RepeatCorrected 是被主人纠正、只降权不写入的条数。
+	RepeatCorrected int
+	// RepeatSkipped 是子任务跳过原因（none / failed）。
+	RepeatSkipped string
 	// Frozen 表示本轮因冻结被跳过。
 	Frozen bool
 	// FrozenReason 是冻结来源（config / state_file）。
@@ -372,6 +393,7 @@ func (w *Worker) RunOnce(ctx context.Context) (Stats, error) {
 	}
 	w.rebuildProfiles(ctx, &stats)
 	w.rebuildSoul(ctx, &stats)
+	w.promoteRepeats(ctx, &stats)
 	return stats, nil
 }
 
@@ -422,12 +444,14 @@ func (w *Worker) runJobs(ctx context.Context, stats *Stats) (Stats, error) {
 				// 单条失败已记账并回队，本轮到此为止（不做紧密重试）。
 				w.rebuildProfiles(ctx, stats)
 				w.rebuildSoul(ctx, stats)
+				w.promoteRepeats(ctx, stats)
 				return *stats, nil
 			}
 		}
 	}
 	w.rebuildProfiles(ctx, stats)
 	w.rebuildSoul(ctx, stats)
+	w.promoteRepeats(ctx, stats)
 	return *stats, nil
 }
 
@@ -756,7 +780,15 @@ func (w *Worker) extractEvent(ctx context.Context, ev event.Event) ([]store.Memo
 
 	records := make([]store.MemoryRecord, 0, len(candidates))
 	for _, candidate := range candidates {
-		records = append(records, w.buildRecord(ev, candidate))
+		record := w.buildRecord(ev, candidate)
+		// 护栏（#93）：事实必须带 evidence，无证据不写。
+		if record.Kind == "fact" && len(record.Evidence) == 0 {
+			continue
+		}
+		records = append(records, record)
+	}
+	if len(records) == 0 {
+		return nil, true, nil
 	}
 	return records, false, nil
 }
@@ -810,7 +842,7 @@ func (w *Worker) buildRecord(ev event.Event, c memory.Candidate) store.MemoryRec
 	if source == "" {
 		source = defaultSource(c.Kind)
 	}
-	return store.MemoryRecord{
+	record := store.MemoryRecord{
 		Record: memory.Record{
 			ID:         recordIDFor(ev, c),
 			Channel:    ev.Channel,
@@ -834,6 +866,17 @@ func (w *Worker) buildRecord(ev event.Event, c memory.Candidate) store.MemoryRec
 		// Body 留空：摘要已经够召回用，不把完整正文写进记忆库
 		Body: "",
 	}
+	// 事实必须带可核对的来源片段：面板与召回都靠它区分「有据」和「编的」。
+	if c.Kind == memory.KindFact {
+		if text := strings.TrimSpace(ev.Text); text != "" {
+			record.Evidence = []store.MemoryEvidence{{
+				Field: "source_event",
+				Type:  store.ViewerSummaryBasisObserved,
+				Text:  clipRunes(text, evidenceTextRunes),
+			}}
+		}
+	}
+	return record
 }
 
 // validFrom 返回记录的有效期起点：取事件时间，但**绝不晚于当前时间**。
@@ -896,6 +939,14 @@ func factDomain(ev event.Event) string {
 func shortHash(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])[:12]
+}
+
+// clipRunes 按字符截断，避免把多字节汉字切成半个。
+func clipRunes(s string, limit int) string {
+	if limit <= 0 || utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+	return string([]rune(s)[:limit])
 }
 
 // recordID 由 event_id + kind + title 派生稳定的主键，实现幂等。

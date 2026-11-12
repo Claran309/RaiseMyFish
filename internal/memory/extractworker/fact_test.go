@@ -3,12 +3,15 @@ package extractworker
 // 本文件测 fact 记录的去重主键：同人同事实只留一条。
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
+	"RaiseMyFish/internal/store"
 )
 
 func factCandidate(title string) memory.Candidate {
@@ -104,5 +107,73 @@ func TestNonFactRecordIDStillEventScoped(t *testing.T) {
 
 	if w.buildRecord(ev1, c).ID == w.buildRecord(ev2, c).ID {
 		t.Error("非事实类仍应随事件区分")
+	}
+}
+
+// staticExtractor 返回固定候选，用来单独测 worker 的落库护栏。
+type staticExtractor []memory.Candidate
+
+func (s staticExtractor) Extract(context.Context, event.Event, memory.ExtractOptions) ([]memory.Candidate, error) {
+	return s, nil
+}
+
+// TestFactRecordCarriesSourceEventEvidence #93：事实记录必须带可核对的来源片段。
+func TestFactRecordCarriesSourceEventEvidence(t *testing.T) {
+	w := &Worker{opts: Options{Now: func() time.Time { return baseTime }}}
+	ev := event.Event{
+		ID: "live:room:1", Channel: event.ChLive, Dir: event.DirIn, Session: "room",
+		FromID: "2002", FromName: "乙", Text: strings.Repeat("鱼", 260), At: baseTime,
+	}
+	rec := w.buildRecord(ev, factCandidate("我是学生"))
+	if len(rec.Evidence) != 1 {
+		t.Fatalf("fact 应带 1 条来源证据：%+v", rec.Evidence)
+	}
+	got := rec.Evidence[0]
+	if got.Field != "source_event" || got.Type != store.ViewerSummaryBasisObserved {
+		t.Errorf("证据字段/类型不符：%+v", got)
+	}
+	if n := utf8.RuneCountInString(got.Text); n != evidenceTextRunes {
+		t.Errorf("证据片段长度 = %d，期望截断到 %d", n, evidenceTextRunes)
+	}
+}
+
+// TestExtractEventDropsFactWithoutEvidence 无证据事实不落库（正文为空时无法举证）。
+func TestExtractEventDropsFactWithoutEvidence(t *testing.T) {
+	w := newWorker(t, &fakeSource{}, &fakeRepo{}, NewMemoryWatermark(), Options{
+		Now:       func() time.Time { return baseTime },
+		Extractor: staticExtractor{factCandidate("我是学生")},
+	})
+	ev := event.Event{
+		ID: "live:room:1", Channel: event.ChLive, Dir: event.DirIn, Session: "room",
+		FromID: "2002", FromName: "乙", Text: "", At: baseTime,
+	}
+	records, skipped, err := w.extractEvent(context.Background(), ev)
+	if err != nil {
+		t.Fatalf("extractEvent 失败：%v", err)
+	}
+	if !skipped || len(records) != 0 {
+		t.Errorf("无证据事实应被丢弃：records=%+v skipped=%v", records, skipped)
+	}
+}
+
+// TestExtractEventKeepsFactWithEvidence 有正文时事实正常落库并带证据。
+func TestExtractEventKeepsFactWithEvidence(t *testing.T) {
+	w := newWorker(t, &fakeSource{}, &fakeRepo{}, NewMemoryWatermark(), Options{
+		Now:       func() time.Time { return baseTime },
+		Extractor: staticExtractor{factCandidate("我是学生")},
+	})
+	ev := event.Event{
+		ID: "live:room:1", Channel: event.ChLive, Dir: event.DirIn, Session: "room",
+		FromID: "2002", FromName: "乙", Text: "我是学生", At: baseTime,
+	}
+	records, skipped, err := w.extractEvent(context.Background(), ev)
+	if err != nil {
+		t.Fatalf("extractEvent 失败：%v", err)
+	}
+	if skipped || len(records) != 1 {
+		t.Fatalf("有证据事实应保留：records=%+v skipped=%v", records, skipped)
+	}
+	if len(records[0].Evidence) != 1 || records[0].Evidence[0].Text != "我是学生" {
+		t.Errorf("证据不符：%+v", records[0].Evidence)
 	}
 }

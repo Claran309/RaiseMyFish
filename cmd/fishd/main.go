@@ -415,7 +415,9 @@ type memoryWorkerDeps struct {
 	// Soul 非 nil 且 SoulEnabled 时重建灵魂记忆（M12）。
 	Soul extractworker.SoulSource
 	// Extractor 非 nil 时按触发策略走 LLM，否则规则版。
-	Extractor     memory.Extractor
+	Extractor memory.Extractor
+	// Repeats 非 nil 时附带重复度触发（#93）；阈值关闭时留 nil。
+	Repeats       *extractworker.RepeatPromotion
 	WatermarkPath string
 	FreezePath    string
 }
@@ -439,6 +441,8 @@ func newMemoryWorker(deps memoryWorkerDeps) (*extractworker.Worker, error) {
 		Recent:    deps.Recent,
 		OwnerUID:  deps.Config.OwnerUID,
 		OwnerName: deps.Config.OwnerName,
+		// 重复度触发（#93）：与主提炼共用事件/事实仓储，阈值关闭时为 nil。
+		Repeats: deps.Repeats,
 	}
 	// 灵魂记忆（M12）：只有显式开启时才接来源；路径由配置派生/显式给出，
 	// 主体/未来生效/私密筛选在仓库与重建层各自兜底。
@@ -618,6 +622,12 @@ func runMemoryExtract(ctx context.Context, worker memoryExtractWorker, interval 
 			zap.Int("duplicated", stats.Duplicated),
 			zap.Int("skipped", stats.Skipped),
 			zap.Int("lease_lost", stats.LeaseLost),
+			zap.Int("repeat_scanned", stats.RepeatScanned),
+			zap.Int("repeat_candidates", stats.RepeatCandidates),
+			zap.Int("repeat_inserted", stats.RepeatInserted),
+			zap.Int("repeat_debounced", stats.RepeatDebounced),
+			zap.Int("repeat_corrected", stats.RepeatCorrected),
+			zap.String("repeat_skipped", stats.RepeatSkipped),
 		)
 	}
 	runOnce()
@@ -675,6 +685,17 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, r
 		logger.Warn("提炼上下文装配失败，将不带上下文提炼", zap.String("action", "memory_extract"), zap.Error(rerr))
 		recent = nil
 	}
+	// 重复度触发（#93）：别名表可选；事件/昵称来源按接口注入，
+	// 避免把 nil 具体类型装进接口后调用时 panic。
+	var repeatEvents extractworker.RepeatEventSource
+	if recent != nil {
+		repeatEvents = recent
+	}
+	var repeatNames extractworker.RepeatNameSource
+	if profiles != nil {
+		repeatNames = profiles
+	}
+	repeats := buildRepeatPromotion(cfg, repeatEvents, repeatNames, repo, buildViewerAliasSource(cfg.Viewer, logger), logger)
 	worker, err := newMemoryWorker(memoryWorkerDeps{
 		Config:        cfg.Memory,
 		Source:        source,
@@ -685,6 +706,7 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, r
 		Projection:    projection,
 		Soul:          repo,
 		Extractor:     extractor,
+		Repeats:       repeats,
 		WatermarkPath: memoryWatermarkPath,
 		FreezePath:    memoryFreezePath,
 	})
@@ -702,6 +724,7 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, r
 		zap.Bool("frozen", cfg.Memory.Frozen),
 		zap.Bool("soul_enabled", cfg.Memory.SoulEnabled),
 		zap.Int("soul_max_entries", cfg.Memory.SoulMaxEntries),
+		zap.Int("repeat_promote_threshold", cfg.Memory.RepeatPromoteThreshold),
 	)
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})

@@ -56,6 +56,21 @@ Windows 本机：
 .\scripts\dev.ps1 stop     # 跨终端停止（超时强杀进程树）
 ```
 
+### 一键启动（`start-fishd.bat`，开发期）
+
+双击仓库根目录的 `start-fishd.bat`：构造 B站 cookie → 探测并拉起本机 ASR（`127.0.0.1:8077`，最多等 60 秒）→ `go run ./cmd/fishd --env-file .env` → 等面板端口后自动打开 <http://127.0.0.1:8090>。ASR 未就绪只告警，声音感知降级，不影响回复。
+
+### Windows 稳定版（`dist/`）
+
+```bash
+make release VERSION=0.1.0     # 构建 dist/fishd.exe 并生成 fishd-stable-0.1.0.zip
+dist/fishd.exe version         # 输出版本号（构建时通过 -ldflags "-X main.version=..." 注入）
+```
+
+`dist/` 内容：`fishd.exe`（版本已注入）、`config/fishd.toml`、`personas/`、`scripts/cookie.py`、`.env.example`、`README.md` 与 `start.bat`。`start.bat` 与开发期一键启动同一套流程，但直接运行打包好的 `fishd.exe`，不再依赖 Go 工具链。
+
+版本号规则：开发构建默认 `dev`；发布包使用语义化版本（如 `0.1.0`），可通过 `make build VERSION=x.y.z` 或 `make release VERSION=x.y.z` 指定。面板状态/`fishctl status` 的 `service.version` 与 `fishd version` 一致。
+
 ## 3. Linux 本机（新增）
 
 ### 3.1 安装依赖与建库
@@ -232,7 +247,25 @@ docker compose -f deployment/docker-compose.yml exec fishd \
 
 连接失败时先查宿主机监听地址与防火墙，不要把地址改回 `127.0.0.1`（那会指向容器自身）。
 
-### 4.5 使用外部 PostgreSQL
+### 4.5 公共 SearXNG 多实例搜索
+
+不想常开 Docker、也不想用付费搜索 API 时，可以配置公共 SearXNG 实例：
+
+```toml
+[web]
+search_url = "https://searx.be/search"
+protocol = "searxng"
+search_fallbacks = ["https://search.inetol.net/search", "https://baresearch.org/search"]
+allowed_domains = []
+```
+
+- `protocol = "searxng"`：先请求 `?q=...&format=json`；公共实例通常未开启 JSON，此时自动退化解析 HTML 的 `<article class="result">`。
+- `search_fallbacks` 最多 8 个；主实例 + 备用的总尝试不超过 6 次，单实例超时 8 秒。429、反爬页或网络错误会立刻换下一个，同一实例本轮不再重试。
+- 全部实例失败时工具返回「搜索暂不可用（所有实例失败）」，由大脑降级且不编造结果；每次尝试都会打 `action=web_search` 日志（实例、状态、耗时）。
+- `allowed_domains` 在合并去重后按最终 URL 过滤，语义与单实例一致。
+- 公共实例可能随时限速或启用人机验证（Anubis、Substation 等），属于外部可用性问题；可替换实例，或自建 SearXNG。自建实例需在 `settings.yml` 开启 `format: json` 才会走 JSON，否则自动走 HTML 兜底。
+
+### 4.6 使用外部 PostgreSQL
 
 Dockerfile 本身不包含数据库。若已有外部 PG 17 + pgvector：
 
@@ -262,6 +295,20 @@ docker run -d --name fishd --restart unless-stopped --env-file deployment/.env \
 - 账号解析：**DB 活跃账号优先，环境变量兜底**。只把 Cookie 存 DB 也可以启动（不再要求环境里同时有 Cookie）。
 - 窗口支持：Windows 本地读根目录 `.env`；Compose 读 `deployment/.env`；两者互不影响。
 - 当前面板固定回环地址；`[web].addr` 填非回环会被配置校验拒绝。
+
+### 5.1 性能与预算（R 批）
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| `[db].max_open` / `max_idle` | 30 / 10 | 连接池上限与空闲数；省略或 0 走默认 |
+| `[db].conn_max_lifetime_seconds` | 1800 | 连接最长复用时间 |
+| `[db].slow_query_ms` | 200 | 超过即用 zap 记 `action=db_slow`；0 关闭；SQL 参数会打码 |
+| `[reasoning].timeout_ms` | 8000 | 弹幕 ReAct 总预算（3 步） |
+| `[reasoning.comment]` / `[reasoning.dm]` | 30000 | 评论/私信 ReAct 总预算（5 步，配置下限 30s） |
+
+- 面板「概览」的「回复延迟」卡片与 `fishctl status` 的 `stats.latency` 同口径：近 24h、每条入向事件取最早一次成功发送，按通道算 p50/p90/均值/最大；无样本显示 `—`。
+- 延迟口径包含采集轮询与排队，不只是模型耗时。实测（2026-11-12，近 24h）LLM 单次调用 p90：live 2.33s、comment 1.69s、dm 1.70s；DM 的回复延迟主要来自 120 秒轮询，评论来自 60 秒轮询。想进一步压缩应调采集间隔，而不是继续放大模型预算。
+- `db_pool` 展示 open/in_use/idle/max_open 与累计等待次数/时长（`database/sql.DBStats`），用于判断连接池是否成为瓶颈。
 
 ## 6. 进程守护
 

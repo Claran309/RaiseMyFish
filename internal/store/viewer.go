@@ -153,6 +153,12 @@ type ViewerProfileHit struct {
 	Score      float64
 }
 
+// ViewerName 是观众昵称的轻量投影；重复度触发只读 uid/name 两列。
+type ViewerName struct {
+	UID  string
+	Name string
+}
+
 // ViewerRebuildOptions 是档案重建参数。
 type ViewerRebuildOptions struct {
 	MinHits       int

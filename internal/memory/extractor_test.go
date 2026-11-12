@@ -59,11 +59,58 @@ func TestLLMExtractorParsesJSON(t *testing.T) {
 	if len(got) != 1 || got[0].Kind != KindFact || got[0].Title != "他是学生" {
 		t.Fatalf("模型结果未生效：%+v", got)
 	}
-	if got[0].Importance != 0.7 || got[0].Confidence != 0.9 {
-		t.Errorf("权重没透传：%+v", got[0])
+	// #93 防垃圾护栏：fact 类重要度起步不超过 0.6，模型给 0.7 也要压回。
+	if got[0].Importance != factImportance || got[0].Confidence != 0.9 {
+		t.Errorf("fact 重要度应被压到 %v、置信度透传：%+v", factImportance, got[0])
 	}
 	if !strings.Contains(llm.gotUser, "熟客乙") {
 		t.Errorf("输入应带昵称：%s", llm.gotUser)
+	}
+}
+
+// TestLLMExtractorKeepsPromiseImportance 护栏只压 fact：承诺类仍透传模型权重。
+func TestLLMExtractorKeepsPromiseImportance(t *testing.T) {
+	llm := &mockLLM{reply: `{"archive":true,"records":[{"kind":"promise","title":"明天带奶茶","summary":"答应明天给他带奶茶","importance":0.85}],"confidence":0.9}`}
+	e := newLLM(t, llm)
+
+	got, err := e.Extract(context.Background(), llmEvent("我保证明天给你带奶茶，说到做到，绝对不忘，晚上八点前送到直播间"), ExtractOptions{})
+	if err != nil {
+		t.Fatalf("提取失败：%v", err)
+	}
+	if len(got) != 1 || got[0].Kind != KindPromise || got[0].Importance != 0.85 {
+		t.Fatalf("承诺类权重不应被压：%+v", got)
+	}
+}
+
+// TestLLMExtractorDropsBareIdentityClaim 「我是梁文峰」直接不产记忆、不调模型。
+func TestLLMExtractorDropsBareIdentityClaim(t *testing.T) {
+	for _, text := range []string{"我是梁文峰", "我叫梁文峰", "我的名字是马化腾", "本人是刘强东", "我就是马斯克！"} {
+		llm := &mockLLM{reply: `{"archive":true,"records":[{"kind":"fact","title":"身份","summary":"他是名人","importance":0.9}],"confidence":0.9}`}
+		e := newLLM(t, llm)
+		got, err := e.Extract(context.Background(), llmEvent(text), ExtractOptions{})
+		if err != nil {
+			t.Fatalf("%q 不应报错：%v", text, err)
+		}
+		if len(got) != 0 {
+			t.Errorf("%q 不应生成记忆：%+v", text, got)
+		}
+		if llm.calls != 0 {
+			t.Errorf("%q 不应调用模型，实际 %d 次", text, llm.calls)
+		}
+	}
+}
+
+// TestBareIdentityClaimAllowsSentence 带分句/上下文的自述不算「口号」，交模型判断。
+func TestBareIdentityClaimAllowsSentence(t *testing.T) {
+	for _, text := range []string{
+		"我是学生，今天也在上课",
+		"我叫小王，住在广州",
+		"我想被不骂呢", // 不是身份自称
+		"你是梁文峰吧",
+	} {
+		if bareIdentityClaim(text) {
+			t.Errorf("%q 不应被当成编造身份", text)
+		}
 	}
 }
 

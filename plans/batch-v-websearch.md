@@ -39,3 +39,21 @@
 ## 执行规则
 
 fishd 不重启（交付后 DSH 验证）；不执行 git；不改 personas。
+
+## 交付状态（2026-11-13）
+
+- V1/V2/V3 已完成：`searxng` 协议、`search_fallbacks`（≤8）、总尝试 ≤6、单实例 8 秒超时、
+  JSON→HTML 兜底、429/反爬/网络错误换实例、合并去重后白名单过滤、`action=web_search` 尝试日志。
+- 单测覆盖：JSON 解析、HTML 兜底（403/200 非 JSON）、429 跳实例并记日志、反爬页跳实例、
+  全失败明确报错、超时换实例、6 次尝试上限、去重后白名单、HTML 解析边界。
+- 真机探测（2026-11-13，本机网络）：
+  - `searx.be` → 200 但为 Anubis「Verifying your browser…」；
+  - `search.inetol.net` → 200 但为 Substation「Security check」；
+  - `baresearch.org` → 200 但为 Anubis「Making sure you're not a bot!」；
+  - `priv.au`、`searx.tiekoetter.com` → 429；`opnxng.com` → 网络错误。
+  - 结论：本机网络下**没有**公共实例能返回真实结果，属外部反爬/限速，不是客户端缺陷。
+  - 用实际配置跑客户端（3 实例）实测到：`searx.be` blocked 1.8s → `search.inetol.net` timeout 8.0s
+    → `baresearch.org` blocked 1.3s，最终返回「搜索暂不可用（所有实例失败）」，且每次尝试都有
+    `action=web_search` 日志；超时、反爬识别、轮换与降级均按预期工作。
+- `config/fishd.toml` 已配 3 个公共实例（searx.be + 2 备用）；DSH 可在其它网络复测或替换实例。
+  自建 SearXNG 需在 `settings.yml` 开启 `format: json` 才走 JSON，否则自动走 HTML 兜底。

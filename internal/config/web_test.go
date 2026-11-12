@@ -48,7 +48,9 @@ func TestWebProtocolAndAllowedDomains(t *testing.T) {
 		{Protocol: "generic"},
 		{Protocol: "serper"},
 		{Protocol: "BING"},
+		{Protocol: "searxng"},
 		{AllowedDomains: []string{"example.com", "sub.bilibili.com", "127.0.0.1"}},
+		{SearchURL: "https://searx.be/search", SearchFallbacks: []string{"https://search.bus-hit.me/search", "https://priv.au/search"}},
 	}
 	for _, w := range good {
 		if err := w.Validate(); err != nil {
@@ -63,6 +65,13 @@ func TestWebProtocolAndAllowedDomains(t *testing.T) {
 		{AllowedDomains: []string{"example.com:443"}},
 		{AllowedDomains: []string{"-bad.example.com"}},
 		{AllowedDomains: []string{"exa mple.com"}},
+		{SearchFallbacks: []string{"https://searx.be/search"}},
+		{SearchURL: "https://searx.be/search", SearchFallbacks: []string{""}},
+		{SearchURL: "https://searx.be/search", SearchFallbacks: []string{"http://192.168.1.10/search"}},
+		{SearchURL: "https://searx.be/search", SearchFallbacks: []string{
+			"https://a.example", "https://b.example", "https://c.example", "https://d.example",
+			"https://e.example", "https://f.example", "https://g.example", "https://h.example", "https://i.example",
+		}},
 	}
 	for _, w := range bad {
 		if err := w.Validate(); err == nil {
@@ -85,6 +94,25 @@ func TestLoadWebProtocolAndDomains(t *testing.T) {
 	}
 	if cfg.Web.Protocol != "serper" || len(cfg.Web.AllowedDomains) != 2 || cfg.Web.AllowedDomains[0] != "bilibili.com" {
 		t.Fatalf("新字段未加载：%+v", cfg.Web)
+	}
+}
+
+// TestLoadWebSearxngFallbacks 批 V：searxng 协议与备用实例能从 TOML 加载。
+func TestLoadWebSearxngFallbacks(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fish:private@localhost/fish")
+	p := filepath.Join(t.TempDir(), "fishd.toml")
+	body := "[web]\nsearch_url='https://searx.be/search'\nprotocol='searxng'\n" +
+		"search_fallbacks=['https://search.bus-hit.me/search','https://priv.au/search']\n"
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p, "")
+	if err != nil {
+		t.Fatalf("加载失败：%v", err)
+	}
+	if cfg.Web.Protocol != "searxng" || len(cfg.Web.SearchFallbacks) != 2 ||
+		cfg.Web.SearchFallbacks[1] != "https://priv.au/search" {
+		t.Fatalf("searxng 备用实例未加载：%+v", cfg.Web)
 	}
 }
 

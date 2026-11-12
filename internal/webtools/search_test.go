@@ -1,6 +1,7 @@
 package webtools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,7 +10,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // TestSearchPostsQueryAndBearer 断言通用协议：POST JSON + 可选 Bearer，结果按行拼接。
@@ -563,5 +568,311 @@ func TestSameHostRedirectPolicy(t *testing.T) {
 				t.Fatalf("应允许：%s（%v）", tc.target, err)
 			}
 		})
+	}
+}
+
+// TestSearxngJSONRequestAndResults 批 V：GET q+format=json，解析 results[].content。
+func TestSearxngJSONRequestAndResults(t *testing.T) {
+	var method, path, query, format, language, userAgent string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		query = r.URL.Query().Get("q")
+		format = r.URL.Query().Get("format")
+		language = r.URL.Query().Get("language")
+		userAgent = r.Header.Get("User-Agent")
+		io.WriteString(w, `{"results":[{"title":"标题A","url":"https://example.com/a","content":"摘要A"}]}`)
+	}))
+	defer srv.Close()
+
+	searcher, err := NewHTTP(Options{URL: srv.URL + "/search", Protocol: "searxng"})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	got, err := searcher.Search(context.Background(), "B站 直播")
+	if err != nil {
+		t.Fatalf("搜索失败：%v", err)
+	}
+	if method != http.MethodGet || path != "/search" {
+		t.Errorf("请求不符：method=%s path=%s", method, path)
+	}
+	if query != "B站 直播" || format != "json" || language != searxngLanguage {
+		t.Errorf("参数不符：q=%q format=%q language=%q", query, format, language)
+	}
+	if userAgent == "" {
+		t.Error("缺少 User-Agent，公共实例会直接拒绝")
+	}
+	if !strings.Contains(got, "标题A") || !strings.Contains(got, "https://example.com/a") || !strings.Contains(got, "摘要A") {
+		t.Fatalf("JSON 结果未解析：%q", got)
+	}
+}
+
+// TestSearxngHTMLFallback 403 或 200 非 JSON 时，不带 format 再请求并解析 article.result。
+func TestSearxngHTMLFallback(t *testing.T) {
+	const page = `<html><body>
+<article class="result result-default">
+  <a href="https://example.com" class="url_header">example.com</a>
+  <h3><a href="https://example.com/article?a=1&amp;b=2">结果标题</a></h3>
+  <p class="content">结果摘要 &amp; 更多</p>
+</article>
+</body></html>`
+	cases := []struct {
+		name       string
+		jsonStatus int
+		jsonBody   string
+	}{
+		{"403 非 JSON", http.StatusForbidden, "forbidden"},
+		{"200 非 JSON", http.StatusOK, "<html>验证页</html>"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.URL.Query().Get("format") == "json" {
+					w.WriteHeader(tc.jsonStatus)
+					io.WriteString(w, tc.jsonBody)
+					return
+				}
+				io.WriteString(w, page)
+			}))
+			defer srv.Close()
+
+			searcher, err := NewHTTP(Options{URL: srv.URL + "/search", Protocol: "searxng"})
+			if err != nil {
+				t.Fatalf("装配失败：%v", err)
+			}
+			got, err := searcher.Search(context.Background(), "B站")
+			if err != nil {
+				t.Fatalf("HTML 兜底失败：%v", err)
+			}
+			if calls != 2 {
+				t.Errorf("请求次数 = %d，期望 JSON+HTML 各一次", calls)
+			}
+			for _, want := range []string{"结果标题", "https://example.com/article?a=1&b=2", "结果摘要 & 更多"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("HTML 结果缺少 %q：%q", want, got)
+				}
+			}
+		})
+	}
+}
+
+// TestSearxng429RotatesAndLogs 429 立刻换下一个实例，并记录每次尝试。
+func TestSearxng429RotatesAndLogs(t *testing.T) {
+	primaryCalls, fallbackCalls := 0, 0
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryCalls++
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackCalls++
+		io.WriteString(w, `{"results":[{"title":"备用实例","url":"https://example.com/f","content":"ok"}]}`)
+	}))
+	defer fallback.Close()
+
+	var logs bytes.Buffer
+	logger := zap.New(zapcore.NewCore(
+		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
+		zapcore.AddSync(&logs),
+		zap.InfoLevel,
+	))
+	searcher, err := NewHTTP(Options{
+		URL: primary.URL + "/search", Fallbacks: []string{fallback.URL + "/search"},
+		Protocol: "searxng", Logger: logger,
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	got, err := searcher.Search(context.Background(), "B站")
+	if err != nil {
+		t.Fatalf("应跳到备用实例成功：%v", err)
+	}
+	if primaryCalls != 1 || fallbackCalls != 1 {
+		t.Errorf("调用次数 = %d/%d，期望各 1（429 不重试）", primaryCalls, fallbackCalls)
+	}
+	if !strings.Contains(got, "备用实例") {
+		t.Fatalf("结果不是备用实例：%q", got)
+	}
+	logText := logs.String()
+	for _, want := range []string{`"action":"web_search"`, `"status":"rate_limited"`, `"status":"ok_json"`} {
+		if !strings.Contains(logText, want) {
+			t.Errorf("尝试日志缺少 %s：%s", want, logText)
+		}
+	}
+}
+
+// TestSearxngBlockedHTMLRotates 验证码页不算成功结果，继续换实例。
+func TestSearxngBlockedHTMLRotates(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("format") == "json" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		io.WriteString(w, `<html><title>Making sure you're not a bot!</title><p>verify captcha</p></html>`)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"results":[{"title":"验证码后仍可用","url":"https://example.com/ok","content":"ok"}]}`)
+	}))
+	defer fallback.Close()
+
+	searcher, err := NewHTTP(Options{
+		URL: primary.URL + "/search", Fallbacks: []string{fallback.URL + "/search"}, Protocol: "searxng",
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	got, err := searcher.Search(context.Background(), "B站")
+	if err != nil || !strings.Contains(got, "验证码后仍可用") {
+		t.Fatalf("验证码页应触发轮换：got=%q err=%v", got, err)
+	}
+}
+
+// TestSearxngAllFail 全部实例失败时明确报「搜索暂不可用」，不返回编造结果。
+func TestSearxngAllFail(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer fallback.Close()
+
+	searcher, err := NewHTTP(Options{
+		URL: primary.URL + "/search", Fallbacks: []string{fallback.URL + "/search"}, Protocol: "searxng",
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	got, err := searcher.Search(context.Background(), "B站")
+	if err == nil || !strings.Contains(err.Error(), "搜索暂不可用（所有实例失败）") {
+		t.Fatalf("应明确报所有实例失败：got=%q err=%v", got, err)
+	}
+	if got != "" {
+		t.Fatalf("失败时不应返回结果：%q", got)
+	}
+}
+
+// TestSearxngTimeoutRotates 单实例超时后换下一个实例。
+func TestSearxngTimeoutRotates(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		io.WriteString(w, `{"results":[]}`)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"results":[{"title":"超时后的备用","url":"https://example.com/t","content":"ok"}]}`)
+	}))
+	defer fallback.Close()
+
+	searcher, err := NewHTTP(Options{
+		URL: primary.URL + "/search", Fallbacks: []string{fallback.URL + "/search"},
+		Protocol: "searxng", Timeout: 40 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	got, err := searcher.Search(context.Background(), "B站")
+	if err != nil || !strings.Contains(got, "超时后的备用") {
+		t.Fatalf("超时应换实例：got=%q err=%v", got, err)
+	}
+}
+
+// TestSearxngAttemptLimit 总尝试不超过 6 次。
+func TestSearxngAttemptLimit(t *testing.T) {
+	const endpointCount = 9
+	calls := make([]int, endpointCount)
+	servers := make([]*httptest.Server, 0, endpointCount)
+	for i := 0; i < endpointCount; i++ {
+		index := i
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls[index]++
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		servers = append(servers, srv)
+	}
+	defer func() {
+		for _, srv := range servers {
+			srv.Close()
+		}
+	}()
+
+	fallbacks := make([]string, 0, endpointCount-1)
+	for _, srv := range servers[1:] {
+		fallbacks = append(fallbacks, srv.URL+"/search")
+	}
+	searcher, err := NewHTTP(Options{URL: servers[0].URL + "/search", Fallbacks: fallbacks, Protocol: "searxng"})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	if _, err := searcher.Search(context.Background(), "B站"); err == nil {
+		t.Fatal("全部 429 应失败")
+	}
+	total := 0
+	for _, n := range calls {
+		total += n
+	}
+	if total != maxInstanceAttempts {
+		t.Fatalf("总尝试 = %d，期望 %d", total, maxInstanceAttempts)
+	}
+	if calls[6] != 0 || calls[8] != 0 {
+		t.Fatalf("超过上限后仍请求实例：%v", calls)
+	}
+}
+
+// TestSearxngDedupesThenFilters 合并去重后按最终 URL 过滤白名单。
+func TestSearxngDedupesThenFilters(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"results":[
+			{"title":"视频A","url":"https://www.bilibili.com/video/a","content":"a"},
+			{"title":"视频A重复","url":"https://www.bilibili.com/video/a#frag","content":"a"},
+			{"title":"伪后缀","url":"https://evil-bilibili.com/x","content":"x"},
+			{"title":"其它","url":"https://zhihu.com/q","content":"q"}
+		]}`)
+	}))
+	defer srv.Close()
+
+	searcher, err := NewHTTP(Options{
+		URL: srv.URL + "/search", Protocol: "searxng", AllowedDomains: []string{"bilibili.com"},
+	})
+	if err != nil {
+		t.Fatalf("装配失败：%v", err)
+	}
+	got, err := searcher.Search(context.Background(), "B站")
+	if err != nil {
+		t.Fatalf("搜索失败：%v", err)
+	}
+	if strings.Count(got, "bilibili.com/video/a") != 1 {
+		t.Fatalf("重复结果未去重：%q", got)
+	}
+	for _, banned := range []string{"伪后缀", "其它"} {
+		if strings.Contains(got, banned) {
+			t.Fatalf("白名单外结果未过滤 %q：%q", banned, got)
+		}
+	}
+}
+
+// TestParseSearxngHTMLFallbacks article 结构差异时仍能取到标题/摘要。
+func TestParseSearxngHTMLFallbacks(t *testing.T) {
+	page := []byte(`<article class="result">
+		<h3><a href="https://example.com/h3">H3 标题</a></h3>
+		<p class="content">摘要一</p>
+	</article>
+	<article class="result result-default">
+		<a href="https://example.com/only-link">无 h3 的标题</a>
+	</article>`)
+	parsed := parseSearxngHTML(page)
+	if len(parsed.Results) != 2 {
+		t.Fatalf("解析条数 = %d，期望 2：%+v", len(parsed.Results), parsed.Results)
+	}
+	if parsed.Results[0].Title != "H3 标题" || parsed.Results[0].Snippet != "摘要一" ||
+		parsed.Results[0].URL != "https://example.com/h3" {
+		t.Fatalf("h3 结果不符：%+v", parsed.Results[0])
+	}
+	if parsed.Results[1].Title != "无 h3 的标题" || parsed.Results[1].URL != "https://example.com/only-link" {
+		t.Fatalf("无 h3 结果不符：%+v", parsed.Results[1])
 	}
 }

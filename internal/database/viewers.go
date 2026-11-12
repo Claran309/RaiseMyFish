@@ -202,6 +202,32 @@ func (r *ViewerRepo) ActiveSince(ctx context.Context, since time.Time) (bool, er
 	return exists, nil
 }
 
+// RepeatViewerNames 返回窗口内活跃观众的昵称（重复度触发用）。
+//
+// 只读 uid/name 两列，不装配整份档案（recent_texts/侧写字段对本功能无用）；
+// 昵称是否可用由 memory 包的称呼规则再过滤。
+func (r *ViewerRepo) RepeatViewerNames(ctx context.Context, since time.Time, limit int) ([]store.ViewerName, error) {
+	if ctx == nil || since.IsZero() || limit < 1 || limit > 500 {
+		return nil, store.ErrInvalid
+	}
+	var rows []struct {
+		UID  string
+		Name string
+	}
+	err := r.db.WithContext(ctx).Table("viewer_profiles").
+		Select("uid, name").
+		Where("last_seen >= ? AND btrim(name) <> ''", since.UTC()).
+		Order("hits DESC, last_seen DESC, uid ASC").Limit(limit).Scan(&rows).Error
+	if err != nil {
+		return nil, &safeError{"读取活跃观众昵称失败", err}
+	}
+	out := make([]store.ViewerName, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, store.ViewerName{UID: row.UID, Name: row.Name})
+	}
+	return out, nil
+}
+
 // ActiveViewers 返回本轮该做侧写的观众档案（R06/R09）。
 //
 // 选人分两条路：

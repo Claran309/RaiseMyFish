@@ -58,6 +58,32 @@ type MemoryRepo interface {
 	CountByKind(ctx context.Context) (map[string]int, error)
 }
 
+// RepeatFactState 是重复度触发需要的既有事实状态。
+//
+// Important：冲突更新不会改 importance，因此已存在的低权重事实
+// 不会被后续重复提炼重新抬高，主人纠正的降权可以长期生效。
+type RepeatFactState struct {
+	ID         string
+	Title      string
+	Summary    string
+	Importance float64
+	Confidence float64
+	ValidFrom  time.Time
+	Archived   bool
+}
+
+// RepeatFactStore 是重复度触发的窄接口：只依赖写入、按标题查重与降权。
+//
+// 刻意不并进 MemoryRepo：并进去会让所有既有 fake 都要多实现三个方法，
+// 而重复度触发是可选能力，关闭阈值时 worker 不会调用它。
+type RepeatFactStore interface {
+	InsertRecord(context.Context, MemoryRecord) (bool, error)
+	// RepeatFactByTitle 按公开事实标题查最近一行；不存在返回 false。
+	RepeatFactByTitle(ctx context.Context, title string) (RepeatFactState, bool, error)
+	// DownweightFact 只降低重要度与置信度，不抬高；返回是否命中了有效事实。
+	DownweightFact(ctx context.Context, id string, importance, confidence float64) (bool, error)
+}
+
 // Validate 检查持久化输入，拒绝错误降密和无范围私密记录。
 func (r MemoryRecord) Validate() error {
 	if strings.TrimSpace(r.Source) == "" || strings.TrimSpace(r.Title) == "" || r.ValidFrom.IsZero() {

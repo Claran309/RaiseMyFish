@@ -35,6 +35,7 @@ type MemoryRepo struct{ db *gorm.DB }
 // 编译期断言：事实查询同时满足 store 与 memory 两侧的窄接口。
 var (
 	_ store.MemoryRepo          = (*MemoryRepo)(nil)
+	_ store.RepeatFactStore     = (*MemoryRepo)(nil)
 	_ store.FactSource          = (*MemoryRepo)(nil)
 	_ memory.ViewerRecordSource = (*MemoryRepo)(nil)
 	_ memory.FactSource         = (*MemoryRepo)(nil)
@@ -129,9 +130,61 @@ WHERE memory_records.kind = 'fact'
 	return result.RowsAffected == 1, nil
 }
 
+// RepeatFactByTitle 按公开事实标题读取最近一行（含归档状态）。
+//
+// 重复度触发用它做两件事：复用既有记录 ID（保证幂等）与读取 valid_from
+// 判断 24 小时防抖。只看公开行：DM 里同名的事实不能挡住公开事实的生成。
+func (r *MemoryRepo) RepeatFactByTitle(ctx context.Context, title string) (store.RepeatFactState, bool, error) {
+	title = strings.TrimSpace(title)
+	if ctx == nil || title == "" || utf8.RuneCountInString(title) > 200 {
+		return store.RepeatFactState{}, false, store.ErrInvalid
+	}
+	var row struct {
+		ID         string
+		Title      string
+		Summary    string
+		Importance float64
+		Confidence float64
+		ValidFrom  time.Time
+		Archived   bool
+	}
+	err := r.db.WithContext(ctx).Table("memory_records").
+		Select("id,title,summary,importance,confidence,valid_from,archived").
+		Where("kind = ? AND title = ? AND NOT private", "fact", title).
+		Order("archived ASC, valid_from DESC, id ASC").Limit(1).Scan(&row).Error
+	if err != nil {
+		return store.RepeatFactState{}, false, &safeError{"读取重复度事实失败", err}
+	}
+	if strings.TrimSpace(row.ID) == "" {
+		return store.RepeatFactState{}, false, nil
+	}
+	return store.RepeatFactState{
+		ID: row.ID, Title: row.Title, Summary: row.Summary,
+		Importance: row.Importance, Confidence: row.Confidence,
+		ValidFrom: row.ValidFrom, Archived: row.Archived,
+	}, true, nil
+}
+
+// DownweightFact 把一条有效事实的重要度与置信度压到不高于给定值。
+//
+// 只用 LEAST 不抬高：重复提炼或后续统计不能把主人纠正过的权重重新拉回来。
+// 归档或已失效的行不动，返回 false。
+func (r *MemoryRepo) DownweightFact(ctx context.Context, id string, importance, confidence float64) (bool, error) {
+	id = strings.TrimSpace(id)
+	if ctx == nil || id == "" || importance < 0 || importance > 1 || confidence < 0 || confidence > 1 {
+		return false, store.ErrInvalid
+	}
+	result := r.db.WithContext(ctx).Exec(`UPDATE memory_records
+SET importance = LEAST(importance, ?), confidence = LEAST(confidence, ?)
+WHERE id = ? AND kind = 'fact' AND valid_to IS NULL AND NOT archived`, importance, confidence, id)
+	if result.Error != nil {
+		return false, &safeError{"降低记忆权重失败", result.Error}
+	}
+	return result.RowsAffected > 0, nil
+}
+
 // Recent 返回最近N条同会话消息，展示顺序为时间和ID升序。
-func (r *MemoryRepo) Recent(ctx context.Context, s memory.Scope, limit int) ([]memory.Message, error) {
-	if err := validateRecall(ctx, s, limit); err != nil {
+func (r *MemoryRepo) Recent(ctx context.Context, s memory.Scope, limit int) ([]memory.Message, error) {	if err := validateRecall(ctx, s, limit); err != nil {
 		return nil, err
 	}
 	query := r.db.WithContext(ctx).Table("events").Where("channel=? AND session=?", s.Channel, s.Session).Where("(dir <> 'out' OR status='done')")

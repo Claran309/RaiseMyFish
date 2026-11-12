@@ -53,10 +53,16 @@ const LLMExtractPrompt = `你是记忆提炼器。读一条直播弹幕和最近
 2. 真实的身份/关系自述：职业、所在地、和主播的关系（但「我是梁文峰」这种反差玩笑不算）
 3. 明确承诺：「明天给你带 X」「答应过 X」
 4. 长期有效的习惯/事实：「每天早上 X 点起」「养了两只猫」
+5. 反复出现的称呼/别名：同一称呼在上下文里多次出现且都指向同一个人（「奇迹鱼」指的是「X奇迹与你X」）
+6. 明确的关系陈述：「X 是 Y 的室友/同学/朋友」（只记明确说出口的，不猜）
+7. 小圈子黑话/梗的固定含义：同一个词多次出现且上下文含义一致（「上号」= 一起打游戏）
 
 【不该记】（一律 archive=false）：
 - 玩笑、钓鱼、整活、玩梗（「我是梁文峰」「按 alt+f4」「我是盲人」）
+- 任何以第一人称编造的自我身份（「我是梁文峰」「我其实是明星」）：没有上下文证据一律不记
 - 恶搞/挑衅/命令（「主播我命令你 X」「展示 alt+f4」）
+- 钓况流水账（「又空军了」「上了条大的」）
+- 纯语气词/表情/复读（「哈哈哈」「？？？」「666」）
 - 情绪废话/反问/感叹（「那我想被不骂呢」「怎么会这样」）
 - 一次性闲聊、当时说的话、无信息量的附和
 - 对主播的临时要求/起哄
@@ -109,6 +115,11 @@ func (e *LLMExtractor) Extract(ctx context.Context, ev event.Event, opts Extract
 	if ev.Private && !opts.AllowPrivate {
 		return nil, nil
 	}
+	// 编造自我身份（「我是梁文峰」）在进入任何提炼分支前直接丢弃：
+	// 这不是「模型可能判断错」的问题，而是提示词放宽后最容易被带回来的垃圾。
+	if bareIdentityClaim(ev.Text) {
+		return nil, nil
+	}
 	ruleResult := Extract(ev, opts)
 	if e == nil || e.llm == nil {
 		return ruleResult, nil
@@ -129,6 +140,35 @@ func (e *LLMExtractor) Extract(ctx context.Context, ev event.Event, opts Extract
 		return ruleResult, nil //nolint:nilerr // 有意吞掉：LLM 只是增强
 	}
 	return out, nil
+}
+
+// bareIdentityMaxRunes 是「一句话身份自称」的长度上限。
+const bareIdentityMaxRunes = 30
+
+// bareIdentityPrefixes 是第一人称身份自称的句式前缀。
+var bareIdentityPrefixes = []string{"我是", "我叫", "我的名字是", "本人是", "我就是"}
+
+// bareIdentityClaim 判断是否为「一句话式第一人称身份自称」。
+//
+// 这类短句没有可核实信息，最容易复现「我是梁文峰」式玩笑；
+// 整条事件直接不产记忆，也不浪费模型调用。带逗号/分句的表述
+// （「我是学生，今天在上课」）不在此列，交给模型按上下文判断。
+func bareIdentityClaim(text string) bool {
+	text = strings.TrimSpace(text)
+	text = strings.TrimRight(text, "。.！!？?，,；;~～ ")
+	if text == "" || utf8.RuneCountInString(text) > bareIdentityMaxRunes {
+		return false
+	}
+	// 仍有内部分句说明不是单纯的身份口号，交给模型判断。
+	if strings.ContainsAny(text, "，,。.；;！!？?\n") {
+		return false
+	}
+	for _, prefix := range bareIdentityPrefixes {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // shouldUseLLM 是触发策略：只对值得多花一次调用的事件跑模型。
@@ -279,6 +319,11 @@ func parseLLMRecords(raw string, ev event.Event, opts ExtractOptions) ([]Candida
 		}
 		importance := r.Importance
 		if importance < 0 || importance > 1 {
+			importance = factImportance
+		}
+		// 防垃圾护栏（#93）：事实类重要度起步不超过 0.6，模型给再高也不认。
+		// 承诺/偏好不在此列，它们的原有门槛由提示词控制。
+		if kind == KindFact && importance > factImportance {
 			importance = factImportance
 		}
 		confidence := reply.Confidence

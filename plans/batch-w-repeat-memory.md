@@ -55,3 +55,15 @@
 ## 执行规则
 
 fishd 不重启（交付后 DSH 验证）；不执行 git；不改 personas 文本（配置项走 TOML）。
+
+## 实施状态（2026-11-13，待 DSH 验收）
+
+- [x] W1 config：`[memory] repeat_promote_threshold`（默认 5，0/1 关闭；校验 0~1000）
+- [x] W2 memory 纯函数：`RepeatEntities`（别名/档案名/@ 目标）、`FilterRepeatEntities`（忽略鱼自身名）、`CountRepeatMentions`、`DedupeRepeatCandidates`、`CorrectedRepeatAliases`、`RepeatFactTitle/Key`（`internal/memory/repeat.go` + 单测）
+- [x] W3 database：`EventRepo.PublicIncomingSince`（只取公开入站、`at >= since`、上限保护）、`MemoryRepo.RepeatFactByTitle` / `DownweightFact`、`RepeatFactStore` 窄接口
+- [x] W4 extractworker：`RepeatPromotion` 子任务接入 `RunOnce`/`runJobs`；达标写 `live/global` fact（title `称呼：奇迹鱼 = X奇迹与你X`，summary 带 7 天次数，importance 0.5，evidence=次数+最多 5 条事件 ID）；24h 防抖 + 同标题去重；主人纠正 → 降权 0.2 不再新建；已归档不复活；失败只记 stats 不影响提炼主流程
+- [x] W4 护栏：fact 无 evidence 不写；LLM 提炼器允许「反复称呼/明确关系/黑话」，拦截 bare 第一人称身份句（「我是梁文峰」等）且不调模型；fact importance 上限 0.6
+- [x] W5 fishd：装配 `RepeatPromotion`（`cfg.Memory.RepeatPromoteThreshold`、窗口 7 天、防抖 24h、`IgnoreNames` 取调度器 `self_names`）；typed-nil 防护；启动/每轮日志带 repeat 统计
+- [x] 文档：`docs/06-memory.md` 增「2.1 重复度触发（#93）」
+- [x] 门禁：`go build ./...`、`go vet ./...`、`go vet -tags integration ./internal/database/`、`go test ./... -count=1`、`go test -race ./internal/memory/... ./internal/config/ ./cmd/fishd/ -count=1` 全绿
+- [ ] 真机回放（DSH）：14 条「奇迹鱼」→ 1 条 fact 且鱼能答；「我是梁文峰」不生成（fishd 不重启，本轮不跑）

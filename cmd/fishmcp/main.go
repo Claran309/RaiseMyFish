@@ -248,9 +248,11 @@ func buildToolExecutors(cfg config.Config, usage store.UsageRepo, log *zap.Logge
 	if cfg.Web.SearchURL != "" {
 		searcher, err := webtools.NewHTTP(webtools.Options{
 			URL:            cfg.Web.SearchURL,
+			Fallbacks:      cfg.Web.SearchFallbacks,
 			Key:            cfg.Web.ResolveKey(),
 			Protocol:       cfg.Web.Protocol,
 			AllowedDomains: cfg.Web.AllowedDomains,
+			Logger:         log,
 		})
 		if err != nil {
 			log.Warn("搜索执行器未装配",

@@ -36,3 +36,25 @@ func (r *EventRepo) PublicSince(ctx context.Context, ch event.Channel, since tim
 	}
 	return out, nil
 }
+
+// PublicIncomingSince 返回窗口内全部公开入向事件（跨通道），按时间倒序。
+//
+// 重复度触发要跨直播间/评论统计同一个称呼，所以不按通道过滤；
+// DM 与私密事件仍在 SQL 层排除，避免私聊内容进入公开事实。
+func (r *EventRepo) PublicIncomingSince(ctx context.Context, since time.Time, limit int) ([]event.Event, error) {
+	if ctx == nil || since.IsZero() || limit < 1 || limit > maxSinceEvents {
+		return nil, store.ErrInvalid
+	}
+	var rows []eventRow
+	err := r.db.WithContext(ctx).Table("events").
+		Where("channel <> ? AND dir = ? AND private = ? AND at >= ?", event.ChDM, event.DirIn, false, since).
+		Order("at DESC, id DESC").Limit(limit).Find(&rows).Error
+	if err != nil {
+		return nil, &safeError{"读取公开事件窗口失败", err}
+	}
+	out := make([]event.Event, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.event())
+	}
+	return out, nil
+}

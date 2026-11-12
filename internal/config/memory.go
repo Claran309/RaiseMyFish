@@ -41,6 +41,9 @@ type Memory struct {
 	ViewerSummaryRecentTTLSeconds int `toml:"viewer_summary_recent_ttl_seconds"`
 	// ViewerSummaryDailyViewers 是每天最多尝试侧写的观众数（按尝试时间去重）。
 	ViewerSummaryDailyViewers int `toml:"viewer_summary_daily_viewers"`
+	// RepeatPromoteThreshold 是重复度触发阈值：同一实体在 7 天窗口内被公开提及
+	// 达到该次数就提升为一条 fact。0 表示关闭重复度触发；启用时范围 2-100。
+	RepeatPromoteThreshold int `toml:"repeat_promote_threshold"`
 	// OwnerUID 是主人的可信平台 UID：只有发言人 UID 与之相等才算主人自述，
 	// 也才可能提升为长期设定。昵称可被改名冒充，不参与身份判定。
 	OwnerUID string `toml:"owner_uid"`
@@ -58,6 +61,7 @@ func defaultMemory() Memory {
 		ViewerSummaryMinNewMessages:   3,
 		ViewerSummaryRecentTTLSeconds: 7 * 24 * 3600,
 		ViewerSummaryDailyViewers:     50,
+		RepeatPromoteThreshold:        5,
 	}
 }
 
@@ -109,6 +113,9 @@ func (m Memory) Validate() error {
 	}
 	if m.ViewerSummaryDailyViewers < 1 || m.ViewerSummaryDailyViewers > 500 {
 		return errors.New("观众侧写每日观众预算必须在1至500之间")
+	}
+	if m.RepeatPromoteThreshold != 0 && (m.RepeatPromoteThreshold < 2 || m.RepeatPromoteThreshold > 100) {
+		return errors.New("重复度触发阈值必须为0（关闭）或2至100次")
 	}
 	if m.SoulEnabled {
 		if m.SoulMaxEntries < 1 || m.SoulMaxEntries > 100 {
