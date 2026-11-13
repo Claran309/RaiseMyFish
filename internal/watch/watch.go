@@ -9,7 +9,10 @@ import (
 )
 
 // DefaultPrompt 是读帧的固定提示词。
-const DefaultPrompt = "描述画面：主播在做什么/画面文字/氛围"
+const DefaultPrompt = "描述画面：主播在做什么/画面文字/氛围。" +
+	"只写画面里能直接看到的东西（人物动作、界面文字、场景），" +
+	"不要在画面里看不到游戏名/作品名时猜它是什么游戏——不确定就写「像素风游戏，具体名字看不清」。" +
+	"不要凭观众印象补充画面上没有的游戏名。"
 
 // MaxFramesPerClip 与配置校验口径一致：一段录像最多看 5 帧。
 const MaxFramesPerClip = 5
