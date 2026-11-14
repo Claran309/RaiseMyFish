@@ -63,6 +63,10 @@ func buildBrains(ctx context.Context, cfg config.Config, usage store.UsageRepo, 
 		o.KnowledgeBudgetPercent = cfg.Knowledge.BudgetPercent
 		if price, ok := p.Prices[model]; ok {
 			o.InputUSDPerMillion = price.InputUSDPerMillion
+			o.CachedInputUSDPerMillion = price.CachedInputUSDPerMillion
+			o.OffPeakInputUSDPerMillion = price.OffPeakInputUSDPerMillion
+			o.OffPeakOutputUSDPerMillion = price.OffPeakOutputUSDPerMillion
+			o.OffPeakCachedInputUSDPerMillion = price.OffPeakCachedInputUSDPerMillion
 			o.OutputUSDPerMillion = price.OutputUSDPerMillion
 		}
 		runtime, err := brain.New(client, usage, o, logger)

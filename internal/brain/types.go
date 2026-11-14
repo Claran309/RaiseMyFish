@@ -87,6 +87,16 @@ type Options struct {
 	MaxConcurrent          int
 	Temperature            float64
 	InputUSDPerMillion     *float64
+	// CachedInputUSDPerMillion 是缓存命中输入的单价；nil 时按 InputUSDPerMillion 计（不静默打折）。
+	CachedInputUSDPerMillion *float64
+	// OffPeak* 是谷段价（峰段的一半）；全部 nil 表示不分峰谷。
+	OffPeakInputUSDPerMillion       *float64
+	OffPeakOutputUSDPerMillion      *float64
+	OffPeakCachedInputUSDPerMillion *float64
+	// Peak 是峰段定义；零值时用 DeepSeek 官方峰段。
+	Peak PeakWindow
+	// Now 供测试注入时钟；nil 用 time.Now。
+	Now func() time.Time
 	OutputUSDPerMillion    *float64
 }
 

@@ -37,6 +37,13 @@ type Provider struct {
 type Price struct {
 	InputUSDPerMillion  *float64 `toml:"input_usd_per_million"`
 	OutputUSDPerMillion *float64 `toml:"output_usd_per_million"`
+	// CachedInputUSDPerMillion 是缓存命中输入的单价（DeepSeek 官方 0.003-0.006）。
+	// 未配置时按 input 价计（不做折扣），避免静默低估。
+	CachedInputUSDPerMillion *float64 `toml:"cached_input_usd_per_million"`
+	// OffPeak* 是谷段价（DeepSeek 峰段的一半）。全部为 nil 表示不分峰谷。
+	OffPeakInputUSDPerMillion       *float64 `toml:"offpeak_input_usd_per_million"`
+	OffPeakOutputUSDPerMillion      *float64 `toml:"offpeak_output_usd_per_million"`
+	OffPeakCachedInputUSDPerMillion *float64 `toml:"offpeak_cached_input_usd_per_million"`
 }
 
 func defaultLLM() LLM {
@@ -129,7 +136,7 @@ func (l LLM) Validate() error {
 			if !hasModel(p, model) || (price.InputUSDPerMillion == nil) != (price.OutputUSDPerMillion == nil) {
 				return errors.New("LLM报价必须对应模型且同时配置输入/输出")
 			}
-			for _, v := range []*float64{price.InputUSDPerMillion, price.OutputUSDPerMillion} {
+			for _, v := range []*float64{price.InputUSDPerMillion, price.OutputUSDPerMillion, price.CachedInputUSDPerMillion, price.OffPeakInputUSDPerMillion, price.OffPeakOutputUSDPerMillion, price.OffPeakCachedInputUSDPerMillion} {
 				if v != nil && (math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0) {
 					return errors.New("LLM报价必须是非负有限数")
 				}

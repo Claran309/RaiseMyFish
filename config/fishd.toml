@@ -116,8 +116,15 @@ live = "deepseek:deepseek-chat"
 # 报价（USD/百万 tokens）：deepseek-chat（V3）2025 官价
 # 输入 0.27（cache miss）/ 输出 1.10；价格变动请按官网调整。
 [llm.providers.deepseek.prices.deepseek-chat]
-input_usd_per_million = 0.27
-output_usd_per_million = 1.10
+# DeepSeek 官方价（2026，每百万 token，USD）：
+# 峰段 = UTC 周一至周五 01:00-04:00 / 06:00-10:00（不含中国法定假日）；谷段 = 其余时间，半价。
+input_usd_per_million = 0.30
+output_usd_per_million = 1.20
+cached_input_usd_per_million = 0.006
+# 谷段价（峰段的一半）：
+offpeak_input_usd_per_million = 0.15
+offpeak_output_usd_per_million = 0.60
+offpeak_cached_input_usd_per_million = 0.003
 
 # 仅装配知识Reader；默认关闭，事件消费链路尚未接入。
 [knowledge]

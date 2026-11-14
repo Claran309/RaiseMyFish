@@ -41,7 +41,7 @@ func New(p provider.Provider, usage store.UsageRepo, o Options, logger *zap.Logg
 	if o.KnowledgeBudgetPercent < 0 || o.KnowledgeBudgetPercent > 10 {
 		return nil, &Error{Kind: KindInput}
 	}
-	for _, price := range []*float64{o.InputUSDPerMillion, o.OutputUSDPerMillion} {
+	for _, price := range []*float64{o.InputUSDPerMillion, o.OutputUSDPerMillion, o.CachedInputUSDPerMillion} {
 		if price != nil && (math.IsNaN(*price) || math.IsInf(*price, 0) || *price < 0) {
 			return nil, &Error{Kind: KindInput}
 		}
@@ -51,6 +51,10 @@ func New(p provider.Provider, usage store.UsageRepo, o Options, logger *zap.Logg
 		in, out := *o.InputUSDPerMillion, *o.OutputUSDPerMillion
 		o.InputUSDPerMillion = &in
 		o.OutputUSDPerMillion = &out
+		if o.CachedInputUSDPerMillion != nil {
+			cached := *o.CachedInputUSDPerMillion
+			o.CachedInputUSDPerMillion = &cached
+		}
 	}
 	return &OpenAI{provider: p, usage: usage, options: o, logger: logger, slots: make(chan struct{}, o.MaxConcurrent)}, nil
 }
@@ -69,7 +73,45 @@ func cost(u provider.Usage, o Options) *float64 {
 	if u.InputTokens == nil || u.OutputTokens == nil || o.InputUSDPerMillion == nil || o.OutputUSDPerMillion == nil {
 		return nil
 	}
-	v := math.Round((float64(*u.InputTokens)**o.InputUSDPerMillion + float64(*u.OutputTokens)**o.OutputUSDPerMillion)) / 1e6
+	// 缓存命中部分按缓存价计（DeepSeek 官方 0.07 vs 0.27）；未配置缓存价时整段按 miss 价。
+	// 峰谷选价：谷段且配了谷价时用谷价。
+	inUSD := *o.InputUSDPerMillion
+	outUSD := *o.OutputUSDPerMillion
+	peak := o.Peak
+	if len(peak.Ranges) == 0 {
+		peak = DefaultDeepSeekPeak()
+	}
+	now := time.Now
+	if o.Now != nil {
+		now = o.Now
+	}
+	if !peak.InPeak(now()) {
+		if o.OffPeakInputUSDPerMillion != nil {
+			inUSD = *o.OffPeakInputUSDPerMillion
+		}
+		if o.OffPeakOutputUSDPerMillion != nil {
+			outUSD = *o.OffPeakOutputUSDPerMillion
+		}
+	}
+	cached := 0
+	if u.CachedInputTokens != nil {
+		cached = *u.CachedInputTokens
+	}
+	if cached < 0 {
+		cached = 0
+	}
+	if cached > *u.InputTokens {
+		cached = *u.InputTokens
+	}
+	miss := *u.InputTokens - cached
+	cachedUSD := inUSD
+	if o.CachedInputUSDPerMillion != nil {
+		cachedUSD = *o.CachedInputUSDPerMillion
+	}
+	if !peak.InPeak(now()) && o.OffPeakCachedInputUSDPerMillion != nil {
+		cachedUSD = *o.OffPeakCachedInputUSDPerMillion
+	}
+	v := math.Round((float64(miss)*inUSD + float64(cached)*cachedUSD + float64(*u.OutputTokens)*outUSD)) / 1e6
 	return &v
 }
 

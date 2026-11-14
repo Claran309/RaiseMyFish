@@ -40,6 +40,55 @@ type UsageRepo interface {
 //
 // 缺 token 或缺报价就是 nil（unknown），绝不编造 0 —— 与 Brain 的口径一致。
 // 结果四舍五入到 1e-6（llm_usage.cost_usd 是 NUMERIC(10,6)）。
+// CostWithPeak 是峰谷版计价：peak 价与 offpeak 价按传入时刻选择。
+// 谷价任一为 nil 时退回峰价（不分峰谷），保证不静默低估。
+func CostWithPeak(in, out, cached *int, inUSD, outUSD, cachedUSD, offInUSD, offOutUSD, offCachedUSD *float64, at time.Time) *float64 {
+	// DeepSeek 峰段：UTC 周一至周五 01:00-04:00 / 06:00-10:00；其余为谷段。
+	utc := at.UTC()
+	inPeak := false
+	if d := utc.Weekday(); d != time.Saturday && d != time.Sunday {
+		h := utc.Hour()
+		inPeak = (h >= 1 && h < 4) || (h >= 6 && h < 10)
+	}
+	useIn, useOut, useCached := inUSD, outUSD, cachedUSD
+	if !inPeak {
+		if offInUSD != nil {
+			useIn = offInUSD
+		}
+		if offOutUSD != nil {
+			useOut = offOutUSD
+		}
+		if offCachedUSD != nil {
+			useCached = offCachedUSD
+		}
+	}
+	return CostWithCache(in, out, cached, useIn, useOut, useCached)
+}
+
+// CostWithCache 按「命中/未命中」分别计价；cachedUSD 为 nil 时整段按 inUSD 计。
+func CostWithCache(in, out, cached *int, inUSD, outUSD, cachedUSD *float64) *float64 {
+	if in == nil || out == nil || inUSD == nil || outUSD == nil {
+		return nil
+	}
+	hit := 0
+	if cached != nil {
+		hit = *cached
+	}
+	if hit < 0 {
+		hit = 0
+	}
+	if hit > *in {
+		hit = *in
+	}
+	miss := *in - hit
+	hitPrice := *inUSD
+	if cachedUSD != nil {
+		hitPrice = *cachedUSD
+	}
+	v := math.Round((float64(miss)**inUSD + float64(hit)*hitPrice + float64(*out)**outUSD)) / 1e6
+	return &v
+}
+
 func Cost(in, out *int, inUSD, outUSD *float64) *float64 {
 	if in == nil || out == nil || inUSD == nil || outUSD == nil {
 		return nil

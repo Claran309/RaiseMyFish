@@ -533,6 +533,10 @@ func buildBackgroundLLM(cfg config.Config, key string, maxTokens int, purpose ll
 	if price, ok := prov.Prices[model]; ok {
 		adapter.inUSD = price.InputUSDPerMillion
 		adapter.outUSD = price.OutputUSDPerMillion
+		adapter.cachedUSD = price.CachedInputUSDPerMillion
+		adapter.offInUSD = price.OffPeakInputUSDPerMillion
+		adapter.offOutUSD = price.OffPeakOutputUSDPerMillion
+		adapter.offCachedUSD = price.OffPeakCachedInputUSDPerMillion
 	}
 	return adapter, model, nil
 }
@@ -546,6 +550,10 @@ type memoryProviderLLM struct {
 	purpose   llmmeta.Purpose
 	inUSD     *float64
 	outUSD    *float64
+	cachedUSD *float64
+	offInUSD  *float64
+	offOutUSD *float64
+	offCachedUSD *float64
 	usage     store.UsageRepo
 	logger    *zap.Logger
 }
@@ -579,7 +587,7 @@ func (m *memoryProviderLLM) record(ctx context.Context, at time.Time, resp provi
 		InputTokens:       validTokens(resp.Usage.InputTokens),
 		OutputTokens:      validTokens(resp.Usage.OutputTokens),
 		CachedInputTokens: validTokens(resp.Usage.CachedInputTokens),
-		CostUSD:           store.Cost(resp.Usage.InputTokens, resp.Usage.OutputTokens, m.inUSD, m.outUSD),
+		CostUSD:           store.CostWithPeak(resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CachedInputTokens, m.inUSD, m.outUSD, m.cachedUSD, m.offInUSD, m.offOutUSD, m.offCachedUSD, time.Now()),
 		Milliseconds:      int(time.Since(at).Milliseconds()),
 		OK:                callErr == nil,
 	}
