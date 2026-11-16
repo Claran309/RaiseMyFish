@@ -5,16 +5,22 @@ SHELL := /bin/bash
 BINARY := fishd
 CTL := fishctl
 GOFLAGS := -trimpath
+# 发布版本号：make build VERSION=0.1.0；未指定时为 dev。
+VERSION ?= dev
+LDFLAGS := -X main.version=$(VERSION)
 COMPOSE := docker compose -f deployment/docker-compose.yml
 
-.PHONY: help build run test test-race lint fmt vet migrate-up migrate-down dev-status clean docker-up docker-down docker-logs docker-migrate
+.PHONY: help build release run test test-race lint fmt vet migrate-up migrate-down dev-status clean docker-up docker-down docker-logs docker-migrate
 
 help: ## 显示所有命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-build: ## 构建 fishd 与 fishctl
-	go build $(GOFLAGS) -o bin/$(BINARY) ./cmd/fishd
+build: ## 构建 fishd 与 fishctl（VERSION 注入 fishd 版本号）
+	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/fishd
 	go build $(GOFLAGS) -o bin/$(CTL) ./cmd/fishctl
+
+release: ## 打稳定包到 dist/：VERSION 版本 + 当前配置/人格 + start.bat
+	bash scripts/build-dist.sh $(VERSION)
 
 run: ## 本地运行主服务（需已配置 .env）
 	go run ./cmd/fishd
