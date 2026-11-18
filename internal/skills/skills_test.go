@@ -123,6 +123,28 @@ func TestSplitFrontmatterRequiresDelimiters(t *testing.T) {
 	}
 }
 
+func TestRegistryReadFile(t *testing.T) {
+	root := t.TempDir()
+	dir := writeSkill(t, root, "docs-skill", "", "# docs\n")
+	ref := filepath.Join(dir, "references")
+	if err := os.MkdirAll(ref, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ref, "genre.md"), []byte("题材说明"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg := newTestRegistry(t, root, false)
+	text, err := reg.ReadFile("docs-skill", "references/genre.md")
+	if err != nil || text != "题材说明" {
+		t.Fatalf("读取参考文件失败：%q err=%v", text, err)
+	}
+	for _, bad := range []string{"../secret.md", "references/../../secret.md", "scripts/run.py"} {
+		if _, err := reg.ReadFile("docs-skill", bad); err == nil {
+			t.Fatalf("非法参考路径未被拒绝：%s", bad)
+		}
+	}
+}
+
 func TestRepositorySkillSamples(t *testing.T) {
 	reg, err := New(Options{
 		Dir:            filepath.Join("..", "..", "skills"),
@@ -141,7 +163,7 @@ func TestRepositorySkillSamples(t *testing.T) {
 	for _, item := range reg.List() {
 		names[item.Name] = true
 	}
-	if !names["white-rice"] || !names["dice"] {
+	if !names["white-rice"] || !names["dice"] || !names["foreverse-character-card-skills"] || !names["csp"] {
 		t.Fatalf("仓库示例技能缺失：%+v", names)
 	}
 	if runtime.GOOS != "windows" {

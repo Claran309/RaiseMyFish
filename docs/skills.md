@@ -54,7 +54,7 @@ timeout_seconds: 5        # 可选，默认 10，不超过 [skills].max_timeout_
 | 工具 | 作用 | args |
 |---|---|---|
 | `skill_list` | 列出技能名与用途 | 忽略 |
-| `skill_read` | 读技能完整说明 | 技能名 |
+| `skill_read` | 读技能说明或技能内参考文件，按页返回 | 技能名；或 JSON：`{"name":"character-card-author","file":"genres/_index.md","offset":0,"limit":1800}` |
 | `skill_run` | 执行技能声明的脚本 | JSON：`{"name":"dice","args":"2"}`；也接受裸技能名（无参数） |
 
 脚本通过环境变量接收参数：
@@ -64,6 +64,16 @@ timeout_seconds: 5        # 可选，默认 10，不超过 [skills].max_timeout_
 - `FISH_SKILL_ARGS`：`skill_run` 的 args 原文（≤4KB）
 
 脚本的 stdout/stderr 合并返回，受 `max_output_bytes` 限制。
+
+### 上下文预算
+
+技能**不会把整包正文自动注入** ReAct prompt：
+
+- `skill_list` 只返回名称 + 简短描述，`Toolbox` 上限 900 字符；
+- `skill_read` 默认只返回 1800 字符，`file` 可读技能内文本参考（`.md/.txt/.json/.yaml/.yml/.csv/.toml`），用 `offset/limit` 分页，单次最多 2400 字符；
+- `skill_run` 输出经 `max_output_bytes` 裁剪。
+
+因此像 Foreverse 这种带 47 份分类指南的大包，只会在模型明确需要时读一小段，而不是整包进上下文。
 
 ## 4. 配置
 
@@ -89,7 +99,14 @@ allowed = []               # 空=全部；只允许列出的技能名
 - `allow_scripts=false` 时所有 `skill_run` 拒绝，但 `skill_list/skill_read` 仍可用。
 - 技能名、描述、正文和脚本输出都会进入模型上下文，不要写凭据。
 
-## 6. 限制（下一版再做）
+## 6. 已安装示例
+
+- `white-rice`：白饭梗说明（纯说明，无脚本）
+- `dice`：真实掷骰子脚本
+- `foreverse-character-card-skills`：Foreverse 角色卡创作套件（四个子技能完整放在 `references/`，按需分页读）
+- `csp`：Character Skill Producer（离线角色蒸馏器，含 references/scripts，不在直播中直接调用）
+
+## 7. 限制（下一版再做）
 
 - 没有 Web 面板管理（新增/编辑/删除技能仍用文件）。
 - 没有按技能配置网络/文件权限（目前靠进程用户权限和目录约束）。

@@ -218,6 +218,45 @@ func (r *Registry) Read(name string) (string, error) {
 	return skill.Body, nil
 }
 
+// ReadFile 读取技能目录内的参考文档；只允许文本类扩展名，禁止跳出技能目录。
+// 用于大技能按需读取 genres/、references/ 等资料，避免一次性把整包塞进上下文。
+func (r *Registry) ReadFile(name, relative string) (string, error) {
+	skill, ok := r.Get(name)
+	if !ok {
+		return "", fmt.Errorf("技能不存在：%s", name)
+	}
+	clean := filepath.Clean(filepath.FromSlash(strings.TrimSpace(relative)))
+	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", errors.New("参考文件路径不合法")
+	}
+	switch strings.ToLower(filepath.Ext(clean)) {
+	case ".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".toml":
+	default:
+		return "", errors.New("参考文件只支持 Markdown/文本/JSON/YAML/CSV/TOML")
+	}
+	realDir, err := filepath.EvalSymlinks(skill.Dir)
+	if err != nil {
+		return "", errors.New("技能目录不可用")
+	}
+	realPath, err := filepath.EvalSymlinks(filepath.Join(skill.Dir, clean))
+	if err != nil {
+		return "", fmt.Errorf("参考文件不存在：%s", clean)
+	}
+	rel, err := filepath.Rel(realDir, realPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", errors.New("参考文件路径不合法")
+	}
+	info, err := os.Stat(realPath)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 512*1024 {
+		return "", fmt.Errorf("参考文件不存在或过大：%s", clean)
+	}
+	data, err := os.ReadFile(realPath)
+	if err != nil {
+		return "", fmt.Errorf("读取参考文件失败：%w", err)
+	}
+	return string(data), nil
+}
+
 // Run 执行技能声明的脚本；args 通过 FISH_SKILL_ARGS 环境变量传给脚本。
 func (r *Registry) Run(ctx context.Context, name, args string) (string, error) {
 	if r == nil {

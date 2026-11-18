@@ -47,14 +47,23 @@ func buildSkillToolbox(registry *skills.Registry) (*reasoning.Toolbox, error) {
 	}
 	read := reasoning.Tool{
 		Name:     toolSkillRead,
-		Desc:     "读取某个技能的完整操作说明；args 传技能名（先用 skill_list 确认）",
-		MaxRunes: 1800,
+		Desc:     "读取技能说明；args 传技能名，或 JSON {\"name\":\"技能名\",\"file\":\"genres/_index.md\",\"offset\":0,\"limit\":1800} 按需读参考文件（大技能不要一次全读）",
+		MaxRunes: 2600,
 		Run: func(_ context.Context, args string) (string, error) {
-			name := strings.TrimSpace(args)
-			if name == "" {
-				return "", fmt.Errorf("skill_read 需要技能名")
+			name, file, offset, limit, err := parseSkillReadArgs(args)
+			if err != nil {
+				return "", err
 			}
-			return registry.Read(name)
+			var text string
+			if file == "" {
+				text, err = registry.Read(name)
+			} else {
+				text, err = registry.ReadFile(name, file)
+			}
+			if err != nil {
+				return "", err
+			}
+			return pageSkillText(name, file, text, offset, limit), nil
 		},
 	}
 	run := reasoning.Tool{
@@ -92,4 +101,59 @@ func parseSkillRunArgs(args string) (string, string, error) {
 		return name, req.Args, nil
 	}
 	return raw, "", nil
+}
+
+func parseSkillReadArgs(args string) (string, string, int, int, error) {
+	raw := strings.TrimSpace(args)
+	if raw == "" {
+		return "", "", 0, 0, fmt.Errorf("skill_read 需要技能名")
+	}
+	if !strings.HasPrefix(raw, "{") {
+		return raw, "", 0, 0, nil
+	}
+	var req struct {
+		Name   string `json:"name"`
+		File   string `json:"file"`
+		Offset int    `json:"offset"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.Unmarshal([]byte(raw), &req); err != nil {
+		return "", "", 0, 0, fmt.Errorf("skill_read 参数不是合法 JSON：%w", err)
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return "", "", 0, 0, fmt.Errorf("skill_read 缺少 name")
+	}
+	if req.Offset < 0 || req.Limit < 0 {
+		return "", "", 0, 0, fmt.Errorf("skill_read 的 offset/limit 不能为负")
+	}
+	if req.Limit > 2400 {
+		req.Limit = 2400
+	}
+	return name, strings.TrimSpace(req.File), req.Offset, req.Limit, nil
+}
+
+// pageSkillText 按字符分页，避免一次把大技能正文全部塞进 ReAct prompt。
+func pageSkillText(name, file, text string, offset, limit int) string {
+	if limit <= 0 {
+		limit = 1800
+	}
+	runes := []rune(text)
+	if offset > len(runes) {
+		offset = len(runes)
+	}
+	end := offset + limit
+	if end > len(runes) {
+		end = len(runes)
+	}
+	header := "技能=" + name
+	if file != "" {
+		header += " | 文件=" + file
+	}
+	header += fmt.Sprintf(" | 字符=%d-%d/%d", offset, end, len(runes))
+	out := header + "\n" + string(runes[offset:end])
+	if end < len(runes) {
+		out += "\n…（还有内容，用 offset 继续读）"
+	}
+	return out
 }
