@@ -21,6 +21,7 @@ import (
 	"RaiseMyFish/internal/proactive"
 	"RaiseMyFish/internal/reasoning"
 	senderlive "RaiseMyFish/internal/sender/live"
+	"RaiseMyFish/internal/skills"
 	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/watch"
 	"RaiseMyFish/internal/webtools"
@@ -35,6 +36,8 @@ type toolExecutors struct {
 	Frame     reasoning.FrameSource
 	FrameRead reasoning.FrameReader
 	Search    reasoning.WebSearcher
+	// Skills 是本地技能包注册表；nil 时 skill_* 工具不注册。
+	Skills *skills.Registry
 	// Danmaku 只在被动消费循环里装配；nil 时 send_danmaku 不注册。
 	Danmaku reasoning.DanmakuSender
 	// LiveView 是主动弹幕的感知缓存；nil 时 watch_live 不注册（被动消费循环保持 nil）。
@@ -64,6 +67,25 @@ func buildToolExecutors(cfg config.Config, usage store.UsageRepo, log *zap.Logge
 			)
 		} else {
 			execs.Search = searcher
+		}
+	}
+	// 技能包不依赖 B站凭据；先于 cookie 的早退装配。
+	if cfg.Skills.Enabled {
+		registry, err := skills.New(skills.Options{
+			Dir:            cfg.Skills.Dir,
+			AllowScripts:   cfg.Skills.AllowScripts,
+			MaxTimeout:     time.Duration(cfg.Skills.MaxTimeoutSec) * time.Second,
+			MaxOutputBytes: cfg.Skills.MaxOutputBytes,
+			Allowed:        cfg.Skills.Allowed,
+			CheckInterval:  time.Duration(cfg.Skills.CheckSeconds) * time.Second,
+		})
+		if err != nil {
+			log.Warn("技能系统未装配", zap.String("action", "skills_setup"), zap.Error(err))
+		} else {
+			if err := registry.Reload(); err != nil {
+				log.Warn("部分技能加载失败", zap.String("action", "skills_reload"), zap.Error(err))
+			}
+			execs.Skills = registry
 		}
 	}
 
@@ -123,7 +145,7 @@ func buildToolExecutors(cfg config.Config, usage store.UsageRepo, log *zap.Logge
 			if _, provider, model, err := cfg.LLM.Resolve(cfg.Watch.LLMRoute); err == nil {
 				sink := visionSink(usage, model, provider, log)
 				if describer, err := watch.NewOpenAIDescriber(provider.BaseURL, provider.APIKey, model, nil, 0, sink); err == nil {
-					execs.FrameRead = frameReader{inner: describer}
+					execs.FrameRead = frameReader{inner: describer, log: log}
 				}
 			}
 		}
@@ -230,10 +252,27 @@ func (g giftExecutor) SendGift(ctx context.Context, req reasoning.GiftRequest) (
 }
 
 // frameReader 把 watch 的多帧描述器适配成 reasoning.FrameReader（单帧 + 详细识图词）。
-type frameReader struct{ inner *watch.OpenAIDescriber }
+type frameReader struct {
+	inner *watch.OpenAIDescriber
+	log   *zap.Logger
+}
 
 func (f frameReader) Describe(ctx context.Context, framePath string) (string, error) {
-	return f.inner.Describe(ctx, []string{framePath}, proactive.VisionPrompt)
+	started := time.Now()
+	text, err := f.inner.Describe(ctx, []string{framePath}, proactive.VisionPrompt)
+	// 视觉描述落日志：事后复盘「鱼看到了什么」的唯一依据。
+	if f.log != nil {
+		if err != nil {
+			f.log.Warn("视觉描述失败", zap.String("action", "vision_desc"),
+				zap.Int64("ms", time.Since(started).Milliseconds()), zap.Error(err))
+		} else {
+			f.log.Info("视觉描述", zap.String("action", "vision_desc"),
+				zap.Int("runes", len([]rune(text))),
+				zap.Int64("ms", time.Since(started).Milliseconds()),
+				zap.String("text", truncRunes(text, 200)))
+		}
+	}
+	return text, err
 }
 
 func itoa(n int) string {
@@ -248,4 +287,13 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+// truncRunes 按 rune 截断，用于日志里放视觉描述摘要。
+func truncRunes(s string, limit int) string {
+	r := []rune(s)
+	if len(r) <= limit {
+		return s
+	}
+	return string(r[:limit]) + "…"
 }

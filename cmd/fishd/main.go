@@ -132,9 +132,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, shutdown 
 		return fmt.Errorf("校验基础设施配置：%w", err)
 	}
 	// 声音链路（watch 音频采样/主动弹幕）依赖本机 ASR；启动时先探一次，
-	// 失败只告警，等 start-fishd.bat 或人工拉起后下一轮自动恢复。
+	// 失败只告警；开启 asr_auto_start 后由守护进程按冷却自动拉起。
 	if cfg.Watch.Enabled || cfg.Proactive.Enabled {
 		logASRHealth(ctx, cfg.Watch.ASRURL, logger)
+		startASRSupervisor(ctx, cfg.Watch, logger)
 	}
 	usage, err := database.NewUsageRepo(resources.DB)
 	if err != nil {

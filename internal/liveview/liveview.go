@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -30,6 +32,8 @@ const (
 type Options struct {
 	TTL time.Duration
 	Now func() time.Time
+	// Log 用于记录「watch_live 读到了什么」；nil 时不落日志。
+	Log *zap.Logger
 }
 
 // View 是一次感知快照；零值字段表示该路数据不存在或已过期。
@@ -59,6 +63,7 @@ type Senses struct {
 	mu    sync.Mutex
 	ttl   time.Duration
 	now   func() time.Time
+	log   *zap.Logger
 	title observed
 	frame observed
 	audio observed
@@ -75,7 +80,7 @@ func NewSenses(opts Options) *Senses {
 	if now == nil {
 		now = time.Now
 	}
-	return &Senses{ttl: ttl, now: now}
+	return &Senses{ttl: ttl, now: now, log: opts.Log}
 }
 
 // UpdateTitle 记录直播间当前标题（平台原样）；传空串表示清空。
@@ -196,4 +201,13 @@ func clipRunes(text string, max int) string {
 		return text
 	}
 	return string(runes[:max]) + "…"
+}
+
+// trunc 按 rune 截断，用于日志摘要。
+func trunc(s string, limit int) string {
+	r := []rune(s)
+	if len(r) <= limit {
+		return s
+	}
+	return string(r[:limit]) + "…"
 }

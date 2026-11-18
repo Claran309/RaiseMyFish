@@ -48,6 +48,7 @@ func newLiveCollector(cfg config.Config, log *zap.Logger) (*livecollector.Collec
 	o.BackoffMin = time.Duration(l.BackoffMinMS) * time.Millisecond
 	o.BackoffMax = time.Duration(l.BackoffMaxMS) * time.Millisecond
 	o.StableAfter = time.Duration(l.StableAfterMS) * time.Millisecond
+	o.OfflinePoll = time.Duration(l.OfflinePollMS) * time.Millisecond
 	o.MaxFailures = l.MaxFailures
 	return livecollector.New(o, log)
 }

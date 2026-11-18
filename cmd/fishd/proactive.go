@@ -136,7 +136,7 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 		}
 	}
 	// 感知缓存：主动弹幕每轮写入，ReAct 的 watch_live 工具主动读取。
-	senses := liveview.NewSenses(liveview.Options{})
+	senses := liveview.NewSenses(liveview.Options{Log: logger})
 	// ReAct 多步：与弹幕回复共用同一套装配（工具按事件 Scope 现造）。
 	// use_react=false 时明确传 nil，永远单步。
 	var react proactive.ReactFactory

@@ -392,6 +392,15 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 			}
 			boxes = append(boxes, side)
 		}
+		if exec.Skills != nil {
+			skillBox, err := buildSkillToolbox(exec.Skills)
+			if err != nil {
+				return nil, err
+			}
+			if skillBox != nil {
+				boxes = append(boxes, skillBox)
+			}
+		}
 		box, err := reasoning.MergeToolboxes(boxes...)
 		if err != nil {
 			return nil, err

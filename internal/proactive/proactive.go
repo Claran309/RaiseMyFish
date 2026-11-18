@@ -397,6 +397,8 @@ func (r *Runner) RunOnce(ctx context.Context) (Result, error) {
 		zap.String("decision", string(action)),
 		zap.String("observation_id", obs.ID),
 		zap.Time("observed_at", obs.CapturedAt),
+		// 画面帧年龄：从截帧到发送的间隔，用来判断「说的是不是旧画面」。
+		zap.Int64("frame_age_ms", time.Since(obs.CapturedAt).Milliseconds()),
 		zap.Bool("verified", res.Verified),
 		zap.Bool("react", usedReact),
 		zap.Int("runes", len([]rune(text))),
@@ -601,6 +603,8 @@ func (r *Runner) silent(obs observation, reason string) {
 		fields = append(fields,
 			zap.String("observation_id", obs.ID),
 			zap.Time("observed_at", obs.CapturedAt),
+		// 画面帧年龄：从截帧到发送的间隔，用来判断「说的是不是旧画面」。
+		zap.Int64("frame_age_ms", time.Since(obs.CapturedAt).Milliseconds()),
 		)
 	}
 	r.log.Info("主动弹幕保持安静", fields...)

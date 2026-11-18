@@ -670,6 +670,7 @@ func (c *collectorController) status() web.CollectorState {
 	}
 	if inst != nil {
 		health := inst.Health()
+		state.Offline = health.Offline
 		if !health.LastEventAt.IsZero() {
 			state.LastEventAt = formatTime(health.LastEventAt)
 		}
