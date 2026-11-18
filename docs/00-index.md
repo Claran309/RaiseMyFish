@@ -26,6 +26,7 @@
 | 22 | [2026-11-09 修改后复核与弹幕智能评估](reviews/2026-11-09-recheck-and-intelligence-assessment.md) | 对照修复提交复核剩余问题、离线缺陷探针、真实智能验收方案 | 修改后复核；尚无新版实测 |
 | 23 | [2026-11-10 三通道收尾条件与能力评估](reviews/2026-11-10-three-channel-closeout-assessment.md) | 阶段条件判定、旧问题改善、剩余缺陷、token比较与受控收尾门槛 | 候选版评估，未宣告阶段通过 |
 | 24 | [2026-11-10 短测试与观众侧写上线复核](reviews/2026-11-10-short-test-and-viewer-summary-review.md) | 短测改善、侧写三份投影生命周期、失败恢复、目标人物接线及监护使用建议 | 侧写试运行审查 |
+| 25 | [skills.md](skills.md) | 本地技能包系统：目录格式、ReAct 三工具、配置、安全边界 | ✅ MVP |
 
 契约文档：`../contracts/`（event / collector / sender / brain）
 

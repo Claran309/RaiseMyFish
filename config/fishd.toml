@@ -49,6 +49,8 @@ backoff_min_ms = 1000
 backoff_max_ms = 60000
 stable_after_ms = 30000
 max_failures = 8
+# 未开播时的复查间隔：只查房间状态，不连弹幕 WebSocket，不计重连失败。
+offline_poll_ms = 60000
 
 # 评论采集（P1）：消息监听 + 动态评论轮询，按 rpid 去重后写 channel=comment 事件。
 # 默认关闭；启用需要 [channels.comment] enabled=true、FISH_BILI_COOKIE/_FILE 凭据，
@@ -256,6 +258,10 @@ interval_seconds = 600 # 直播采集运行期间，每隔多少秒看一次
 seconds = 10
 frames = 4
 asr_url = "http://127.0.0.1:8077/v1/audio/transcriptions"
+# ASR 守护：本机转写服务空闲 15 分钟会自动退出，fishd 定期探测并按冷却自动拉起。
+asr_auto_start = true
+asr_start_script = "C:/Users/Claran/.dsh/skills/asr-server/start-asr.bat"
+asr_check_seconds = 60
 stream_quality = "origin" # origin/bluray/ultra/high/smooth
 cookie_env = "FISH_BILI_COOKIE"
 ffmpeg_path = "ffmpeg"
@@ -279,6 +285,17 @@ send_gap_seconds = 30 # 两次主动发送的最小间隔；间隔内跳过（re
 use_react = true
 # ReAct 触发：always（默认，有画面描述就查）/ keyword（回到静态词表）
 react_trigger = "always"
+
+# 本地技能包（文件驱动）：skills/<name>/SKILL.md，可选 entry 脚本。
+# 技能说明会被 ReAct 通过 skill_list/skill_read 读取；脚本只有 allow_scripts=true 才可执行。
+[skills]
+enabled = true
+dir = "skills"
+allow_scripts = true
+check_seconds = 30
+max_timeout_seconds = 30
+max_output_bytes = 8000
+allowed = [] # 空表示不限制；只允许列出的技能名
 
 # 送礼（0.13b）：默认关闭且默认 dry-run——不读凭据、不调用平台API、不扣电池。
 # 只有 enabled=true 且 real=true 才会真实赠送；凭据只从 FISH_BILI_COOKIE/_FILE 读取。

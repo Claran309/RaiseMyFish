@@ -30,6 +30,7 @@ type Config struct {
 	Viewer        Viewer        `toml:"viewer"`
 	Watch         Watch         `toml:"watch"`
 	Proactive     Proactive     `toml:"proactive"`
+	Skills        Skills        `toml:"skills"`
 	Gift          Gift          `toml:"gift"`
 	Memory        Memory        `toml:"memory"`
 	Web           Web           `toml:"web"`
@@ -210,6 +211,7 @@ func load(path, envPath string) (Config, error) {
 		Viewer:        defaultViewer(),
 		Watch:         defaultWatch(),
 		Proactive:     defaultProactive(),
+		Skills:        defaultSkills(),
 		Gift:          defaultGift(),
 		Memory:        defaultMemory(),
 		Web:           defaultWeb(),
@@ -370,6 +372,9 @@ func (c Config) validateStructure(strictLive bool) error {
 		return err
 	}
 	if err := c.Proactive.Validate(); err != nil {
+		return err
+	}
+	if err := c.Skills.Validate(); err != nil {
 		return err
 	}
 	if err := c.Gift.validateStructure(); err != nil {

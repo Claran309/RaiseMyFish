@@ -610,6 +610,24 @@ func TestCleanMemoryKeywordAndVariants(t *testing.T) {
 	}
 }
 
+// TestToolboxMaxRunesOverride 工具可按需放宽结果上限，但仍由 Toolbox 统一裁剪。
+func TestToolboxMaxRunesOverride(t *testing.T) {
+	long := strings.Repeat("鱼", 500)
+	box, err := NewToolbox(Tool{Name: "skill_read", MaxRunes: 120, Run: func(context.Context, string) (string, error) {
+		return long, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := box.Run(context.Background(), "skill_read", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len([]rune(out)); n < 120 || n > 121 {
+		t.Fatalf("MaxRunes 未生效：runes=%d", n)
+	}
+}
+
 // TestNewToolboxRejectsBad 空名/重名/nil Run 都算配置错误。
 func TestNewToolboxRejectsBad(t *testing.T) {
 	noop := func(context.Context, string) (string, error) { return "", nil }

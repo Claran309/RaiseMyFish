@@ -34,7 +34,10 @@ const maxObservationRunes = 400
 type Tool struct {
 	Name string
 	Desc string
-	Run  func(ctx context.Context, args string) (string, error)
+	// MaxRunes 是工具结果进入 prompt 的字符上限；0 表示使用默认 400。
+	// 技能说明之类需要较完整的文本可单独放宽，但仍由 Toolbox 统一裁剪。
+	MaxRunes int
+	Run      func(ctx context.Context, args string) (string, error)
 }
 
 // Toolbox 是工具集合：按名字查、按顺序列（顺序稳定便于 prompt 复现）。
@@ -103,11 +106,15 @@ func (b *Toolbox) Run(ctx context.Context, name, args string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	limit := maxObservationRunes
+	if tool.MaxRunes > 0 {
+		limit = tool.MaxRunes
+	}
 	// 结构化信封按来源/条目取舍后再进 prompt；其他输出保持原有裁剪行为。
-	if rendered, ok := renderToolResult(out, maxObservationRunes); ok {
+	if rendered, ok := renderToolResult(out, limit); ok {
 		return rendered, nil
 	}
-	return clip(out, maxObservationRunes), nil
+	return clip(out, limit), nil
 }
 
 // MergeToolboxes 合并多个工具箱；重名直接报错（工具名是协议，不能含糊）。
