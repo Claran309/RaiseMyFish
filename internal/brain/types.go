@@ -60,6 +60,8 @@ type ContextInput struct {
 	LiveChat string
 	// LiveTitle 是当前直播间标题（平台原样）；用于识别换人/代播，空则不出现 <live_title> 段。
 	LiveTitle string
+	// RecentSelf 是鱼自己最近说过的话（新的在前）；用于去公式化（别重复同一个说法/梗）。
+	RecentSelf []string
 	// Viewer 是对方档案片段（认人用）；空则不出现 <viewer> 段（陌生人）。
 	Viewer string
 	// Injection 是看板操作人写入的临时设定；空则不出现 <injection> 段。

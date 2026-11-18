@@ -48,6 +48,8 @@ function validateOptions(options) {
   for (const key of ['httpTimeoutMs', 'connectTimeoutMs', 'heartbeatMs', 'idleMs']) {
     if (!Number.isSafeInteger(options[key]) || options[key] < 1 || options[key] > 2147483647) throw failure('runtime')
   }
+  // offlinePollMs 只用于主循环的未开播等待；bootstrap 单测可以不传。
+  if (options.offlinePollMs !== undefined && (!Number.isSafeInteger(options.offlinePollMs) || options.offlinePollMs < 1000 || options.offlinePollMs > 600000)) throw failure('runtime')
   if (!Number.isSafeInteger(options.hostIndex) || options.hostIndex < 0) throw failure('runtime')
 }
 
@@ -109,6 +111,8 @@ export async function bootstrap(options, deps = {}) {
     const roomInfo = await get(`https://api.live.bilibili.com/room/v1/Room/get_info?room_id=${options.room}`)
     const room = decimalID(roomInfo?.room_id)
     if (!room) throw failure('protocol')
+    // 先看开播状态：未开播时不取弹幕服务器、也不建立 WebSocket，交给主循环低频轮询。
+    if (roomInfo.live_status !== 1) return { room, selfId: options.selfId, offline: true }
     const keyOf = value => {
       if (typeof value !== 'string') throw failure('protocol')
       return value.slice(value.lastIndexOf('/') + 1, value.lastIndexOf('.'))
@@ -229,9 +233,9 @@ export function createOutput(stream, maxBytes = MAX_BYTES) {
 export function cliOptions(argv) {
   const names = new Map([
     ['room', 'room'], ['self-id', 'selfId'], ['http-timeout-ms', 'httpTimeoutMs'], ['connect-timeout-ms', 'connectTimeoutMs'],
-    ['heartbeat-ms', 'heartbeatMs'], ['idle-ms', 'idleMs'], ['host-index', 'hostIndex'],
+    ['heartbeat-ms', 'heartbeatMs'], ['idle-ms', 'idleMs'], ['offline-poll-ms', 'offlinePollMs'], ['host-index', 'hostIndex'],
   ])
-  const options = { httpTimeoutMs: 10000, connectTimeoutMs: 15000, heartbeatMs: 30000, idleMs: 70000, hostIndex: 0 }
+  const options = { httpTimeoutMs: 10000, connectTimeoutMs: 15000, heartbeatMs: 30000, idleMs: 70000, offlinePollMs: 60000, hostIndex: 0 }
   const seen = new Set()
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index]?.slice(2), key = names.get(name), value = argv[index + 1]
@@ -247,6 +251,16 @@ export function cliOptions(argv) {
   return options
 }
 
+// 未开播等待：只睡定时器，不持有任何 WebSocket；收到退出信号立即醒来。
+function wait(ms, signal) {
+  return new Promise(resolve => {
+    if (signal?.aborted) return resolve()
+    const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', done); resolve() }
+    const timer = setTimeout(done, ms)
+    signal?.addEventListener('abort', done, { once: true })
+  })
+}
+
 async function main() {
   const emit = createOutput(process.stdout), controller = new AbortController()
   const cancel = () => controller.abort()
@@ -256,8 +270,14 @@ async function main() {
   try {
     if (Number(process.versions.node.split('.')[0]) < 24) throw failure('runtime')
     const options = { ...cliOptions(process.argv.slice(2)), signal: controller.signal }
-    const session = await bootstrap(options)
-    if (session && !controller.signal.aborted) await connectSession(options, session, { emit })
+    let session = await bootstrap(options)
+    while (session?.offline && !controller.signal.aborted) {
+      emit({ protocol: 1, type: 'offline', live_status: 0 })
+      await wait(options.offlinePollMs, controller.signal)
+      if (controller.signal.aborted) break
+      session = await bootstrap(options)
+    }
+    if (session && !session.offline && !controller.signal.aborted) await connectSession(options, session, { emit })
   } catch (error) {
     if (!controller.signal.aborted) { code = safeCode(error); emit(errorFrame(code)) }
   } finally {

@@ -79,15 +79,24 @@
 ```bash
 # 1. 依赖：PostgreSQL 17（pgvector）、Node 24、Go 1.25+（仅构建）
 # 2. 配置：config/fishd.toml + .env（cookie/LLM key/embedding key）
-# 3. 迁移：bash scripts/migrate.sh
-# 4. 启动：bash scripts/test-run.sh（或 go run ./cmd/fishd --env-file .env）
+# 3. 迁移：bash scripts/migrate.sh 或 go run ./cmd/fishd migrate up
+# 4. 启动（Windows 一键）：双击 start-fishd.bat
+#    它会构造 cookie、拉起本机 ASR（若存在）、go run 启动 fishd 并打开面板
+#    开发期也可：bash scripts/test-run.sh（或 go run ./cmd/fishd --env-file .env）
 # 5. 面板：http://127.0.0.1:8090
+
+# 稳定版打包（Windows，生成 dist/ 与 fishd-stable-<版本>.zip）：
+make release VERSION=0.1.0
+# 产物：dist/fishd.exe（带版本号）+ config + personas + start.bat
+# 版本核对：dist/fishd.exe version
 
 # Docker（Linux/服务器）：
 cp .env.example deployment/.env   # 填凭据；DSN 主机用 postgres
 # 首次启动前核对 config/fishd.toml 的房间/账号/礼物开关
 make docker-up                     # fishd + pgvector/pgvector:pg17，自动迁移
 ```
+
+性能与延迟：面板「概览」展示近 24h 各通道回复延迟（p50/p90）与数据库连接池状态；`fishctl status` 的 `stats.latency` 输出同一口径。连接池与慢查询阈值在 `[db]` 配置，改了重启生效。
 
 部署方式与依赖细节见 `docs/13-deployment.md`。
 

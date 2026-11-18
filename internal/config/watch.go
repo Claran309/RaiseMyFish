@@ -18,6 +18,9 @@ type Watch struct {
 	Seconds         int    `toml:"seconds"`
 	Frames          int    `toml:"frames"`
 	ASRURL          string `toml:"asr_url"`
+	ASRAutoStart    bool   `toml:"asr_auto_start"`
+	ASRStartScript  string `toml:"asr_start_script"`
+	ASRCheckSeconds int    `toml:"asr_check_seconds"`
 	StreamQuality   string `toml:"stream_quality"`
 	CookieEnv       string `toml:"cookie_env"`
 	FFmpegPath      string `toml:"ffmpeg_path"`
@@ -37,6 +40,7 @@ func defaultWatch() Watch {
 		Seconds:         10,
 		Frames:          4,
 		ASRURL:          "http://127.0.0.1:8077/v1/audio/transcriptions",
+		ASRCheckSeconds: 60,
 		StreamQuality:   "origin",
 		CookieEnv:       "FISH_BILI_COOKIE",
 		FFmpegPath:      "ffmpeg",
@@ -96,9 +100,29 @@ func (w Watch) validateStreamCredential() error {
 	return nil
 }
 
+// validateASR 校验 ASR 守护配置；看直播关闭但主动弹幕启用时也会用到。
+func (w Watch) validateASR() error {
+	if !w.ASRAutoStart {
+		return nil
+	}
+	if strings.TrimSpace(w.ASRStartScript) == "" || strings.ContainsAny(w.ASRStartScript, "\r\n\x00") {
+		return errors.New("ASR 自动拉起需要有效的启动脚本路径")
+	}
+	if !validServiceEndpoint(w.ASRURL) {
+		return errors.New("看直播 asr_url 必须是HTTPS、本机HTTP或host.docker.internal HTTP地址")
+	}
+	if w.ASRCheckSeconds < 10 || w.ASRCheckSeconds > 3600 {
+		return errors.New("ASR 检查间隔必须在10至3600秒之间")
+	}
+	return nil
+}
+
 // validateStructure 只校验非B站凭据部分；看直播关闭时仍校验会进入 prompt 的身份字段。
 func (w Watch) validateStructure() error {
 	if err := w.validateIdentity(); err != nil {
+		return err
+	}
+	if err := w.validateASR(); err != nil {
 		return err
 	}
 	if !w.Enabled {

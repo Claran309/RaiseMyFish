@@ -103,7 +103,7 @@ test('WBI签名不丢大房间号，固定排序并有摘要', () => {
 
 const options = { room: '1', selfId: '8', httpTimeoutMs: 1000, connectTimeoutMs: 5000, heartbeatMs: 30000, idleMs: 60000, hostIndex: 0 }
 const nav = { code: 0, data: { isLogin: true, mid: 8, wbi_img: { img_url: 'https://i0.hdslb.com/a.png', sub_url: 'https://i0.hdslb.com/b.png' } } }
-const responses = [nav, { code: 0, data: { room_id: 99 } }, { code: 0, data: { token: 'secret-token-canary', host_list: [{ host: 'test.chat.bilibili.com', wss_port: 443 }] } }]
+const responses = [nav, { code: 0, data: { room_id: 99, live_status: 1 } }, { code: 0, data: { token: 'secret-token-canary', host_list: [{ host: 'test.chat.bilibili.com', wss_port: 443 }] } }]
 function fakeFetch() {
   let index = 0
   return async (url, init) => {
@@ -123,6 +123,18 @@ test('显式凭据、自账号校验与固定平台目标，无自动DSH配置',
   assert.equal(result.room, '99')
   assert.equal(result.selfId, '8')
   await assert.rejects(bootstrap({ ...options, selfId: '9' }, { fetch: fakeFetch(), cookie: 'SESSDATA=credential-canary' }), { code: 'auth' })
+})
+
+test('未开播只查房间状态，不取弹幕服务器', async () => {
+  const calls = []
+  const fetch = async url => {
+    calls.push(new URL(url).pathname)
+    const data = calls.length === 1 ? nav : { code: 0, data: { room_id: 99, live_status: 0 } }
+    return { ok: true, status: 200, text: async () => JSON.stringify(data) }
+  }
+  const result = await bootstrap(options, { fetch, cookie: 'SESSDATA=credential-canary' })
+  assert.deepEqual(result, { room: '99', selfId: '8', offline: true })
+  assert.deepEqual(calls, ['/x/web-interface/nav', '/room/v1/Room/get_info'])
 })
 
 class FakeWebSocket extends EventTarget {

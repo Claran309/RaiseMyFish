@@ -67,7 +67,7 @@ func inputBounds(ctx context.Context, task Task, in ContextInput) error {
 	}
 	e := in.Event
 	key, _ := persona.ContextKey(string(e.Channel), e.Private)
-	bytes := len(task.ID) + len(e.ID) + len(e.Text) + len(e.Session) + len(e.FromID) + len(e.FromName) + len(in.State) + len(in.Visual) + len(in.Audio) + len(in.LiveChat) + len(in.LiveTitle) + len(in.Viewer) + len(in.Injection) + len(soulText(in.Soul)) + len(in.Persona.Soul) + len(in.Persona.Rules) + len(in.Persona.Samples) + len(in.Persona.Contexts[key])
+	bytes := len(task.ID) + len(e.ID) + len(e.Text) + len(e.Session) + len(e.FromID) + len(e.FromName) + len(in.State) + len(in.Visual) + len(in.Audio) + len(in.LiveChat) + len(in.LiveTitle) + recentSelfLen(in.RecentSelf) + len(in.Viewer) + len(in.Injection) + len(soulText(in.Soul)) + len(in.Persona.Soul) + len(in.Persona.Rules) + len(in.Persona.Samples) + len(in.Persona.Contexts[key])
 	for _, ev := range in.Evidence {
 		bytes += len(ev.Tool) + len(ev.Args) + len(ev.Result)
 	}
@@ -466,6 +466,30 @@ func liveTitlePromptLine(title string) string {
 	return "<live_title>\n" + encodePromptText(title) + hint + "\n</live_title>\n"
 }
 
+// maxRecentSelfLines 是「自己最近说过的话」保留条数。
+const maxRecentSelfLines = 3
+
+// recentSelfPromptLine 把鱼自己最近说过的话包成一段，用于去公式化。
+// 它只是反例提示：这些说过就别再说同一个梗/同一句话。
+func recentSelfPromptLine(lines []string) string {
+	clean := make([]string, 0, maxRecentSelfLines)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		clean = append(clean, line)
+		if len(clean) >= maxRecentSelfLines {
+			break
+		}
+	}
+	if len(clean) == 0 {
+		return ""
+	}
+	return "<recent_self>（你自己最近说过的话，别重复同样的说法或梗）\n" +
+		encodePromptText(strings.Join(clean, "\n")) + "\n</recent_self>\n"
+}
+
 // mentionsStandIn 判断标题是否暗示代播/家人代播。
 func mentionsStandIn(title string) bool {
 	for _, cue := range []string{"妈妈", "爸爸", "妈", "爸", "家长", "代播", "代班", "表妹", "表哥", "姐姐", "弟弟", "哥哥", "妹妹", "家里人"} {
@@ -474,6 +498,15 @@ func mentionsStandIn(title string) bool {
 		}
 	}
 	return false
+}
+
+// recentSelfLen 估算自己最近发言段的字节数（预算用）。
+func recentSelfLen(lines []string) int {
+	n := 0
+	for _, line := range lines {
+		n += len(line) + 1
+	}
+	return n
 }
 
 // soulText 把长期设定拼成一段（每行一条），空切片返回空串。
@@ -496,8 +529,8 @@ func longtermPromptLine(soul []string) string {
 	return "<longterm>\n" + encodePromptText(text) + "\n</longterm>\n"
 }
 
-func renderContext(ctx context.Context, p persona.Pack, section contextSection, eventJSON []byte, ch event.Channel, state, visual, audio, liveTitle, liveChat, viewer, injection string, soul []string) ([]provider.Message, string, error) {
-	body, err := contextBody(ctx, p, section, ch, state, visual, audio, liveTitle, liveChat, viewer, injection, soul)
+func renderContext(ctx context.Context, p persona.Pack, section contextSection, eventJSON []byte, ch event.Channel, state, visual, audio, liveTitle string, recentSelf []string, liveChat, viewer, injection string, soul []string) ([]provider.Message, string, error) {
+	body, err := contextBody(ctx, p, section, ch, state, visual, audio, liveTitle, recentSelf, liveChat, viewer, injection, soul)
 	if err != nil {
 		return nil, "", err
 	}
@@ -534,7 +567,7 @@ func contextHints(section contextSection) string {
 
 // contextBody 渲染统一快照正文：场景/记忆/知识 + 状态/画面/声音/最近弹幕/档案/长期设定，
 // 不含当前事件与回复指令。Brain 的单步 prompt 与 ReAct 的 Context 共用这一段。
-func contextBody(ctx context.Context, p persona.Pack, section contextSection, ch event.Channel, state, visual, audio, liveTitle, liveChat, viewer, injection string, soul []string) (string, error) {
+func contextBody(ctx context.Context, p persona.Pack, section contextSection, ch event.Channel, state, visual, audio, liveTitle string, recentSelf []string, liveChat, viewer, injection string, soul []string) (string, error) {
 	if err := pendingError(ctx); err != nil {
 		return "", contextFailure(err)
 	}
@@ -542,9 +575,9 @@ func contextBody(ctx context.Context, p persona.Pack, section contextSection, ch
 	if err != nil {
 		return "", &Error{Kind: KindInput, Cause: err}
 	}
-	return fmt.Sprintf("<context>\n%s\n</context>\n%s%s%s%s%s%s%s%s", data,
+	return fmt.Sprintf("<context>\n%s\n</context>\n%s%s%s%s%s%s%s%s%s", data,
 		statePromptLine(state), injectionPromptLine(injection), liveTitlePromptLine(liveTitle), visualPromptLine(visual), audioPromptLine(audio),
-		liveChatPromptLine(liveChat), viewerPromptLine(viewer), longtermPromptLine(soul)), nil
+		recentSelfPromptLine(recentSelf), liveChatPromptLine(liveChat), viewerPromptLine(viewer), longtermPromptLine(soul)), nil
 }
 
 // buildContextSection 把快照数据整理成固定顺序；单步 prompt 与 Prepare 共用。
@@ -804,13 +837,14 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 	visual := in.Visual
 	audio := in.Audio
 	liveTitle := in.LiveTitle
+	recentSelf := in.RecentSelf
 	liveChat := in.LiveChat
 	viewer := in.Viewer
 	injection := in.Injection
 	soul := in.Soul
 	truncated := false
 	render := func() ([]provider.Message, string, error) {
-		return renderContext(ctx, p, section, eventJSON, e.Channel, in.State, visual, audio, liveTitle, liveChat, viewer, injection, soul)
+		return renderContext(ctx, p, section, eventJSON, e.Channel, in.State, visual, audio, liveTitle, recentSelf, liveChat, viewer, injection, soul)
 	}
 	finish := func(messages []provider.Message, body string, err error) (promptPlan, error) {
 		if err != nil {
@@ -819,7 +853,7 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 		if in.Knowledge == nil {
 			return promptPlan{Messages: messages, Context: body, Truncated: truncated}, nil
 		}
-		return finishKnowledge(ctx, in.Knowledge, p, section, eventJSON, e.Channel, in.State, visual, audio, liveTitle, liveChat, viewer, injection, soul, messages, limit, knowledgePercent, truncated)
+		return finishKnowledge(ctx, in.Knowledge, p, section, eventJSON, e.Channel, in.State, visual, audio, liveTitle, recentSelf, liveChat, viewer, injection, soul, messages, limit, knowledgePercent, truncated)
 	}
 	messages, body, err := render()
 	if err != nil {

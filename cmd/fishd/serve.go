@@ -119,6 +119,18 @@ type consumeOptions struct {
 	viewerFinder  profileFinder
 	commentVision *commentVision
 	injections    store.InjectionReader
+	recentSelf    func(ctx context.Context, ch event.Channel, session string, limit int) []string
+	viewerRecent  func(ctx context.Context, fromID string, limit int) []string
+}
+
+// withRecentSelf 注入「鱼自己最近说过的话」来源，用于去公式化。
+func withRecentSelf(src func(ctx context.Context, ch event.Channel, session string, limit int) []string) consumeOption {
+	return func(o *consumeOptions) { o.recentSelf = src }
+}
+
+// withViewerRecent 注入「该观众最近几条弹幕」来源（实时上下文）。
+func withViewerRecent(src func(ctx context.Context, fromID string, limit int) []string) consumeOption {
+	return func(o *consumeOptions) { o.viewerRecent = src }
 }
 
 // withViewerFinder 注入「按昵称查观众档案」能力，用于甲问乙时预取乙档案。
@@ -161,6 +173,8 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 
 	// 统一上下文快照：被动回复与主动弹幕共用同一套资料装配规则。
 	builder := newContextBuilder(pack, mem, know, viewers, newSoulCache(soulPath), state, log)
+	builder.recentSelf = extra.recentSelf
+	builder.viewerRecent = extra.viewerRecent
 	builder.finder = extra.viewerFinder
 	builder.injections = extra.injections
 	generate := generateHandler(generateDeps{
@@ -558,7 +572,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader))
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)))
 	if err != nil {
 		return nil, nil, nil, err
 	}

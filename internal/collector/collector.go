@@ -15,8 +15,10 @@ type Collector interface {
 }
 
 // Health为快照；LastEventAt是最近产出事件的接收时间，而非平台At。
+// Offline=true 表示采集器在等平台开播/恢复，不是故障，也不计入重连。
 type Health struct {
 	OK          bool
+	Offline     bool
 	LastEventAt time.Time
 	LastError   string
 	Reconnects  int

@@ -39,7 +39,7 @@ func TestLiveConfigInvalidSafeAndFileNotRead(t *testing.T) {
 	t.Setenv("FISH_BILI_COOKIE", "")
 	t.Setenv("FISH_BILI_COOKIE_FILE", "not-existing-private-canary.json")
 	base := "[channels.live]\nenabled=true\n[collector.live]\nroom_id='1'\nself_id='8'\n"
-	for _, suffix := range []string{"idle_ms=30000\n", "max_failures=0\n", "heartbeat_ms=0\n"} {
+	for _, suffix := range []string{"idle_ms=30000\n", "max_failures=0\n", "heartbeat_ms=0\n", "offline_poll_ms=0\n"} {
 		p := filepath.Join(t.TempDir(), "invalid.toml")
 		if err := os.WriteFile(p, []byte(base+suffix), 0600); err != nil {
 			t.Fatal(err)

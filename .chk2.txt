@@ -1,0 +1,2 @@
+﻿?   	RaiseMyFish/cmd/knowledgeeval	[no test files]
+EXIT=0

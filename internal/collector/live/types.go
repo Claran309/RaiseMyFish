@@ -22,6 +22,7 @@ const (
 	KindProtocol  Kind = "protocol"
 	KindRate      Kind = "rate_limit"
 	KindTimeout   Kind = "timeout"
+	KindOffline   Kind = "offline"
 	KindExhausted Kind = "exhausted"
 )
 
@@ -34,7 +35,7 @@ type Error struct {
 func (e *Error) Error() string {
 	kind := e.Kind
 	switch kind {
-	case KindInput, KindAuth, KindRuntime, KindNetwork, KindProtocol, KindRate, KindTimeout, KindExhausted:
+	case KindInput, KindAuth, KindRuntime, KindNetwork, KindProtocol, KindRate, KindTimeout, KindOffline, KindExhausted:
 	default:
 		kind = KindProtocol
 	}
@@ -58,12 +59,13 @@ type Options struct {
 	BackoffMin     time.Duration
 	BackoffMax     time.Duration
 	StableAfter    time.Duration
+	OfflinePoll    time.Duration
 	MaxFailures    int
 }
 
 // DefaultOptions不访问环境/凭据或平台；构造时还须明确房间/自身身份。
 func DefaultOptions() Options {
-	return Options{NodePath: "node", ScriptPath: "tools/bili-whale/danmaku-await.mjs", HTTPTimeout: 10 * time.Second, ConnectTimeout: 10 * time.Second, Heartbeat: 30 * time.Second, IdleTimeout: 90 * time.Second, StartupTimeout: 45 * time.Second, BackoffMin: time.Second, BackoffMax: 60 * time.Second, StableAfter: 30 * time.Second, MaxFailures: 8}
+	return Options{NodePath: "node", ScriptPath: "tools/bili-whale/danmaku-await.mjs", HTTPTimeout: 10 * time.Second, ConnectTimeout: 10 * time.Second, Heartbeat: 30 * time.Second, IdleTimeout: 90 * time.Second, StartupTimeout: 45 * time.Second, BackoffMin: time.Second, BackoffMax: 60 * time.Second, StableAfter: 30 * time.Second, OfflinePoll: time.Minute, MaxFailures: 8}
 }
 
 // Collector只有一个Start拥有子进程，Health并发安全。
@@ -83,6 +85,7 @@ func (c *Collector) Name() string { return "bili-live" }
 // Health复制内部状态，调用方不能修改共享状态。
 func (c *Collector) Health() collector.Health { c.mu.RLock(); defer c.mu.RUnlock(); return c.health }
 func (c *Collector) setOK(ok bool)            { c.mu.Lock(); c.health.OK = ok; c.mu.Unlock() }
+func (c *Collector) setOffline(offline bool)  { c.mu.Lock(); c.health.Offline = offline; c.mu.Unlock() }
 func (c *Collector) report(errc chan<- error, err *Error) {
 	c.mu.Lock()
 	c.health.LastError = err.Error()

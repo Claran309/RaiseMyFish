@@ -22,7 +22,7 @@ import (
 func New(o Options, log *zap.Logger) (*Collector, error) {
 	room, roomOK := canonicalID(o.RoomID)
 	self, selfOK := canonicalID(o.SelfID)
-	if !roomOK || !selfOK || log == nil || strings.TrimSpace(o.NodePath) == "" || strings.TrimSpace(o.ScriptPath) == "" || (o.Cookie == "" && o.CookieFile == "") || strings.ContainsAny(o.Cookie+o.CookieFile, "\r\n\x00") || o.MaxFailures < 1 || o.MaxFailures > 32 || o.HTTPTimeout < time.Millisecond || o.ConnectTimeout < time.Millisecond || o.Heartbeat < time.Millisecond || o.IdleTimeout <= o.Heartbeat || o.StartupTimeout < time.Millisecond || o.BackoffMin < time.Millisecond || o.BackoffMax < o.BackoffMin || o.BackoffMax > time.Hour || o.StableAfter < time.Millisecond {
+	if !roomOK || !selfOK || log == nil || strings.TrimSpace(o.NodePath) == "" || strings.TrimSpace(o.ScriptPath) == "" || (o.Cookie == "" && o.CookieFile == "") || strings.ContainsAny(o.Cookie+o.CookieFile, "\r\n\x00") || o.MaxFailures < 1 || o.MaxFailures > 32 || o.HTTPTimeout < time.Millisecond || o.ConnectTimeout < time.Millisecond || o.Heartbeat < time.Millisecond || o.IdleTimeout <= o.Heartbeat || o.StartupTimeout < time.Millisecond || o.BackoffMin < time.Millisecond || o.BackoffMax < o.BackoffMin || o.BackoffMax > time.Hour || o.StableAfter < time.Millisecond || o.OfflinePoll < time.Second || o.OfflinePoll > 10*time.Minute {
 		return nil, &Error{Kind: KindInput}
 	}
 	o.RoomID = room
@@ -44,7 +44,7 @@ func New(o Options, log *zap.Logger) (*Collector, error) {
 func (c *Collector) buildCommand(ctx context.Context) *exec.Cmd {
 	o := c.options
 	// #nosec G204 -- Node与脚本路径来自可信部署配置；逐参数传递且不经shell，平台数据仅允许数字ID。
-	cmd := exec.CommandContext(ctx, o.NodePath, o.ScriptPath, "--room", o.RoomID, "--self-id", o.SelfID, "--http-timeout-ms", strconv.FormatInt(o.HTTPTimeout.Milliseconds(), 10), "--connect-timeout-ms", strconv.FormatInt(o.ConnectTimeout.Milliseconds(), 10), "--heartbeat-ms", strconv.FormatInt(o.Heartbeat.Milliseconds(), 10), "--idle-ms", strconv.FormatInt(o.IdleTimeout.Milliseconds(), 10), "--host-index", strconv.Itoa(c.Health().Reconnects))
+	cmd := exec.CommandContext(ctx, o.NodePath, o.ScriptPath, "--room", o.RoomID, "--self-id", o.SelfID, "--http-timeout-ms", strconv.FormatInt(o.HTTPTimeout.Milliseconds(), 10), "--connect-timeout-ms", strconv.FormatInt(o.ConnectTimeout.Milliseconds(), 10), "--heartbeat-ms", strconv.FormatInt(o.Heartbeat.Milliseconds(), 10), "--idle-ms", strconv.FormatInt(o.IdleTimeout.Milliseconds(), 10), "--offline-poll-ms", strconv.FormatInt(o.OfflinePoll.Milliseconds(), 10), "--host-index", strconv.Itoa(c.Health().Reconnects))
 	cmd.Env = []string{}
 	for _, key := range []string{"PATH", "SystemRoot", "WINDIR", "PATHEXT", "TEMP", "TMP"} {
 		if value, ok := os.LookupEnv(key); ok {
@@ -62,11 +62,13 @@ func (c *Collector) buildCommand(ctx context.Context) *exec.Cmd {
 }
 
 // Start指数退避重连；连续短连接失败有上限，稳定连接后才重置。
+// 未开播由子进程上报 offline 帧：不建立 WebSocket，只按 OfflinePoll 低频复查，不计失败。
 func (c *Collector) Start(ctx context.Context, out chan<- event.Event, errc chan<- error) error {
 	if ctx == nil || out == nil || errc == nil || !c.started.CompareAndSwap(false, true) {
 		return &Error{Kind: KindInput}
 	}
 	defer c.setOK(false)
+	defer c.setOffline(false)
 	failures := 0
 	delay := c.options.BackoffMin
 	attempt := 0
@@ -74,12 +76,6 @@ func (c *Collector) Start(ctx context.Context, out chan<- event.Event, errc chan
 		if ctx.Err() != nil {
 			return nil
 		}
-		if attempt > 0 {
-			c.mu.Lock()
-			c.health.Reconnects++
-			c.mu.Unlock()
-		}
-		attempt++
 		stable, err := c.once(ctx, out, errc)
 		if ctx.Err() != nil {
 			return nil
@@ -87,6 +83,25 @@ func (c *Collector) Start(ctx context.Context, out chan<- event.Event, errc chan
 		if err == nil {
 			err = &Error{Kind: KindNetwork}
 		}
+		if err.Kind == KindOffline {
+			c.log.Info("直播未开播，等待开播",
+				zap.String("action", "collector_offline"),
+				zap.Duration("delay", c.options.OfflinePoll),
+			)
+			if err := c.pause(ctx, c.options.OfflinePoll); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return &Error{Kind: KindNetwork, Cause: err}
+			}
+			continue
+		}
+		if attempt > 0 {
+			c.mu.Lock()
+			c.health.Reconnects++
+			c.mu.Unlock()
+		}
+		attempt++
 		c.report(errc, err)
 		if err.Kind == KindAuth || err.Kind == KindRuntime || err.Kind == KindInput {
 			return err
@@ -143,8 +158,10 @@ func (c *Collector) once(parent context.Context, out chan<- event.Event, errc ch
 	timer := time.AfterFunc(c.options.StartupTimeout, expire)
 	defer func() { timer.Stop(); c.setOK(false) }()
 	reset := func() { timer.Stop(); timer = time.AfterFunc(c.options.IdleTimeout, expire) }
+	resetAfter := func(d time.Duration) { timer.Stop(); timer = time.AfterFunc(d, expire) }
 	room := ""
 	readyAt := time.Time{}
+	offline := false
 	var failure *Error
 	scanner := bufio.NewScanner(stdout)
 	// 与Node的1MiB输出上限一致，额外1字节留给Scanner分隔符检查。
@@ -170,8 +187,22 @@ func (c *Collector) once(parent context.Context, out chan<- event.Event, errc ch
 			}
 			room = canonical
 			readyAt = time.Now()
+			offline = false
 			reset()
+			c.setOffline(false)
 			c.setOK(true)
+		case "offline":
+			// 子进程已确认未开播：不建立 WebSocket，按轮询间隔（至少两倍余量）重新计时。
+			offline = true
+			delay := c.options.OfflinePoll * 2
+			if delay < c.options.IdleTimeout {
+				delay = c.options.IdleTimeout
+			}
+			resetAfter(delay)
+			c.mu.Lock()
+			c.health.Offline = true
+			c.health.LastError = ""
+			c.mu.Unlock()
 		case "event":
 			if room == "" {
 				c.report(errc, &Error{Kind: KindProtocol})
@@ -220,6 +251,9 @@ func (c *Collector) once(parent context.Context, out chan<- event.Event, errc ch
 	stable := !readyAt.IsZero() && time.Since(readyAt) >= c.options.StableAfter
 	if failure != nil {
 		return stable, failure
+	}
+	if offline {
+		return false, &Error{Kind: KindOffline}
 	}
 	if timedout.Load() {
 		return stable, &Error{Kind: KindTimeout, Cause: context.DeadlineExceeded}

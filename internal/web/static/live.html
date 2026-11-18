@@ -103,12 +103,13 @@ function render() {
   var liveAvailable = live.available !== false;
   var livePill = document.getElementById('live-pill');
   if (!liveAvailable) { pill(livePill, false, '未装配'); }
+  else if (live.running && live.offline) { livePill.className = 'pill warn'; livePill.textContent = '等待开播'; }
   else if (live.running) { pill(livePill, true, '采集中'); }
   else if (live.enabled) { pill(livePill, false, '已启用未运行'); }
   else { pill(livePill, false, '已停止'); }
   document.getElementById('live-btn').textContent = live.enabled ? '停止直播采集' : '启动直播采集';
   document.getElementById('live-btn').disabled = !liveAvailable;
-  document.getElementById('live-sub').textContent = live.last_error ? ('错误：' + live.last_error) : (!liveAvailable ? '直播采集未装配' : '');
+  document.getElementById('live-sub').textContent = live.last_error ? ('错误：' + live.last_error) : (live.offline ? '直播未开播，等待开播' : (!liveAvailable ? '直播采集未装配' : ''));
   document.getElementById('live-kv').innerHTML =
     '<div>启动时间：<b>' + when(live.started_at) + '</b></div>' +
     '<div>最近事件：<b>' + when(live.last_event_at) + '</b></div>' +

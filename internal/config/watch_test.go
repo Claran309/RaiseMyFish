@@ -191,3 +191,25 @@ func TestWatchDisabledIgnoresInvalidFields(t *testing.T) {
 		t.Fatalf("关闭状态不应校验运行时凭据：%v", err)
 	}
 }
+
+// TestWatchASRAutoStartValidation 守护配置即使看直播关闭也会生效（主动弹幕同样依赖 ASR）。
+func TestWatchASRAutoStartValidation(t *testing.T) {
+	t.Setenv("FISH_DB_DSN", "postgres://fixture")
+	body := "[watch]\nenabled=false\nasr_auto_start=true\nasr_start_script='C:/tools/start-asr.bat'\nasr_check_seconds=60\n"
+	cfg, err := loadWatchConfig(t, body)
+	if err != nil {
+		t.Fatalf("合法 ASR 守护配置被拒绝：%v", err)
+	}
+	if !cfg.Watch.ASRAutoStart || cfg.Watch.ASRStartScript == "" || cfg.Watch.ASRCheckSeconds != 60 {
+		t.Fatalf("ASR 守护配置未生效：%+v", cfg.Watch)
+	}
+	for _, bad := range []string{
+		"[watch]\nenabled=false\nasr_auto_start=true\nasr_check_seconds=60\n",
+		"[watch]\nenabled=false\nasr_auto_start=true\nasr_start_script='C:/x.bat'\nasr_check_seconds=3\n",
+		"[watch]\nenabled=false\nasr_auto_start=true\nasr_start_script=\"C:/x.bat\\r\\nbad\"\nasr_check_seconds=60\n",
+	} {
+		if _, err := loadWatchConfig(t, bad); err == nil {
+			t.Fatalf("无效 ASR 守护配置未被拒绝：%q", bad)
+		}
+	}
+}

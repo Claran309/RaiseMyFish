@@ -27,13 +27,14 @@ type LiveCollector struct {
 	BackoffMinMS     int    `toml:"backoff_min_ms"`
 	BackoffMaxMS     int    `toml:"backoff_max_ms"`
 	StableAfterMS    int    `toml:"stable_after_ms"`
+	OfflinePollMS    int    `toml:"offline_poll_ms"`
 	MaxFailures      int    `toml:"max_failures"`
 	Cookie           string `toml:"-" json:"-"`
 	CookieFile       string `toml:"-" json:"-"`
 }
 
 func defaultLiveCollector() LiveCollector {
-	return LiveCollector{NodePath: "node", ScriptPath: "tools/bili-whale/danmaku-await.mjs", HTTPTimeoutMS: 10000, ConnectTimeoutMS: 10000, HeartbeatMS: 30000, IdleMS: 90000, StartupMS: 45000, BackoffMinMS: 1000, BackoffMaxMS: 60000, StableAfterMS: 30000, MaxFailures: 8}
+	return LiveCollector{NodePath: "node", ScriptPath: "tools/bili-whale/danmaku-await.mjs", HTTPTimeoutMS: 10000, ConnectTimeoutMS: 10000, HeartbeatMS: 30000, IdleMS: 90000, StartupMS: 45000, BackoffMinMS: 1000, BackoffMaxMS: 60000, StableAfterMS: 30000, OfflinePollMS: 60000, MaxFailures: 8}
 }
 func (l *LiveCollector) resolveEnvironment(lookup func(string) (string, bool), enabled bool) {
 	if !enabled {
@@ -65,7 +66,7 @@ func (l LiveCollector) ValidateStructure(enabled bool) error {
 	if !positiveLiveID.MatchString(l.RoomID) || strings.Trim(l.RoomID, "0") == "" || strings.TrimSpace(l.NodePath) == "" || strings.TrimSpace(l.ScriptPath) == "" {
 		return errors.New("直播采集房间或运行时配置无效")
 	}
-	for _, v := range []int{l.HTTPTimeoutMS, l.ConnectTimeoutMS, l.HeartbeatMS, l.IdleMS, l.StartupMS, l.BackoffMinMS, l.BackoffMaxMS, l.StableAfterMS} {
+	for _, v := range []int{l.HTTPTimeoutMS, l.ConnectTimeoutMS, l.HeartbeatMS, l.IdleMS, l.StartupMS, l.BackoffMinMS, l.BackoffMaxMS, l.StableAfterMS, l.OfflinePollMS} {
 		if v < 1000 || v > 600000 {
 			return errors.New("直播采集时限必须在1至600秒内")
 		}

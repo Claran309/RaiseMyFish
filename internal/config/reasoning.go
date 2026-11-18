@@ -41,7 +41,7 @@ const (
 	defaultReasoningTimeoutMS = 8000
 	maxReasoningSteps         = 10
 	minReasoningTimeoutMS     = 1000
-	maxReasoningTimeoutMS     = 10000 // 派发单要求「不能变成 30 秒」，硬顶 10 秒
+	maxReasoningTimeoutMS     = 20000 // 弹幕预算 4 步/12 秒（原 3 步/8 秒）；硬顶 20 秒防止拖成半分钟
 )
 
 // 评论/私信允许更长思考；默认取区间中位，仍受父级 worker 超时约束。

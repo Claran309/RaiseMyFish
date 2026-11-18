@@ -75,6 +75,10 @@ type contextBuilder struct {
 	state      func(time.Time) string
 	finder     profileFinder
 	injections store.InjectionReader
+	// recentSelf 取鱼自己最近说过的话（去公式化用）；nil 时不注入。
+	recentSelf func(ctx context.Context, ch event.Channel, session string, limit int) []string
+	// viewerRecent 取该观众最近几条弹幕（实时上下文）；nil 时不注入。
+	viewerRecent func(ctx context.Context, fromID string, limit int) []string
 	log        *zap.Logger
 }
 
@@ -123,6 +127,10 @@ func (b *contextBuilder) BuildContext(ctx context.Context, ev event.Event, visua
 		Visual:    strings.TrimSpace(visual),
 		Injection: b.injectionText(ctx),
 		Soul:      b.soul.load(ctx),
+	}
+	// 自己去公式化：最近说过的话作为反例一起注入。
+	if b.recentSelf != nil && ev.Channel == event.ChLive {
+		input.RecentSelf = b.recentSelf(ctx, ev.Channel, ev.Session, 3)
 	}
 	// Viewer 段依赖问题主体（甲问乙）与记忆快照，必须最后组装。
 	input.Viewer = b.viewerText(ctx, input)
@@ -176,6 +184,11 @@ func (b *contextBuilder) viewerText(ctx context.Context, in brain.ContextInput) 
 		return ""
 	}
 	profileText := ""
+	if b.viewerRecent != nil {
+		if recentLines := b.viewerRecent(ctx, ev.FromID, 5); len(recentLines) > 0 {
+			profileText = "最近说过：\n- " + strings.Join(recentLines, "\n- ")
+		}
+	}
 	var segments []viewerSegment
 	profile, err := b.viewers.GetProfile(ctx, ev.FromID)
 	switch {

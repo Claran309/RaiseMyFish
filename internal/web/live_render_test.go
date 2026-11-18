@@ -117,6 +117,12 @@ func TestLivePageRenderStatesWithoutTypeError(t *testing.T) {
 			watch: livePillView{Text: "运行中", Class: "pill ok"},
 		},
 		{
+			name:  "等待开播",
+			state: `{"live":{"available":true,"running":true,"enabled":true,"offline":true},"watch":{"available":true,"enabled":false}}`,
+			live:  livePillView{Text: "等待开播", Class: "pill warn"},
+			watch: livePillView{Text: "已停止", Class: "pill"},
+		},
+		{
 			name:  "已停止",
 			state: `{"live":{"available":true},"watch":{"available":true,"enabled":false}}`,
 			live:  livePillView{Text: "已停止", Class: "pill bad"},

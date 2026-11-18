@@ -36,6 +36,7 @@ type wireFrame struct {
 	Kind        string `json:"kind,omitempty"`
 	Fatal       bool   `json:"fatal,omitempty"`
 	Retryable   bool   `json:"retryable,omitempty"`
+	LiveStatus  int    `json:"live_status,omitempty"`
 }
 
 func normalize(f wireFrame, room, self string) (event.Event, bool, error) {

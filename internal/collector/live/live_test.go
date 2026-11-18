@@ -120,6 +120,11 @@ func TestLiveChildHelper(t *testing.T) {
 	if mode == "" {
 		return
 	}
+	if mode == "offline" {
+		fmt.Println(`{"protocol":1,"type":"offline","live_status":0}`)
+		time.Sleep(10 * time.Second)
+		os.Exit(0)
+	}
 	if mode == "silent" {
 		time.Sleep(10 * time.Second)
 		os.Exit(0)
@@ -225,6 +230,41 @@ func TestProcessStructuredReplyFrame(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		cancel()
 		t.Fatal("未收到结构化回复事件")
+	}
+}
+
+func TestOfflineFrameKeepsWaitingWithoutReconnect(t *testing.T) {
+	c := newHelper(t, "offline")
+	c.options.MaxFailures = 1
+	c.options.OfflinePoll = time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan event.Event, 1)
+	errc := make(chan error, 4)
+	finished := make(chan error, 1)
+	go func() { finished <- c.Start(ctx, out, errc) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !c.Health().Offline && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !c.Health().Offline {
+		t.Fatal("未进入等待开播状态")
+	}
+	if c.Health().Reconnects != 0 {
+		t.Fatalf("未开播不应计重连：%d", c.Health().Reconnects)
+	}
+	select {
+	case err := <-finished:
+		t.Fatalf("未开播不应退出：%v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	if c.Health().Offline {
+		t.Fatal("退出后仍标记等待开播")
 	}
 }
 

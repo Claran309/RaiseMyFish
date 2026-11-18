@@ -41,6 +41,7 @@ type CollectorState struct {
 	Available   bool   `json:"available"`
 	Enabled     bool   `json:"enabled"`
 	Running     bool   `json:"running"`
+	Offline     bool   `json:"offline,omitempty"`
 	StartedAt   string `json:"started_at,omitempty"`
 	LastError   string `json:"last_error,omitempty"`
 	LastEventAt string `json:"last_event_at,omitempty"`

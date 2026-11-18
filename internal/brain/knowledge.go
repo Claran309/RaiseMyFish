@@ -47,7 +47,7 @@ func emptySameShape[T any](items []T) []T {
 }
 
 // finishKnowledge 在原记忆预算完成后使用余量，不反向裁记忆或人格。
-func finishKnowledge(ctx context.Context, k *knowledge.Context, p persona.Pack, section contextSection, eventJSON []byte, ch event.Channel, state, visual, audio, liveTitle, liveChat, viewer, injection string, soul []string, base []provider.Message, limit, percent int, truncated bool) (promptPlan, error) {
+func finishKnowledge(ctx context.Context, k *knowledge.Context, p persona.Pack, section contextSection, eventJSON []byte, ch event.Channel, state, visual, audio, liveTitle string, recentSelf []string, liveChat, viewer, injection string, soul []string, base []provider.Message, limit, percent int, truncated bool) (promptPlan, error) {
 	if percent < 0 || percent > 10 {
 		return promptPlan{}, &Error{Kind: KindInput}
 	}
@@ -56,7 +56,7 @@ func finishKnowledge(ctx context.Context, k *knowledge.Context, p persona.Pack, 
 	fixed.Recent = emptySameShape(fixed.Recent)
 	fixed.CrossChannel = emptySameShape(fixed.CrossChannel)
 	fixed.Records = emptySameShape(fixed.Records)
-	withoutMemory, _, err := renderContext(ctx, p, fixed, eventJSON, ch, state, visual, audio, liveTitle, liveChat, viewer, injection, soul)
+	withoutMemory, _, err := renderContext(ctx, p, fixed, eventJSON, ch, state, visual, audio, liveTitle, recentSelf, liveChat, viewer, injection, soul)
 	if err != nil {
 		return promptPlan{}, err
 	}
@@ -93,7 +93,7 @@ func finishKnowledge(ctx context.Context, k *knowledge.Context, p persona.Pack, 
 		}
 	}
 	section.Knowledge = selected
-	messages, body, err := renderContext(ctx, p, section, eventJSON, ch, state, visual, audio, liveTitle, liveChat, viewer, injection, soul)
+	messages, body, err := renderContext(ctx, p, section, eventJSON, ch, state, visual, audio, liveTitle, recentSelf, liveChat, viewer, injection, soul)
 	if err != nil {
 		return promptPlan{}, err
 	}

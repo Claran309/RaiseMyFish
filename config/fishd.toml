@@ -216,8 +216,10 @@ allowed_tools = []
 enabled = true
 # true：除短句外全部走 ReAct；false：回到旧两段式（命中召回词表才走）。
 default_react = true
-max_steps = 3
-timeout_ms = 8000
+# 弹幕预算：4 步 / 12 秒（原 3 步 / 8 秒）。理由：p50 延迟已 4.6s，
+# 观众对 1-2 秒差异不敏感；多一步能让「看画面/查记忆」真正发生。
+max_steps = 4
+timeout_ms = 12000
 # 副作用工具（送礼/关注/点赞/私信/发动态）总开关：默认关，开了模型才看得见这些工具。
 allow_side_effect_tools = false
 # 弹幕工具（send_danmaku）：开了一条事件里可直接发 1-3 条弹幕（每条≤40字，
@@ -360,9 +362,10 @@ max_tokens = 900
 # 消费循环（Claim → Scheduler → Brain → Sender）。
 # 整段缺失表示「只采集不回复」；这里保留默认值，实际是否回复还取决于 [llm] enabled 与路由。
 [scheduler]
-max_concurrent = 8
-max_pending = 64
-claim_batch = 8
+# 弹幕高峰（几十条/分钟）时并行回复：8 → 16 个 worker，一次领 16 条。
+max_concurrent = 16
+max_pending = 128
+claim_batch = 16
 poll_interval_ms = 500
 retry_delay_ms = 5000
 max_event_age_seconds = 60 # 积压超过多少秒直接丢弃（不回复过期弹幕）；0=不限制
