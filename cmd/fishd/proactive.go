@@ -73,7 +73,7 @@ func buildProactiveRunner(cfg config.Config, resources *infra.Resources, routes 
 	if err != nil {
 		return nil, err
 	}
-	vision := proactive.VisionFromFrames(describer)
+	vision := proactive.VisionFromFrames(describer, logger)
 
 	// 记忆是可选增强：装配失败只降级为空快照，不影响主动弹幕本身
 	var memReader memory.Reader
