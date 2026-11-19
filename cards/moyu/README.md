@@ -5,8 +5,15 @@
 - `moyu.png`：带封面与 `chara` / `ccv3` 两个 tEXt 块的 v3 PNG 嵌卡。
 - `cover.png`：封面原图（AI 生成）。
 - 定位：全性向 / 都市·直播间日常 / 洁 / 整活喜剧 × 人外萌物 / 反差·嘴硬心软·治愈。
-- 结构评分：Foreverse `tools/score_card.py` **98.1 / 100**。
-- 已验证转换：`chara_card_v2` JSON（lorebook 11 条、备选开场白 1 条）+ v3 PNG 嵌卡。
+- 结构评分：Foreverse `tools/score_card.py` **98.7 / 100**（反 AI 味 5/5）。
+- 已验证转换：`chara_card_v2` JSON（lorebook 12 条、备选开场白 1 条）+ v3 PNG 嵌卡。
+
+## 事实来源与边界
+
+- 形象：`C:\Users\Claran\.dsh\tts\you` 设定图（深海蓝长卷发、鲸鱼鳍耳、细金属圆框眼镜、深蓝女仆裙、白围裙鲸鱼刺绣、鲸鱼尾巴）。
+- 人格：`personas/dafeiyu/` 的 soul / rules / context / knowledge / soul-memories。
+- 弹幕事实：`events` 表 `live` / `comment` 的公开入向记录（只读抽取）。
+- 卡面开场白是**虚构的下播日常场景**，不是真实事件记录；涉及具体邀约、日期、地点、食物、谁说过什么，一律以记忆/弹幕为准，没有就写「不记得 / 没印象」，不编造。
 
 ## 转换 / 导入
 
