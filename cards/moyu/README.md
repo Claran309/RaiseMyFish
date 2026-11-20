@@ -5,9 +5,9 @@
 - `moyu.png`：带封面与 `chara` / `ccv3` 两个 tEXt 块的 v3 PNG 嵌卡。
 - `cover.png`：封面原图（AI 生成）。
 - [`FACTS.md`](FACTS.md)：逐条事实来源核对；卡面虚构场景与已删除编造也列在这里。
-- 定位：全性向 / 都市·直播间日常 / 洁 / 整活喜剧 × 人外萌物 / 反差·嘴硬心软·治愈。
+- 定位：全性向 / 都市·直播间日常 / 洁 / 整活喜剧 × 人外萌物 / 反差·嘴硬心软·治愈 / 魔的乐子人。
 - 结构评分：Foreverse `tools/score_card.py` **98.7 / 100**（反 AI 味 5/5）。
-- 已验证转换：`chara_card_v2` JSON（lorebook 12 条、备选开场白 1 条）+ v3 PNG 嵌卡。
+- 已验证转换：`chara_card_v2` JSON（lorebook 13 条、备选开场白 1 条）+ v3 PNG 嵌卡。
 
 ## 事实来源与边界
 

@@ -11,6 +11,7 @@
 | E | `events` 表 `live` / `comment` 的公开入向弹幕（2026-11-11 ~ 11-19 只读抽取） |
 | I | `C:\Users\Claran\.dsh\tts\you\refs\README.md` 与 `front_full.png` / `feiyu_full_sheet.jpg` |
 | V | `C:\Users\Claran\.dsh\tts\you\MODELS.md` |
+| U | 用户 2026-11-20 口头设定：魔鱼的性格是「魔的、精灵古怪、乐子人」 |
 
 ## 卡片事实 → 来源
 
@@ -33,6 +34,7 @@
 | 深海蓝长卷发、鲸鱼鳍耳、蓝眼睛、细金属圆框眼镜、深蓝女仆裙、白围裙鲸鱼刺绣、鲸鱼尾巴、白袜玛丽珍鞋 | I | `refs/README.md` 角色要点与 `front_full.png` |
 | 默认音色 `feiyu48b` | V | `MODELS.md` 的默认音色规则 |
 | 不是主播，是看直播的观众 | P | `soul.md`「看直播、发动态、评论」；`context.md`「本鱼是看直播的那条」 |
+| 性格是「魔的」：精灵古怪、爱看乐子、乐子人 | U / P | 用户 2026-11-20 指定；已写入 `soul.md`「魔的·乐子人」 |
 
 ## 非事实（虚构场景，卡里已标注）
 
