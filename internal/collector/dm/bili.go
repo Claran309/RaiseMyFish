@@ -352,7 +352,9 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, client *bili.Client, sel
 	frontier := st.Frontier
 	pending := st.PendingFrom
 	first := watermark == "0" && frontier == "0" && pending == "0"
-	if !first && pending == "0" && compareDecimal(sessionSeq, watermark) <= 0 {
+	// 注意：用严格小于。等于水位时也要拉一次——平台可能给新消息复用同一 seqno
+	// （如私信图片消息），此前「等于就跳过」会让这类消息永远采不到；重复由事件 ID 幂等兜底。
+	if !first && pending == "0" && compareDecimal(sessionSeq, watermark) < 0 {
 		return nil, false, nil
 	}
 
@@ -375,6 +377,7 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, client *bili.Client, sel
 				ID:     m.MsgKey,
 				PeerID: peer,
 				Text:   m.Content,
+				Images: append([]string(nil), m.Images...),
 				At:     atFromUnix(m.Timestamp),
 			})
 		}

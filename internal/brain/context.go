@@ -132,7 +132,8 @@ func replyLimit(ch event.Channel) int {
 	case event.ChComment:
 		return 200
 	case event.ChDM:
-		return 500
+		// 私信是 IM 聊天：太长不像人说话（原 500 字，鱼会写小作文）。
+		return 80
 	default:
 		return 200
 	}
