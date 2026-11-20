@@ -58,8 +58,8 @@ func TestLoadRealPack(t *testing.T) {
 	if p.Meta.Name != "dafeiyu" {
 		t.Errorf("meta.name = %q，期望 dafeiyu", p.Meta.Name)
 	}
-	if p.Meta.Version != "v1.1" {
-		t.Errorf("meta.version = %q，期望安全单句修订版 v1.1", p.Meta.Version)
+	if p.Meta.Version != "v1.2" {
+		t.Errorf("meta.version = %q，期望魔的乐子人版 v1.2", p.Meta.Version)
 	}
 	if !filepath.IsAbs(p.Dir) {
 		t.Errorf("Pack.Dir 不是绝对路径：%q", p.Dir)
@@ -72,6 +72,12 @@ func TestLoadRealPack(t *testing.T) {
 	}
 	if !strings.Contains(p.Rules, "「XX 是谁」不是在问本鱼") {
 		t.Error("rules 缺少认人规则：XX 是谁 ≠ 你是谁")
+	}
+	if !strings.Contains(p.Soul, "魔的·乐子人") || !strings.Contains(p.Rules, "不编具体的邀约") {
+		t.Error("人格包缺少魔的乐子人或事实边界")
+	}
+	if !strings.Contains(p.Contexts[ContextLive], "乐子人") {
+		t.Error("live 口径缺少乐子人规则")
 	}
 
 	for _, ch := range []string{"live", "comment", "dm", "qq"} {
