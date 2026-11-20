@@ -573,6 +573,7 @@ func (f *BiliFetcher) fetchWithoutSeqno(ctx context.Context, client *bili.Client
 			ID:     m.MsgKey,
 			PeerID: s.TalkerID,
 			Text:   m.Content,
+			Images: append([]string(nil), m.Images...),
 			At:     atFromUnix(m.Timestamp),
 		})
 	}
@@ -641,6 +642,7 @@ func messageFromSession(s bili.DMSession) Message {
 		ID:     s.MsgKey,
 		PeerID: s.TalkerID,
 		Text:   s.Content,
+		Images: append([]string(nil), s.Images...),
 		At:     atFromUnix(s.Timestamp),
 	}
 }

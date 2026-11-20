@@ -195,7 +195,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		// 统一快照：近期记忆默认注入，知识按意图补充（与 ReAct/主动弹幕同源）。
 		input, decision := buildPassiveInput(prepCtx, deps.context, ev)
 		// 评论附图：下载 + 视觉转述后注入 Visual；失败只降级为无图，不阻塞回复。
-		if deps.commentVision != nil && ev.Channel == event.ChComment {
+		if deps.commentVision != nil && (ev.Channel == event.ChComment || ev.Channel == event.ChDM) {
 			if visual := deps.commentVision.Describe(prepCtx, ev); visual != "" {
 				input.Visual = visual
 			}

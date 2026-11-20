@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -88,10 +89,13 @@ func newCommentVision(describer imageDescriber, timeout time.Duration, maxImages
 
 // Describe 返回「评论附图（视觉模型转述）」文本；无图或全部失败返回空串。
 func (v *commentVision) Describe(ctx context.Context, ev event.Event) string {
-	if v == nil || ev.Channel != event.ChComment {
+	if v == nil || (ev.Channel != event.ChComment && ev.Channel != event.ChDM) {
 		return ""
 	}
 	pics := collectorcomment.Pics(ev.Meta)
+	if ev.Channel == event.ChDM {
+		pics = dmPics(ev.Meta)
+	}
 	if len(pics) == 0 {
 		return ""
 	}
@@ -116,7 +120,7 @@ func (v *commentVision) Describe(ctx context.Context, ev event.Event) string {
 		desc, err := v.describeOne(ctx, pic)
 		if err != nil {
 			v.log.Warn("评论图片识别失败，跳过该图",
-				zap.String("action", "comment_vision"),
+				zap.String("action", visionAction(ev)),
 				zap.String("event_id", ev.ID),
 				zap.Int("image", i+1),
 				zap.Error(err),
@@ -127,7 +131,7 @@ func (v *commentVision) Describe(ctx context.Context, ev event.Event) string {
 	}
 	if len(descriptions) == 0 {
 		v.log.Warn("评论附图全部识别失败，按无图继续",
-			zap.String("action", "comment_vision"),
+			zap.String("action", visionAction(ev)),
 			zap.String("event_id", ev.ID),
 			zap.Int("pics", len(pics)),
 			zap.Int64("latency_ms", time.Since(started).Milliseconds()),
@@ -135,7 +139,11 @@ func (v *commentVision) Describe(ctx context.Context, ev event.Event) string {
 		return ""
 	}
 
-	lines := []string{"评论附图（视觉模型转述）："}
+	label := "评论附图（视觉模型转述）："
+	if ev.Channel == event.ChDM {
+		label = "私信图片（视觉模型转述）："
+	}
+	lines := []string{label}
 	for _, desc := range descriptions {
 		lines = append(lines, fmt.Sprintf("图%d：%s", desc.index, desc.text))
 	}
@@ -289,4 +297,45 @@ func buildCommentVision(cfg config.Config, usage store.UsageRepo, log *zap.Logge
 		zap.Bool("usage_recording", usage != nil),
 	)
 	return vision, nil
+}
+
+// dmPics 从私信事件 Meta 里取图片 URL（采集层写入的 images JSON 数组）。
+func dmPics(meta json.RawMessage) []string {
+	if len(meta) == 0 {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(meta, &fields); err != nil {
+		return nil
+	}
+	raw, ok := fields["images"]
+	if !ok {
+		return nil
+	}
+	var urls []string
+	if err := json.Unmarshal(raw, &urls); err != nil {
+		// 兼容「字符串里再套 JSON」的历史写法。
+		var encoded string
+		if err2 := json.Unmarshal(raw, &encoded); err2 != nil {
+			return nil
+		}
+		if err3 := json.Unmarshal([]byte(encoded), &urls); err3 != nil {
+			return nil
+		}
+	}
+	out := make([]string, 0, len(urls))
+	for _, u := range urls {
+		if u = strings.TrimSpace(u); u != "" {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// visionAction 给日志一个可区分的 action（评论图/私信图）。
+func visionAction(ev event.Event) string {
+	if ev.Channel == event.ChDM {
+		return "dm_vision"
+	}
+	return "comment_vision"
 }

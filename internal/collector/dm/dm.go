@@ -65,8 +65,10 @@ type Message struct {
 	PeerID string
 	// PeerName 是对方昵称。
 	PeerName string
-	// Text 是正文。
+	// Text 是正文；纯图片消息为「[图片]」占位。
 	Text string
+	// Images 是图片消息的图片 URL（已通过 http(s) 校验；空表示无图）。
+	Images []string
 	// At 是平台时间；为零时用采集时刻。
 	At time.Time
 }
@@ -262,6 +264,16 @@ func (c *Collector) toEvent(m Message, now time.Time, recvActor string) (event.E
 	id := strings.TrimSpace(m.ID)
 	peer := strings.TrimSpace(m.PeerID)
 	text := strings.TrimSpace(m.Text)
+	images := make([]string, 0, len(m.Images))
+	for _, raw := range m.Images {
+		if u := strings.TrimSpace(raw); strings.HasPrefix(u, "https://") && len(images) < 4 {
+			images = append(images, u)
+		}
+	}
+	if text == "" && len(images) > 0 {
+		// 纯图片消息也要成为事件：正文用占位，图片放 Meta 供视觉识别。
+		text = "[图片]"
+	}
 	if id == "" || peer == "" || text == "" || !validMID(peer) {
 		return event.Event{}, "", false
 	}
@@ -280,7 +292,13 @@ func (c *Collector) toEvent(m Message, now time.Time, recvActor string) (event.E
 	if name == "" {
 		name = peer
 	}
-	meta, _ := json.Marshal(map[string]string{event.MetaRecvActor: recvActor})
+	metaFields := map[string]string{event.MetaRecvActor: recvActor}
+	if len(images) > 0 {
+		if encoded, err := json.Marshal(images); err == nil {
+			metaFields["images"] = string(encoded)
+		}
+	}
+	meta, _ := json.Marshal(metaFields)
 	return event.Event{
 		ID:       eventID,
 		Channel:  event.ChDM,

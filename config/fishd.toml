@@ -239,9 +239,11 @@ timeout_ms = 30000
 max_steps = 5
 timeout_ms = 30000
 
-# 评论附图识别：采集到图片 URL 后下载 → 视觉模型描述/OCR → 注入上下文。
+# 评论/私信附图识别：采集到图片 URL 后下载 → 视觉模型描述/OCR → 注入上下文。
+# - 评论：Meta.pics（content.pics[].img_src）
+# - 私信：msg_type=2 图片消息的 content.url（纯图消息正文占位「[图片]」）
 # 默认关闭；开启需同时启用 [llm] 且 llm_route 可解析。
-# 单条评论最多看 max_images 张图，所有图共用 timeout_ms；失败只按无图继续。
+# 单条最多看 max_images 张图，所有图共用 timeout_ms；失败只按无图继续。
 [comment_vision]
 enabled = true
 llm_route = "default"

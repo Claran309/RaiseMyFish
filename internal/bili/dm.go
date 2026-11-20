@@ -26,8 +26,10 @@ type DMSession struct {
 	MsgKey string
 	// SenderUID 是最近一条消息的发送者。
 	SenderUID string
-	// Content 是正文。
+	// Content 是正文；纯图片会话为「[图片]」。
 	Content string
+	// Images 是最近一条消息的图片 URL（图片消息时非空）。
+	Images []string
 	// Timestamp 是平台秒级时间戳。
 	Timestamp int64
 	// MsgSeqno 是最近一条消息的序列号；平台未返回时为空。
@@ -67,6 +69,7 @@ func (c *Client) DMSessionsPage(ctx context.Context, size int, endTS int64) (DMS
 			LastMsg  struct {
 				MsgKey    json.RawMessage `json:"msg_key"`
 				MsgSeqno  json.RawMessage `json:"msg_seqno"`
+				MsgType   json.RawMessage `json:"msg_type"`
 				SenderUID json.RawMessage `json:"sender_uid"`
 				Content   string          `json:"content"`
 				Timestamp int64           `json:"timestamp"`
@@ -80,11 +83,16 @@ func (c *Client) DMSessionsPage(ctx context.Context, size int, endTS int64) (DMS
 	out := make([]DMSession, 0, len(data.SessionList))
 	for _, s := range data.SessionList {
 		// 与详情路径共用解包逻辑，详情失败降级时正文才不会带 JSON 包装。
+		lastText, lastImages := parseDMMessage(rawJSONID(s.LastMsg.MsgType), s.LastMsg.Content)
+		if lastText == "" && len(lastImages) > 0 {
+			lastText = "[图片]"
+		}
 		item := DMSession{
 			TalkerID:  rawJSONID(s.TalkerID),
 			MsgKey:    rawJSONID(s.LastMsg.MsgKey),
 			SenderUID: rawJSONID(s.LastMsg.SenderUID),
-			Content:   parseDMContent(s.LastMsg.Content),
+			Content:   lastText,
+			Images:    lastImages,
 			Timestamp: s.LastMsg.Timestamp,
 			MsgSeqno:  rawJSONID(s.LastMsg.MsgSeqno),
 			MaxSeqno:  rawJSONID(s.MaxSeqno),
@@ -122,6 +130,8 @@ type DMMessage struct {
 	MsgKey    string
 	SenderUID string
 	Content   string
+	// Images 是图片消息里的图片 URL（msg_type=2）；文本消息为空。
+	Images    []string
 	Timestamp int64
 	// Seqno 是会话内消息序列号（msg_seqno）；平台未返回时为空。
 	Seqno string
@@ -174,6 +184,7 @@ func (c *Client) DMSessionMessagesPage(ctx context.Context, talkerID string, siz
 		Messages []struct {
 			MsgKey    json.RawMessage `json:"msg_key"`
 			MsgSeqno  json.RawMessage `json:"msg_seqno"`
+			MsgType   json.RawMessage `json:"msg_type"`
 			SenderUID json.RawMessage `json:"sender_uid"`
 			Content   string          `json:"content"`
 			Timestamp int64           `json:"timestamp"`
@@ -192,14 +203,16 @@ func (c *Client) DMSessionMessagesPage(ctx context.Context, talkerID string, siz
 			page.MinSeqno = minDecimalID(page.MinSeqno, seq)
 			page.MaxSeqno = maxDecimalID(page.MaxSeqno, seq)
 		}
-		key, sender, text := rawJSONID(m.MsgKey), rawJSONID(m.SenderUID), parseDMContent(m.Content)
-		if key == "" || sender == "" || text == "" {
+		key, sender := rawJSONID(m.MsgKey), rawJSONID(m.SenderUID)
+		text, images := parseDMMessage(rawJSONID(m.MsgType), m.Content)
+		if key == "" || sender == "" || (text == "" && len(images) == 0) {
 			continue
 		}
 		page.Messages = append(page.Messages, DMMessage{
 			MsgKey:    key,
 			SenderUID: sender,
 			Content:   text,
+			Images:    images,
 			Timestamp: m.Timestamp,
 			Seqno:     seq,
 		})
@@ -235,6 +248,58 @@ func (c *Client) DMSessionMessages(ctx context.Context, talkerID string, limit i
 }
 
 // parseDMContent 取文本消息正文；平台把正文包在 JSON 字符串里（{"content":"..."}）。
+// parseDMMessage 解析一条私信：返回正文与图片 URL。
+//
+// B站私信 msg_type：1=文本，2=图片（content 是 JSON，含 url/width/height）。
+// 其他类型（撤回/卡片/系统）尽量取 content 文本，取不到就跳过。
+func parseDMMessage(msgType, raw string) (string, []string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if msgType == "2" {
+		return "", parseDMImageURLs(raw)
+	}
+	return parseDMContent(raw), nil
+}
+
+// parseDMImageURLs 从图片消息 content 里取 URL；兼容 url 为字符串或数组两种形态。
+func parseDMImageURLs(raw string) []string {
+	var obj struct {
+		URL   json.RawMessage `json:"url"`
+		URLs  json.RawMessage `json:"urls"`
+		Image json.RawMessage `json:"image"`
+	}
+	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
+		return nil
+	}
+	out := make([]string, 0, 2)
+	collect := func(value json.RawMessage) {
+		if len(value) == 0 {
+			return
+		}
+		var one string
+		if err := json.Unmarshal(value, &one); err == nil {
+			if u := strings.TrimSpace(one); u != "" {
+				out = append(out, u)
+			}
+			return
+		}
+		var many []string
+		if err := json.Unmarshal(value, &many); err == nil {
+			for _, u := range many {
+				if u = strings.TrimSpace(u); u != "" {
+					out = append(out, u)
+				}
+			}
+		}
+	}
+	collect(obj.URL)
+	collect(obj.URLs)
+	collect(obj.Image)
+	return out
+}
+
 func parseDMContent(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
