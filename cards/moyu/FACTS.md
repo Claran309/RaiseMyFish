@@ -55,4 +55,4 @@
 ## 复核
 
 - Foreverse `tools/score_card.py`：**98.7 / 100**，反 AI 味 5/5。
-- `tools/card_md_to_st.py`：`moyu.v2.json` + `moyu.png` 转换成功，lorebook 12 条、备选开场白 1 条，PNG 内含 `chara` / `ccv3`。
+- `tools/card_md_to_st.py`：`moyu.v2.json` + `moyu.png` 转换成功，lorebook 13 条、备选开场白 1 条，PNG 内含 `chara` / `ccv3`。
