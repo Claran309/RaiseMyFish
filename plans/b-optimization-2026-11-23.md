@@ -422,6 +422,12 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 
 ### 4.7 B7 代码归属与讲解（P1，1–2 天）
 
+#### B7 执行记录（2026-11-23）
+
+- 新增 `docs/design-decisions/` 三页：WSS→发送、弹幕 ReAct、记忆提炼。
+- 每页固定结构：问题、方案、关键代码路径、失败路径、3 个可回答问题。
+- 验证：文档链接与代码路径逐条核对；不涉及功能测试。
+
 新增 `docs/design-decisions/`：
 - `01-wss-to-sender.md`：WSS → events → 五道闸 → Brain → Sender；
 - `02-react-danmaku.md`：一条弹幕的 ReAct（上下文快照 → 工具 → 观察 → 降级）；
