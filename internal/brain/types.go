@@ -70,6 +70,9 @@ type ContextInput struct {
 	Soul []string
 	// Conversation 是会话摘要与最近轮次；空则不出现 <conversation> 段。
 	Conversation *ConversationContext
+	// MaxPromptTokens 是本次调用的 prompt 预算覆盖；0 表示用 Brain 默认。
+	// 只允许调小：装不下时应裁剪资料，而不是偷偷超过全局上限。
+	MaxPromptTokens int
 }
 
 // ConversationContext 是「会话摘要 + 最近 N 轮」的注入投影；只含文本与方向。

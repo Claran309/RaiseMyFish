@@ -53,10 +53,16 @@ type ChannelPolicy struct {
 	ReplyMentionBack *bool   `toml:"reply_mention_back"`
 	MaxReplyRunes    int     `toml:"max_reply_runes"`
 	// MaxEventAgeSeconds 是该通道的积压上限（秒）；0 对 comment/dm 表示用默认值。
-	MaxEventAgeSeconds int      `toml:"max_event_age_seconds"`
-	SelfNames          []string `toml:"self_names"`
-	OwnerIDs           []string `toml:"owner_ids"`
-	SelfIDs            []string `toml:"self_ids"`
+	MaxEventAgeSeconds int `toml:"max_event_age_seconds"`
+	// MaxConcurrent 是该通道的软并发上限；0 表示不单独限制（仍受全局 max_concurrent 约束）。
+	MaxConcurrent int `toml:"max_concurrent"`
+	// MaxPromptTokens 是该通道的 prompt 预算上限；0 表示沿用 [llm].max_prompt_tokens。
+	MaxPromptTokens int `toml:"max_prompt_tokens"`
+	// MergeWindowMS 是同用户短窗口合并时长（毫秒）；0 表示关闭。
+	MergeWindowMS int      `toml:"merge_window_ms"`
+	SelfNames     []string `toml:"self_names"`
+	OwnerIDs      []string `toml:"owner_ids"`
+	SelfIDs       []string `toml:"self_ids"`
 }
 
 // 消费循环默认值（派发单 §1）。
@@ -147,6 +153,17 @@ func (s *Scheduler) ApplyDefaults() {
 				p.MaxEventAgeSeconds = 24 * 60 * 60
 			}
 		}
+		// 通道软配额：live 优先保证实时，comment/dm 给后台回复留余量。
+		if p.MaxConcurrent == 0 {
+			switch ch {
+			case event.ChLive:
+				p.MaxConcurrent = 6
+			case event.ChComment:
+				p.MaxConcurrent = 4
+			case event.ChDM:
+				p.MaxConcurrent = 2
+			}
+		}
 		for i, name := range p.SelfNames {
 			p.SelfNames[i] = strings.TrimSpace(name)
 		}
@@ -211,6 +228,15 @@ func (s *Scheduler) Validate() error {
 		}
 		if p.MaxEventAgeSeconds < 0 || p.MaxEventAgeSeconds > 7*24*60*60 {
 			return fmt.Errorf("通道 %s 的 max_event_age_seconds 需在0至604800之间", ch)
+		}
+		if p.MaxConcurrent < 0 || p.MaxConcurrent > 32 {
+			return fmt.Errorf("通道 %s 的 max_concurrent 需在0至32之间", ch)
+		}
+		if p.MaxPromptTokens < 0 || p.MaxPromptTokens > 1000000 {
+			return fmt.Errorf("通道 %s 的 max_prompt_tokens 需在0至1000000之间", ch)
+		}
+		if p.MergeWindowMS < 0 || p.MergeWindowMS > 60000 {
+			return fmt.Errorf("通道 %s 的 merge_window_ms 需在0至60000之间", ch)
 		}
 		if p.ReplyMentionBack != nil && *p.ReplyMentionBack && ch != event.ChLive {
 			return fmt.Errorf("通道 %s 不支持 reply_mention_back（只对 live 生效）", ch)

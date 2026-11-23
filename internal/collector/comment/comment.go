@@ -250,6 +250,12 @@ type Options struct {
 	// RecentSince 只产出不早于该时间的评论；零值不限制。
 	// 动态评论没有持久水位，首轮用它挡住历史评论，避免重启后回刷旧账。
 	RecentSince time.Time
+	// Cursors 是跨重启的评论水位；nil 时只保存在进程内。
+	Cursors CursorStore
+	// CursorPath 便于装配层只给路径；Cursors 非 nil 时优先用注入实现。
+	CursorPath string
+	// Concurrency 是单轮并行轮询的目标数；<=0 用 1（保持旧顺序）。
+	Concurrency int
 }
 
 func DefaultOptions() Options {
@@ -312,6 +318,10 @@ type Collector struct {
 	health  collector.Health
 	seen    map[string]struct{}
 	targets map[string]*targetState
+	// cursorSeed 是启动时加载的水位，新建 targetState 时灌入。
+	cursorSeed map[string]Cursor
+	// cursors 是持久化水位；nil 时只保存在进程内。
+	cursors CursorStore
 	started atomic.Bool
 	// emitted 是进程内累计产出事件数，用于判断本轮是否活跃。
 	emitted atomic.Int64
@@ -397,13 +407,29 @@ func New(o Options, log *zap.Logger) (*Collector, error) {
 		o.APIRoot = defaultAPIRoot
 	}
 	o.APIRoot = strings.TrimRight(strings.TrimSpace(o.APIRoot), "/")
-	return &Collector{
+	if o.Concurrency <= 0 {
+		o.Concurrency = 1
+	}
+	if o.Concurrency > 8 {
+		o.Concurrency = 8
+	}
+	c := &Collector{
 		options: o,
 		log:     log,
 		client:  &http.Client{Timeout: o.HTTPTimeout},
 		seen:    make(map[string]struct{}),
 		targets: make(map[string]*targetState),
-	}, nil
+	}
+	if o.Cursors != nil {
+		c.cursors = o.Cursors
+	} else if strings.TrimSpace(o.CursorPath) != "" {
+		store, err := NewFileCursorStore(o.CursorPath)
+		if err != nil {
+			return nil, &Error{Kind: KindInput, Cause: err}
+		}
+		c.cursors = store
+	}
+	return c, nil
 }
 
 func (c *Collector) Name() string { return "bili-comment" }
@@ -458,6 +484,15 @@ func (c *Collector) Start(ctx context.Context, out chan<- event.Event, errc chan
 		zap.Duration("interval", c.options.Interval),
 	)
 	targets := c.manualTargets()
+	// 水位在收到 SIGTERM/重启后仍要生效：首轮之前加载一次，损坏时只记日志。
+	if c.cursors != nil {
+		loaded, err := c.cursors.Load()
+		if err != nil {
+			c.log.Warn("评论水位加载失败，本轮从头补", zap.String("action", "comment_cursor"), zap.Error(err))
+			loaded = map[string]Cursor{}
+		}
+		c.cursorSeed = loaded
+	}
 	var lastDiscover time.Time
 	// 自适应轮询：活跃期用 Interval，空闲期放慢到 3×，412/429 指数退避。
 	policy := polling.Policy{Min: c.options.Interval, Max: c.options.Interval * 3, Jitter: 0.2, BackoffFactor: 2}.Resolve()
@@ -475,6 +510,7 @@ func (c *Collector) Start(ctx context.Context, out chan<- event.Event, errc chan
 		if fatal := c.cycle(ctx, cookie, targets, out, errc); fatal != nil {
 			return fatal
 		}
+		c.persistCursors()
 		active := c.emittedCount() > before
 		rateLimited := c.lastRateLimited()
 		if rateLimited {
@@ -561,10 +597,34 @@ func (c *Collector) stateFor(target Target) *targetState {
 	key := targetKey(target)
 	st := c.targets[key]
 	if st == nil {
-		st = &targetState{roots: make(map[string]*rootState)}
+		seed := c.cursorSeed[key]
+		st = &targetState{
+			roots:      make(map[string]*rootState),
+			frontierAt: seed.At, frontierID: seed.ID, covered: seed.Covered,
+		}
 		c.targets[key] = st
 	}
 	return st
+}
+
+// persistCursors 把当前水位写盘；失败只记日志，不影响采集。
+func (c *Collector) persistCursors() {
+	if c.cursors == nil {
+		return
+	}
+	out := make(map[string]Cursor, len(c.cursorSeed)+len(c.targets))
+	for key, cur := range c.cursorSeed {
+		out[key] = cur
+	}
+	for key, st := range c.targets {
+		if st.frontierAt <= 0 {
+			continue
+		}
+		out[key] = Cursor{At: st.frontierAt, ID: st.frontierID, Covered: st.covered}
+	}
+	if err := c.cursors.Save(out); err != nil {
+		c.log.Warn("评论水位保存失败，下轮继续用内存水位", zap.String("action", "comment_cursor"), zap.Error(err))
+	}
 }
 
 // trackRoot 把根评论放进按最近活跃淘汰的有界集合。
@@ -602,40 +662,68 @@ func (c *Collector) cycle(ctx context.Context, cookie string, targets []Target, 
 			delete(c.targets, key)
 		}
 	}
+	// 先串行建好每个 target 的状态：goroutine 只读写自己的 state，
+	// 共享的 seen/targets 结构不再被并发修改。
+	states := make([]*targetState, len(targets))
+	for i, target := range targets {
+		states[i] = c.stateFor(target)
+	}
+	workers := c.options.Concurrency
+	if workers < 1 {
+		workers = 1
+	}
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 	ok := true
-	for _, target := range targets {
+	var fatalErr *Error
+	for i := range targets {
 		if ctx.Err() != nil {
-			return nil
+			break
 		}
-		st := c.stateFor(target)
-		fatal, healthy, count := c.pollTop(ctx, cookie, target, st, out, errc)
-		if !healthy {
-			ok = false
-		}
-		if !st.polled && healthy && ctx.Err() == nil {
-			st.polled = true
-			c.log.Info("评论轮询目标已拉取",
-				zap.String("action", "comment_target_poll"),
-				zap.String("oid", target.OID),
-				zap.Int("comment_type", target.Type),
-				zap.Int("fetched", count.fetched),
-				zap.Int("emitted", count.emitted),
-				zap.Bool("recent_since", !c.options.RecentSince.IsZero()),
-			)
-		}
-		if fatal != nil {
-			return fatal
-		}
-		if ctx.Err() != nil {
-			return nil
-		}
-		fatal, healthy = c.pollRoots(ctx, cookie, target, st, out, errc)
-		if !healthy {
-			ok = false
-		}
-		if fatal != nil {
-			return fatal
-		}
+		target, st := targets[i], states[i]
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fatal, healthy, count := c.pollTop(ctx, cookie, target, st, out, errc)
+			mu.Lock()
+			if !healthy {
+				ok = false
+			}
+			if fatal != nil && fatalErr == nil {
+				fatalErr = fatal
+			}
+			mu.Unlock()
+			if !st.polled && healthy && ctx.Err() == nil {
+				st.polled = true
+				c.log.Info("评论轮询目标已拉取",
+					zap.String("action", "comment_target_poll"),
+					zap.String("oid", target.OID),
+					zap.Int("comment_type", target.Type),
+					zap.Int("fetched", count.fetched),
+					zap.Int("emitted", count.emitted),
+					zap.Bool("recent_since", !c.options.RecentSince.IsZero()),
+				)
+			}
+			if fatal != nil || ctx.Err() != nil {
+				return
+			}
+			fatal, healthy = c.pollRoots(ctx, cookie, target, st, out, errc)
+			mu.Lock()
+			if !healthy {
+				ok = false
+			}
+			if fatal != nil && fatalErr == nil {
+				fatalErr = fatal
+			}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	if fatalErr != nil {
+		return fatalErr
 	}
 	c.setOK(ok)
 	return nil

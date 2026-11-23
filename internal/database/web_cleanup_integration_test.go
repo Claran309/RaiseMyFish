@@ -37,21 +37,21 @@ func TestWebMemoryOrderRealPostgres(t *testing.T) {
 	seed("web_mem_new", 0.1, base.Add(-time.Hour))
 	seed("web_mem_mid", 0.5, base)
 
-	byTime, err := repo.Memory(ctx, "", "", "time", 10)
+	byTime, err := repo.Memory(ctx, "", "", "time", false, 10)
 	if err != nil {
 		t.Fatalf("按时间排序失败：%v", err)
 	}
 	if len(byTime) != 3 || byTime[0].ID != "web_mem_mid" || byTime[1].ID != "web_mem_new" || byTime[2].ID != "web_mem_old" {
 		t.Fatalf("时间排序错误：%+v", byTime)
 	}
-	byImportance, err := repo.Memory(ctx, "", "", "importance", 10)
+	byImportance, err := repo.Memory(ctx, "", "", "importance", false, 10)
 	if err != nil {
 		t.Fatalf("按重要度排序失败：%v", err)
 	}
 	if len(byImportance) != 3 || byImportance[0].ID != "web_mem_old" || byImportance[1].ID != "web_mem_mid" || byImportance[2].ID != "web_mem_new" {
 		t.Fatalf("重要度排序错误：%+v", byImportance)
 	}
-	if _, err := repo.Memory(ctx, "", "", "importance DESC", 10); !errors.Is(err, store.ErrInvalid) {
+	if _, err := repo.Memory(ctx, "", "", "importance DESC", false, 10); !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("未知排序应 invalid：%v", err)
 	}
 }
@@ -124,3 +124,5 @@ func TestWebErrorClearRealPostgres(t *testing.T) {
 		t.Fatalf("清理改了事件状态：%q %v", status, err)
 	}
 }
+
+

@@ -158,8 +158,10 @@ type generateDeps struct {
 	conversationCfg config.Conversation
 	// liveWindow 是直播 30 秒短窗口（C3）；nil 表示关闭。
 	liveWindow *conversation.Window
-	tracer     *trace.Local
-	log        *zap.Logger
+	// promptBudgets 是通道级 prompt 预算；缺省通道用 Brain 默认。
+	promptBudgets map[event.Channel]int
+	tracer        *trace.Local
+	log           *zap.Logger
 }
 
 // markGenerated 记录模型/ReAct 产出最终正文的时间；计时失败不能阻塞回复。
@@ -216,6 +218,9 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		// 统一快照：近期记忆默认注入，知识按意图补充（与 ReAct/主动弹幕同源）。
 		buildCtx, buildSpan := trace.Start(prepCtx, "context.build", trace.A("channel", string(ev.Channel)))
 		input, decision := buildPassiveInput(prepCtx, deps.context, ev)
+		if budget := deps.promptBudgets[ev.Channel]; budget > 0 {
+			input.MaxPromptTokens = budget
+		}
 		// C4：会话摘要 + 最近轮次；默认关闭，关闭时 input.Conversation 为 nil。
 		input.Conversation = conversationInput(prepCtx, deps.conversation, deps.conversationCfg, deps.liveWindow, ev, deps.log)
 		trace.Add(buildCtx, trace.A("need_memory", decision.NeedMemory), trace.A("need_knowledge", decision.NeedKnowledge), trace.A("reason", decision.Reason))

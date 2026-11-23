@@ -47,6 +47,12 @@ type ChannelPolicy struct {
 	MaxReplyRunes    int
 	// MaxEventAge 是该通道的积压上限；0 表示沿用全局 MaxEventAge。
 	MaxEventAge time.Duration
+	// MaxConcurrent 是该通道的软并发上限；0 表示不单独限制。
+	MaxConcurrent int
+	// MaxPromptTokens 是该通道的 prompt 预算上限；0 表示沿用全局。
+	MaxPromptTokens int
+	// MergeWindow 是同用户短窗口合并时长；0 表示关闭。
+	MergeWindow time.Duration
 	SelfNames   []string
 	OwnerIDs    []string
 	SelfIDs     []string

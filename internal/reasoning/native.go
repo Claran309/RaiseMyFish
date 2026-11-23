@@ -95,6 +95,10 @@ func (a *Agent) RunNative(ctx context.Context, in Input) (Result, error) {
 			if argErr != nil {
 				out := "参数错误：" + argErr.Error()
 				messages = append(messages, provider.Message{Role: "tool", Content: out, ToolCallID: call.ID})
+				// 参数错误单独记一个 trace 事件：面板/统计按 span 名即可计数，
+				// 不需要把错误正文写进日志字段。
+				_, span := trace.Start(runCtx, "tool.args_error", trace.A("tool", name))
+				trace.End(span, argErr)
 				a.log.Warn("原生工具参数校验失败",
 					zap.String("action", "tool_args"),
 					zap.String("tool", name),

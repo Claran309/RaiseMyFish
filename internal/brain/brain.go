@@ -154,7 +154,12 @@ func (b *OpenAI) Reply(ctx context.Context, task Task, in ContextInput) (Reply, 
 	case <-totalCtx.Done():
 		return Reply{}, contextFailure(totalCtx.Err())
 	}
-	prepared, err := Prepare(totalCtx, task, in, Budget{MaxPromptTokens: b.options.MaxPromptTokens, KnowledgeBudgetPercent: b.options.KnowledgeBudgetPercent})
+	// 通道级预算只允许调小：装不下时由 Prepare 裁剪，不能超过全局上限。
+	maxPrompt := b.options.MaxPromptTokens
+	if in.MaxPromptTokens > 0 && in.MaxPromptTokens < maxPrompt {
+		maxPrompt = in.MaxPromptTokens
+	}
+	prepared, err := Prepare(totalCtx, task, in, Budget{MaxPromptTokens: maxPrompt, KnowledgeBudgetPercent: b.options.KnowledgeBudgetPercent})
 	if err != nil {
 		return Reply{}, err
 	}

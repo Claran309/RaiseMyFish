@@ -75,6 +75,10 @@ auto_discover = true
 videos = []
 interval_seconds = 60
 discover_interval_seconds = 600
+# 评论轮询 (ctime,rpid) 水位：跨重启续采，不再每轮从头翻页。
+cursor_path = "state/comment-cursors.json"
+# 单轮并行轮询目标数；1=保持旧顺序，4–8 用于多视频/多动态。
+concurrency = 4
 
 # 弹幕发送通道：与采集脚本分开——采集是 danmaku-await.mjs（长连监听），
 # 发送是 danmaku.mjs（一次性 POST）。凭据复用 [collector.live] 解析到的 FISH_BILI_COOKIE（同一账号）。
@@ -408,6 +412,10 @@ reply_mention_back = true
 max_reply_runes = 40
 self_names = ["大肥鱼", "肥鱼", "Claranの大肥鱼", "魔鱼魔鱼吃白饭饭饭饭"]
 self_ids = ["3747574135655903"]
+# 通道软并发与 prompt 预算：直播优先实时；0 表示不单独限制/沿用全局。
+max_concurrent = 6
+# 同用户 30 秒内连续弹幕只回最后一条（前一条正文仍会进 viewerRecent）。
+merge_window_ms = 30000
 
 # 评论回复的调度策略：启用 [collector.comment]/[sender.comment] 时必须同时配置，
 # 否则调度器不认识 comment 通道，评论事件只会排队不被消费。
@@ -422,6 +430,8 @@ cooldown_ms = 0
 min_runes = 2
 max_reply_runes = 40
 max_event_age_seconds = 21600 # 6h：更旧的评论不再回复，标 stale 不进 LLM
+max_concurrent = 4
+max_prompt_tokens = 16000
 
 # 私信回复的调度策略：与评论相同的高配额、0 冷却；私密语义由调度器按通道类型加 ACL。
 [scheduler.channels.dm]
@@ -433,6 +443,10 @@ cooldown_ms = 0
 min_runes = 1
 max_reply_runes = 40
 max_event_age_seconds = 86400 # 24h：更旧的私信不再回复
+max_concurrent = 2
+max_prompt_tokens = 16000
+# 同用户 30 秒合并：仅在后一条仍在排队时生效；开启会话状态后前一条会进上下文。
+merge_window_ms = 30000
 
 # 观众档案（认人）：从 events 聚合「谁说过什么/鱼怎么回」，按 from_id 注入 prompt。
 # 只给 hits ≥ min_hits 的人建档；每小时节流重建，且只在直播活跃时跑。
@@ -450,7 +464,7 @@ alias_file = "personas/dafeiyu/viewer_aliases.yaml"
 # 轮询私信会话 → 按 msg_id 去重 → 写事件（channel=dm、session=对方 mid）
 [collector.dm]
 enabled = true
-interval_seconds = 120   # 10-3600
+interval_seconds = 60    # 10-3600；先 120→60 观察一周，412/429 上升再回退
 # 私信采集水位（账号+会话+消息游标，跨重启保留）；留空用 state/dm-cursors.json
 state_path = "state/dm-cursors.json"
 
@@ -511,3 +525,4 @@ summary_context_turns = 12
 # 灰度：按会话键确定性分桶，同一 thread/peer 稳定落同一侧。
 dm_rollout_percent = 100
 comment_rollout_percent = 100
+

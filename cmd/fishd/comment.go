@@ -115,6 +115,8 @@ func newCommentCollector(cfg config.Config, videos []string, log *zap.Logger) (*
 	// 配置层已保证评论采集启用时 self_id 合法；这里只做同名回落。
 	o.SelfID = selfMID(cfg)
 	o.AutoDiscover = cfg.Collector.Comment.AutoDiscover
+	o.CursorPath = cfg.Collector.Comment.CursorPath
+	o.Concurrency = cfg.Collector.Comment.Concurrency
 	if o.AutoDiscover {
 		o.DiscoverInterval = time.Duration(cfg.Collector.Comment.DiscoverIntervalSeconds) * time.Second
 		discoverer, err := newCommentDiscoverer(cfg, log)
@@ -179,6 +181,8 @@ func newDynamicCommentCollector(cfg config.Config, log *zap.Logger) (*commentcol
 	// 动态没有手动 oid 列表，必须靠发现；dynamic_poll_enabled 本身就是开关。
 	o.AutoDiscover = true
 	o.DiscoverInterval = time.Duration(cfg.Collector.Comment.DiscoverIntervalSeconds) * time.Second
+	o.CursorPath = cfg.Collector.Comment.CursorPath
+	o.Concurrency = cfg.Collector.Comment.Concurrency
 	o.Discoverer = commentcollector.DynamicDiscoverer{
 		Client: client,
 		MID:    selfMID(cfg),

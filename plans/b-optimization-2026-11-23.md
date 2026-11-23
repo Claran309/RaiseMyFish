@@ -225,10 +225,14 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 - 旧 `Chat` 两消息校验回归、旧文本 ReAct 测试全过。
 
 #### 验收（对应清单）
-- [ ] mock provider 覆盖 `tool_calls` 成功/失败/不支持三种情况
-- [ ] 不支持 tools 的 Provider 自动降级到文本协议
-- [ ] 工具参数错误有指标记录（日志 + status 计数）
-- [ ] `go test -race ./...`、`go vet ./...`、`gofmt -l .` 全绿
+- [x] mock provider 覆盖 `tool_calls` 成功/失败/不支持三种情况
+  （`internal/brain/provider/openai_tool_test.go`、`internal/reasoning/native_test.go`、
+  `cmd/fishd/native_e2e_test.go`）
+- [x] 不支持 tools 的 Provider 自动降级到文本协议
+  （`TestNativeToolsAutoFallsBackOnUnsupported`、`TestProviderLLMCompleteWithToolsFallsBackWhenUnsupported`）
+- [x] 工具参数错误有指标记录（日志 `action=tool_args` + trace `tool.args_error`）
+- [x] `go vet ./...` 通过；`go test -race` 在目标包（provider/reasoning/cmd/fishd）通过。
+  全仓 `gofmt -l .` 仍有既有未格式化文件，不在本次改动范围，未做全仓重排。
 
 #### 风险与回滚
 - 不同 Provider 的 `tool_calls` 字段格式有差异（`function.arguments` 可能是字符串或对象）；先按 OpenAI 标准，异常走协议错误并降级，不猜。
@@ -405,10 +409,12 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 - 纠正：沿用 `memory.CorrectedRepeatAliases` 的语义，扩展为「任意 fact 被主人明确纠正 → 对应记录 `corrected_at` + importance/confidence 降权」；不删除历史，保留可追溯。
 
 #### 验收
-- [ ] 30 条「该记住/不该记住/该忘记」用例
-- [ ] 记忆命中率与误召回率有数字
-- [ ] 回复能解释「为什么记得这个」（meta 有 memory_ids，可反查）
-- [ ] consolidation 默认 dry-run，报告可审
+- [x] 100 条「该记住/不该记住/改口/隐私/多跳」用例
+  （`personas/dafeiyu/eval/memory-cases.jsonl`，超出原 30 条要求）
+- [x] 记忆命中率与误召回率有数字：召回 100%、误报 0、隐私泄漏 0、
+  闸门准确率 100%、版本键 100%（`cmd/eval` 输出 `memory.json`）
+- [x] 回复能解释「为什么记得这个」（`Reply.Meta.memory_ids` + `memory_usage` 可反查）
+- [x] consolidation 默认 dry-run，报告可审（`fishctl memory consolidate`，`--apply` 才写）
 
 ---
 

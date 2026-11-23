@@ -82,6 +82,9 @@ func buildSchedulerOptions(c *config.Scheduler) scheduler.Options {
 			ReplyMentionBack: p.ReplyMentionBack != nil && *p.ReplyMentionBack,
 			MaxReplyRunes:    p.MaxReplyRunes,
 			MaxEventAge:      time.Duration(p.MaxEventAgeSeconds) * time.Second,
+			MaxConcurrent:    p.MaxConcurrent,
+			MaxPromptTokens:  p.MaxPromptTokens,
+			MergeWindow:      time.Duration(p.MergeWindowMS) * time.Millisecond,
 			SelfNames:        p.SelfNames,
 			OwnerIDs:         p.OwnerIDs,
 			SelfIDs:          p.SelfIDs,
@@ -130,6 +133,7 @@ type consumeOptions struct {
 	conversation    store.ConversationRepo
 	conversationCfg config.Conversation
 	liveWindow      *conversation.Window
+	promptBudgets   map[event.Channel]int
 	tracer          *trace.Local
 }
 
@@ -183,6 +187,11 @@ func withLiveWindow(window *conversation.Window) consumeOption {
 	return func(o *consumeOptions) { o.liveWindow = window }
 }
 
+// withPromptBudgets 注入通道级 prompt 预算；nil 表示全用全局上限。
+func withPromptBudgets(budgets map[event.Channel]int) consumeOption {
+	return func(o *consumeOptions) { o.promptBudgets = budgets }
+}
+
 // withTracer 注入本地 trace；nil 表示不记录。
 func withTracer(tracer *trace.Local) consumeOption {
 	return func(o *consumeOptions) { o.tracer = tracer }
@@ -234,6 +243,7 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 		conversation:    extra.conversation,
 		conversationCfg: extra.conversationCfg,
 		liveWindow:      extra.liveWindow,
+		promptBudgets:   extra.promptBudgets,
 		tracer:          extra.tracer,
 		log:             log,
 	})
@@ -645,7 +655,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo), withErrorRepo(errorRepo), withTracer(tracer), withMemoryUsage(memoryUsageRepo), withConversation(conversationRepo, cfg.Conversation), withLiveWindow(liveWindowFrom(cfg.Conversation)))
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo), withErrorRepo(errorRepo), withTracer(tracer), withMemoryUsage(memoryUsageRepo), withConversation(conversationRepo, cfg.Conversation), withLiveWindow(liveWindowFrom(cfg.Conversation)), withPromptBudgets(promptBudgetsFrom(cfg)))
 	if err != nil {
 		return nil, nil, nil, err
 	}

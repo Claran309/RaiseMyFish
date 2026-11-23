@@ -18,6 +18,7 @@ import (
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/conversationeval"
 	"RaiseMyFish/internal/knowledgeeval"
+	"RaiseMyFish/internal/memoryeval"
 	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/personaeval"
 )
@@ -34,6 +35,7 @@ type Summary struct {
 	Trajectory     *personaeval.TrajectoryReport `json:"trajectory,omitempty"`
 	Reflection     *personaeval.ReflectionReport `json:"reflection,omitempty"`
 	Conversation   *conversationeval.Report      `json:"conversation,omitempty"`
+	Memory         *memoryeval.Report            `json:"memory,omitempty"`
 	Passed         bool                          `json:"passed"`
 	FailureReasons []string                      `json:"failure_reasons,omitempty"`
 	Notes          []string                      `json:"notes,omitempty"`
@@ -89,6 +91,7 @@ func run(ctx context.Context, args []string, stdout *os.File) error {
 	conversationCases := fs.String("conversation-cases", "", "会话多轮用例；默认 <pack>/eval/conversation-cases.jsonl")
 	recentTurns := fs.Int("conversation-recent-turns", 8, "会话评测注入的最近轮数（与线上配置一致）")
 	promptTokens := fs.Int("conversation-max-prompt-tokens", 65536, "会话评测的 prompt 预算（与线上 max_prompt_tokens 一致）")
+	memoryCases := fs.String("memory-cases", "", "记忆评测用例；默认 <pack>/eval/memory-cases.jsonl")
 	output := fs.String("output", "", "新建输出目录（必须不存在）")
 	strictKnowledge := fs.Bool("strict-knowledge", false, "知识检索未达标时让整轮评测失败")
 	if err := fs.Parse(args); err != nil {
@@ -115,6 +118,9 @@ func run(ctx context.Context, args []string, stdout *os.File) error {
 	if *conversationCases == "" {
 		*conversationCases = filepath.Join(*pack, "eval", "conversation-cases.jsonl")
 	}
+	if *memoryCases == "" {
+		*memoryCases = filepath.Join(*pack, "eval", "memory-cases.jsonl")
+	}
 
 	summary := Summary{RunID: time.Now().UTC().Format("20060102T150405Z"), Mode: *mode, StartedAt: time.Now().UTC()}
 	if err := os.Mkdir(*output, 0o700); err != nil {
@@ -135,6 +141,9 @@ func run(ctx context.Context, args []string, stdout *os.File) error {
 			return err
 		}
 		if err := runConversation(ctx, *output, *pack, *conversationCases, *recentTurns, *promptTokens, &summary); err != nil {
+			return err
+		}
+		if err := runMemoryEval(ctx, *output, *memoryCases, &summary); err != nil {
 			return err
 		}
 	}
@@ -287,6 +296,34 @@ func runReflection(output, path, runsPath string, summary *Summary) error {
 	}
 	if report.HarmAlarm {
 		summary.Notes = append(summary.Notes, "反思伤害率超过 5%，建议关闭评论/私信反思或调整 critic")
+	}
+	return nil
+}
+
+// runMemoryEval 跑 100 条记忆用例：规则提炼、写入闸门与版本键。
+func runMemoryEval(ctx context.Context, output, path string, summary *Summary) error {
+	cases, err := memoryeval.LoadCases(path)
+	if err != nil {
+		return err
+	}
+	report, err := memoryeval.Run(ctx, cases)
+	if err != nil {
+		return err
+	}
+	summary.Memory = &report
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(output, "memory.json"), append(data, '\n'), 0o600); err != nil {
+		return err
+	}
+	summary.Notes = append(summary.Notes, fmt.Sprintf(
+		"记忆用例 %d 条：规则召回 %.1f%%，误报 %d，隐私泄漏 %d，闸门准确率 %.1f%%，版本键 %.1f%%",
+		report.Cases, report.Recall*100, report.FalsePositive, report.PrivacyLeak,
+		report.GateAccuracy*100, report.KeyAccuracy*100))
+	if !report.Passed {
+		summary.FailureReasons = append(summary.FailureReasons, "记忆评测未达标")
 	}
 	return nil
 }

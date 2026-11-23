@@ -149,10 +149,18 @@
 - 接入 B3 `make eval` 报告，新增 `reflection` 段；不另建评测框架。
 
 #### 验收
-- [ ] 能回答「Reflection 让多少条变好/变坏」
-- [ ] `reflect_harm_rate >5%` 时有告警/报告
-- [ ] 50 条用例可重复跑
-- [ ] 报告进 CI artifact
+- [x] 能回答「Reflection 让多少条变好/变坏」
+  （`ScoreReflection` 输出 changed/improve/harm/skip；录制带 verdict 即可算，
+  `reflection_test.go` 用录制样例验证了分母与告警）
+- [x] `reflect_harm_rate >5%` 时有告警/报告
+  （`HarmAlarm` + `cmd/eval` 在报告中追加「建议关闭/调整 critic」说明）
+- [x] 50 条用例可重复跑
+  （`personas/dafeiyu/eval/reflection-cases.jsonl`，`make eval` 每次校验 50 条）
+- [x] 报告进 CI artifact
+  （`.github/workflows/ci.yml` 上传 `dist/eval`，含 `reflection.json`）
+
+> 真实模型录制（Reflect=off/on 对照 50 条）需要 `FISH_LLM_KEY` 与费用授权；
+> 未录制时报告明确 `judge_pending=true`，不把「未评估」当 0 分。
 
 ---
 

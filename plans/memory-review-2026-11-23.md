@@ -327,6 +327,26 @@
 - `fishctl memory audit`：重复 Top20、冲突 Top20、从未引用 Top20、无 `from_id` Top20；
 - 日报增加记忆健康度。
 
+#### M5/M7/M8 执行记录（2026-11-24）
+
+- **M5 100 条评测集**：`personas/dafeiyu/eval/memory-cases.jsonl` + `internal/memoryeval`。
+  覆盖该记住（承诺/主人相关/首次出现）、不该记住（30 条噪声）、隐私（未授权不提炼）、
+  写入闸门（稳定信号 vs 玩笑）、版本键（同谓词同键、不同主体不同键）。
+  实测：召回 100%、误报 0、隐私泄漏 0、闸门准确率 100%、版本键 100%（100 条全过）。
+- **记忆归因**：`reply_meta.memory_ids` 与 `memory_usage` 已在 M5 第一批完成；
+  面板「引用 N 次」直接读 `memory_usage`。
+- **M7 滚动摘要**：由 C5 `conversation_summary_jobs` + `conversation_state.summary` 实现，
+  与「摘要 + 最近 N 轮」注入同源；**偏差**：不写 `memory_records(kind=session)`，
+  避免把会话摘要混进长期记忆召回（摘要是背景，不是事实）。
+- **M8 运维**：
+  - `fishctl memory audit [--limit N]`：重复 Top、改口 Top、从未引用 Top、缺 `from_id` Top；
+    没有 `memory_usage` 数据时明确标「不可判定」。
+  - 面板记忆行新增来源、来源事件、`valid_from/valid_to`、confidence、importance、引用次数，
+    并支持 `?all=1` 查看已失效/已归档。
+  - 日报增加「记忆健康度」段（有效/重复/改口/未引用/缺来源）；审计失败只跳过该段。
+- 验证：`go test ./internal/memoryeval ./cmd/fishctl ./internal/web ./cmd/fishd`；
+  `go test -tags=integration ./internal/database -run 'TestMemoryAudit'`。
+
 ---
 
 ## 4. 分阶段实施

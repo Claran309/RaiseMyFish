@@ -244,6 +244,18 @@
 - 私信/参数小步调整仍需线上观察 412/429 率，按计划单独灰度。
 - 验证：`go test ./internal/collector/...`（含 polling 纯函数测试）。
 
+#### L2 执行记录（2026-11-24，第二批）
+
+- 评论游标持久化：`internal/collector/comment/cursor.go` 把每个目标 `(ctime, rpid, covered)`
+  写入 `state/comment-cursors.json`（临时文件 + Sync + Rename）；重启后从水位续采，
+  坏文件按「没有水位」处理并记日志。
+- 有界并发：`Concurrency` 1–8，先串行建好每目标状态，再按信号量并行轮询；
+  生产配置 `concurrency=4`，代码默认 1（测试与旧部署顺序不变）。
+- 私信水位：沿用既有 `state/dm-cursors.json`（账号+会话+seqno 的 watermark/frontier/pending），
+  已满足「每会话 last_msg_id」；本轮只把小步间隔 `120→60` 写进配置，观察 412/429 再决定 45。
+- 验证：`go test ./internal/collector/comment`（游标读写/损坏/继承/只落有水位目标）；
+  `go test ./cmd/fishd ./internal/config`。
+
 - 参数小步：comment `feed_interval_seconds` 60→30（观察一周）→20；动态 `interval_seconds` 60→30；`discover_interval_seconds` 600→180；dm `interval_seconds` 120→60→45。
 - 每次只改一个通道；记录 412/429 率、fresh P50/P90、LLM 成本；不达标回退。
 - 自适应轮询：活跃期快、空闲期慢；412/429 指数退避 + ±20% 抖动；每账号/房间独立限速。
@@ -258,6 +270,19 @@
 - 阈值只影响评论/私信，live 不受影响；工具/证据路径不变。
 - 通道配额与模型路由仍需真实流量数据后再定，不凭空调参。
 - 验证：`go test ./cmd/fishd/... ./internal/config/...`。
+
+#### L3 执行记录（2026-11-24，第二批）
+
+- 通道软配额：`[scheduler.channels.*].max_concurrent`（默认 live 6 / comment 4 / dm 2）；
+  调度器按通道计数，超配额的任务留在堆里，不挤占其他通道。
+- 优先级：`collect_mode=backfill` 的事件固定排在 fresh 之后（priority 3）。
+- Prompt 预算：`max_prompt_tokens` 按通道生效，经 `ContextInput.MaxPromptTokens`
+  进入单步与 ReAct；只允许调小，不突破 `[llm].max_prompt_tokens`。
+- 模型路由：沿用既有「通道 → brain 路由名」能力（`[scheduler.channels.*].brain`）。
+- 合并重复请求：`merge_window_ms`（默认 live/dm 30 秒，comment 关闭）；仅当同用户
+  后一条仍在 pending/queued 时跳过较早事件，前一条正文由会话 Recent/viewerRecent 带入。
+- 验证：`go test ./internal/scheduler`（配额/backfill/合并窗口）、`go test ./cmd/fishd`
+  （通道预算注入）、`go test -tags=integration ./internal/database -run 'TestNewerSameUser'`。
 
 - 按通道配额：live 6 / comment 4 / dm 2 软配额（初值），或加权公平队列。
 - 优先级：live 实时 > comment/dm fresh > backfill；backfill 不挤占 fresh。

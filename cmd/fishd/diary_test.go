@@ -59,6 +59,56 @@ type fakeDiaryLLM struct {
 	completeCall int
 }
 
+type fakeMemoryAudit struct {
+	report store.MemoryAuditReport
+	err    error
+}
+
+func (f *fakeMemoryAudit) AuditMemories(context.Context, int) (store.MemoryAuditReport, error) {
+	return f.report, f.err
+}
+
+// TestDailyDigestAppendsMemoryHealth 日报必须包含记忆健康度，且失败时不影响主体。
+func TestDailyDigestAppendsMemoryHealth(t *testing.T) {
+	digest := &dailyDigest{
+		repo: &fakeDiaryRepo{rows: []store.DiaryEvent{
+			{Channel: "live", Dir: "in", FromName: "阿明", Text: "鱼呢", At: time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)},
+		}},
+		summarizer: func() *diary.Summarizer {
+			s, err := diary.New(&fakeDiaryLLM{reply: "今天很热闹"}, diary.Options{MaxEvents: 10})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return s
+		}(),
+		model: "mock:model", maxEvents: 10,
+		audit: &fakeMemoryAudit{report: store.MemoryAuditReport{
+			Since: time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC), Active: 42,
+			Duplicates:  []store.MemoryAuditItem{{Title: "喜欢鲫鱼", Count: 2}},
+			Conflicts:   []store.MemoryAuditItem{{ID: "k"}},
+			MissingFrom: []store.MemoryAuditItem{{ID: "m"}},
+		}},
+	}
+	summary, err := digest.Generate(context.Background(), "2026-11-23")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## 记忆健康度", "有效记忆：42", "重复：1 组", "「喜欢鲫鱼」×2", "改口：1 组", "缺 from_id：1 条"} {
+		if !strings.Contains(summary.Content, want) {
+			t.Errorf("日报缺少 %q：%s", want, summary.Content)
+		}
+	}
+	// 审计失败只跳过该段。
+	digest.audit = &fakeMemoryAudit{err: errors.New("库挂了")}
+	summary, err = digest.Generate(context.Background(), "2026-11-23")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(summary.Content, "记忆健康度") {
+		t.Fatal("审计失败仍写了健康度段")
+	}
+}
+
 func (f *fakeDiaryLLM) Complete(_ context.Context, system, user string) (string, error) {
 	f.completeCall++
 	f.gotSystem, f.gotUser = system, user

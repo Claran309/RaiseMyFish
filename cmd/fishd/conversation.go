@@ -58,6 +58,23 @@ func liveWindowFrom(cfg config.Conversation) *conversation.Window {
 	})
 }
 
+// promptBudgetsFrom 把通道级 prompt 预算投影成运行期表；0 值不进入表。
+func promptBudgetsFrom(cfg config.Config) map[event.Channel]int {
+	if cfg.Scheduler == nil {
+		return nil
+	}
+	out := make(map[event.Channel]int, len(cfg.Scheduler.Channels))
+	for ch, policy := range cfg.Scheduler.Channels {
+		if policy.MaxPromptTokens > 0 {
+			out[ch] = policy.MaxPromptTokens
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // inConversationRollout 按通道灰度判断该事件是否启用会话状态。
 //
 // 灰度按 conversation_id 确定性分桶：同一 thread/同一 peer 在整个灰度期内

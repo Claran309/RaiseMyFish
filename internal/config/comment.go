@@ -34,6 +34,10 @@ type CommentCollector struct {
 	Videos                  []string `toml:"videos"`
 	IntervalSeconds         int      `toml:"interval_seconds"`
 	DiscoverIntervalSeconds int      `toml:"discover_interval_seconds"`
+	// CursorPath 是评论轮询 (ctime,rpid) 水位文件；空串用 state/comment-cursors.json。
+	CursorPath string `toml:"cursor_path"`
+	// Concurrency 是单轮并行轮询目标数（1-8）；0 用 1（保持旧顺序）。
+	Concurrency int `toml:"concurrency"`
 }
 
 func defaultCommentCollector() CommentCollector {
@@ -45,6 +49,8 @@ func defaultCommentCollector() CommentCollector {
 		AutoDiscover:            true,
 		IntervalSeconds:         60,
 		DiscoverIntervalSeconds: 600,
+		CursorPath:              "state/comment-cursors.json",
+		Concurrency:             1,
 	}
 }
 
@@ -63,6 +69,12 @@ func canonicalOID(value string) (string, bool) {
 func (c CommentCollector) Validate() error {
 	if !c.Enabled {
 		return nil
+	}
+	if strings.ContainsAny(c.CursorPath, "\x00\r\n") {
+		return errors.New("评论轮询 cursor_path 非法")
+	}
+	if c.Concurrency < 0 || c.Concurrency > 8 {
+		return errors.New("评论轮询 concurrency 需在0至8之间")
 	}
 	if c.FeedEnabled {
 		if c.FeedIntervalSeconds < 10 || c.FeedIntervalSeconds > 3600 {

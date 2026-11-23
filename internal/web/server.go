@@ -534,6 +534,14 @@ func round3(v float64) float64 {
 	return math.Round(v*1000) / 1000
 }
 
+// validToText 统一「当前有效 / 已失效」的展示口径：空串表示仍有效。
+func validToText(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 // handleMemory 列出记忆。
 func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
@@ -555,7 +563,8 @@ func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := limitParam(r, defaultLimit)
-	rows, err := s.repo.Memory(r.Context(), r.URL.Query().Get("kind"), r.URL.Query().Get("q"), order, limit)
+	includeInvalid := r.URL.Query().Get("all") == "1"
+	rows, err := s.repo.Memory(r.Context(), r.URL.Query().Get("kind"), r.URL.Query().Get("q"), order, includeInvalid, limit)
 	if err != nil {
 		s.fail(w, "读取记忆失败", err)
 		return
@@ -569,7 +578,12 @@ func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 			"summary":         clip(m.Summary),
 			"importance":      math.Round(m.Importance*100) / 100,
 			"importance_text": strconv.FormatFloat(m.Importance, 'f', 2, 64),
+			"confidence":      math.Round(m.Confidence*100) / 100,
+			"source":          m.Source,
+			"source_event_id": m.SourceEventID,
+			"ref_count":       m.RefCount,
 			"valid_from":      m.ValidFrom.UTC().Format(time.RFC3339),
+			"valid_to":        validToText(m.ValidTo),
 			"created_at":      m.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}

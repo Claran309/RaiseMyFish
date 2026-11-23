@@ -197,6 +197,10 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 	if maxPrompt <= 0 {
 		maxPrompt = brain.DefaultBudget().MaxPromptTokens
 	}
+	// 通道级预算只允许调小，避免评论/私信挤占直播的实时预算。
+	if input.MaxPromptTokens > 0 && input.MaxPromptTokens < maxPrompt {
+		maxPrompt = input.MaxPromptTokens
+	}
 	outputReserve := runtime.outputReserve
 	if outputReserve < 0 {
 		outputReserve = 0

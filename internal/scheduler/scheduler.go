@@ -84,7 +84,7 @@ func New(bus event.Bus, repo store.SchedulerRepo, o Options, workers Workers, lo
 	}
 	policies := make(map[event.Channel]*policyState, len(o.Channels))
 	for ch, p := range o.Channels {
-		if !ch.Valid() || strings.TrimSpace(p.Brain) == "" || math.IsNaN(p.RatePerMinute) || math.IsInf(p.RatePerMinute, 0) || p.RatePerMinute <= 0 || p.Burst < 1 || p.DailyQuota < 1 || p.Cooldown < 0 || p.MinRunes < 0 || p.RepeatWindow < 0 {
+		if !ch.Valid() || strings.TrimSpace(p.Brain) == "" || math.IsNaN(p.RatePerMinute) || math.IsInf(p.RatePerMinute, 0) || p.RatePerMinute <= 0 || p.Burst < 1 || p.DailyQuota < 1 || p.Cooldown < 0 || p.MinRunes < 0 || p.RepeatWindow < 0 || p.MaxConcurrent < 0 || p.MaxConcurrent > 32 || p.MergeWindow < 0 || p.MergeWindow > time.Minute {
 			return nil, store.ErrInvalid
 		}
 		// routing_mode 只属于 live；未知取值直接拒绝，避免配错静默变成「全部回复」。
@@ -194,6 +194,10 @@ func (s *Scheduler) add(ctx context.Context, c event.Claim) error {
 		}
 		item.priority = t.Priority
 	}
+	// backfill（历史补采）永远排在 fresh 之后：它不该挤占实时回复的并发。
+	if c.Event.CollectMode == "backfill" && item.priority < 3 {
+		item.priority = 3
+	}
 	item.fair = s.fairSeq[c.Event.Channel]
 	s.fairSeq[c.Event.Channel]++
 	heap.Push(&s.pending, item)
@@ -292,13 +296,46 @@ drained:
 		}
 	}
 	for len(s.active) < s.options.MaxConcurrent && len(s.pending) > 0 {
-		item := heap.Pop(&s.pending).(*queued)
+		item := s.popDispatchable()
+		if item == nil {
+			break
+		}
 		delete(s.waiting, item.claim.Event.ID)
 		if err := s.dispatch(ctx, parent, item); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// popDispatchable 按优先级弹出第一个未超过通道软配额的任务。
+//
+// 被配额挡下的任务先暂存再放回堆，顺序不变；通道并发上限只是软约束，
+// 全局 MaxConcurrent 仍是硬上限。
+func (s *Scheduler) popDispatchable() *queued {
+	counts := make(map[event.Channel]int, len(s.policies))
+	for _, job := range s.active {
+		counts[job.work.Claim.Event.Channel]++
+	}
+	var held []*queued
+	var chosen *queued
+	for len(s.pending) > 0 {
+		item := heap.Pop(&s.pending).(*queued)
+		policy := s.policies[item.claim.Event.Channel]
+		limit := 0
+		if policy != nil {
+			limit = policy.MaxConcurrent
+		}
+		if limit <= 0 || counts[item.claim.Event.Channel] < limit {
+			chosen = item
+			break
+		}
+		held = append(held, item)
+	}
+	for _, item := range held {
+		heap.Push(&s.pending, item)
+	}
+	return chosen
 }
 
 func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
@@ -349,6 +386,26 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 		return err
 	} else if until != nil {
 		return s.deferClaim(ctx, c, *until)
+	}
+	// 同用户短窗口合并：后面还有一条待处理消息时，只回最后一条，
+	// 前一条的正文会通过会话 Recent / 直播 viewerRecent 进入后一条的上下文。
+	if policy.MergeWindow > 0 {
+		if src, ok := s.repo.(interface {
+			NewerSameUser(context.Context, event.Claim, time.Duration) (bool, error)
+		}); ok {
+			newer, err := src.NewerSameUser(ctx, c, policy.MergeWindow)
+			if err != nil {
+				return err
+			}
+			if newer {
+				s.log.Info("同用户短窗口合并，跳过较早事件",
+					zap.String("action", "merge_window"),
+					zap.String("ch", string(c.Event.Channel)),
+					zap.String("event_id", c.Event.ID),
+				)
+				return s.skip(ctx, c)
+			}
+		}
 	}
 	var task *store.Task
 	expectedStage := c.Stage

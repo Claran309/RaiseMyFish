@@ -110,8 +110,16 @@ type WebMemory struct {
 	Title      string
 	Summary    string
 	Importance float64
-	ValidFrom  time.Time
-	CreatedAt  time.Time
+	Confidence float64
+	Source     string
+	// SourceEventID 是记忆来源事件（event_ids[1]）；空表示历史数据没有。
+	SourceEventID string
+	// ValidTo 为空表示当前有效；面板用它区分「现行」与「已失效」。
+	ValidTo *time.Time
+	// RefCount 是这条记忆被回复引用的次数（memory_usage）。
+	RefCount  int64
+	ValidFrom time.Time
+	CreatedAt time.Time
 }
 
 // WebEvent 是活动流水项。
@@ -197,7 +205,7 @@ type WebRepo interface {
 	// EmbeddingStatus 汇总知识/记忆/档案的向量入库进度。
 	EmbeddingStatus(ctx context.Context) (WebEmbeddingStatus, error)
 	// Memory 按 kind/关键词过滤记忆；order 为 time（默认，新的在前）或 importance（重要度高在前）。
-	Memory(ctx context.Context, kind, query, order string, limit int) ([]WebMemory, error)
+	Memory(ctx context.Context, kind, query, order string, includeInvalid bool, limit int) ([]WebMemory, error)
 	// ArchiveMemory 软删除一条记忆（归档 + 置失效时间）。
 	ArchiveMemory(ctx context.Context, id string) error
 	// Events 取最近事件（dir 为空表示不筛）。

@@ -199,13 +199,15 @@ func webWindow(w LatencyWindow) store.WebLatencyWindow {
 // Memory 按 kind/关键词过滤公开记忆。
 //
 // 面板记忆页是公开导出视角：私密 DM 摘要与其错误降密行都不展示。
-func (r *WebRepo) Memory(ctx context.Context, kind, query, order string, limit int) ([]store.WebMemory, error) {
+func (r *WebRepo) Memory(ctx context.Context, kind, query, order string, includeInvalid bool, limit int) ([]store.WebMemory, error) {
 	if ctx == nil || limit < 1 || limit > webMaxLimit {
 		return nil, store.ErrInvalid
 	}
 	q := r.db.WithContext(ctx).Table("memory_records").
-		Where("valid_to IS NULL AND NOT archived").
 		Where("NOT private AND (channel IS NULL OR channel <> 'dm' OR private)")
+	if !includeInvalid {
+		q = q.Where("valid_to IS NULL AND NOT archived")
+	}
 	if k := strings.TrimSpace(kind); k != "" {
 		q = q.Where("kind = ?", k)
 	}
@@ -214,13 +216,18 @@ func (r *WebRepo) Memory(ctx context.Context, kind, query, order string, limit i
 		q = q.Where("title ILIKE ? OR summary ILIKE ?", pattern, pattern)
 	}
 	var rows []struct {
-		ID         string
-		Kind       string
-		Title      string
-		Summary    string
-		Importance float64
-		ValidFrom  time.Time
-		CreatedAt  time.Time
+		ID            string
+		Kind          string
+		Title         string
+		Summary       string
+		Importance    float64
+		Confidence    float64
+		Source        string
+		SourceEventID string `gorm:"column:source_event_id"`
+		ValidTo       *time.Time
+		RefCount      int64 `gorm:"column:ref_count"`
+		ValidFrom     time.Time
+		CreatedAt     time.Time
 	}
 	// 排序在 SQL 层做：面板只取一页，不能先取再排丢数据。
 	switch strings.TrimSpace(order) {
@@ -231,7 +238,10 @@ func (r *WebRepo) Memory(ctx context.Context, kind, query, order string, limit i
 	default:
 		return nil, store.ErrInvalid
 	}
-	if err := q.Select("id, kind, title, summary, importance, valid_from, created_at").
+	if err := q.Select(`id, kind, title, summary, importance, confidence, source,
+		COALESCE(event_ids[1], '') AS source_event_id, valid_to,
+		(SELECT count(*) FROM memory_usage u WHERE u.record_id = memory_records.id) AS ref_count,
+		valid_from, created_at`).
 		Limit(limit).Find(&rows).Error; err != nil {
 		return nil, &safeError{"查询记忆失败", err}
 	}
@@ -240,7 +250,9 @@ func (r *WebRepo) Memory(ctx context.Context, kind, query, order string, limit i
 		out = append(out, store.WebMemory{
 			ID: row.ID, Kind: row.Kind, Title: row.Title, Summary: row.Summary,
 			// 展示用：保留两位小数，避免 0.6000000000000001 这种
-			Importance: round2(row.Importance), ValidFrom: row.ValidFrom, CreatedAt: row.CreatedAt,
+			Importance: round2(row.Importance), Confidence: round2(row.Confidence),
+			Source: row.Source, SourceEventID: row.SourceEventID, ValidTo: row.ValidTo,
+			RefCount: row.RefCount, ValidFrom: row.ValidFrom, CreatedAt: row.CreatedAt,
 		})
 	}
 	return out, nil

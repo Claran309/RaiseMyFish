@@ -34,7 +34,7 @@ const (
 	maxMemoryLimit     = 200
 )
 
-var errMemoryUsage = errors.New("用法：fishctl memory list [--limit N] | memory search --q <关键词> [--limit N] | memory stats | memory embed | memory consolidate [--apply] | memory freeze | memory unfreeze")
+var errMemoryUsage = errors.New("用法：fishctl memory list [--limit N] | memory search --q <关键词> [--limit N] | memory stats | memory audit [--limit N] | memory embed | memory consolidate [--apply] | memory freeze | memory unfreeze")
 
 // memoryFreezeFile 是冻结状态文件位置；测试可替换，生产固定与 fishd 共用默认路径。
 var memoryFreezeFile = memory.DefaultFreezePath
@@ -110,6 +110,13 @@ func runMemory(ctx context.Context, configPath, envPath string, args []string, o
 			return err
 		}
 		return executeMemoryConsolidate(probe, consolidation, spec.Apply, out)
+	}
+	if spec.Action == "audit" {
+		audit, err := database.NewMemoryAuditRepo(resources.DB)
+		if err != nil {
+			return err
+		}
+		return executeMemoryAudit(probe, audit, spec.Limit, out)
 	}
 	return executeMemory(probe, repo, spec, out)
 }
@@ -207,6 +214,25 @@ func parseMemoryArgs(args []string, stderr io.Writer) (memoryCommand, error) {
 			return memoryCommand{}, errMemoryUsage
 		}
 		return memoryCommand{Action: "consolidate", Apply: *apply}, nil
+
+	case "audit":
+		fs := flag.NewFlagSet("memory audit", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		fs.Usage = func() { fmt.Fprintln(stderr, "用法：fishctl memory audit [--limit N]") }
+		limit := fs.Int("limit", 20, "每个清单最多返回条数")
+		if err := fs.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return memoryCommand{Action: "help"}, nil
+			}
+			return memoryCommand{}, errMemoryUsage
+		}
+		if fs.NArg() != 0 {
+			return memoryCommand{}, errMemoryUsage
+		}
+		if *limit < 1 || *limit > maxMemoryLimit {
+			return memoryCommand{}, fmt.Errorf("limit 必须在1至%d之间", maxMemoryLimit)
+		}
+		return memoryCommand{Action: "audit", Limit: *limit}, nil
 
 	case "freeze", "unfreeze":
 		fs := flag.NewFlagSet("memory "+args[0], flag.ContinueOnError)
@@ -422,4 +448,66 @@ func writeMemoryRecords(out io.Writer, query string, records []store.MemoryRecor
 		return fmt.Errorf("输出记忆记录：%w", err)
 	}
 	return nil
+}
+
+// memoryAuditOutput 是 `memory audit` 的单行 JSON 结构。
+type memoryAuditOutput struct {
+	Active int64 `json:"active"`
+	// Since 为空表示还没有记忆引用归因数据：此时「从未引用」不可判定。
+	Since           string            `json:"usage_since,omitempty"`
+	NeverReferenced []memoryAuditItem `json:"never_referenced"`
+	Duplicates      []memoryAuditItem `json:"duplicates"`
+	Conflicts       []memoryAuditItem `json:"conflicts"`
+	MissingFrom     []memoryAuditItem `json:"missing_from_id"`
+	Notes           []string          `json:"notes,omitempty"`
+}
+
+// memoryAuditItem 是审计清单的单条输出。
+type memoryAuditItem struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Kind      string    `json:"kind,omitempty"`
+	Summary   string    `json:"summary,omitempty"`
+	Source    string    `json:"source,omitempty"`
+	Count     int64     `json:"count"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+}
+
+// executeMemoryAudit 输出记忆健康度报告；只读，不自动合并或删除。
+func executeMemoryAudit(ctx context.Context, repo store.MemoryAuditRepo, limit int, out io.Writer) error {
+	if repo == nil {
+		return errors.New("记忆审计依赖不能为空")
+	}
+	report, err := repo.AuditMemories(ctx, limit)
+	if err != nil {
+		return fmt.Errorf("读取记忆审计：%w", err)
+	}
+	payload := memoryAuditOutput{
+		Active:          report.Active,
+		NeverReferenced: auditItems(report.NeverReferenced),
+		Duplicates:      auditItems(report.Duplicates),
+		Conflicts:       auditItems(report.Conflicts),
+		MissingFrom:     auditItems(report.MissingFrom),
+	}
+	if !report.Since.IsZero() {
+		payload.Since = report.Since.UTC().Format(time.RFC3339)
+	} else {
+		payload.Notes = append(payload.Notes, "暂无 memory_usage 归因数据，「从未引用」清单为空且不可判定")
+	}
+	if err := json.NewEncoder(out).Encode(payload); err != nil {
+		return fmt.Errorf("输出记忆审计：%w", err)
+	}
+	return nil
+}
+
+// auditItems 把仓储投影转成输出项，并把 nil 统一成空数组。
+func auditItems(items []store.MemoryAuditItem) []memoryAuditItem {
+	out := make([]memoryAuditItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, memoryAuditItem{
+			ID: item.ID, Title: item.Title, Kind: item.Kind, Summary: item.Summary,
+			Count: item.Count, Source: item.Source, UpdatedAt: item.UpdatedAt,
+		})
+	}
+	return out
 }

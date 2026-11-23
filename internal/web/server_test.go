@@ -76,7 +76,7 @@ func (f *fakeRepo) EmbeddingStatus(context.Context) (store.WebEmbeddingStatus, e
 	return f.embedding, nil
 }
 
-func (f *fakeRepo) Memory(_ context.Context, _, _, order string, _ int) ([]store.WebMemory, error) {
+func (f *fakeRepo) Memory(_ context.Context, _, _, order string, _ bool, _ int) ([]store.WebMemory, error) {
 	f.memoryOrder = order
 	return f.memory, nil
 }

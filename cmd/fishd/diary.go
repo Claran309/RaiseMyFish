@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"RaiseMyFish/internal/config"
@@ -32,6 +33,8 @@ type dailyDigest struct {
 	summarizer *diary.Summarizer
 	model      string
 	maxEvents  int
+	// audit 是可选的记忆健康度来源；nil 时日报不追加这一段。
+	audit store.MemoryAuditRepo
 }
 
 // Generate 生成指定日期（东八区自然日）的日报；重复生成覆盖旧日报。
@@ -57,6 +60,9 @@ func (d *dailyDigest) Generate(ctx context.Context, day string) (store.DailySumm
 	content, err := d.summarizer.Summarize(ctx, start, events)
 	if err != nil {
 		return store.DailySummary{}, err
+	}
+	if section := d.memoryHealth(ctx); section != "" {
+		content = content + "\n\n" + section
 	}
 	summary := store.DailySummary{
 		Day: start.Format(diary.DayLayout), Content: content, Model: d.model, EventCount: len(rows),
@@ -86,7 +92,39 @@ func buildDailyDigest(cfg config.Config, db *gorm.DB, usage store.UsageRepo, log
 	if err != nil {
 		return nil, err
 	}
-	return &dailyDigest{repo: repo, summarizer: summarizer, model: model, maxEvents: cfg.Summary.MaxEvents}, nil
+	digest := &dailyDigest{repo: repo, summarizer: summarizer, model: model, maxEvents: cfg.Summary.MaxEvents}
+	// 记忆健康度是增强段：装配失败只跳过，不影响日报主体。
+	if audit, aerr := database.NewMemoryAuditRepo(db); aerr == nil {
+		digest.audit = audit
+	}
+	return digest, nil
+}
+
+// memoryHealth 生成确定性的记忆健康度段；查询失败只返回空串，不影响日报。
+func (d *dailyDigest) memoryHealth(ctx context.Context) string {
+	if d.audit == nil {
+		return ""
+	}
+	report, err := d.audit.AuditMemories(ctx, 5)
+	if err != nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## 记忆健康度\n")
+	fmt.Fprintf(&b, "- 有效记忆：%d 条\n", report.Active)
+	fmt.Fprintf(&b, "- 重复：%d 组", len(report.Duplicates))
+	if len(report.Duplicates) > 0 {
+		fmt.Fprintf(&b, "（最多的是「%s」×%d）", report.Duplicates[0].Title, report.Duplicates[0].Count)
+	}
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "- 改口：%d 组\n", len(report.Conflicts))
+	if report.Since.IsZero() {
+		b.WriteString("- 从未引用：暂无归因数据，不可判定\n")
+	} else {
+		fmt.Fprintf(&b, "- 从未引用：%d 条（归因自 %s）\n", len(report.NeverReferenced), report.Since.UTC().Format("2006-01-02"))
+	}
+	fmt.Fprintf(&b, "- 缺 from_id：%d 条\n", len(report.MissingFrom))
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // startDailySummary 装配生成器并在启用时启动每日调度。
