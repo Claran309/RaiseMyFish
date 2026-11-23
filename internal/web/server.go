@@ -143,7 +143,7 @@ func New(o Options) (*Server, error) {
 	return &Server{
 		addr: addr, repo: o.Repo, log: o.Log, now: now,
 		knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts, control: o.Control, viewerSummary: o.ViewerSummary, logs: o.Logs,
-		shutdown:   o.Shutdown, memoryWriter: o.MemoryWriter,
+		shutdown: o.Shutdown, memoryWriter: o.MemoryWriter,
 		injections: o.Injections, diary: o.Diary, diaryGen: o.DiaryGenerator,
 		token: token, port: port,
 	}, nil
@@ -324,6 +324,18 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"avg_ms": stat.AvgMS, "max_ms": stat.MaxMS,
 		}
 	}
+	latencyDetail := make(map[string]map[string]any, len(st.LatencyDetail))
+	for channel, d := range st.LatencyDetail {
+		latencyDetail[channel] = map[string]any{
+			"all":   webWindowJSON(d.All),
+			"fresh": webWindowJSON(d.Fresh),
+			"segments": map[string]any{
+				"collect": webWindowJSON(d.Segments.Collect), "queue": webWindowJSON(d.Segments.Queue),
+				"generate": webWindowJSON(d.Segments.Generate), "send": webWindowJSON(d.Segments.Send),
+				"e2e_user": webWindowJSON(d.Segments.E2EUser), "e2e_platform": webWindowJSON(d.Segments.E2EPlatform),
+			},
+		}
+	}
 	var pool any
 	if st.Pool != nil {
 		pool = map[string]any{
@@ -344,9 +356,17 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"total_calls":    st.TotalCalls,
 		"coverage":       st.Coverage,
 		"latency":        latency,
+		"latency_detail": latencyDetail,
 		"db_pool":        pool,
 		"generated_at":   st.GeneratedAt.UTC().Format(time.RFC3339),
 	})
+}
+
+func webWindowJSON(w store.WebLatencyWindow) map[string]any {
+	return map[string]any{
+		"count": w.Count, "p50_ms": w.P50MS, "p90_ms": w.P90MS, "p99_ms": w.P99MS,
+		"avg_ms": w.AvgMS, "max_ms": w.MaxMS, "sample_sufficient": w.SampleSufficient,
+	}
 }
 
 // handleEmbeddingStatus 返回知识/记忆/档案的向量入库进度。

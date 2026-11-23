@@ -121,6 +121,7 @@ type consumeOptions struct {
 	injections    store.InjectionReader
 	recentSelf    func(ctx context.Context, ch event.Channel, session string, limit int) []string
 	viewerRecent  func(ctx context.Context, fromID string, limit int) []string
+	timing        store.TimingRepo
 }
 
 // withRecentSelf 注入「鱼自己最近说过的话」来源，用于去公式化。
@@ -146,6 +147,11 @@ func withCommentVision(vision *commentVision) consumeOption {
 // withInjections 注入看板临时设定来源；nil 表示不读取注入。
 func withInjections(reader store.InjectionReader) consumeOption {
 	return func(o *consumeOptions) { o.injections = reader }
+}
+
+// withTiming 注入分阶段计时仓储；nil 表示不记录 generated_at。
+func withTiming(repo store.TimingRepo) consumeOption {
+	return func(o *consumeOptions) { o.timing = repo }
 }
 
 func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, viewers store.ViewerRepo, soulPath string, pres *presence.Table, state func(time.Time) string, react *reactRuntime, channels *channelSet, log *zap.Logger, opts ...consumeOption) (scheduler.Workers, error) {
@@ -188,6 +194,7 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 		presence:      pres,
 		react:         react,
 		commentVision: extra.commentVision,
+		timing:        extra.timing,
 		log:           log,
 	})
 	// deliver 与 verify 是同一件事：事件已经投递出去，只需要 Resume 核验并结清。
@@ -501,6 +508,10 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	timingRepo, err := database.NewTimingRepo(resources.DB)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	// 看板注入：装配失败只降级为不读取注入，不影响回复主链路。
 	var injectionReader store.InjectionReader
 	if webRepo, werr := database.NewWebRepo(resources.DB); werr != nil {
@@ -572,7 +583,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)))
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo))
 	if err != nil {
 		return nil, nil, nil, err
 	}

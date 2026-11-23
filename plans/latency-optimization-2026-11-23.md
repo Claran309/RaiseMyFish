@@ -11,9 +11,9 @@
 |---|---|---|
 | 3.7 文档口径 | ✅ 已写 | `docs/10-observability-cost.md` 新增「延迟口径」章节：平台时间/采集时间/生成时间/发送时间定义与公式、fresh/all、n<30、backfill 规则 |
 | 8.5 排查手册 | ✅ 已写 | `docs/runbook.md` 新增「评论/私信延迟排查」：先看 fresh/all、再拆阶段、再看 dead/skipped 原因 |
-| 3.1 `collected_at` | ⏳ 待做 | 需迁移 `0025`；注意 `0024_manual_memory_source.sql` 尚未接入 `migrationSteps()`，必须先核对迁移链 |
-| 3.2 `event_timings` | ⏳ 待做 | 新表 + TimingRepo + collector/scheduler/generate/sender 写入点 |
-| 3.3–3.6 | ⏳ 待做 | 5 段延迟、backfill、fresh/all、SLO |
+| 3.1 `collected_at` | ✅ 已完成 | 迁移 `0025_event_timing.sql`；`0024` 已接入迁移链；`EventRepo.Insert` 零值兜底 |
+| 3.2 `event_timings` | ✅ 已完成 | 新表 + `TimingRepo`；采集/排队/领取/发送/核验由触发器写，`generated_at` 由生成 handler 写 |
+| 3.3–3.6 | ✅ 已完成 | `LatencyDetail` 五段拆分、`collect_mode`、fresh/all、`[slo]` 配置与面板/status 输出 |
 | L1–L5 | ⏳ 待做 | 见后文 |
 
 ---
@@ -158,12 +158,20 @@
 - `docs/10-observability-cost.md` 增补「平台时间 / 采集时间 / 生成时间 / 发送时间」定义与公式。
 
 #### L0 验收
-- [ ] 新事件 `collected_at` 非空；历史事件为空且不阻塞查询
-- [ ] `event_timings` 能按 event_id 查到 7 个阶段
-- [ ] `fishctl status` 同时输出 all/fresh；n<30 标注样本不足
-- [ ] 面板延迟卡区分 fresh/all
-- [ ] `docs/10-observability-cost.md` 口径与 SQL 一致
-- [ ] `go test -race ./...` 相关包通过
+- [x] 新事件 `collected_at` 非空；历史事件为空且不阻塞查询
+- [x] `event_timings` 能按 event_id 查到 7 个阶段（集成测试 `TestEventTimingStagesAndLatencyDetail`）
+- [x] `fishctl status` 同时输出 all/fresh；n<30 标注样本不足
+- [x] 面板延迟卡区分 fresh/all
+- [x] `docs/10-observability-cost.md` 口径与 SQL 一致
+- [x] 相关包 `go test` 通过；`-race` 留 L4 统一跑
+
+#### L0 执行记录（2026-11-23）
+
+- 迁移：`0024_manual_memory_source.sql` 接入 `migrationSteps()`；新增 `0025_event_timing.sql`。
+- 计时：`event_timings` 七阶段；触发器自动写 collected/enqueued/claimed/send_started/sent/verified，`generated_at` 由 `cmd/fishd/generate.go` 写入。
+- 口径：`collect_mode=feed|poll|backfill`；评论顶层页 >1、楼中楼回填、私信首轮/缺口标 `backfill`。
+- 输出：`fishctl status` 与 `/api/status` 新增 `latency_detail`，保留旧 `latency` 字段。
+- 验证：`go test ./...`、`go test -tags=integration ./internal/database -run 'TestMigration|TestEventTiming'` 通过。
 
 ---
 

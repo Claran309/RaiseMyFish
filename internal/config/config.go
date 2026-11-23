@@ -38,6 +38,7 @@ type Config struct {
 	Watchdog      Watchdog      `toml:"watchdog"`
 	// Summary 是每日总结（默认关闭）；手动生成入口仍要看面板与 LLM 是否可用。
 	Summary   Summary    `toml:"summary"`
+	SLO       SLO        `toml:"slo"`
 	Collector Collectors `toml:"collector"`
 	// Scheduler 为 nil 表示「不接消费循环」，只采集。
 	Scheduler *Scheduler `toml:"scheduler"`
@@ -218,6 +219,7 @@ func load(path, envPath string) (Config, error) {
 		MCP:           defaultMCP(),
 		Watchdog:      defaultWatchdog(),
 		Summary:       defaultSummary(),
+		SLO:           defaultSLO(),
 		// 评论采集默认关闭；interval 先补默认值，开启后省略也能工作。
 		Collector: Collectors{Live: defaultLiveCollector(), Comment: defaultCommentCollector(), DM: defaultDMCollector()},
 	}
@@ -361,6 +363,9 @@ func (c Config) validateStructure(strictLive bool) error {
 	}
 	if err := c.Scheduler.Validate(); err != nil {
 		return err
+	}
+	if err := c.SLO.Validate(); err != nil {
+		return fmt.Errorf("校验SLO配置：%w", err)
 	}
 	if err := c.Collector.DM.Validate(); err != nil {
 		return err

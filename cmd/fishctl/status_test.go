@@ -25,14 +25,17 @@ type mockStats struct {
 	counts     database.WindowCounts
 	lastSeen   map[string]time.Time
 	latency    map[string]database.LatencyStat
+	detail     map[string]database.LatencyDetail
 	countsErr  error
 	lastErr    error
 	latencyErr error
+	detailErr  error
 
 	gotFrom, gotTo time.Time
 	countCalls     int
 	lastCalls      int
 	latencyCalls   int
+	detailCalls    int
 }
 
 func (m *mockStats) Counts(_ context.Context, from, to time.Time) (database.WindowCounts, error) {
@@ -59,6 +62,15 @@ func (m *mockStats) Latency(_ context.Context, from, to time.Time) (map[string]d
 		return nil, m.latencyErr
 	}
 	return m.latency, nil
+}
+
+func (m *mockStats) LatencyDetailStats(_ context.Context, from, to time.Time, freshFor time.Duration) (map[string]database.LatencyDetail, error) {
+	m.detailCalls++
+	m.gotFrom, m.gotTo = from, to
+	if m.detailErr != nil {
+		return nil, m.detailErr
+	}
+	return m.detail, nil
 }
 
 // floatPtr 便于构造费用三态。
@@ -118,6 +130,37 @@ func TestCollectStatsWithData(t *testing.T) {
 		if !strings.Contains(w, "≥") {
 			t.Errorf("静默时长缺少「≥」前缀：%q", w)
 		}
+	}
+}
+
+// TestCollectStatsLatencyDetail 验证 all/fresh 与五段拆分透传，样本不足由渲染层判断。
+func TestCollectStatsLatencyDetail(t *testing.T) {
+	src := &mockStats{
+		counts:   database.WindowCounts{},
+		lastSeen: map[string]time.Time{},
+		detail: map[string]database.LatencyDetail{
+			"comment": {
+				All:   database.LatencyWindow{Count: 40, P50MS: 5000, P90MS: 12000, SampleSufficient: true},
+				Fresh: database.LatencyWindow{Count: 8, P50MS: 3000, P90MS: 6000},
+				Segments: database.LatencySegments{
+					Collect:  database.LatencyWindow{Count: 40, P50MS: 100},
+					Queue:    database.LatencyWindow{Count: 40, P50MS: 200},
+					Generate: database.LatencyWindow{Count: 40, P50MS: 2100},
+					Send:     database.LatencyWindow{Count: 40, P50MS: 300},
+				},
+			},
+		},
+	}
+	got, err := collectStats(context.Background(), src, statNow, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src.detailCalls != 1 {
+		t.Fatalf("分段延迟调用次数=%d，期望1", src.detailCalls)
+	}
+	d := got.LatencyDetail["comment"]
+	if d.All.Count != 40 || d.Fresh.Count != 8 || d.Fresh.SampleSufficient || d.Segments.Generate.P50MS != 2100 {
+		t.Fatalf("分段延迟未透传：%+v", got.LatencyDetail)
 	}
 }
 

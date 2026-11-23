@@ -31,6 +31,11 @@ type StatsSource interface {
 	Latency(ctx context.Context, from, to time.Time) (map[string]database.LatencyStat, error)
 }
 
+// latencyDetailSource 是 L0 新增的 all/fresh + 五段拆分能力；旧 mock 不实现时保持原输出。
+type latencyDetailSource interface {
+	LatencyDetailStats(ctx context.Context, from, to time.Time, freshFor time.Duration) (map[string]database.LatencyDetail, error)
+}
+
 // 编译期断言：真实聚合实现必须满足本文件依赖的接口。
 var _ StatsSource = (*database.Stats)(nil)
 
@@ -42,6 +47,8 @@ type StatusStats struct {
 	HeartbeatWarnings []string `json:"heartbeat_warnings"`
 	// Latency 是窗口内的回复延迟分位；没有样本时省略该字段。
 	Latency map[string]database.LatencyStat `json:"latency,omitempty"`
+	// LatencyDetail 是 all/fresh 与采集/排队/生成/发送拆分；旧数据源不提供时省略。
+	LatencyDetail map[string]database.LatencyDetail `json:"latency_detail,omitempty"`
 }
 
 // empty 判断是否没有任何可输出的统计内容。
@@ -96,6 +103,13 @@ func collectStats(ctx context.Context, src StatsSource, now time.Time, window ti
 	if err != nil {
 		return StatusStats{}, fmt.Errorf("读取回复延迟失败：%w", err)
 	}
+	var detail map[string]database.LatencyDetail
+	if richer, ok := src.(latencyDetailSource); ok {
+		detail, err = richer.LatencyDetailStats(ctx, from, to, 5*time.Minute)
+		if err != nil {
+			return StatusStats{}, fmt.Errorf("读取分段延迟失败：%w", err)
+		}
+	}
 
 	snapshot := observe.Snapshot{
 		WindowStart:  from,
@@ -114,6 +128,7 @@ func collectStats(ctx context.Context, src StatsSource, now time.Time, window ti
 		Report:            observe.Render(snapshot),
 		HeartbeatWarnings: formatHeartbeat(observe.Check(now, lastSeen)),
 		Latency:           latency,
+		LatencyDetail:     detail,
 	}, nil
 }
 

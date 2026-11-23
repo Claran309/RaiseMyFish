@@ -209,6 +209,16 @@ func TestStatusJSON(t *testing.T) {
 		Latency: map[string]store.WebLatency{
 			"live": {Count: 6, P50MS: 850, P90MS: 2100, AvgMS: 1200, MaxMS: 3000},
 		},
+		LatencyDetail: map[string]store.WebLatencyDetail{
+			"live": {
+				All:   store.WebLatencyWindow{Count: 6, P50MS: 850, P90MS: 2100, SampleSufficient: false},
+				Fresh: store.WebLatencyWindow{Count: 3, P50MS: 500, P90MS: 900},
+				Segments: store.WebLatencySegments{
+					Collect: store.WebLatencyWindow{Count: 6, P50MS: 10},
+					Queue:   store.WebLatencyWindow{Count: 6, P50MS: 20},
+				},
+			},
+		},
 		Pool:        &store.WebPool{Open: 3, InUse: 1, Idle: 2, MaxOpen: 30, WaitCount: 4, WaitDurationMS: 12},
 		GeneratedAt: time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC),
 	}}
@@ -223,7 +233,7 @@ func TestStatusJSON(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("响应不是 JSON：%v", err)
 	}
-	for _, k := range []string{"events_total", "events_pending", "memory_total", "memory_by_kind", "send_total", "send_failed", "known_cost", "unknown_calls", "total_calls", "coverage", "latency", "db_pool", "generated_at"} {
+	for _, k := range []string{"events_total", "events_pending", "memory_total", "memory_by_kind", "send_total", "send_failed", "known_cost", "unknown_calls", "total_calls", "coverage", "latency", "latency_detail", "db_pool", "generated_at"} {
 		if _, ok := body[k]; !ok {
 			t.Errorf("缺少字段 %s", k)
 		}
@@ -243,6 +253,14 @@ func TestStatusJSON(t *testing.T) {
 	live, ok := latency["live"].(map[string]any)
 	if !ok || live["p50_ms"].(float64) != 850 || live["p90_ms"].(float64) != 2100 || live["count"].(float64) != 6 {
 		t.Errorf("延迟数值不符：%+v", latency)
+	}
+	detail, ok := body["latency_detail"].(map[string]any)
+	if !ok {
+		t.Fatalf("latency_detail 结构不符：%+v", body["latency_detail"])
+	}
+	liveDetail, ok := detail["live"].(map[string]any)
+	if !ok || liveDetail["fresh"].(map[string]any)["p50_ms"].(float64) != 500 {
+		t.Errorf("fresh 延迟未透传：%+v", detail)
 	}
 	pool, ok := body["db_pool"].(map[string]any)
 	if !ok || pool["in_use"].(float64) != 1 || pool["max_open"].(float64) != 30 || pool["wait_count"].(float64) != 4 {
@@ -622,7 +640,7 @@ func TestOverviewPageBlocks(t *testing.T) {
 		}
 	}
 	// R1/R2：延迟与连接池卡片必须有渲染函数与空态，纯前端无编译期保护。
-	for _, want := range []string{"function latencyCards", "'p50 '", "近24h无样本", "function poolCard", "等待 "} {
+	for _, want := range []string{"function latencyCards", "'p50 '", "近24h无样本", "延迟(fresh)", "样本不足", "function poolCard", "等待 "} {
 		if !strings.Contains(body, want) {
 			t.Errorf("概览页缺少延迟/连接池渲染 %q", want)
 		}

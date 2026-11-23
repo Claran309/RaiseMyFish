@@ -49,8 +49,12 @@ type Event struct {
     At        time.Time
     Status    Status
     Meta      json.RawMessage // 平台原始字段
+    CollectedAt time.Time     // 本进程首次看到并落库的时间；零值表示历史数据未记录
+    CollectMode string        // feed | poll | backfill；空值表示历史数据未标记
 }
 ```
+
+`At` 永远是平台时间；`CollectedAt` 只用于延迟统计，不替代事件时间。`CollectMode=backfill` 的事件不进入 fresh 延迟 SLO。
 
 ## 2. 幂等键规则（必须遵守）
 

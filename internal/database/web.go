@@ -109,6 +109,29 @@ func (r *WebRepo) Status(ctx context.Context) (store.WebStatus, error) {
 			AvgMS: stat.AvgMS, MaxMS: stat.MaxMS,
 		}
 	}
+	detail, err := queryLatencyDetail(ctx, r.db, now.Add(-24*time.Hour), now, "all", time.Time{})
+	if err != nil {
+		return store.WebStatus{}, err
+	}
+	fresh, err := queryLatencyDetail(ctx, r.db, now.Add(-24*time.Hour), now, "fresh", now.Add(-5*time.Minute))
+	if err != nil {
+		return store.WebStatus{}, err
+	}
+	st.LatencyDetail = make(map[string]store.WebLatencyDetail, len(detail))
+	for channel, d := range detail {
+		w := store.WebLatencyDetail{
+			All: webWindow(d.All),
+			Segments: store.WebLatencySegments{
+				Collect: webWindow(d.Segments.Collect), Queue: webWindow(d.Segments.Queue),
+				Generate: webWindow(d.Segments.Generate), Send: webWindow(d.Segments.Send),
+				E2EUser: webWindow(d.Segments.E2EUser), E2EPlatform: webWindow(d.Segments.E2EPlatform),
+			},
+		}
+		if f, ok := fresh[channel]; ok {
+			w.Fresh = webWindow(f.All)
+		}
+		st.LatencyDetail[channel] = w
+	}
 	// 连接池状态直接从 database/sql 读取，不额外查库。
 	// 拿不到 DB 句柄只影响展示，不影响其它统计。
 	if sqlDB, poolErr := r.db.DB(); poolErr == nil {
@@ -121,6 +144,13 @@ func (r *WebRepo) Status(ctx context.Context) (store.WebStatus, error) {
 	}
 	st.GeneratedAt = now.UTC()
 	return st, nil
+}
+
+func webWindow(w LatencyWindow) store.WebLatencyWindow {
+	return store.WebLatencyWindow{
+		Count: w.Count, P50MS: w.P50MS, P90MS: w.P90MS, P99MS: w.P99MS,
+		AvgMS: w.AvgMS, MaxMS: w.MaxMS, SampleSufficient: w.SampleSufficient,
+	}
 }
 
 // Memory 按 kind/关键词过滤公开记忆。

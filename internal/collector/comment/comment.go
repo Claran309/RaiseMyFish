@@ -635,7 +635,12 @@ func (c *Collector) pollTop(ctx context.Context, cookie string, target Target, s
 			return nil, healthy, count
 		}
 		count.fetched += len(page.Replies)
-		emitted, done, stopped := c.processTopPage(ctx, target, st, page, out, errc)
+		mode := "poll"
+		if pn > 1 {
+			// 顶层评论只有第一页是最新；后续页按历史回填处理，避免污染 fresh 延迟。
+			mode = "backfill"
+		}
+		emitted, done, stopped := c.processTopPage(ctx, target, st, page, out, errc, mode)
 		count.emitted += emitted
 		if stopped {
 			return nil, healthy, count
@@ -680,14 +685,14 @@ func (c *Collector) pollTop(ctx context.Context, cookie string, target Target, s
 }
 
 // processTopPage 处理一页顶层评论，返回本页新事件数、是否已到列表末尾、是否因取消停止。
-func (c *Collector) processTopPage(ctx context.Context, target Target, st *targetState, page replyPage, out chan<- event.Event, errc chan<- error) (int, bool, bool) {
+func (c *Collector) processTopPage(ctx context.Context, target Target, st *targetState, page replyPage, out chan<- event.Event, errc chan<- error, mode string) (int, bool, bool) {
 	newCount := 0
 	for i := range page.Replies {
 		reply := page.Replies[i]
 		if root := string(reply.Rpid); positiveID.MatchString(root) && (reply.Rcount > 0 || len(reply.Replies) > 0) {
 			st.trackRoot(root, c.options.MaxRoots)
 		}
-		emitted, stopped := c.emitReply(ctx, target, reply, out, errc)
+		emitted, stopped := c.emitReply(ctx, target, reply, out, errc, mode)
 		if emitted {
 			newCount++
 		}
@@ -695,7 +700,7 @@ func (c *Collector) processTopPage(ctx context.Context, target Target, st *targe
 			return newCount, false, true
 		}
 		for _, child := range reply.Replies {
-			emitted, stopped = c.emitReply(ctx, target, child, out, errc)
+			emitted, stopped = c.emitReply(ctx, target, child, out, errc, mode)
 			if emitted {
 				newCount++
 			}
@@ -727,8 +732,8 @@ func (c *Collector) processTopPage(ctx context.Context, target Target, st *targe
 	return newCount, false, false
 }
 
-func (c *Collector) emitReply(ctx context.Context, target Target, reply apiReply, out chan<- event.Event, errc chan<- error) (bool, bool) {
-	ev, keep, err := c.normalize(target, reply)
+func (c *Collector) emitReply(ctx context.Context, target Target, reply apiReply, out chan<- event.Event, errc chan<- error, mode string) (bool, bool) {
+	ev, keep, err := c.normalizeWithMode(target, reply, mode)
 	if err != nil {
 		c.report(errc, err)
 		return false, false
@@ -747,10 +752,10 @@ func (c *Collector) emitReply(ctx context.Context, target Target, reply apiReply
 	}
 }
 
-func (c *Collector) processReplies(ctx context.Context, target Target, replies []apiReply, out chan<- event.Event, errc chan<- error) (int, bool) {
+func (c *Collector) processReplies(ctx context.Context, target Target, replies []apiReply, out chan<- event.Event, errc chan<- error, mode string) (int, bool) {
 	newCount := 0
 	for _, reply := range replies {
-		emitted, stopped := c.emitReply(ctx, target, reply, out, errc)
+		emitted, stopped := c.emitReply(ctx, target, reply, out, errc, mode)
 		if emitted {
 			newCount++
 		}
@@ -808,7 +813,7 @@ func (c *Collector) pollRoot(ctx context.Context, cookie string, target Target, 
 	if err != nil {
 		return report(err)
 	}
-	if _, stopped := c.processReplies(ctx, target, first.Replies, out, errc); stopped {
+	if _, stopped := c.processReplies(ctx, target, first.Replies, out, errc, "poll"); stopped {
 		return nil, healthy
 	}
 	count := first.Count
@@ -856,7 +861,7 @@ func (c *Collector) pollRoot(ctx context.Context, cookie string, target Target, 
 		if err != nil {
 			return report(err)
 		}
-		if _, stopped := c.processReplies(ctx, target, page.Replies, out, errc); stopped {
+		if _, stopped := c.processReplies(ctx, target, page.Replies, out, errc, "poll"); stopped {
 			return nil, healthy
 		}
 		budget--
@@ -873,7 +878,7 @@ func (c *Collector) pollRoot(ctx context.Context, cookie string, target Target, 
 			if err != nil {
 				return report(err)
 			}
-			if _, stopped := c.processReplies(ctx, target, page.Replies, out, errc); stopped {
+			if _, stopped := c.processReplies(ctx, target, page.Replies, out, errc, "poll"); stopped {
 				return nil, healthy
 			}
 			budget--
@@ -895,7 +900,7 @@ func (c *Collector) pollRoot(ctx context.Context, cookie string, target Target, 
 		if err != nil {
 			return report(err)
 		}
-		if _, stopped := c.processReplies(ctx, target, page.Replies, out, errc); stopped {
+		if _, stopped := c.processReplies(ctx, target, page.Replies, out, errc, "backfill"); stopped {
 			return nil, healthy
 		}
 		budget--
@@ -1113,6 +1118,11 @@ func codeKind(code int) Kind {
 
 // normalize 校验单条评论；重复与自己的评论返回 keep=false。
 func (c *Collector) normalize(target Target, r apiReply) (event.Event, bool, *Error) {
+	return c.normalizeWithMode(target, r, "poll")
+}
+
+// normalizeWithMode 在构造事件时写入采集方式；feed/poll 为实时，backfill 为历史回填。
+func (c *Collector) normalizeWithMode(target Target, r apiReply, mode string) (event.Event, bool, *Error) {
 	invalid := func() (event.Event, bool, *Error) { return event.Event{}, false, &Error{Kind: KindProtocol} }
 	rpid, mid := string(r.Rpid), string(r.Member.Mid)
 	if mid == "" {
@@ -1165,18 +1175,20 @@ func (c *Collector) normalize(target Target, r apiReply) (event.Event, bool, *Er
 		return invalid()
 	}
 	return event.Event{
-		ID:       "comment:" + target.OID + ":" + rpid,
-		Channel:  event.ChComment,
-		Dir:      event.DirIn,
-		Session:  target.OID,
-		FromID:   mid,
-		FromName: name,
-		Text:     text,
-		Private:  false,
-		ReplyTo:  rpid,
-		At:       time.Unix(r.Ctime, 0).UTC(),
-		Status:   event.StatusPending,
-		Meta:     meta,
+		ID:          "comment:" + target.OID + ":" + rpid,
+		Channel:     event.ChComment,
+		Dir:         event.DirIn,
+		Session:     target.OID,
+		FromID:      mid,
+		FromName:    name,
+		Text:        text,
+		Private:     false,
+		ReplyTo:     rpid,
+		At:          time.Unix(r.Ctime, 0).UTC(),
+		Status:      event.StatusPending,
+		Meta:        meta,
+		CollectedAt: time.Now().UTC(),
+		CollectMode: mode,
 	}, true, nil
 }
 

@@ -71,6 +71,8 @@ type Message struct {
 	Images []string
 	// At 是平台时间；为零时用采集时刻。
 	At time.Time
+	// CollectMode 是采集方式：poll（增量）、backfill（首轮/缺口回填）。
+	CollectMode string
 }
 
 // Batch 是一轮拉取结果。
@@ -299,18 +301,24 @@ func (c *Collector) toEvent(m Message, now time.Time, recvActor string) (event.E
 		}
 	}
 	meta, _ := json.Marshal(metaFields)
+	mode := m.CollectMode
+	if mode == "" {
+		mode = "poll"
+	}
 	return event.Event{
-		ID:       eventID,
-		Channel:  event.ChDM,
-		Dir:      event.DirIn,
-		Private:  true,
-		Session:  event.DMSession(recvActor, peer),
-		FromID:   peer,
-		FromName: name,
-		Text:     text,
-		At:       at,
-		Status:   event.StatusPending,
-		Meta:     meta,
+		ID:          eventID,
+		Channel:     event.ChDM,
+		Dir:         event.DirIn,
+		Private:     true,
+		Session:     event.DMSession(recvActor, peer),
+		FromID:      peer,
+		FromName:    name,
+		Text:        text,
+		At:          at,
+		Status:      event.StatusPending,
+		Meta:        meta,
+		CollectedAt: time.Now().UTC(),
+		CollectMode: mode,
 	}, eventID, true
 }
 

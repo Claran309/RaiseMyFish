@@ -96,7 +96,7 @@ P1 起：落库 `daily_stats`，同时保留文件。
 ## 8. 延迟口径（2026-11-23 补充）
 
 > 延迟报表必须区分「平台时间」与「我们看见的时间」；否则补历史评论会把 P90 算成几小时，优化就变成优化假指标。
-> 说明：`collected_at` 与 `event_timings` 是 L0 待实现约定（见 `plans/latency-optimization-2026-11-23.md`）；当前 `stats.go` 仍使用旧 `at` 口径，落地前不要把本节的 fresh 数字当作已有能力。
+> 说明：`collected_at`、`collect_mode` 与 `event_timings` 已在 L0 落地（迁移 `0025_event_timing.sql`）。旧 `Latency` 口径继续保留；新 `LatencyDetail` 同时输出 `all`/`fresh` 与五段拆分，历史事件缺失阶段保持 `NULL`，不伪造 0。
 
 | 字段 | 定义 | 用途 |
 |---|---|---|
@@ -123,6 +123,7 @@ P1 起：落库 `daily_stats`，同时保留文件。
 统计规则：
 
 - `all` 与 `fresh(<5m)` 必须分开；`fresh` 只统计 `collected_at` 在 5 分钟内、且 `collect_mode != 'backfill'` 的事件。
+- 计时写入：事件落库自动写 `collected_at`；状态/租约变化自动写 `enqueued_at`、`claimed_at`、`verified_at`；`send_log.ok=true` 写 `sent_at`；`send_attempts/delivery_attempts` 进入 `armed` 写 `send_started_at`；`generated_at` 由生成 handler 写。
 - 样本 `n < 30` 时只显示「样本不足」，不展示 P50/P90；`n=0` 显示 `—`。
 - `backfill`（首次补 24h、批量补处理、旧评论回复）不进入 fresh SLO；只要求不丢、不重、可观测。
 - `live` 的“1 秒级”只适用于短句单步；ReAct 多步与 30 天全量数字必须分开写，不能混用口径。

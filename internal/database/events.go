@@ -26,25 +26,31 @@ func NewEventRepo(db *gorm.DB) (*EventRepo, error) {
 }
 
 type eventRow struct {
-	ID       string
-	Channel  event.Channel
-	Dir      event.Dir
-	Session  string
-	FromID   string
-	FromName string
-	Text     string
-	Private  bool
-	ReplyTo  string
-	At       time.Time
-	Status   event.Status
-	Meta     json.RawMessage `gorm:"type:jsonb"`
+	ID          string
+	Channel     event.Channel
+	Dir         event.Dir
+	Session     string
+	FromID      string
+	FromName    string
+	Text        string
+	Private     bool
+	ReplyTo     string
+	At          time.Time
+	Status      event.Status
+	Meta        json.RawMessage `gorm:"type:jsonb"`
+	CollectedAt time.Time       `gorm:"column:collected_at"`
+	CollectMode string          `gorm:"column:collect_mode"`
 }
 
 func rowFromEvent(e event.Event) eventRow {
-	return eventRow{e.ID, e.Channel, e.Dir, e.Session, e.FromID, e.FromName, e.Text, e.Private, e.ReplyTo, e.At, e.Status, e.Meta}
+	collected := e.CollectedAt
+	if collected.IsZero() {
+		collected = time.Now().UTC()
+	}
+	return eventRow{ID: e.ID, Channel: e.Channel, Dir: e.Dir, Session: e.Session, FromID: e.FromID, FromName: e.FromName, Text: e.Text, Private: e.Private, ReplyTo: e.ReplyTo, At: e.At, Status: e.Status, Meta: e.Meta, CollectedAt: collected, CollectMode: e.CollectMode}
 }
 func (r eventRow) event() event.Event {
-	return event.Event{ID: r.ID, Channel: r.Channel, Dir: r.Dir, Session: r.Session, FromID: r.FromID, FromName: r.FromName, Text: r.Text, Private: r.Private, ReplyTo: r.ReplyTo, At: r.At, Status: r.Status, Meta: r.Meta}
+	return event.Event{ID: r.ID, Channel: r.Channel, Dir: r.Dir, Session: r.Session, FromID: r.FromID, FromName: r.FromName, Text: r.Text, Private: r.Private, ReplyTo: r.ReplyTo, At: r.At, Status: r.Status, Meta: r.Meta, CollectedAt: r.CollectedAt, CollectMode: r.CollectMode}
 }
 
 // Insert 仅按主键去重，重复时不覆盖原始事实或后续状态。

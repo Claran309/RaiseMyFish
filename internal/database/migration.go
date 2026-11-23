@@ -152,6 +152,16 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取异常清理迁移：%w", err)
 	}
 	eventClearanceHash := sha256.Sum256(eventClearance)
+	manualMemorySource, err := migrations.Files.ReadFile("0024_manual_memory_source.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取手动记忆来源迁移：%w", err)
+	}
+	manualMemorySourceHash := sha256.Sum256(manualMemorySource)
+	eventTiming, err := migrations.Files.ReadFile("0025_event_timing.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取延迟计时迁移：%w", err)
+	}
+	eventTimingHash := sha256.Sum256(eventTiming)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -176,6 +186,8 @@ func migrationSteps() ([]migrationStep, error) {
 		{21, string(contextInjections), hex.EncodeToString(contextInjectionsHash[:])},
 		{22, string(dailySummaries), hex.EncodeToString(dailySummariesHash[:])},
 		{23, string(eventClearance), hex.EncodeToString(eventClearanceHash[:])},
+		{24, string(manualMemorySource), hex.EncodeToString(manualMemorySourceHash[:])},
+		{25, string(eventTiming), hex.EncodeToString(eventTimingHash[:])},
 	}, nil
 }
 

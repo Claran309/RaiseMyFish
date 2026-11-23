@@ -193,7 +193,6 @@ func (f *BiliFetcher) snapshotActor(ctx context.Context) (bili.Actor, error) {
 	return actor, nil
 }
 
-
 // msgBlockedUntil 判断该会话的消息接口是否仍在退避（404 等不可恢复错误）。
 func (f *BiliFetcher) msgBlockedUntil(peer string) bool {
 	f.mu.Lock()
@@ -361,7 +360,7 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, client *bili.Client, sel
 	budget := f.maxMessagePages()
 	emitted := make(map[string]struct{})
 	var out []Message
-	emit := func(items []bili.DMMessage, floor string) {
+	emit := func(items []bili.DMMessage, floor, mode string) {
 		for _, m := range items {
 			if selfID != "" && m.SenderUID == selfID {
 				continue
@@ -374,11 +373,12 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, client *bili.Client, sel
 			}
 			emitted[m.MsgKey] = struct{}{}
 			out = append(out, Message{
-				ID:     m.MsgKey,
-				PeerID: peer,
-				Text:   m.Content,
-				Images: append([]string(nil), m.Images...),
-				At:     atFromUnix(m.Timestamp),
+				ID:          m.MsgKey,
+				PeerID:      peer,
+				Text:        m.Content,
+				Images:      append([]string(nil), m.Images...),
+				At:          atFromUnix(m.Timestamp),
+				CollectMode: mode,
 			})
 		}
 	}
@@ -387,7 +387,7 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, client *bili.Client, sel
 	// 阶段 1：继续回填上次没追平的缺口。
 	if pending != "0" && budget > 0 {
 		oldest, reached, scanned, scanErr := f.scanOlder(ctx, client, peer, pending, watermark, &budget, func(items []bili.DMMessage) {
-			emit(items, watermark)
+			emit(items, watermark, "backfill")
 		})
 		if scanErr != nil {
 			return nil, false, scanErr
@@ -407,9 +407,9 @@ func (f *BiliFetcher) fetchSession(ctx context.Context, client *bili.Client, sel
 	if budget > 0 && (first || pending != "0" || compareDecimal(sessionSeq, frontier) > 0) {
 		oldest, reached, pageMax, scanned, stoppedByError, scanErr := f.scanNewest(ctx, client, peer, watermark, &budget, func(items []bili.DMMessage) {
 			if first {
-				emit(items, "0")
+				emit(items, "0", "backfill")
 			} else {
-				emit(items, frontier)
+				emit(items, frontier, "poll")
 			}
 		})
 		if scanErr != nil {
@@ -477,7 +477,6 @@ func (f *BiliFetcher) scanOlder(ctx context.Context, client *bili.Client, peer, 
 	// 历史恢复（缺口补全）依赖水位与首连基线；这里直接返回「无更早」。
 	return "", true, false, nil
 }
-
 
 // scanNewest 从最新页向历史翻页，直到追上 watermark 或没有更多。
 // stoppedByError 表示翻页中途遇到非鉴权错误（已拿到较新的页）。

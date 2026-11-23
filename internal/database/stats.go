@@ -190,8 +190,37 @@ type LatencyStat struct {
 	Count int64
 	P50MS int64
 	P90MS int64
+	P99MS int64
 	AvgMS int64
 	MaxMS int64
+}
+
+// LatencyWindow 是一个统计窗口的分位结果；样本不足时不展示分位。
+type LatencyWindow struct {
+	Count            int64
+	P50MS            int64
+	P90MS            int64
+	P99MS            int64
+	AvgMS            int64
+	MaxMS            int64
+	SampleSufficient bool
+}
+
+// LatencySegments 是采集/排队/生成/发送拆分；缺失阶段按零值表示 unknown。
+type LatencySegments struct {
+	Collect     LatencyWindow
+	Queue       LatencyWindow
+	Generate    LatencyWindow
+	Send        LatencyWindow
+	E2EUser     LatencyWindow
+	E2EPlatform LatencyWindow
+}
+
+// LatencyDetail 是同一通道的全量与 fresh 口径。
+type LatencyDetail struct {
+	All      LatencyWindow
+	Fresh    LatencyWindow
+	Segments LatencySegments
 }
 
 // latencyChannels 是面板/日报关心的业务通道；qq 等未启用通道不混进结果。
@@ -220,6 +249,7 @@ SELECT channel,
        COUNT(*) AS n,
        percentile_cont(0.5) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8) AS p50_ms,
        percentile_cont(0.9) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8) AS p90_ms,
+       percentile_cont(0.99) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8) AS p99_ms,
        AVG(EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8 AS avg_ms,
        MAX(EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8 AS max_ms
   FROM first_ok
@@ -242,6 +272,7 @@ func queryLatency(ctx context.Context, db *gorm.DB, from, to time.Time) (map[str
 		N       int64   `gorm:"column:n"`
 		P50     float64 `gorm:"column:p50_ms"`
 		P90     float64 `gorm:"column:p90_ms"`
+		P99     float64 `gorm:"column:p99_ms"`
 		Avg     float64 `gorm:"column:avg_ms"`
 		Max     float64 `gorm:"column:max_ms"`
 	}
@@ -257,11 +288,175 @@ func queryLatency(ctx context.Context, db *gorm.DB, from, to time.Time) (map[str
 			Count: row.N,
 			P50MS: roundMS(row.P50),
 			P90MS: roundMS(row.P90),
+			P99MS: roundMS(row.P99),
 			AvgMS: roundMS(row.Avg),
 			MaxMS: roundMS(row.Max),
 		}
 	}
 	return out, nil
+}
+
+// latencyDetailSQL 以每条入事件的首次成功发送为样本，LEFT JOIN 计时表：
+// 历史事件没有 event_timings 时仍保留 e2e_platform，但各拆分阶段为 NULL。
+const latencyDetailSQL = `
+WITH first_ok AS (
+    SELECT DISTINCT ON (l.event_id)
+           COALESCE(NULLIF(l.channel, ''), e.channel) AS channel,
+           l.at AS sent_at,
+           e.at AS event_at,
+           e.collected_at,
+           t.enqueued_at,
+           t.claimed_at,
+           t.generated_at,
+           t.send_started_at
+      FROM send_log l
+      JOIN events e ON e.id = l.event_id
+      LEFT JOIN event_timings t ON t.event_id = e.id
+     WHERE l.ok IS TRUE AND e.dir = 'in'
+       AND e.at >= ? AND e.at < ?
+       AND l.at >= e.at
+       AND (? = 'all' OR (e.collect_mode IS DISTINCT FROM 'backfill' AND e.collected_at >= ?))
+     ORDER BY l.event_id, l.at ASC
+)
+SELECT channel,
+       COUNT(*) AS n,
+       COUNT(collected_at) AS collect_n,
+       COUNT(claimed_at) AS queue_n,
+       COUNT(generated_at) AS generate_n,
+       COUNT(send_started_at) AS send_n,
+       COUNT(collected_at) AS user_n,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8) AS p50_ms,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8) AS p90_ms,
+       percentile_cont(0.99) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8) AS p99_ms,
+       AVG(EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8 AS avg_ms,
+       MAX(EXTRACT(EPOCH FROM (sent_at - event_at)) * 1000)::float8 AS max_ms,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (collected_at - event_at)) * 1000)::float8) AS collect_p50,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (collected_at - event_at)) * 1000)::float8) AS collect_p90,
+       percentile_cont(0.99) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (collected_at - event_at)) * 1000)::float8) AS collect_p99,
+       AVG(EXTRACT(EPOCH FROM (collected_at - event_at)) * 1000)::float8 AS collect_avg,
+       MAX(EXTRACT(EPOCH FROM (collected_at - event_at)) * 1000)::float8 AS collect_max,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (claimed_at - collected_at)) * 1000)::float8) AS queue_p50,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (claimed_at - collected_at)) * 1000)::float8) AS queue_p90,
+       percentile_cont(0.99) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (claimed_at - collected_at)) * 1000)::float8) AS queue_p99,
+       AVG(EXTRACT(EPOCH FROM (claimed_at - collected_at)) * 1000)::float8 AS queue_avg,
+       MAX(EXTRACT(EPOCH FROM (claimed_at - collected_at)) * 1000)::float8 AS queue_max,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (generated_at - claimed_at)) * 1000)::float8) AS generate_p50,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (generated_at - claimed_at)) * 1000)::float8) AS generate_p90,
+       percentile_cont(0.99) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (generated_at - claimed_at)) * 1000)::float8) AS generate_p99,
+       AVG(EXTRACT(EPOCH FROM (generated_at - claimed_at)) * 1000)::float8 AS generate_avg,
+       MAX(EXTRACT(EPOCH FROM (generated_at - claimed_at)) * 1000)::float8 AS generate_max,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - send_started_at)) * 1000)::float8) AS send_p50,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - send_started_at)) * 1000)::float8) AS send_p90,
+       percentile_cont(0.99) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - send_started_at)) * 1000)::float8) AS send_p99,
+       AVG(EXTRACT(EPOCH FROM (sent_at - send_started_at)) * 1000)::float8 AS send_avg,
+       MAX(EXTRACT(EPOCH FROM (sent_at - send_started_at)) * 1000)::float8 AS send_max,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - collected_at)) * 1000)::float8) AS user_p50,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - collected_at)) * 1000)::float8) AS user_p90,
+       percentile_cont(0.99) WITHIN GROUP (ORDER BY (EXTRACT(EPOCH FROM (sent_at - collected_at)) * 1000)::float8) AS user_p99,
+       AVG(EXTRACT(EPOCH FROM (sent_at - collected_at)) * 1000)::float8 AS user_avg,
+       MAX(EXTRACT(EPOCH FROM (sent_at - collected_at)) * 1000)::float8 AS user_max
+  FROM first_ok
+ GROUP BY channel`
+
+// LatencyDetailStats 返回各通道 all/fresh 与五段拆分。
+//
+// fresh 只统计最近 freshFor 内采集、且未标记 backfill 的事件；
+// 历史事件缺少 collected_at 时不会进入 fresh，也不会被伪造成 0。
+func (s *Stats) LatencyDetailStats(ctx context.Context, from, to time.Time, freshFor time.Duration) (map[string]LatencyDetail, error) {
+	if ctx == nil || to.Before(from) || freshFor <= 0 {
+		return nil, store.ErrInvalid
+	}
+	all, err := queryLatencyDetail(ctx, s.db, from, to, "all", time.Time{})
+	if err != nil {
+		return nil, err
+	}
+	fresh, err := queryLatencyDetail(ctx, s.db, from, to, "fresh", to.Add(-freshFor))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]LatencyDetail, len(all))
+	for channel, detail := range all {
+		out[channel] = detail
+	}
+	for channel, detail := range fresh {
+		item := out[channel]
+		item.Fresh = detail.All
+		out[channel] = item
+	}
+	return out, nil
+}
+
+func queryLatencyDetail(ctx context.Context, db *gorm.DB, from, to time.Time, mode string, freshFrom time.Time) (map[string]LatencyDetail, error) {
+	if mode != "all" && mode != "fresh" {
+		return nil, store.ErrInvalid
+	}
+	var rows []struct {
+		Channel     string  `gorm:"column:channel"`
+		N           int64   `gorm:"column:n"`
+		CollectN    int64   `gorm:"column:collect_n"`
+		QueueN      int64   `gorm:"column:queue_n"`
+		GenerateN   int64   `gorm:"column:generate_n"`
+		SendN       int64   `gorm:"column:send_n"`
+		UserN       int64   `gorm:"column:user_n"`
+		P50         float64 `gorm:"column:p50_ms"`
+		P90         float64 `gorm:"column:p90_ms"`
+		P99         float64 `gorm:"column:p99_ms"`
+		Avg         float64 `gorm:"column:avg_ms"`
+		Max         float64 `gorm:"column:max_ms"`
+		CollectP50  float64 `gorm:"column:collect_p50"`
+		CollectP90  float64 `gorm:"column:collect_p90"`
+		CollectP99  float64 `gorm:"column:collect_p99"`
+		CollectAvg  float64 `gorm:"column:collect_avg"`
+		CollectMax  float64 `gorm:"column:collect_max"`
+		QueueP50    float64 `gorm:"column:queue_p50"`
+		QueueP90    float64 `gorm:"column:queue_p90"`
+		QueueP99    float64 `gorm:"column:queue_p99"`
+		QueueAvg    float64 `gorm:"column:queue_avg"`
+		QueueMax    float64 `gorm:"column:queue_max"`
+		GenerateP50 float64 `gorm:"column:generate_p50"`
+		GenerateP90 float64 `gorm:"column:generate_p90"`
+		GenerateP99 float64 `gorm:"column:generate_p99"`
+		GenerateAvg float64 `gorm:"column:generate_avg"`
+		GenerateMax float64 `gorm:"column:generate_max"`
+		SendP50     float64 `gorm:"column:send_p50"`
+		SendP90     float64 `gorm:"column:send_p90"`
+		SendP99     float64 `gorm:"column:send_p99"`
+		SendAvg     float64 `gorm:"column:send_avg"`
+		SendMax     float64 `gorm:"column:send_max"`
+		UserP50     float64 `gorm:"column:user_p50"`
+		UserP90     float64 `gorm:"column:user_p90"`
+		UserP99     float64 `gorm:"column:user_p99"`
+		UserAvg     float64 `gorm:"column:user_avg"`
+		UserMax     float64 `gorm:"column:user_max"`
+	}
+	if err := db.WithContext(ctx).Raw(latencyDetailSQL, from, to, mode, freshFrom).Scan(&rows).Error; err != nil {
+		return nil, &safeError{"统计分段延迟失败", err}
+	}
+	out := make(map[string]LatencyDetail, len(rows))
+	for _, row := range rows {
+		if !latencyChannels[row.Channel] || row.N == 0 {
+			continue
+		}
+		out[row.Channel] = LatencyDetail{
+			All: window(row.N, row.P50, row.P90, row.P99, row.Avg, row.Max),
+			Segments: LatencySegments{
+				Collect:     window(row.CollectN, row.CollectP50, row.CollectP90, row.CollectP99, row.CollectAvg, row.CollectMax),
+				Queue:       window(row.QueueN, row.QueueP50, row.QueueP90, row.QueueP99, row.QueueAvg, row.QueueMax),
+				Generate:    window(row.GenerateN, row.GenerateP50, row.GenerateP90, row.GenerateP99, row.GenerateAvg, row.GenerateMax),
+				Send:        window(row.SendN, row.SendP50, row.SendP90, row.SendP99, row.SendAvg, row.SendMax),
+				E2EUser:     window(row.UserN, row.UserP50, row.UserP90, row.UserP99, row.UserAvg, row.UserMax),
+				E2EPlatform: window(row.N, row.P50, row.P90, row.P99, row.Avg, row.Max),
+			},
+		}
+	}
+	return out, nil
+}
+
+func window(n int64, p50, p90, p99, avg, max float64) LatencyWindow {
+	return LatencyWindow{
+		Count: n, P50MS: roundMS(p50), P90MS: roundMS(p90), P99MS: roundMS(p99),
+		AvgMS: roundMS(avg), MaxMS: roundMS(max), SampleSufficient: n >= 30,
+	}
 }
 
 // roundMS 把毫秒浮点夹到非负整数；NaN/Inf 属于上游算错，按 0 处理。

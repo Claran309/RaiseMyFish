@@ -148,7 +148,18 @@ type generateDeps struct {
 	react      *reactRuntime
 	// commentVision 是评论附图识别；nil 表示未开启或未装配，按无图处理。
 	commentVision *commentVision
+	timing        store.TimingRepo
 	log           *zap.Logger
+}
+
+// markGenerated 记录模型/ReAct 产出最终正文的时间；计时失败不能阻塞回复。
+func markGenerated(ctx context.Context, timing store.TimingRepo, ev event.Event, log *zap.Logger) {
+	if timing == nil {
+		return
+	}
+	if err := timing.MarkGenerated(ctx, ev.ID, time.Now().UTC()); err != nil {
+		log.Warn("写入生成计时失败", zap.String("action", "timing_generated"), zap.String("event_id", ev.ID), zap.Error(err))
+	}
 }
 
 // generateHandler 返回 Generate 阶段的调度 handler。
@@ -227,6 +238,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 			}
 		}
 		if len(reactResult.Danmaku) > 0 {
+			markGenerated(ctx, deps.timing, ev, deps.log)
 			// 工具已经把回复投递出去了（sender 已写出事件审计），不再发普通回复；
 			// 输入事件仍要按 replying→sent→done 结清，否则调度器会判定未结清。
 			deps.log.Info("ReAct 已用 send_danmaku 回复，跳过普通发送",
@@ -281,6 +293,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 			logWorkFailure(deps.log, "generate_failed", w, err)
 			return scheduler.Result{}, nil
 		}
+		markGenerated(ctx, deps.timing, ev, deps.log)
 
 		// Scope 必须显式带上：sender.Reply.Validate 要求与事件通道/会话一致
 		// 发送走通道：注册表优先，取不到回落直连 sender（行为与改造前一致）

@@ -461,3 +461,12 @@ restart_command = "bin/fishd.exe --env-file .env"
 # managed-child：restart_command 直接拉起常驻 fishd，必须等到该子进程写出的新心跳。
 restart_mode = "managed-child"
 heartbeat_path = "state/fishd.heartbeat"
+
+# SLO 只用于面板/日报/告警展示，不阻塞业务；0 表示关闭对应目标。
+[slo]
+live_p99_ms = 3000
+comment_fresh_p90_ms = 60000
+dm_fresh_p90_ms = 90000
+queue_oldest_ms = 300000
+comment_dead_rate = 0.05
+dm_dead_rate = 0.02

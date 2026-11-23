@@ -76,5 +76,5 @@ func normalize(f wireFrame, room, self string) (event.Event, bool, error) {
 		ReplyToID   string `json:"reply_to_id,omitempty"`
 		ReplyToName string `json:"reply_to_name,omitempty"`
 	}{"bili-whale-ws", truncated, len(runes), replyTo, replyName})
-	return event.Event{ID: "live:" + room + ":" + f.MsgID, Channel: event.ChLive, Dir: event.DirIn, Session: room, FromID: from, FromName: f.FromName, Text: text, Private: false, At: at.UTC(), Status: event.StatusPending, Meta: meta}, true, nil
+	return event.Event{ID: "live:" + room + ":" + f.MsgID, Channel: event.ChLive, Dir: event.DirIn, Session: room, FromID: from, FromName: f.FromName, Text: text, Private: false, At: at.UTC(), Status: event.StatusPending, Meta: meta, CollectedAt: time.Now().UTC(), CollectMode: "feed"}, true, nil
 }

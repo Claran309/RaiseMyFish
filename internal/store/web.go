@@ -29,6 +29,8 @@ type WebStatus struct {
 	// Latency 是近 24 小时各通道回复延迟分位（live/comment/dm）。
 	// 空 map 表示窗口内没有成功的入向回复，不是「延迟为 0」。
 	Latency     map[string]WebLatency
+	// LatencyDetail 是 all/fresh 与五段拆分；空 map 表示历史数据不足。
+	LatencyDetail map[string]WebLatencyDetail
 	Pool        *WebPool
 	GeneratedAt time.Time
 }
@@ -40,6 +42,34 @@ type WebLatency struct {
 	P90MS int64
 	AvgMS int64
 	MaxMS int64
+}
+
+// WebLatencyWindow 是一个统计窗口的分位；SampleSufficient=false 时页面不展示分位。
+type WebLatencyWindow struct {
+	Count            int64
+	P50MS            int64
+	P90MS            int64
+	P99MS            int64
+	AvgMS            int64
+	MaxMS            int64
+	SampleSufficient bool
+}
+
+// WebLatencySegments 是采集/排队/生成/发送拆分。
+type WebLatencySegments struct {
+	Collect     WebLatencyWindow
+	Queue       WebLatencyWindow
+	Generate    WebLatencyWindow
+	Send        WebLatencyWindow
+	E2EUser     WebLatencyWindow
+	E2EPlatform WebLatencyWindow
+}
+
+// WebLatencyDetail 是同一通道的全量与 fresh 口径。
+type WebLatencyDetail struct {
+	All      WebLatencyWindow
+	Fresh    WebLatencyWindow
+	Segments WebLatencySegments
 }
 
 // WebPool 是连接池运行态（database/sql DBStats 的只读投影）。

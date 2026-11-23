@@ -190,13 +190,27 @@ function ms(v) {
 // 无样本时显示 — 而不是 0，否则会被误读成「秒回」。
 function latencyCards(d) {
   var lat = d.latency || {};
+  var detail = d.latency_detail || {};
   var names = [['live', '直播'], ['comment', '评论'], ['dm', '私信']];
   return names.map(function (ns) {
+    var x = detail[ns[0]];
+    if (x && x.fresh && x.fresh.count) {
+      var f = x.fresh, a = x.all || {};
+      var seg = x.segments || {};
+      var tip = 'fresh n=' + f.count + (f.sample_sufficient ? '' : '（样本不足）') +
+        ' · all n=' + (a.count || 0) +
+        ' · 采集 ' + ms((seg.collect || {}).p50_ms) +
+        ' · 排队 ' + ms((seg.queue || {}).p50_ms) +
+        ' · 生成 ' + ms((seg.generate || {}).p50_ms) +
+        ' · 发送 ' + ms((seg.send || {}).p50_ms);
+      return card(f.p90_ms > 5000 ? 'warn' : 'ok', '⏱️', ns[1] + '延迟(fresh)',
+        'p50 ' + ms(f.p50_ms) + ' · p90 ' + ms(f.p90_ms), tip, true);
+    }
     var s = lat[ns[0]];
     if (!s || !s.count) return card('info', '⏱️', ns[1] + '延迟', '—', '近24h无样本', true);
     return card(s.p90_ms > 5000 ? 'warn' : 'ok', '⏱️', ns[1] + '延迟',
       'p50 ' + ms(s.p50_ms) + ' · p90 ' + ms(s.p90_ms),
-      'n=' + s.count + ' · 均 ' + ms(s.avg_ms) + ' · 最大 ' + ms(s.max_ms), true);
+      'all n=' + s.count + ' · 均 ' + ms(s.avg_ms) + ' · 最大 ' + ms(s.max_ms), true);
   }).join('');
 }
 // 连接池：in_use/max_open 是当前压力；等待次数长期大于 0 才需要调大 max_open。

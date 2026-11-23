@@ -67,4 +67,10 @@ type Event struct {
 	At       time.Time
 	Status   Status
 	Meta     json.RawMessage
+	// CollectedAt 是本进程实际收到事件的时间；At 永远是平台时间。
+	// 零值表示历史数据未记录，统计必须按 unknown 处理，不能伪造成 0。
+	CollectedAt time.Time
+	// CollectMode 记录采集方式：feed（直播/消息流）、poll（轮询）、backfill（历史回填）。
+	// 空值表示历史数据未标记；fresh 统计只排除明确的 backfill。
+	CollectMode string
 }
