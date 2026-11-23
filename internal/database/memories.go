@@ -6,8 +6,10 @@ import (
 	"RaiseMyFish/internal/store"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"slices"
 	"strings"
 	"time"
@@ -95,9 +97,86 @@ func insertMemoryRecord(ctx context.Context, db *gorm.DB, m store.MemoryRecord) 
 	// 修订时 event_ids/valid_from 取 EXCLUDED，保留新来源事件与逻辑时间；
 	// subject 用 COALESCE 保留已有主体。valid_from 取 EXCLUDED 的事件时间而不是
 	// now()：否则「更新时间」会顶替「事实发生时间」，让第 4 道的先后比较失真。
+	// 版本链：同一 fact_key 的新事实先关闭旧 active 行，再写新行。
+	// 两步在同一事务内完成；调用方传事务时跟随调用方边界。
+	if strings.TrimSpace(m.FactKey) != "" {
+		var superseded bool
+		err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			old, err := lockActiveFact(tx, m)
+			if err != nil {
+				return err
+			}
+			ok, err := upsertMemoryRecord(ctx, tx, m, ids, evidence)
+			if err != nil {
+				return err
+			}
+			if old != nil {
+				if err := supersedeFact(tx, m, *old); err != nil {
+					return err
+				}
+			}
+			superseded = ok
+			return nil
+		})
+		if err != nil {
+			return false, err
+		}
+		return superseded, nil
+	}
+	return upsertMemoryRecord(ctx, db, m, ids, evidence)
+}
+
+type activeFact struct {
+	ID      string
+	Summary string
+}
+
+// lockActiveFact 锁住同 fact_key 的旧 active 行；没有时返回 nil。
+//
+// 只处理同可见域、同主体、未归档、valid_to IS NULL 的行；
+// 历史行 fact_key 为空，不会被误伤。
+func lockActiveFact(tx *gorm.DB, m store.MemoryRecord) (*activeFact, error) {
+	var old activeFact
+	err := tx.Table("memory_records").
+		Select("id,summary").
+		Where("fact_key = ? AND id <> ? AND valid_to IS NULL AND NOT archived", m.FactKey, m.ID).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Take(&old).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, &safeError{"读取旧事实版本失败", err}
+	}
+	return &old, nil
+}
+
+// supersedeFact 在新行落库后关闭旧行；必须先写新行，superseded_by 外键才有效。
+func supersedeFact(tx *gorm.DB, m store.MemoryRecord, old activeFact) error {
+	if err := tx.Exec(`UPDATE memory_records
+   SET valid_to = ?, superseded_by = ?, status = 'superseded'
+ WHERE id = ? AND valid_to IS NULL`, m.ValidFrom, m.ID, old.ID).Error; err != nil {
+		return &safeError{"关闭旧事实版本失败", err}
+	}
+	if err := tx.Exec(`INSERT INTO memory_conflicts(fact_key,old_record_id,new_record_id,old_summary,new_summary,source_event_id)
+VALUES(?,?,?,?,?,NULLIF(?,''))`, m.FactKey, old.ID, m.ID, old.Summary, m.Summary, firstEvent(m.EventIDs)).Error; err != nil {
+		return &safeError{"写入事实冲突审计失败", err}
+	}
+	return nil
+}
+
+func firstEvent(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	return ids[0]
+}
+
+// upsertMemoryRecord 是原来的单条写入 SQL；事务边界由调用方决定。
+func upsertMemoryRecord(ctx context.Context, db *gorm.DB, m store.MemoryRecord, ids, evidence []byte) (bool, error) {
 	result := db.WithContext(ctx).Exec(`INSERT INTO memory_records
-(id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name,asserted_by_id,asserted_by_name,subject,derived_by,evidence)
-VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),?,?::jsonb)
+(id,source,kind,title,summary,body,importance,confidence,private,channel,session,valid_from,event_ids,from_id,from_name,asserted_by_id,asserted_by_name,subject,derived_by,evidence,fact_key)
+VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,ARRAY(SELECT jsonb_array_elements_text(NULLIF(?::jsonb,'null'::jsonb))),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),?,?::jsonb,NULLIF(?,''))
 ON CONFLICT (id) DO UPDATE SET
   summary    = EXCLUDED.summary,
   confidence = EXCLUDED.confidence,
@@ -111,7 +190,8 @@ ON CONFLICT (id) DO UPDATE SET
   asserted_by_name = COALESCE(EXCLUDED.asserted_by_name, memory_records.asserted_by_name),
   subject    = COALESCE(EXCLUDED.subject, memory_records.subject),
   derived_by = COALESCE(NULLIF(EXCLUDED.derived_by,''), memory_records.derived_by),
-  evidence   = CASE WHEN EXCLUDED.evidence = '[]'::jsonb THEN memory_records.evidence ELSE EXCLUDED.evidence END
+  evidence   = CASE WHEN EXCLUDED.evidence = '[]'::jsonb THEN memory_records.evidence ELSE EXCLUDED.evidence END,
+  fact_key   = COALESCE(EXCLUDED.fact_key, memory_records.fact_key)
 WHERE memory_records.kind = 'fact'
   AND EXCLUDED.kind = 'fact'
   AND memory_records.private = EXCLUDED.private
@@ -123,7 +203,7 @@ WHERE memory_records.kind = 'fact'
       )
   )
   AND EXCLUDED.valid_from > memory_records.valid_from
-  AND memory_records.summary IS DISTINCT FROM EXCLUDED.summary`, m.ID, m.Source, m.Kind, m.Title, m.Summary, m.Body, m.Importance, m.Confidence, m.Private, m.Channel, m.Session, m.ValidFrom, string(ids), m.FromID, m.FromName, m.AssertedByID, m.AssertedByName, m.Subject, m.DerivedBy, string(evidence))
+  AND memory_records.summary IS DISTINCT FROM EXCLUDED.summary`, m.ID, m.Source, m.Kind, m.Title, m.Summary, m.Body, m.Importance, m.Confidence, m.Private, m.Channel, m.Session, m.ValidFrom, string(ids), m.FromID, m.FromName, m.AssertedByID, m.AssertedByName, m.Subject, m.DerivedBy, string(evidence), m.FactKey)
 	if result.Error != nil {
 		return false, &safeError{"写入记忆失败", result.Error}
 	}
@@ -184,7 +264,8 @@ WHERE id = ? AND kind = 'fact' AND valid_to IS NULL AND NOT archived`, importanc
 }
 
 // Recent 返回最近N条同会话消息，展示顺序为时间和ID升序。
-func (r *MemoryRepo) Recent(ctx context.Context, s memory.Scope, limit int) ([]memory.Message, error) {	if err := validateRecall(ctx, s, limit); err != nil {
+func (r *MemoryRepo) Recent(ctx context.Context, s memory.Scope, limit int) ([]memory.Message, error) {
+	if err := validateRecall(ctx, s, limit); err != nil {
 		return nil, err
 	}
 	query := r.db.WithContext(ctx).Table("events").Where("channel=? AND session=?", s.Channel, s.Session).Where("(dir <> 'out' OR status='done')")

@@ -866,6 +866,11 @@ func (w *Worker) buildRecord(ev event.Event, c memory.Candidate) store.MemoryRec
 		// Body 留空：摘要已经够召回用，不把完整正文写进记忆库
 		Body: "",
 	}
+	// 事实类补版本键：同一主体同一谓词只保留一条 active 行。
+	// 非事实类不参与版本链，保持按事件幂等。
+	if c.Kind == memory.KindFact {
+		record.FactKey = memory.FactKey(factDomain(ev), factSubject(ev, c), c.Title)
+	}
 	// 事实必须带可核对的来源片段：面板与召回都靠它区分「有据」和「编的」。
 	if c.Kind == memory.KindFact {
 		if text := strings.TrimSpace(ev.Text); text != "" {
@@ -877,6 +882,16 @@ func (w *Worker) buildRecord(ev event.Event, c memory.Candidate) store.MemoryRec
 		}
 	}
 	return record
+}
+
+// factSubject 是版本键的主体段：优先陈述主体 UID，其次发言 UID，最后标题。
+func factSubject(ev event.Event, c memory.Candidate) string {
+	for _, candidate := range []string{c.FromID, ev.FromID} {
+		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
+			return trimmed
+		}
+	}
+	return "title:" + strings.TrimSpace(c.Title)
 }
 
 // validFrom 返回记录的有效期起点：取事件时间，但**绝不晚于当前时间**。

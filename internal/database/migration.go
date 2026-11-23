@@ -167,6 +167,11 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取事件错误迁移：%w", err)
 	}
 	eventErrorsHash := sha256.Sum256(eventErrors)
+	memoryFactVersion, err := migrations.Files.ReadFile("0027_memory_fact_version.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取记忆版本迁移：%w", err)
+	}
+	memoryFactVersionHash := sha256.Sum256(memoryFactVersion)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -194,6 +199,7 @@ func migrationSteps() ([]migrationStep, error) {
 		{24, string(manualMemorySource), hex.EncodeToString(manualMemorySourceHash[:])},
 		{25, string(eventTiming), hex.EncodeToString(eventTimingHash[:])},
 		{26, string(eventErrors), hex.EncodeToString(eventErrorsHash[:])},
+		{27, string(memoryFactVersion), hex.EncodeToString(memoryFactVersionHash[:])},
 	}, nil
 }
 

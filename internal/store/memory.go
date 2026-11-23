@@ -42,6 +42,8 @@ type MemoryRecord struct {
 	Evidence []MemoryEvidence
 	// CreatedAt 只由 ListRecords/SearchRecords 填充，用于运维查看；写入时忽略。
 	CreatedAt time.Time
+	// FactKey 是事实版本键；空表示旧数据或非事实类，不参与版本链。
+	FactKey string
 }
 
 // MemoryRepo 将隐私限制放在SQL层；不等于完整Memory Reader/提炼服务。
