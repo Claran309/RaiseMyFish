@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"RaiseMyFish/internal/collector"
+	"RaiseMyFish/internal/conversation"
 	"RaiseMyFish/internal/event"
 	"go.uber.org/zap"
 )
@@ -319,20 +320,21 @@ func (c *Collector) toEvent(m Message, self string) (event.Event, bool) {
 		return event.Event{}, false
 	}
 	return event.Event{
-		ID:          "comment:" + oid + ":" + rpid,
-		Channel:     event.ChComment,
-		Dir:         event.DirIn,
-		Session:     oid,
-		FromID:      from,
-		FromName:    name,
-		Text:        text,
-		Private:     false,
-		ReplyTo:     rpid,
-		At:          m.At.UTC(),
-		Status:      event.StatusPending,
-		Meta:        meta,
-		CollectedAt: time.Now().UTC(),
-		CollectMode: "feed",
+		ID:             "comment:" + oid + ":" + rpid,
+		Channel:        event.ChComment,
+		Dir:            event.DirIn,
+		Session:        oid,
+		FromID:         from,
+		FromName:       name,
+		Text:           text,
+		Private:        false,
+		ReplyTo:        rpid,
+		At:             m.At.UTC(),
+		Status:         event.StatusPending,
+		Meta:           meta,
+		CollectedAt:    time.Now().UTC(),
+		CollectMode:    "feed",
+		ConversationID: conversation.Key(event.Event{Channel: event.ChComment, Session: oid, ReplyTo: rpid, Meta: meta}),
 	}, true
 }
 

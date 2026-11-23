@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"RaiseMyFish/internal/brain"
+	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/presence"
@@ -148,12 +149,14 @@ type generateDeps struct {
 	presence   *presence.Table
 	react      *reactRuntime
 	// commentVision 是评论附图识别；nil 表示未开启或未装配，按无图处理。
-	commentVision *commentVision
-	timing        store.TimingRepo
-	errorsRepo    store.ErrorRepo
-	usageRepo     store.MemoryUsageRepo
-	tracer        *trace.Local
-	log           *zap.Logger
+	commentVision   *commentVision
+	timing          store.TimingRepo
+	errorsRepo      store.ErrorRepo
+	usageRepo       store.MemoryUsageRepo
+	conversation    store.ConversationRepo
+	conversationCfg config.Conversation
+	tracer          *trace.Local
+	log             *zap.Logger
 }
 
 // markGenerated 记录模型/ReAct 产出最终正文的时间；计时失败不能阻塞回复。
@@ -210,6 +213,8 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		// 统一快照：近期记忆默认注入，知识按意图补充（与 ReAct/主动弹幕同源）。
 		buildCtx, buildSpan := trace.Start(prepCtx, "context.build", trace.A("channel", string(ev.Channel)))
 		input, decision := buildPassiveInput(prepCtx, deps.context, ev)
+		// C4：会话摘要 + 最近轮次；默认关闭，关闭时 input.Conversation 为 nil。
+		input.Conversation = conversationInput(prepCtx, deps.conversation, deps.conversationCfg, ev, deps.log)
 		trace.Add(buildCtx, trace.A("need_memory", decision.NeedMemory), trace.A("need_knowledge", decision.NeedKnowledge), trace.A("reason", decision.Reason))
 		trace.End(buildSpan, nil)
 		// 评论附图：下载 + 视觉转述后注入 Visual；失败只降级为无图，不阻塞回复。
@@ -318,6 +323,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 			recordMemoryUsage(ctx, deps.usageRepo, deps.log, ev.ID, ids)
 		}
 		// 发送走通道：注册表优先，取不到回落直连 sender（行为与改造前一致）
+		touchConversation(ctx, deps.conversation, deps.conversationCfg, ev, deps.log)
 		disp, ok := deps.channels.resolve(ev.Channel, deps.sender)
 		if !ok {
 			deps.log.Error("找不到可用的发送通道", zap.String("action", "channel_missing"), zap.String("channel", string(ev.Channel)))

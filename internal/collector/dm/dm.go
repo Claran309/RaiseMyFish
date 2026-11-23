@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"RaiseMyFish/internal/collector"
+	"RaiseMyFish/internal/conversation"
 	"RaiseMyFish/internal/event"
 	"go.uber.org/zap"
 )
@@ -306,19 +307,20 @@ func (c *Collector) toEvent(m Message, now time.Time, recvActor string) (event.E
 		mode = "poll"
 	}
 	return event.Event{
-		ID:          eventID,
-		Channel:     event.ChDM,
-		Dir:         event.DirIn,
-		Private:     true,
-		Session:     event.DMSession(recvActor, peer),
-		FromID:      peer,
-		FromName:    name,
-		Text:        text,
-		At:          at,
-		Status:      event.StatusPending,
-		Meta:        meta,
-		CollectedAt: time.Now().UTC(),
-		CollectMode: mode,
+		ID:             eventID,
+		Channel:        event.ChDM,
+		Dir:            event.DirIn,
+		Private:        true,
+		Session:        event.DMSession(recvActor, peer),
+		FromID:         peer,
+		FromName:       name,
+		Text:           text,
+		At:             at,
+		Status:         event.StatusPending,
+		Meta:           meta,
+		CollectedAt:    time.Now().UTC(),
+		CollectMode:    mode,
+		ConversationID: conversation.Key(event.Event{Channel: event.ChDM, Session: event.DMSession(recvActor, peer), Private: true}),
 	}, eventID, true
 }
 

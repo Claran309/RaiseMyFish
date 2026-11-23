@@ -283,9 +283,16 @@ func dayWindow(now time.Time, location *time.Location) (time.Time, time.Time) {
 type sessionKey struct {
 	channel event.Channel
 	session string
+	// conversation 非空时优先作为锁粒度（C6）；空则回退 channel+session。
+	conversation string
 }
 
-func session(e event.Event) sessionKey { return sessionKey{e.Channel, e.Session} }
+func session(e event.Event) sessionKey {
+	if conv := strings.TrimSpace(e.ConversationID); conv != "" {
+		return sessionKey{channel: e.Channel, session: e.Session, conversation: conv}
+	}
+	return sessionKey{channel: e.Channel, session: e.Session}
+}
 
 type repeatKey struct {
 	session sessionKey

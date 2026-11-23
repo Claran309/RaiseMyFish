@@ -530,8 +530,8 @@ func longtermPromptLine(soul []string) string {
 	return "<longterm>\n" + encodePromptText(text) + "\n</longterm>\n"
 }
 
-func renderContext(ctx context.Context, p persona.Pack, section contextSection, eventJSON []byte, ch event.Channel, state, visual, audio, liveTitle string, recentSelf []string, liveChat, viewer, injection string, soul []string) ([]provider.Message, string, error) {
-	body, err := contextBody(ctx, p, section, ch, state, visual, audio, liveTitle, recentSelf, liveChat, viewer, injection, soul)
+func renderContext(ctx context.Context, p persona.Pack, section contextSection, eventJSON []byte, ch event.Channel, state, visual, audio, liveTitle string, recentSelf []string, liveChat, viewer, injection string, soul []string, conversation string) ([]provider.Message, string, error) {
+	body, err := contextBody(ctx, p, section, ch, state, visual, audio, liveTitle, recentSelf, liveChat, viewer, injection, soul, conversation)
 	if err != nil {
 		return nil, "", err
 	}
@@ -568,7 +568,7 @@ func contextHints(section contextSection) string {
 
 // contextBody 渲染统一快照正文：场景/记忆/知识 + 状态/画面/声音/最近弹幕/档案/长期设定，
 // 不含当前事件与回复指令。Brain 的单步 prompt 与 ReAct 的 Context 共用这一段。
-func contextBody(ctx context.Context, p persona.Pack, section contextSection, ch event.Channel, state, visual, audio, liveTitle string, recentSelf []string, liveChat, viewer, injection string, soul []string) (string, error) {
+func contextBody(ctx context.Context, p persona.Pack, section contextSection, ch event.Channel, state, visual, audio, liveTitle string, recentSelf []string, liveChat, viewer, injection string, soul []string, conversation string) (string, error) {
 	if err := pendingError(ctx); err != nil {
 		return "", contextFailure(err)
 	}
@@ -576,9 +576,44 @@ func contextBody(ctx context.Context, p persona.Pack, section contextSection, ch
 	if err != nil {
 		return "", &Error{Kind: KindInput, Cause: err}
 	}
-	return fmt.Sprintf("<context>\n%s\n</context>\n%s%s%s%s%s%s%s%s%s", data,
-		statePromptLine(state), injectionPromptLine(injection), liveTitlePromptLine(liveTitle), visualPromptLine(visual), audioPromptLine(audio),
+	return fmt.Sprintf("<context>\n%s\n</context>\n%s%s%s%s%s%s%s%s%s%s", data,
+		conversationPromptLine(conversation), statePromptLine(state), injectionPromptLine(injection), liveTitlePromptLine(liveTitle), visualPromptLine(visual), audioPromptLine(audio),
 		recentSelfPromptLine(recentSelf), liveChatPromptLine(liveChat), viewerPromptLine(viewer), longtermPromptLine(soul)), nil
+}
+
+// conversationPromptLine 渲染会话摘要与最近轮次；空输入返回空串。
+func conversationPromptLine(conversation string) string {
+	conversation = strings.TrimSpace(conversation)
+	if conversation == "" {
+		return ""
+	}
+	return "<conversation>\n" + encodePromptText(conversation) + "\n</conversation>\n"
+}
+
+// conversationText 把会话投影拼成「摘要 + 最近轮次」；空返回空串。
+func conversationText(c *ConversationContext) string {
+	if c == nil {
+		return ""
+	}
+	var b strings.Builder
+	if summary := strings.TrimSpace(c.Summary); summary != "" {
+		b.WriteString("摘要：" + summary + "\n")
+	}
+	for _, turn := range c.Turns {
+		text := strings.TrimSpace(turn.Text)
+		if text == "" {
+			continue
+		}
+		speaker := strings.TrimSpace(turn.From)
+		if turn.Dir == "out" {
+			speaker = "本鱼"
+		}
+		if speaker == "" {
+			speaker = "对方"
+		}
+		b.WriteString(speaker + "：" + text + "\n")
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // buildContextSection 把快照数据整理成固定顺序；单步 prompt 与 Prepare 共用。
@@ -845,7 +880,7 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 	soul := in.Soul
 	truncated := false
 	render := func() ([]provider.Message, string, error) {
-		return renderContext(ctx, p, section, eventJSON, e.Channel, in.State, visual, audio, liveTitle, recentSelf, liveChat, viewer, injection, soul)
+		return renderContext(ctx, p, section, eventJSON, e.Channel, in.State, visual, audio, liveTitle, recentSelf, liveChat, viewer, injection, soul, conversationText(in.Conversation))
 	}
 	finish := func(messages []provider.Message, body string, err error) (promptPlan, error) {
 		if err != nil {
@@ -854,7 +889,7 @@ func buildPrompt(ctx context.Context, in ContextInput, limit, knowledgePercent i
 		if in.Knowledge == nil {
 			return promptPlan{Messages: messages, Context: body, Truncated: truncated}, nil
 		}
-		return finishKnowledge(ctx, in.Knowledge, p, section, eventJSON, e.Channel, in.State, visual, audio, liveTitle, recentSelf, liveChat, viewer, injection, soul, messages, limit, knowledgePercent, truncated)
+		return finishKnowledge(ctx, in.Knowledge, p, section, eventJSON, e.Channel, in.State, visual, audio, liveTitle, recentSelf, liveChat, viewer, injection, soul, conversationText(in.Conversation), messages, limit, knowledgePercent, truncated)
 	}
 	messages, body, err := render()
 	if err != nil {

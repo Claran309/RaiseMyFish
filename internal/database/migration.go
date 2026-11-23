@@ -187,6 +187,11 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取索引收尾迁移：%w", err)
 	}
 	l5IndexesHash := sha256.Sum256(l5Indexes)
+	conversationState, err := migrations.Files.ReadFile("0031_conversation_state.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取会话状态迁移：%w", err)
+	}
+	conversationStateHash := sha256.Sum256(conversationState)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -218,6 +223,7 @@ func migrationSteps() ([]migrationStep, error) {
 		{28, string(memoryUsage), hex.EncodeToString(memoryUsageHash[:])},
 		{29, string(memoryEntities), hex.EncodeToString(memoryEntitiesHash[:])},
 		{30, string(l5Indexes), hex.EncodeToString(l5IndexesHash[:])},
+		{31, string(conversationState), hex.EncodeToString(conversationStateHash[:])},
 	}, nil
 }
 

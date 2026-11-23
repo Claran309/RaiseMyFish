@@ -744,7 +744,7 @@ func TestSettlementBeforeRenewStillAppliesCooldown(t *testing.T) {
 	}
 	close(release)
 	drainDone(t, s)
-	if cd := s.cooldowns[sessionKey{event.ChLive, "r"}]; !cd.until.After(clock.Now()) {
+	if cd := s.cooldowns[sessionKey{channel: event.ChLive, session: "r"}]; !cd.until.After(clock.Now()) {
 		t.Fatal("正常结清被当成丢租，漏设回复冷却")
 	}
 	s.stopTimers()

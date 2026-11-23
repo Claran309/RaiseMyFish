@@ -41,6 +41,7 @@ type Config struct {
 	Summary       Summary       `toml:"summary"`
 	SLO           SLO           `toml:"slo"`
 	Observability Observability `toml:"observability"`
+	Conversation  Conversation  `toml:"conversation"`
 	Collector     Collectors    `toml:"collector"`
 	// Scheduler 为 nil 表示「不接消费循环」，只采集。
 	Scheduler *Scheduler `toml:"scheduler"`
@@ -223,6 +224,7 @@ func load(path, envPath string) (Config, error) {
 		Summary:       defaultSummary(),
 		SLO:           defaultSLO(),
 		Observability: defaultObservability(),
+		Conversation:  defaultConversation(),
 		// 评论采集默认关闭；interval 先补默认值，开启后省略也能工作。
 		Collector: Collectors{Live: defaultLiveCollector(), Comment: defaultCommentCollector(), DM: defaultDMCollector()},
 	}
@@ -389,6 +391,9 @@ func (c Config) validateStructure(strictLive bool) error {
 	}
 	if err := c.Observability.Trace.Validate(); err != nil {
 		return fmt.Errorf("校验观测配置：%w", err)
+	}
+	if err := c.Conversation.Validate(); err != nil {
+		return fmt.Errorf("校验会话配置：%w", err)
 	}
 	if err := c.Collector.DM.Validate(); err != nil {
 		return err

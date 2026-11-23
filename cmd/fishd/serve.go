@@ -118,15 +118,17 @@ func resolveRoutes(policies map[event.Channel]scheduler.ChannelPolicy, routes ma
 type consumeOption func(*consumeOptions)
 
 type consumeOptions struct {
-	viewerFinder  profileFinder
-	commentVision *commentVision
-	injections    store.InjectionReader
-	recentSelf    func(ctx context.Context, ch event.Channel, session string, limit int) []string
-	viewerRecent  func(ctx context.Context, fromID string, limit int) []string
-	timing        store.TimingRepo
-	errorsRepo    store.ErrorRepo
-	usageRepo     store.MemoryUsageRepo
-	tracer        *trace.Local
+	viewerFinder    profileFinder
+	commentVision   *commentVision
+	injections      store.InjectionReader
+	recentSelf      func(ctx context.Context, ch event.Channel, session string, limit int) []string
+	viewerRecent    func(ctx context.Context, fromID string, limit int) []string
+	timing          store.TimingRepo
+	errorsRepo      store.ErrorRepo
+	usageRepo       store.MemoryUsageRepo
+	conversation    store.ConversationRepo
+	conversationCfg config.Conversation
+	tracer          *trace.Local
 }
 
 // withRecentSelf 注入「鱼自己最近说过的话」来源，用于去公式化。
@@ -169,6 +171,11 @@ func withMemoryUsage(repo store.MemoryUsageRepo) consumeOption {
 	return func(o *consumeOptions) { o.usageRepo = repo }
 }
 
+// withConversation 注入会话状态仓储与开关；nil 表示不启用。
+func withConversation(repo store.ConversationRepo, cfg config.Conversation) consumeOption {
+	return func(o *consumeOptions) { o.conversation, o.conversationCfg = repo, cfg }
+}
+
 // withTracer 注入本地 trace；nil 表示不记录。
 func withTracer(tracer *trace.Local) consumeOption {
 	return func(o *consumeOptions) { o.tracer = tracer }
@@ -204,21 +211,23 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 	builder.finder = extra.viewerFinder
 	builder.injections = extra.injections
 	generate := generateHandler(generateDeps{
-		live:          live,
-		brains:        byChannel,
-		sender:        snd,
-		bus:           bus,
-		retryDelay:    retryDelay,
-		context:       builder,
-		channels:      channels,
-		presence:      pres,
-		react:         react,
-		commentVision: extra.commentVision,
-		timing:        extra.timing,
-		errorsRepo:    extra.errorsRepo,
-		usageRepo:     extra.usageRepo,
-		tracer:        extra.tracer,
-		log:           log,
+		live:            live,
+		brains:          byChannel,
+		sender:          snd,
+		bus:             bus,
+		retryDelay:      retryDelay,
+		context:         builder,
+		channels:        channels,
+		presence:        pres,
+		react:           react,
+		commentVision:   extra.commentVision,
+		timing:          extra.timing,
+		errorsRepo:      extra.errorsRepo,
+		usageRepo:       extra.usageRepo,
+		conversation:    extra.conversation,
+		conversationCfg: extra.conversationCfg,
+		tracer:          extra.tracer,
+		log:             log,
 	})
 	// deliver 与 verify 是同一件事：事件已经投递出去，只需要 Resume 核验并结清。
 	resume := resumeDeps{channels: channels,
@@ -545,6 +554,13 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	// 会话状态：默认关闭时也装配仓储，但不会读写；装配失败只降级。
+	var conversationRepo store.ConversationRepo
+	if conversationStore, cerr := database.NewConversationRepo(resources.DB); cerr == nil {
+		conversationRepo = conversationStore
+	} else {
+		log.Warn("会话状态仓储装配失败，会话段不启用", zap.String("action", "conversation_setup"), zap.Error(cerr))
+	}
 	// 看板注入：装配失败只降级为不读取注入，不影响回复主链路。
 	var injectionReader store.InjectionReader
 	if webRepo, werr := database.NewWebRepo(resources.DB); werr != nil {
@@ -621,7 +637,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo), withErrorRepo(errorRepo), withTracer(tracer), withMemoryUsage(memoryUsageRepo))
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo), withErrorRepo(errorRepo), withTracer(tracer), withMemoryUsage(memoryUsageRepo), withConversation(conversationRepo, cfg.Conversation))
 	if err != nil {
 		return nil, nil, nil, err
 	}

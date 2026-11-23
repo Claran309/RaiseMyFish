@@ -68,6 +68,21 @@ type ContextInput struct {
 	Injection string
 	// Soul 是长期设定（灵魂记忆），每行一条；空则不出现 <longterm> 段。
 	Soul []string
+	// Conversation 是会话摘要与最近轮次；空则不出现 <conversation> 段。
+	Conversation *ConversationContext
+}
+
+// ConversationContext 是「会话摘要 + 最近 N 轮」的注入投影；只含文本与方向。
+type ConversationContext struct {
+	Summary string
+	Turns   []ConversationTurn
+}
+
+// ConversationTurn 是会话里的一条消息。
+type ConversationTurn struct {
+	From string
+	Dir  string
+	Text string
 }
 
 // Reply 不包含原始prompt或模型凭据。
@@ -98,8 +113,8 @@ type Options struct {
 	// Peak 是峰段定义；零值时用 DeepSeek 官方峰段。
 	Peak PeakWindow
 	// Now 供测试注入时钟；nil 用 time.Now。
-	Now func() time.Time
-	OutputUSDPerMillion    *float64
+	Now                 func() time.Time
+	OutputUSDPerMillion *float64
 }
 
 // DefaultOptions 使用保守字节预算，实际费用只依据服务端用量。

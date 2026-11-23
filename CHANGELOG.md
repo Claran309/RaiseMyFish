@@ -35,6 +35,7 @@
 - L3 快慢双路径：短评论/私信走单步，阈值可配（0=关闭）
 - B11 根目录清理：exe/config.local/migrate 导出归档到本地 `tmp/`（只归档不删除）
 - L5 索引收尾：事件/发送/记忆使用组合索引
+- 会话状态 C0/C1/C4/C6：按通道会话键、`conversation_state`、会话段注入与会话锁（默认关闭）
 
 ### Changed
 - 仓库卫生：根目录临时文件归档到本地 `tmp/`；`AGENTS.md`、`CLAUDE.md`、协作表、内部报告与 prompts 改为本地保留，不再上传

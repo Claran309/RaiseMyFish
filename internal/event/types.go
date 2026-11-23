@@ -73,4 +73,6 @@ type Event struct {
 	// CollectMode 记录采集方式：feed（直播/消息流）、poll（轮询）、backfill（历史回填）。
 	// 空值表示历史数据未标记；fresh 统计只排除明确的 backfill。
 	CollectMode string
+	// ConversationID 是按通道语义派生的会话键；空表示不参与持久会话。
+	ConversationID string
 }

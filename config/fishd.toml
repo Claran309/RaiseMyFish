@@ -490,3 +490,13 @@ dm_dead_rate = 0.02
 enabled = true
 path = "logs/traces.jsonl"
 max_spans = 5000
+
+# 会话状态（私信/评论多轮）：默认关闭；先只开 DM，再灰度评论。
+[conversation]
+enabled = false
+dm_enabled = false
+comment_enabled = false
+live_window_seconds = 0
+recent_turns = 8
+summary_max_runes = 300
+ttl_hours = 168

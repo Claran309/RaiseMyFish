@@ -33,6 +33,7 @@ import (
 	"RaiseMyFish/internal/bili"
 	"RaiseMyFish/internal/collector"
 	"RaiseMyFish/internal/collector/polling"
+	"RaiseMyFish/internal/conversation"
 	"RaiseMyFish/internal/event"
 	"go.uber.org/zap"
 )
@@ -1208,20 +1209,21 @@ func (c *Collector) normalizeWithMode(target Target, r apiReply, mode string) (e
 		return invalid()
 	}
 	return event.Event{
-		ID:          "comment:" + target.OID + ":" + rpid,
-		Channel:     event.ChComment,
-		Dir:         event.DirIn,
-		Session:     target.OID,
-		FromID:      mid,
-		FromName:    name,
-		Text:        text,
-		Private:     false,
-		ReplyTo:     rpid,
-		At:          time.Unix(r.Ctime, 0).UTC(),
-		Status:      event.StatusPending,
-		Meta:        meta,
-		CollectedAt: time.Now().UTC(),
-		CollectMode: mode,
+		ID:             "comment:" + target.OID + ":" + rpid,
+		Channel:        event.ChComment,
+		Dir:            event.DirIn,
+		Session:        target.OID,
+		FromID:         mid,
+		FromName:       name,
+		Text:           text,
+		Private:        false,
+		ReplyTo:        rpid,
+		At:             time.Unix(r.Ctime, 0).UTC(),
+		Status:         event.StatusPending,
+		Meta:           meta,
+		CollectedAt:    time.Now().UTC(),
+		CollectMode:    mode,
+		ConversationID: conversation.Key(event.Event{Channel: event.ChComment, Session: target.OID, ReplyTo: rpid, Meta: meta}),
 	}, true, nil
 }
 
