@@ -36,6 +36,7 @@ import (
 	"RaiseMyFish/internal/sender/durable"
 	senderlive "RaiseMyFish/internal/sender/live"
 	"RaiseMyFish/internal/store"
+	"RaiseMyFish/internal/trace"
 	"RaiseMyFish/internal/viewer"
 	"go.uber.org/zap"
 )
@@ -124,6 +125,7 @@ type consumeOptions struct {
 	viewerRecent  func(ctx context.Context, fromID string, limit int) []string
 	timing        store.TimingRepo
 	errorsRepo    store.ErrorRepo
+	tracer        *trace.Local
 }
 
 // withRecentSelf 注入「鱼自己最近说过的话」来源，用于去公式化。
@@ -159,6 +161,11 @@ func withTiming(repo store.TimingRepo) consumeOption {
 // withErrorRepo 注入死信原因仓储；nil 表示只写日志。
 func withErrorRepo(repo store.ErrorRepo) consumeOption {
 	return func(o *consumeOptions) { o.errorsRepo = repo }
+}
+
+// withTracer 注入本地 trace；nil 表示不记录。
+func withTracer(tracer *trace.Local) consumeOption {
+	return func(o *consumeOptions) { o.tracer = tracer }
 }
 
 func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChannel map[event.Channel]brain.Brain, snd sender.Sender, bus event.Bus, retryDelay time.Duration, mem memory.Reader, know knowledge.Reader, viewers store.ViewerRepo, soulPath string, pres *presence.Table, state func(time.Time) string, react *reactRuntime, channels *channelSet, log *zap.Logger, opts ...consumeOption) (scheduler.Workers, error) {
@@ -203,6 +210,7 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 		commentVision: extra.commentVision,
 		timing:        extra.timing,
 		errorsRepo:    extra.errorsRepo,
+		tracer:        extra.tracer,
 		log:           log,
 	})
 	// deliver 与 verify 是同一件事：事件已经投递出去，只需要 Resume 核验并结清。
@@ -456,7 +464,7 @@ func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExe
 // buildConsume 装配消费循环；未启用（无 [scheduler] / 无 Brain 路由 / 通道关闭）时返回 nil。
 // 返回的发送器与消费循环共用同一实例，供通道注册表复用（同一限流与暂停状态）。
 // dmWhitelist 在未装配私信发送时为 nil；giftGate 为动态送礼开关（面板热更新）。
-func buildConsume(cfg config.Config, resources *infra.Resources, accounts *account.Service, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, know knowledge.Reader, pres *presence.Table, rooms *liveRoomState, channels *channelSet, giftGate func() bool, sideLimiter *reasoning.SideEffectLimiter, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, dmWhitelistSetter, error) {
+func buildConsume(cfg config.Config, resources *infra.Resources, accounts *account.Service, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, tracer *trace.Local, know knowledge.Reader, pres *presence.Table, rooms *liveRoomState, channels *channelSet, giftGate func() bool, sideLimiter *reasoning.SideEffectLimiter, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, dmWhitelistSetter, error) {
 	if !consumeEnabled(cfg, routes) {
 		return nil, nil, nil, nil
 	}
@@ -503,6 +511,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	}
 
 	options := buildSchedulerOptions(cfg.Scheduler)
+	options.Tracer = tracer
 	byChannel, err := resolveRoutes(options.Channels, routes)
 	if err != nil {
 		return nil, nil, nil, err
@@ -596,7 +605,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo), withErrorRepo(errorRepo))
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo), withErrorRepo(errorRepo), withTracer(tracer))
 	if err != nil {
 		return nil, nil, nil, err
 	}

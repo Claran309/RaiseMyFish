@@ -472,3 +472,9 @@ dm_fresh_p90_ms = 90000
 queue_oldest_ms = 300000
 comment_dead_rate = 0.05
 dm_dead_rate = 0.02
+
+# B2 本地 per-event trace：只写时间/ID/长度/模型/费用，不写 prompt 或正文。
+[observability.trace]
+enabled = true
+path = "logs/traces.jsonl"
+max_spans = 5000

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"RaiseMyFish/internal/brain/provider"
+	"RaiseMyFish/internal/trace"
 	"go.uber.org/zap"
 )
 
@@ -102,7 +103,10 @@ func (a *Agent) RunNative(ctx context.Context, in Input) (Result, error) {
 				)
 				continue
 			}
-			out, toolErr := a.tools.Run(runCtx, name, argsText)
+			toolCtx, toolSpan := trace.Start(runCtx, "tool.call", trace.A("tool", name), trace.A("args_len", len(argsText)))
+			out, toolErr := a.tools.Run(toolCtx, name, argsText)
+			trace.Add(toolCtx, trace.A("result_len", len(out)), trace.A("ok", toolErr == nil))
+			trace.End(toolSpan, toolErr)
 			if toolErr != nil {
 				out = "工具失败：" + toolErr.Error()
 			} else if name == ToolSendDanmaku {

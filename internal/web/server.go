@@ -27,6 +27,7 @@ import (
 
 	"RaiseMyFish/internal/account"
 	"RaiseMyFish/internal/store"
+	"RaiseMyFish/internal/trace"
 	"go.uber.org/zap"
 )
 
@@ -84,6 +85,8 @@ type Options struct {
 	DiaryGenerator DiaryGenerator
 	// Token 可选：写接口的本地令牌；为空时每次启动随机生成。
 	Token string
+	// Trace 可选：本地 per-event trace 查询；nil 时 trace 接口返回 503。
+	Trace *trace.Local
 }
 
 // Server 是面板本体。
@@ -108,6 +111,7 @@ type Server struct {
 	shutdown func()
 	// memoryWriter 是面板手动新增记忆的写入口（区别于只读 WebRepo）。
 	memoryWriter MemoryWriter
+	trace        *trace.Local
 }
 
 // New 校验地址与依赖；非回环地址直接拒绝。
@@ -144,6 +148,7 @@ func New(o Options) (*Server, error) {
 		addr: addr, repo: o.Repo, log: o.Log, now: now,
 		knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts, control: o.Control, viewerSummary: o.ViewerSummary, logs: o.Logs,
 		shutdown: o.Shutdown, memoryWriter: o.MemoryWriter,
+		trace:      o.Trace,
 		injections: o.Injections, diary: o.Diary, diaryGen: o.DiaryGenerator,
 		token: token, port: port,
 	}, nil
@@ -199,6 +204,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/comment/recent", s.guard(s.handleCommentRecent))
 	mux.HandleFunc("/api/dm/recent", s.guard(s.handleDMRecent))
 	mux.HandleFunc("/api/errors", s.guard(s.handleErrors))
+	mux.HandleFunc("/api/traces", s.guard(s.handleTracesRecent))
+	mux.HandleFunc("/api/traces/recent", s.guard(s.handleTracesRecent))
+	mux.HandleFunc("/api/traces/", s.guard(s.handleTraceDetail))
 	mux.HandleFunc("/api/errors/clear", s.guard(s.handleErrorsClear))
 	mux.HandleFunc("/api/errors/", s.guard(s.handleErrorItem))
 	mux.HandleFunc("/api/send_log", s.guard(s.handleSendLog))

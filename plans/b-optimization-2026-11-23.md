@@ -291,10 +291,17 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 - 采样率 0/1 边界。
 
 #### 验收
-- [ ] 任选一条弹幕，能看到完整 trace
-- [ ] 能回答「这条为什么降级」
-- [ ] 能回答「这条花了多少 token/多少钱」
-- [ ] 面板最近 20 条慢回复可点开 trace
+- [x] 任选一条弹幕，能看到完整 trace（`collect→schedule→generate→context.build→llm.step→tool.call→deliver`）
+- [x] 能回答「这条为什么降级」（`llm.step.degrade_reason`）
+- [x] 能回答「这条花了多少 token/多少钱」（`llm.step` 的 token 属性 + `llm_usage` 账本）
+- [x] 面板最近 20 条慢回复可点开 trace（`/api/traces/recent?sort=slow` + `/api/traces/{id}`）
+
+#### B2 执行记录（2026-11-23）
+
+- 新增 `internal/trace`：零依赖本地环形缓冲 + `logs/traces.jsonl`；只记时间/ID/长度/模型/token，不记 prompt 或正文。
+- 阶段链按事件 ID 稳定派生 trace，跨 collect/schedule/generate/deliver/verify 自动挂父子；`tool.call` 由文本与原生 ReAct 共用。
+- 面板新增「慢回复 Trace」卡与 `/api/traces` 接口；`[observability.trace]` 控制开关，默认关闭时全部 no-op。
+- 验证：`go test ./internal/trace/... ./cmd/fishd/... ./internal/web/...`；新增 `TestGeneratePipelineWritesTraceTree` 断言五个阶段同 trace。
 
 #### 风险
 - 新增 OTel 依赖与「不换技术栈」不冲突（只是可观测库），但若主人要求零新增依赖，则启用本地 trace，Jaeger 导出延后。

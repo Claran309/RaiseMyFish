@@ -119,6 +119,10 @@ textarea{width:100%;resize:vertical}
           <span class="tag" id="err-count"></span></div>
         <div id="errors"></div>
       </div>
+      <div class="panel" style="margin-top:12px">
+        <div class="head">🧭 <b>慢回复 Trace</b><span class="spacer"></span><span class="tag">按耗时倒序</span></div>
+        <div id="traces"></div>
+      </div>
     </section>
   </div>
 </main>
@@ -285,6 +289,35 @@ async function loadEvents() {
       '<span class="st">' + esc(e.dir) + '</span></div>';
   }).join('');
 }
+async function loadTraces() {
+  var box = document.getElementById('traces');
+  try {
+    var r = await fetch('/api/traces/recent?limit=10&sort=slow');
+    if (!r.ok) { box.innerHTML = '<div class="empty">trace 未启用</div>'; return; }
+    var d = await r.json();
+    var list = d.traces || [];
+    if (!list.length) { box.innerHTML = '<div class="empty">暂无 trace</div>'; return; }
+    box.innerHTML = list.map(function (t) {
+      return '<div class="row"><span class="t">' + ms(t.duration_ms) + '</span>' +
+        '<span class="who">' + (t.event_id || t.trace_id) + '</span>' +
+        '<span class="txt">' + t.span_count + ' spans' + (t.has_error ? ' · 有错误' : '') + '</span>' +
+        '<button onclick="showTrace(\'' + t.trace_id + '\')">查看</button></div>';
+    }).join('');
+  } catch (e) { box.innerHTML = '<div class="empty">trace 读取失败</div>'; }
+}
+async function showTrace(id) {
+  var box = document.getElementById('traces');
+  var r = await fetch('/api/traces/' + encodeURIComponent(id));
+  if (!r.ok) { box.innerHTML = '<div class="empty">trace 不存在</div>'; return; }
+  var d = await r.json();
+  box.innerHTML = (d.spans || []).map(function (s) {
+    var attrs = Object.keys(s.attributes || {}).slice(0, 6).map(function (k) {
+      return k + '=' + s.attributes[k];
+    }).join(' · ');
+    return '<div class="row"><span class="t">' + ms((s.end ? new Date(s.end) - new Date(s.start) : 0)) + '</span>' +
+      '<span class="who">' + s.name + '</span><span class="txt">' + attrs + '</span></div>';
+  }).join('') + '<div class="row"><button onclick="loadTraces()">返回最近</button></div>';
+}
 async function loadErrors() {
   var d = await (await fetch('/api/errors?limit=10')).json();
   var items = d.items || [];
@@ -415,7 +448,7 @@ async function injectDelete(id) {
   if (editingInjection === id) injectReset();
   loadInjections();
 }
-function load() { loadStatus(); loadEmbeddingStatus(); loadEvents(); loadErrors(); loadInjections(); }
+function load() { loadStatus(); loadEmbeddingStatus(); loadEvents(); loadErrors(); loadInjections(); loadTraces(); }
 load();
 setInterval(load, 15000);
 </script>

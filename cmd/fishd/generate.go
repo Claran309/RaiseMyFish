@@ -22,6 +22,7 @@ import (
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
 	"RaiseMyFish/internal/store"
+	"RaiseMyFish/internal/trace"
 	"go.uber.org/zap"
 )
 
@@ -150,6 +151,7 @@ type generateDeps struct {
 	commentVision *commentVision
 	timing        store.TimingRepo
 	errorsRepo    store.ErrorRepo
+	tracer        *trace.Local
 	log           *zap.Logger
 }
 
@@ -205,7 +207,10 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		}
 		defer cancelPrep()
 		// 统一快照：近期记忆默认注入，知识按意图补充（与 ReAct/主动弹幕同源）。
+		buildCtx, buildSpan := trace.Start(prepCtx, "context.build", trace.A("channel", string(ev.Channel)))
 		input, decision := buildPassiveInput(prepCtx, deps.context, ev)
+		trace.Add(buildCtx, trace.A("need_memory", decision.NeedMemory), trace.A("need_knowledge", decision.NeedKnowledge), trace.A("reason", decision.Reason))
+		trace.End(buildSpan, nil)
 		// 评论附图：下载 + 视觉转述后注入 Visual；失败只降级为无图，不阻塞回复。
 		if deps.commentVision != nil && (ev.Channel == event.ChComment || ev.Channel == event.ChDM) {
 			if visual := deps.commentVision.Describe(prepCtx, ev); visual != "" {
@@ -219,6 +224,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 			zap.String("reason", decision.Reason),
 		)
 		task := brain.Task{ID: w.Task.ID, EventID: w.Task.EventID, Channel: w.Task.Channel, Session: w.Task.Session}
+		genCtx, genSpan := trace.Start(prepCtx, "llm.step", trace.A("channel", string(ev.Channel)))
 
 		// ReAct：默认除短句外全部走多步（default_react=true），短句保持单步以维持 1 秒级延迟。
 		// 工具要按**当前事件**的 Scope 查（并发 worker 共享一个可变 Scope 会串会话），
@@ -227,7 +233,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		var err error
 		var reactResult reasoning.Result
 		if useReact {
-			reactResult, err = runReact(prepCtx, deps.react, scope, ev, task, input, deps.log)
+			reactResult, err = runReact(genCtx, deps.react, scope, ev, task, input, deps.log)
 			if err != nil {
 				// ReAct 是增强：失败就回落单步，不能把弹幕卡死
 				deps.log.Warn("ReAct 执行失败，回落单步生成",
@@ -237,8 +243,11 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 				)
 				reactResult = reasoning.Result{}
 			}
+			trace.Add(genCtx, trace.A("protocol", "react"), trace.A("steps", reactResult.Steps), trace.A("tools", len(reactResult.Tools)), trace.A("degraded", reactResult.Degraded), trace.A("degrade_reason", reactResult.Reason))
 		}
 		if len(reactResult.Danmaku) > 0 {
+			trace.Add(genCtx, trace.A("delivery", "send_danmaku"))
+			trace.End(genSpan, nil)
 			markGenerated(ctx, deps.timing, ev, deps.log)
 			// 工具已经把回复投递出去了（sender 已写出事件审计），不再发普通回复；
 			// 输入事件仍要按 replying→sent→done 结清，否则调度器会判定未结清。
@@ -286,6 +295,8 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 			}
 		}
 		if err != nil {
+			trace.Add(genCtx, trace.A("error_kind", normalizeErrorKind(safeErrorKind(err))))
+			trace.End(genSpan, err)
 			// 生成失败也要结清，否则事件卡在 replying
 			if markErr := deps.bus.Mark(ctx, w.Claim, []event.Status{event.StatusReplying}, event.StatusDead); markErr != nil {
 				return scheduler.Result{}, errors.Join(err, markErr)
@@ -294,6 +305,8 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 			logWorkFailure(deps.log, deps.errorsRepo, "generate_failed", w, err)
 			return scheduler.Result{}, nil
 		}
+		trace.Add(genCtx, trace.A("protocol", "text"), trace.A("reply_runes", len([]rune(reply.Text))))
+		trace.End(genSpan, nil)
 		markGenerated(ctx, deps.timing, ev, deps.log)
 
 		// Scope 必须显式带上：sender.Reply.Validate 要求与事件通道/会话一致
@@ -303,7 +316,10 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 			deps.log.Error("找不到可用的发送通道", zap.String("action", "channel_missing"), zap.String("channel", string(ev.Channel)))
 			return scheduler.Result{}, errors.New("找不到可用的发送通道")
 		}
-		res, err := disp.Send(ctx, w.Claim, sender.Reply{Text: formatReplyText(ev, reply.Text, deps.live), Scope: scope})
+		deliverCtx, deliverSpan := trace.Start(ctx, "deliver", trace.A("channel", string(ev.Channel)))
+		res, err := disp.Send(deliverCtx, w.Claim, sender.Reply{Text: formatReplyText(ev, reply.Text, deps.live), Scope: scope})
+		trace.Add(deliverCtx, trace.A("ok", res.OK), trace.A("verified", res.Verified))
+		trace.End(deliverSpan, err)
 		if err != nil {
 			// sender 在自身事务里已把输入事件结清并释放租约（Settled=true）；
 			// 再拿旧 claim 走 Bus 必然报「事件租约已失效」，这不是需要重试的失败。

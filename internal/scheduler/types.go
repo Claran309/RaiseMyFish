@@ -4,6 +4,7 @@ package scheduler
 import (
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/store"
+	"RaiseMyFish/internal/trace"
 	"context"
 	"errors"
 	"time"
@@ -68,9 +69,11 @@ type Options struct {
 	MaxEventAge time.Duration
 	// ErrorRepo 记录 stale/dead 原因；nil 表示只写日志。
 	ErrorRepo store.ErrorRepo
-	Location  *time.Location
-	Clock     Clock
-	Channels  map[event.Channel]ChannelPolicy
+	// Tracer 记录 schedule/generate/deliver/verify 阶段；nil 表示不记录。
+	Tracer   *trace.Local
+	Location *time.Location
+	Clock    Clock
+	Channels map[event.Channel]ChannelPolicy
 }
 
 // DefaultOptions 使用单进程P0保守参数，调用New本身不会启用生产通道。

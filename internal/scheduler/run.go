@@ -7,6 +7,7 @@ import (
 
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/store"
+	"RaiseMyFish/internal/trace"
 	"go.uber.org/zap"
 )
 
@@ -43,7 +44,16 @@ func (s *Scheduler) launch(parent context.Context, work Work) {
 			}
 			s.done <- done
 		}()
-		done.result, done.err = handler(ctx, workerInput)
+		stage := "generate"
+		switch work.Claim.Stage {
+		case event.StageDeliver:
+			stage = "deliver"
+		case event.StageVerify:
+			stage = "verify"
+		}
+		spanCtx, span := s.startStageSpan(ctx, work.Claim, stage)
+		done.result, done.err = handler(spanCtx, workerInput)
+		trace.End(span, done.err)
 	}()
 }
 func (s *Scheduler) complete(parent context.Context, done completion) error {

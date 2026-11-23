@@ -12,6 +12,7 @@ import (
 
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/store"
+	"RaiseMyFish/internal/trace"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
@@ -311,6 +312,11 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 	if c.Event.Status != event.StatusQueued {
 		return store.ErrConflict
 	}
+	if c.Stage == event.StageSchedule {
+		var span *trace.Span
+		ctx, span = s.startStageSpan(ctx, c, "schedule")
+		defer trace.End(span, nil)
+	}
 	policy := s.policies[c.Event.Channel]
 	if policy == nil || !aclAllowed(c.Event, policy.ChannelPolicy) {
 		if c.Stage == event.StageSchedule {
@@ -404,6 +410,18 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 	c = confirmed
 	s.launch(parent, Work{Claim: c, Task: task})
 	return nil
+}
+
+// startStageSpan 以事件 ID 派生稳定 trace；跨阶段即使不共享 ctx 也能聚合到同一 trace。
+func (s *Scheduler) startStageSpan(ctx context.Context, c event.Claim, stage string) (context.Context, *trace.Span) {
+	if s.options.Tracer == nil {
+		return ctx, nil
+	}
+	attrs := []trace.Attr{trace.A("channel", string(c.Event.Channel)), trace.A("stage", stage)}
+	if !c.Event.CollectedAt.IsZero() {
+		attrs = append(attrs, trace.A("queue_ms", time.Since(c.Event.CollectedAt).Milliseconds()))
+	}
+	return s.options.Tracer.StartEvent(ctx, c.Event.ID, stage, attrs...)
 }
 
 // recordSkipped 记录 stale 等跳过原因；事件仍按 skipped 结清，不计入 dead 分布。

@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"RaiseMyFish/internal/brain/provider"
+	"RaiseMyFish/internal/trace"
 	"go.uber.org/zap"
 )
 
@@ -276,7 +277,10 @@ func (a *Agent) Run(ctx context.Context, in Input) (Result, error) {
 		}
 
 		// action 是工具名：执行并把结果回填进下一轮
-		out2, toolErr := a.tools.Run(runCtx, decision.Action, decision.Args)
+		toolCtx, toolSpan := trace.Start(runCtx, "tool.call", trace.A("tool", decision.Action), trace.A("args_len", len(decision.Args)))
+		out2, toolErr := a.tools.Run(toolCtx, decision.Action, decision.Args)
+		trace.Add(toolCtx, trace.A("result_len", len(out2)), trace.A("ok", toolErr == nil))
+		trace.End(toolSpan, toolErr)
 		if toolErr != nil {
 			// 工具失败不终止循环：把失败也当成一条观察，让模型自己决定换招
 			out2 = "工具失败：" + toolErr.Error()

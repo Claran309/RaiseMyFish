@@ -23,6 +23,7 @@ import (
 	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/store"
+	"RaiseMyFish/internal/trace"
 	"go.uber.org/zap"
 )
 
@@ -510,6 +511,7 @@ func (p *providerLLM) Complete(ctx context.Context, system, user string) (string
 	})
 	// 失败调用也要记（OK=false），否则「模型一直挂」在账本里完全看不见
 	p.recordUsage(ctx, at, resp.Usage, err)
+	recordTraceUsage(ctx, at, resp.Usage, err)
 	if err != nil {
 		return "", err
 	}
@@ -540,6 +542,7 @@ func (p *providerLLM) CompleteWithTools(ctx context.Context, messages []provider
 		Tools:       tools,
 	})
 	p.recordUsage(ctx, at, resp.Usage, err)
+	recordTraceUsage(ctx, at, resp.Usage, err)
 	var typed *provider.Error
 	if errors.As(err, &typed) && typed.Kind == provider.KindUnsupported {
 		// Provider 明确不支持 tools：本事件内记住，后续直接走文本，避免每步都撞一次。
@@ -549,6 +552,21 @@ func (p *providerLLM) CompleteWithTools(ctx context.Context, messages []provider
 		return p.textFallback(ctx, messages)
 	}
 	return resp, err
+}
+
+// recordTraceUsage 只把服务端返回的元数据写到 llm.step span；不写正文。
+func recordTraceUsage(ctx context.Context, at time.Time, usage provider.Usage, err error) {
+	attrs := []trace.Attr{trace.A("model_ms", time.Since(at).Milliseconds()), trace.A("ok", err == nil)}
+	if usage.InputTokens != nil {
+		attrs = append(attrs, trace.A("input_tokens", *usage.InputTokens))
+	}
+	if usage.OutputTokens != nil {
+		attrs = append(attrs, trace.A("output_tokens", *usage.OutputTokens))
+	}
+	if usage.CachedInputTokens != nil {
+		attrs = append(attrs, trace.A("cached_input_tokens", *usage.CachedInputTokens))
+	}
+	trace.Add(ctx, attrs...)
 }
 
 // textFallback 把完整消息（含 tool 观察）压成一次纯文本请求。

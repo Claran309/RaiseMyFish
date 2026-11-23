@@ -128,3 +128,10 @@ P1 起：落库 `daily_stats`，同时保留文件。
 - `backfill`（首次补 24h、批量补处理、旧评论回复）不进入 fresh SLO；只要求不丢、不重、可观测。
 - `live` 的“1 秒级”只适用于短句单步；ReAct 多步与 30 天全量数字必须分开写，不能混用口径。
 - 延迟统计只读时间与元数据，不把消息正文、prompt、cookie/token 写进报表或 trace。
+
+## 9. per-event Trace（2026-11-23 补充）
+
+- 一条事件对应一条 trace：`collect → schedule → generate → context.build → llm.step → tool.call → deliver → verify`。
+- 本地实现零依赖：内存环形缓冲 + `logs/traces.jsonl`；`[observability.trace]` 关闭时全部 no-op。
+- span 只记元数据：事件 ID、通道、阶段、工具名、参数/结果长度、模型、token、耗时、错误类别；**不记 prompt、消息正文、cookie/token**。
+- 面板入口：`/api/traces/recent?sort=slow` 与 `/api/traces/{trace_id}`；「为什么降级」看 `llm.step.degrade_reason`，「花了多少」看 token 属性与 `llm_usage` 账本。

@@ -93,6 +93,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, shutdown 
 		return err
 	}
 	defer func() { result = errors.Join(result, closeLog()) }()
+	tracer, err := newTracer(cfg, logger)
+	if err != nil {
+		return err
+	}
+	if tracer != nil {
+		defer func() { result = errors.Join(result, tracer.Close()) }()
+	}
 	resources, err := infra.Setup(ctx, cfg, logger)
 	if err != nil {
 		logger.Error("基础设施初始化失败", zap.Error(err))
@@ -226,7 +233,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, shutdown 
 	chans := &channelSet{}
 	// live 采集房间的权威状态：状态注入与 watching 重置都读它。
 	liveRooms := &liveRoomState{}
-	consume, snd, dmWhitelist, err := buildConsume(cfg, resources, accountService, routes, pack, bus, knowledgeRuntime.Reader, presenceTable, liveRooms, chans, giftGate.Load, sideLimiter, logger)
+	consume, snd, dmWhitelist, err := buildConsume(cfg, resources, accountService, routes, pack, bus, tracer, knowledgeRuntime.Reader, presenceTable, liveRooms, chans, giftGate.Load, sideLimiter, logger)
 	if err != nil {
 		return err
 	}
@@ -254,7 +261,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, shutdown 
 
 	deps := runtimeDeps{
 		// 采集发布前记录 presence（在看直播），与旧 channel.Collect 路径一致。
-		Bus:         withPresenceBus(bus, presenceTable),
+		Bus:         withTraceBus(withPresenceBus(bus, presenceTable), tracer),
 		Resources:   resources,
 		Routes:      routes,
 		Pack:        pack,
@@ -292,7 +299,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, shutdown 
 	defer stopDailySummary()
 
 	// 运维面板（只监听回环）：默认关，开启后独立 goroutine 跑。
-	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, accountService, control, control, diaryGen, logview.NewSource(cfg.Log.Dir, nil), shutdown, logger)
+	stopWeb := startWebPanel(ctx, cfg, resources, knowledgeRuntime, accountService, control, control, diaryGen, logview.NewSource(cfg.Log.Dir, nil), tracer, shutdown, logger)
 	defer stopWeb()
 
 	// 主循环先就绪（running 状态落盘）再启动采集：外部不会先看到事件、后看到服务状态。
@@ -545,18 +552,18 @@ func buildBackgroundLLM(cfg config.Config, key string, maxTokens int, purpose ll
 // memoryProviderLLM 把 provider 适配成后台增强任务共用的最小模型接口
 // （memory.LLM 与 knowledge.MemeLLM）。
 type memoryProviderLLM struct {
-	client    provider.Provider
-	model     string
-	maxTokens int
-	purpose   llmmeta.Purpose
-	inUSD     *float64
-	outUSD    *float64
-	cachedUSD *float64
-	offInUSD  *float64
-	offOutUSD *float64
+	client       provider.Provider
+	model        string
+	maxTokens    int
+	purpose      llmmeta.Purpose
+	inUSD        *float64
+	outUSD       *float64
+	cachedUSD    *float64
+	offInUSD     *float64
+	offOutUSD    *float64
 	offCachedUSD *float64
-	usage     store.UsageRepo
-	logger    *zap.Logger
+	usage        store.UsageRepo
+	logger       *zap.Logger
 }
 
 func (m *memoryProviderLLM) Complete(ctx context.Context, system, user string) (string, error) {

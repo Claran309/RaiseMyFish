@@ -11,6 +11,7 @@ import (
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/infra"
+	"RaiseMyFish/internal/trace"
 	"RaiseMyFish/internal/web"
 	"go.uber.org/zap"
 )
@@ -28,7 +29,7 @@ func memoryRepoFrom(resources *infra.Resources) web.MemoryWriter {
 	return repo
 }
 
-func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Resources, runtime knowledgeAssembly, accounts *account.Service, control web.RuntimeController, viewerSummary web.ViewerSummaryControl, diaryGen web.DiaryGenerator, logs web.LogSource, shutdown func(), log *zap.Logger) func() {
+func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Resources, runtime knowledgeAssembly, accounts *account.Service, control web.RuntimeController, viewerSummary web.ViewerSummaryControl, diaryGen web.DiaryGenerator, logs web.LogSource, tracer *trace.Local, shutdown func(), log *zap.Logger) func() {
 	if !cfg.Web.Enabled {
 		return func() {}
 	}
@@ -49,7 +50,7 @@ func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Reso
 		}
 	}
 	srv, err := web.New(web.Options{Addr: cfg.Web.Addr, Repo: repo, Injections: repo, Diary: repo, DiaryGenerator: diaryGen, Log: log, KnowledgeInfo: knowledgeInfo, Accounts: accounts, Control: control, ViewerSummary: viewerSummary, Logs: logs, Shutdown: shutdown,
-		MemoryWriter: memoryRepoFrom(resources)})
+		MemoryWriter: memoryRepoFrom(resources), Trace: tracer})
 	if err != nil {
 		log.Warn("面板未启动：参数不合法", zap.String("action", "web_setup"), zap.Error(err))
 		return func() {}

@@ -15,6 +15,7 @@ import (
 
 	"RaiseMyFish/internal/account"
 	"RaiseMyFish/internal/store"
+	"RaiseMyFish/internal/trace"
 	"go.uber.org/zap"
 )
 
@@ -196,6 +197,31 @@ func newTestServer(t *testing.T, repo store.WebRepo) *Server {
 		t.Fatal(err)
 	}
 	return s
+}
+
+func TestTraceEndpoints(t *testing.T) {
+	local, err := trace.NewLocal(1000, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, span := local.StartEvent(context.Background(), "live:1:1", "generate", trace.A("channel", "live"))
+	_, child := local.Start(ctx, "llm.step", trace.A("model", "m"))
+	local.End(child, nil)
+	local.End(span, nil)
+	s, err := New(Options{Addr: "127.0.0.1:8090", Repo: &fakeRepo{}, Log: zap.NewNop(), Trace: local})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, readReq("/api/traces/recent?sort=slow"))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), trace.TraceID("live:1:1")) {
+		t.Fatalf("trace recent=%d %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, readReq("/api/traces/"+trace.TraceID("live:1:1")))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"llm.step"`) {
+		t.Fatalf("trace detail=%d %s", rec.Code, rec.Body.String())
+	}
 }
 
 // TestStatusJSON 断言概览字段齐全；费用按已计价/未知拆分。
@@ -645,7 +671,7 @@ func TestOverviewPageBlocks(t *testing.T) {
 		}
 	}
 	// R1/R2：延迟与连接池卡片必须有渲染函数与空态，纯前端无编译期保护。
-	for _, want := range []string{"function latencyCards", "'p50 '", "近24h无样本", "延迟(fresh)", "样本不足", "function deadTopCard", "死信 Top5", "function poolCard", "等待 "} {
+	for _, want := range []string{"function latencyCards", "'p50 '", "近24h无样本", "延迟(fresh)", "样本不足", "function deadTopCard", "死信 Top5", "function loadTraces", "慢回复 Trace", "function poolCard", "等待 "} {
 		if !strings.Contains(body, want) {
 			t.Errorf("概览页缺少延迟/连接池渲染 %q", want)
 		}
