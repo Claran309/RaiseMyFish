@@ -139,6 +139,12 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 - [ ] 评分规则快照/版本号/报告说明同步
 - [ ] 不删除历史 run
 
+#### 执行结果（2026-11-23）
+
+- 采纳**方案 B**（主人裁决）：移除 `live-101/live-102/dm-101` 三条未评审用例，恢复 35 条已评审用例集；不扩展 v5 评分规则。
+- 同步修正基线断言：`fixture_test.go` 的 pack 版本改为 `v1.3`（人格包已升版）；`cmd/fishctl` 的审计测试使用生产同口径 `max_prompt_tokens=65536`，不降低预算校验。
+- 验证：`go test ./...` 全绿（`internal/knowledge` 417s，其余缓存命中）。
+
 ---
 
 ### 4.1 B1 原生 tool calling + 工具 Schema（P0，3–4 天）

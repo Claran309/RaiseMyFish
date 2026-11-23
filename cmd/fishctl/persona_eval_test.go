@@ -36,6 +36,8 @@ func TestEvalGeneratorHasRealTraceAndDoesNotUseLabels(t *testing.T) {
 	usage := &evalUsage{inner: evalUsageStub{}}
 	o := brain.DefaultOptions()
 	o.Model = "unit"
+	// v1.3 人格包已超过默认 8192 估算上限；与 config/fishd.toml 的生产预算保持一致。
+	o.MaxPromptTokens = 65536
 	b, err := brain.New(audit, usage, o, zap.NewNop())
 	if err != nil {
 		t.Fatal(err)
