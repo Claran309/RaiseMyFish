@@ -261,6 +261,13 @@
 
 ### 4.5 L4 可观测收尾（P1，2–3 天）
 
+#### L4 执行记录（2026-11-23，第一批）
+
+- 日报新增三段（有数据才输出）：`fresh 延迟`（n<30 标样本不足）、`死信 Top`（通道/环节/错误类别）、`单条回复`（成本+缓存命中）。
+- `fishctl status` 把 `LatencyDetailStats` 的 fresh 分位与 `DeadStats` 接入 `observe.Render`；无数据时保持旧 4 行输出不变。
+- 面板已有 fresh/all、死信 Top5、单条成本卡与慢回复 trace 入口。
+- 验证：`go test ./internal/observe/... ./cmd/fishctl/...`。
+
 - 面板：fresh P50/P90/P99 + n、队列深度、最老事件年龄、dead/skip 原因分布、LLM 并发使用率/排队时间。
 - Trace：与 **B2** 合并做，一条评论/私信事件 `collect → queue → generate → send → verify`；不要两套 trace。
 - 日报：收到/回复/跳过/失败、P50/P90（fresh+all）、dead Top5、成本。

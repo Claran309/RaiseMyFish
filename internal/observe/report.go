@@ -41,6 +41,29 @@ type Snapshot struct {
 	TotalCalls int
 	// Channels 按通道细分；key 为通道名（live/comment/dm/qq）。
 	Channels map[string]ChannelStat
+	// Latency 是各通道 fresh P50/P90；空 map 不输出该段。
+	Latency map[string]LatencyLine
+	// DeadTop 是窗口内死信 Top 原因；空切片不输出该段。
+	DeadTop []DeadLine
+	// CostPerReplyUSD 是窗口内单条回复成本；nil 不输出。
+	CostPerReplyUSD *float64
+	// CacheHitRate 是缓存命中率（0..1）；TotalCalls=0 时不输出。
+	CacheHitRate *float64
+}
+
+// LatencyLine 是日报里的单通道延迟。
+type LatencyLine struct {
+	Count int
+	P50MS int64
+	P90MS int64
+}
+
+// DeadLine 是日报里的死信原因。
+type DeadLine struct {
+	Channel   string
+	Stage     string
+	ErrorKind string
+	Count     int64
 }
 
 // ChannelStat 是单个通道的计数。
@@ -84,7 +107,70 @@ func Render(s Snapshot) string {
 
 	b.WriteString("- 通道：")
 	b.WriteString(renderChannels(s.Channels))
+	b.WriteString(renderLatency(s.Latency))
+	b.WriteString(renderDeadTop(s.DeadTop))
+	b.WriteString(renderCostPerReply(s.CostPerReplyUSD, s.CacheHitRate))
 
+	return b.String()
+}
+
+// renderLatency 输出 fresh 延迟段；样本不足明确标注，不展示分位。
+func renderLatency(latency map[string]LatencyLine) string {
+	if len(latency) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(latency))
+	for key := range latency {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	var b strings.Builder
+	b.WriteString("\n- fresh 延迟：")
+	for i, key := range keys {
+		if i > 0 {
+			b.WriteString("；")
+		}
+		line := latency[key]
+		if line.Count < 30 {
+			fmt.Fprintf(&b, "%s 样本不足(n=%d)", key, line.Count)
+			continue
+		}
+		fmt.Fprintf(&b, "%s p50=%dms p90=%dms(n=%d)", key, line.P50MS, line.P90MS, line.Count)
+	}
+	return b.String()
+}
+
+// renderDeadTop 输出死信 Top 原因；没有死信时不输出。
+func renderDeadTop(items []DeadLine) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n- 死信 Top：")
+	for i, item := range items {
+		if i > 0 {
+			b.WriteString("；")
+		}
+		fmt.Fprintf(&b, "%s/%s/%s=%d", item.Channel, item.Stage, item.ErrorKind, item.Count)
+	}
+	return b.String()
+}
+
+// renderCostPerReply 输出单条回复成本与缓存命中率；缺数据不输出。
+func renderCostPerReply(cost, cacheHit *float64) string {
+	if cost == nil && cacheHit == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n- 单条回复：")
+	if cost != nil {
+		fmt.Fprintf(&b, "$%.4f", *cost)
+	} else {
+		b.WriteString("费用未知")
+	}
+	if cacheHit != nil {
+		fmt.Fprintf(&b, " · 缓存命中 %.1f%%", *cacheHit*100)
+	}
 	return b.String()
 }
 

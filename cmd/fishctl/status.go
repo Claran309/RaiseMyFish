@@ -125,6 +125,18 @@ func collectStats(ctx context.Context, src StatsSource, now time.Time, window ti
 			return StatusStats{}, fmt.Errorf("读取死信分布失败：%w", err)
 		}
 	}
+	// L4 日报：fresh 延迟、死信 Top 与单条回复成本。
+	var latencyLines map[string]observe.LatencyLine
+	if detail != nil {
+		latencyLines = make(map[string]observe.LatencyLine, len(detail))
+		for channel, d := range detail {
+			latencyLines[channel] = observe.LatencyLine{Count: int(d.Fresh.Count), P50MS: d.Fresh.P50MS, P90MS: d.Fresh.P90MS}
+		}
+	}
+	deadLines := make([]observe.DeadLine, 0, len(deadTop))
+	for _, item := range deadTop {
+		deadLines = append(deadLines, observe.DeadLine{Channel: item.Channel, Stage: item.Stage, ErrorKind: item.ErrorKind, Count: item.Count})
+	}
 
 	snapshot := observe.Snapshot{
 		WindowStart:  from,
@@ -137,6 +149,8 @@ func collectStats(ctx context.Context, src StatsSource, now time.Time, window ti
 		UnknownCalls: counts.UnknownCalls,
 		TotalCalls:   counts.TotalCalls,
 		Channels:     toChannelStats(counts.Channels),
+		Latency:      latencyLines,
+		DeadTop:      deadLines,
 	}
 
 	return StatusStats{
