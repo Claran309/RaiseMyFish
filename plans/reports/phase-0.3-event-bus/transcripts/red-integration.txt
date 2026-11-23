@@ -1,3 +1,0 @@
-RaiseMyFish/internal/event/bus: no non-test Go files in D:\CodeStudy\RaiseMyFish\internal\event\bus
-FAIL	RaiseMyFish/internal/database [build failed]
-FAIL

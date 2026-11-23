@@ -1,2 +1,0 @@
-ok  	RaiseMyFish/internal/sender	0.913s
-ok  	RaiseMyFish/internal/sender/live	3.920s
