@@ -116,3 +116,13 @@ systemctl stop fishd  # Linux
 - [ ] 各通道最近事件时间是否正常
 - [ ] 死信是否堆积
 - [ ] 花费是否在预算内
+
+## 11. 评论/私信延迟排查（2026-11-23 补充）
+
+1. 先看 `fishctl status` 的 `latency.fresh` 与 `latency.all`：`fresh` 才是用户体验口径，`all` 混入 backfill，不能直接当优化目标。
+2. 看 `n`：`n < 30` 时不要解读 P50/P90；先查采集窗口是否太窄。
+3. 拆阶段：`collected_at → enqueued_at → claimed_at → generated_at → sent_at → verified_at`，哪一段最长就查哪一段，不要一上来怪模型。
+4. 评论 P90 异常大：先确认是否有首轮 24h 补采/旧评论回复；`collect_mode=backfill` 的事件不进入 fresh SLO。
+5. 评论 dead 多：先看 `event_errors` 的 `stage × error_kind` 分布；`generate` 阶段的 `provider/timeout/budget/prompt_too_long` 优先处理，再看 `send` 阶段。
+6. 私信 skipped 多：看跳过原因（ACL/噪音/幂等/节流/会话锁/过期），不要把所有 skipped 都当漏回。
+7. 调整轮询前先记录基线：`comment feed 60s / dm 120s` 下的 fresh P50/P90、412/429 率、LLM 成本；一次只改一个通道。
