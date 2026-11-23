@@ -613,6 +613,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 				Live: true, Comment: cfg.Reasoning.ReflectComment, DM: cfg.Reasoning.ReflectDM,
 				MinRunes: cfg.Reasoning.ReflectMinRunes, OnTools: cfg.Reasoning.ReflectOnTools,
 			},
+			shortPathMaxRunes: cfg.Reasoning.ShortPathMaxRunes,
 		}
 	}
 	// 评论附图识别：未开启/未配置视觉路由时不装配，评论照常回复。

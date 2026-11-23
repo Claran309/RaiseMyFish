@@ -35,6 +35,8 @@ type Reasoning struct {
 	ReflectMinRunes int `toml:"reflect_min_runes"`
 	// ReflectOnTools 表示本轮用过工具就触发反思。
 	ReflectOnTools bool `toml:"reflect_on_tools"`
+	// ShortPathMaxRunes 是「短评论/私信走单步」的长度阈值；0 表示关闭快慢双路径。
+	ShortPathMaxRunes int `toml:"short_path_max_runes"`
 	// Comment/DM 是评论与私信的独立预算：两者没有直播弹幕的实时节奏约束，
 	// 允许更长思考（派发单：5-10 步 / 30-60 秒），但弹幕仍用上面的 3 步 / 8 秒。
 	Comment ReasoningChannel `toml:"comment"`
@@ -74,16 +76,17 @@ const (
 // DefaultReasoning 返回默认 ReAct 配置。
 func DefaultReasoning() Reasoning {
 	return Reasoning{
-		Enabled:         true,
-		MaxSteps:        defaultReasoningMaxSteps,
-		TimeoutMS:       defaultReasoningTimeoutMS,
-		DefaultReact:    true,
-		NativeTools:     defaultNativeTools,
-		ReflectBudget:   defaultReflectBudget,
-		ReflectMinRunes: defaultReflectMinRunes,
-		ReflectOnTools:  true,
-		Comment:         ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
-		DM:              ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
+		Enabled:           true,
+		MaxSteps:          defaultReasoningMaxSteps,
+		TimeoutMS:         defaultReasoningTimeoutMS,
+		DefaultReact:      true,
+		NativeTools:       defaultNativeTools,
+		ReflectBudget:     defaultReflectBudget,
+		ReflectMinRunes:   defaultReflectMinRunes,
+		ReflectOnTools:    true,
+		ShortPathMaxRunes: 30,
+		Comment:           ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
+		DM:                ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
 	}
 }
 
@@ -132,6 +135,9 @@ func (r Reasoning) Validate() error {
 	}
 	if r.ReflectMinRunes < 0 || r.ReflectMinRunes > 2000 {
 		return fmt.Errorf("reasoning.reflect_min_runes 需在0至2000")
+	}
+	if r.ShortPathMaxRunes < 0 || r.ShortPathMaxRunes > 200 {
+		return fmt.Errorf("reasoning.short_path_max_runes 需在0至200")
 	}
 	if err := r.Comment.validate("评论"); err != nil {
 		return err

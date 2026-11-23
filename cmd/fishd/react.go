@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/brain/provider"
@@ -58,6 +59,8 @@ type reactRuntime struct {
 	finalReserve time.Duration
 	// reflect 是 Reflection 触发策略；零值时 live 默认开启、评论/私信关闭。
 	reflect reasoning.ReflectPolicy
+	// shortPathMaxRunes 是评论/私信走单步的长度阈值；0 表示全部 ReAct。
+	shortPathMaxRunes int
 }
 
 // reflectAllows 是通道级门禁：评论/私信未显式开启时不做自检。
@@ -90,8 +93,18 @@ func (r *reactRuntime) reflectAllows(channel event.Channel) bool {
 // 短句也可能需要查记忆/知识（「记得吗」「摸我」），不再按长度区分；
 // default_react=false 时保留旧两段式，仅命中召回线索时走 ReAct。
 func shouldUseReAct(channel event.Channel, text string, defaultReact bool) bool {
+	return shouldUseReActWithShortPath(channel, text, defaultReact, 0)
+}
+
+// shouldUseReActWithShortPath 增加 L3 快慢双路径：评论/私信短于阈值时走单步。
+//
+// shortPathMaxRunes=0 保持旧行为（评论/私信恒走 ReAct）。
+func shouldUseReActWithShortPath(channel event.Channel, text string, defaultReact bool, shortPathMaxRunes int) bool {
 	switch channel {
 	case event.ChComment, event.ChDM:
+		if shortPathMaxRunes > 0 && utf8.RuneCountInString(strings.TrimSpace(text)) <= shortPathMaxRunes {
+			return false
+		}
 		return true
 	}
 	if defaultReact {

@@ -201,7 +201,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		// 一轮预算：ReAct 路径把「读取/召回/embedding/Prepare/工具」都压进
 		// prepCtx（父 deadline 减 finalReserve），父 ctx 的最后一段留给最终正文。
 		// 单步路径不拆预算：读取与生成本来就共享同一个父 deadline。
-		useReact := deps.react != nil && deps.react.factory != nil && shouldUseReAct(ev.Channel, ev.Text, deps.react.defaultReact)
+		useReact := deps.react != nil && deps.react.factory != nil && shouldUseReActWithShortPath(ev.Channel, ev.Text, deps.react.defaultReact, deps.react.shortPathMaxRunes)
 		prepCtx, cancelPrep := ctx, context.CancelFunc(func() {})
 		if useReact {
 			prepCtx, cancelPrep = prepareDeadline(ctx, deps.react.finalReserve)

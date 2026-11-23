@@ -238,6 +238,9 @@ reflect_dm = false
 reflect_min_runes = 60
 reflect_on_tools = true
 
+# 快慢双路径：评论/私信短于该字符数时走单步 Brain；0=关闭（全部 ReAct）。
+short_path_max_runes = 30
+
 # 评论/私信没有直播节奏约束，允许更长思考（5-10 步 / 30-60 秒）；恒走 ReAct，
 # 不受 default_react 影响。弹幕仍用上面的 3 步 / 8 秒。
 # R4 实测（近 24h llm_usage）：comment p50 1.32s / p90 1.69s，dm p50 1.36s / p90 1.70s；

@@ -252,6 +252,13 @@
 
 ### 4.4 L3 降低排队（P1，3–5 天）
 
+#### L3 执行记录（2026-11-23，第一批）
+
+- 快慢双路径：`[reasoning] short_path_max_runes=30`；评论/私信短于阈值走单步 Brain，长文仍 ReAct；`0` 关闭并保持旧行为。
+- 阈值只影响评论/私信，live 不受影响；工具/证据路径不变。
+- 通道配额与模型路由仍需真实流量数据后再定，不凭空调参。
+- 验证：`go test ./cmd/fishd/... ./internal/config/...`。
+
 - 按通道配额：live 6 / comment 4 / dm 2 软配额（初值），或加权公平队列。
 - 优先级：live 实时 > comment/dm fresh > backfill；backfill 不挤占 fresh。
 - 快慢双路径：短评论/私信（<30 字、无工具需求）走单步 Brain，否则 ReAct。
