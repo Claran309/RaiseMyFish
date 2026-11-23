@@ -237,6 +237,13 @@
 
 ### 4.3 L2 降低 P50（P1，3–4 天）
 
+#### L2 执行记录（2026-11-23，第一批）
+
+- 新增 `internal/collector/polling`：活跃/空闲间隔、±20% 抖动、412/429 指数退避（有上限）。
+- 评论采集 `Start` 接入：按本轮是否产出事件选择快/慢间隔；`KindRate` 触发退避并在日志中记录 `comment_poll_interval`。
+- 私信/参数小步调整仍需线上观察 412/429 率，按计划单独灰度。
+- 验证：`go test ./internal/collector/...`（含 polling 纯函数测试）。
+
 - 参数小步：comment `feed_interval_seconds` 60→30（观察一周）→20；动态 `interval_seconds` 60→30；`discover_interval_seconds` 600→180；dm `interval_seconds` 120→60→45。
 - 每次只改一个通道；记录 412/429 率、fresh P50/P90、LLM 成本；不达标回退。
 - 自适应轮询：活跃期快、空闲期慢；412/429 指数退避 + ±20% 抖动；每账号/房间独立限速。

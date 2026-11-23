@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -31,6 +32,7 @@ import (
 
 	"RaiseMyFish/internal/bili"
 	"RaiseMyFish/internal/collector"
+	"RaiseMyFish/internal/collector/polling"
 	"RaiseMyFish/internal/event"
 	"go.uber.org/zap"
 )
@@ -310,6 +312,10 @@ type Collector struct {
 	seen    map[string]struct{}
 	targets map[string]*targetState
 	started atomic.Bool
+	// emitted 是进程内累计产出事件数，用于判断本轮是否活跃。
+	emitted atomic.Int64
+	// rateLimited 标记最近一轮是否命中 412/429，用于自适应退避。
+	rateLimited atomic.Bool
 }
 
 var _ collector.Collector = (*Collector)(nil)
@@ -413,10 +419,17 @@ func (c *Collector) setOK(ok bool) {
 	c.mu.Unlock()
 }
 
+// emittedCount 返回累计产出事件数（只增不减）。
+func (c *Collector) emittedCount() int64 { return c.emitted.Load() }
+
+// lastRateLimited 返回最近一轮是否被平台限流。
+func (c *Collector) lastRateLimited() bool { return c.rateLimited.Load() }
+
 func (c *Collector) report(errc chan<- error, err *Error) {
 	c.mu.Lock()
 	c.health.LastError = err.Error()
 	c.mu.Unlock()
+	c.rateLimited.Store(err.Kind == KindRate)
 	select {
 	case errc <- err:
 	default:
@@ -445,6 +458,10 @@ func (c *Collector) Start(ctx context.Context, out chan<- event.Event, errc chan
 	)
 	targets := c.manualTargets()
 	var lastDiscover time.Time
+	// 自适应轮询：活跃期用 Interval，空闲期放慢到 3×，412/429 指数退避。
+	policy := polling.Policy{Min: c.options.Interval, Max: c.options.Interval * 3, Jitter: 0.2, BackoffFactor: 2}.Resolve()
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rateStreak := 0
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -453,10 +470,25 @@ func (c *Collector) Start(ctx context.Context, out chan<- event.Event, errc chan
 			targets = c.refreshTargets(ctx)
 			lastDiscover = time.Now()
 		}
+		before := c.emittedCount()
 		if fatal := c.cycle(ctx, cookie, targets, out, errc); fatal != nil {
 			return fatal
 		}
-		timer := time.NewTimer(c.options.Interval)
+		active := c.emittedCount() > before
+		rateLimited := c.lastRateLimited()
+		if rateLimited {
+			rateStreak++
+		} else {
+			rateStreak = 0
+		}
+		next := policy.Next(active, rateLimited, rateStreak, rnd)
+		c.log.Info("评论轮询节奏",
+			zap.String("action", "comment_poll_interval"),
+			zap.Bool("active", active),
+			zap.Bool("rate_limited", rateLimited),
+			zap.Duration("next", next),
+		)
+		timer := time.NewTimer(next)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -746,6 +778,7 @@ func (c *Collector) emitReply(ctx context.Context, target Target, reply apiReply
 		c.mu.Lock()
 		c.health.LastEventAt = time.Now().UTC()
 		c.mu.Unlock()
+		c.emitted.Add(1)
 		return true, false
 	case <-ctx.Done():
 		return true, true
