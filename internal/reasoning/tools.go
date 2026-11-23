@@ -9,11 +9,13 @@ package reasoning
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"RaiseMyFish/internal/brain/provider"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/knowledge"
 	"RaiseMyFish/internal/memory"
@@ -34,6 +36,8 @@ const maxObservationRunes = 400
 type Tool struct {
 	Name string
 	Desc string
+	// Parameters 是 JSON Schema；为空时使用最小的 object schema。
+	Parameters json.RawMessage
 	// MaxRunes 是工具结果进入 prompt 的字符上限；0 表示使用默认 400。
 	// 技能说明之类需要较完整的文本可单独放宽，但仍由 Toolbox 统一裁剪。
 	MaxRunes int
@@ -56,6 +60,9 @@ func NewToolbox(tools ...Tool) (*Toolbox, error) {
 		}
 		if _, dup := box.tools[name]; dup {
 			return nil, fmt.Errorf("工具重名：%s", name)
+		}
+		if len(t.Parameters) == 0 {
+			t.Parameters = toolSchemaFor(name)
 		}
 		box.tools[name] = t
 		box.order = append(box.order, name)
@@ -91,6 +98,33 @@ func (b *Toolbox) Descriptions() string {
 		fmt.Fprintf(&sb, "- %s：%s\n", name, t.Desc)
 	}
 	return sb.String()
+}
+
+// Definitions 生成原生 tools 请求所需的 JSON Schema 定义。
+//
+// 未显式提供 Parameters 的工具使用最小 object schema，保证旧工具
+// 在原生路径下仍可被调用；具体参数约束由各工具按需补充。
+func (b *Toolbox) Definitions() []provider.ToolDefinition {
+	if b == nil || len(b.order) == 0 {
+		return nil
+	}
+	out := make([]provider.ToolDefinition, 0, len(b.order))
+	for _, name := range b.order {
+		t := b.tools[name]
+		params := t.Parameters
+		if len(params) == 0 {
+			params = json.RawMessage(`{"type":"object","properties":{}}`)
+		}
+		out = append(out, provider.ToolDefinition{
+			Type: "function",
+			Function: provider.ToolFunction{
+				Name:        name,
+				Description: t.Desc,
+				Parameters:  params,
+			},
+		})
+	}
+	return out
 }
 
 // Run 执行工具；未知工具返回错误而不是静默成功。

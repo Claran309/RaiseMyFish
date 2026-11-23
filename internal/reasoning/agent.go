@@ -156,10 +156,11 @@ type Result struct {
 
 // Agent 是 ReAct 执行器。
 type Agent struct {
-	llm   LLM
-	tools *Toolbox
-	opts  Options
-	log   *zap.Logger
+	llm     LLM
+	toolLLM ToolLLM
+	tools   *Toolbox
+	opts    Options
+	log     *zap.Logger
 }
 
 // New 装配 ReAct 执行器。
@@ -180,6 +181,28 @@ func New(llm LLM, tools *Toolbox, o Options, log *zap.Logger) (*Agent, error) {
 		log = zap.NewNop()
 	}
 	return &Agent{llm: llm, tools: tools, opts: o, log: log}, nil
+}
+
+// NewNative 装配原生 tools 执行器；文本 ReAct 的 New 保持原样。
+//
+// 同一个 Agent 只应使用一种协议：原生路径调用 RunNative，文本路径调用 Run。
+func NewNative(llm ToolLLM, tools *Toolbox, o Options, log *zap.Logger) (*Agent, error) {
+	if llm == nil {
+		return nil, errors.New("原生 ReAct 缺少工具模型调用器")
+	}
+	if tools == nil || len(tools.Names()) == 0 {
+		return nil, errors.New("原生 ReAct 缺少可用工具")
+	}
+	if o.MaxSteps < 1 || o.MaxSteps > 10 {
+		return nil, fmt.Errorf("原生 ReAct 步数需为1至10：%d", o.MaxSteps)
+	}
+	if o.Timeout <= 0 {
+		return nil, errors.New("原生 ReAct 超时必须为正")
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	return &Agent{toolLLM: llm, tools: tools, opts: o, log: log}, nil
 }
 
 // HasTool 判断本轮是否注册了某个工具；调用方据此选择主动查证还是被动注入。
@@ -361,6 +384,12 @@ func promptBytes(system, user string) int {
 // 调用方先 Prepare，再用它与 ObservationReserve 判断：
 // Prepare 的预算结果之外，还有多少固定开销必须提前留出来。
 func (a *Agent) Estimate(in Input) int {
+	if a.toolLLM != nil {
+		return estimateNative([]provider.Message{
+			{Role: "system", Content: a.nativeSystemPrompt(in)},
+			{Role: "user", Content: a.nativeUserPrompt(in)},
+		}, a.tools.Definitions())
+	}
 	return promptBytes(a.systemPrompt(in), a.userPrompt(in, nil))
 }
 
@@ -405,11 +434,16 @@ func (a *Agent) fitPrompt(system string, in Input, observations []string) (strin
 //
 // 预算日志用它区分「估计值」与「服务端实际 usage」，两者不能混为一谈。
 func (a *Agent) Usage() (Usage, bool) {
-	reporter, ok := a.llm.(UsageReporter)
-	if !ok {
+	if a == nil {
 		return Usage{}, false
 	}
-	return reporter.Usage(), true
+	if reporter, ok := a.llm.(UsageReporter); ok {
+		return reporter.Usage(), true
+	}
+	if reporter, ok := a.toolLLM.(UsageReporter); ok {
+		return reporter.Usage(), true
+	}
+	return Usage{}, false
 }
 
 // degrade 用已有观察再要一次回复；预算已耗尽则直接返回空，交给调用方回落。

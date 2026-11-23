@@ -225,6 +225,9 @@ allow_side_effect_tools = false
 # 弹幕工具（send_danmaku）：开了一条事件里可直接发 1-3 条弹幕（每条≤40字，
 # 同一轮去重+限频），发过弹幕后不再额外发普通回复。执行走主动弹幕的 Node 投递通道。
 allow_danmaku_tool = true
+# 原生 tool calling：off=文本 ReAct（默认，行为不变）；on=发送 tools 并解析 tool_calls；
+# auto 预留（当前按 off 处理，Provider 能力探测后续接入）。切换前先跑 mock 测试。
+native_tools = "off"
 
 # 评论/私信没有直播节奏约束，允许更长思考（5-10 步 / 30-60 秒）；恒走 ReAct，
 # 不受 default_react 影响。弹幕仍用上面的 3 步 / 8 秒。

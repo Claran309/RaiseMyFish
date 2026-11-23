@@ -6,10 +6,15 @@ import (
 	"fmt"
 )
 
-// Message 不包含工具定义或任意平台元数据。
+// Message 是对话消息。
+//
+// 旧 Provider 契约只使用 Role/Content；ToolCalls/ToolCallID 仅由
+// ToolProvider 的可选原生工具路径使用，omitempty 保证旧请求字节不变。
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
 // Request 是P0纯文本请求。
@@ -47,12 +52,13 @@ type Provider interface {
 type Kind string
 
 const (
-	KindInput    Kind = "input"
-	KindHTTP     Kind = "http"
-	KindTimeout  Kind = "timeout"
-	KindCanceled Kind = "canceled"
-	KindProtocol Kind = "protocol"
-	KindNetwork  Kind = "network"
+	KindInput       Kind = "input"
+	KindHTTP        Kind = "http"
+	KindTimeout     Kind = "timeout"
+	KindCanceled    Kind = "canceled"
+	KindProtocol    Kind = "protocol"
+	KindNetwork     Kind = "network"
+	KindUnsupported Kind = "unsupported"
 )
 
 // Error 保留原始错误链，展示时只输出类别和状态码。

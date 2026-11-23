@@ -23,6 +23,9 @@ type Reasoning struct {
 	// AllowDanmakuTool 是 live 的 send_danmaku 工具开关：开启后模型可在一条事件里
 	// 直接发 1-3 条弹幕（发满后不再发普通回复）。默认 false，显式开启才装配。
 	AllowDanmakuTool bool `toml:"allow_danmaku_tool"`
+	// NativeTools 是原生 tool calling 模式："off"（默认，走文本 ReAct）、
+	// "on"（走 native tools）、"auto"（预留：按 Provider 能力探测）。
+	NativeTools string `toml:"native_tools"`
 	// Comment/DM 是评论与私信的独立预算：两者没有直播弹幕的实时节奏约束，
 	// 允许更长思考（派发单：5-10 步 / 30-60 秒），但弹幕仍用上面的 3 步 / 8 秒。
 	Comment ReasoningChannel `toml:"comment"`
@@ -42,6 +45,8 @@ const (
 	maxReasoningSteps         = 10
 	minReasoningTimeoutMS     = 1000
 	maxReasoningTimeoutMS     = 20000 // 弹幕预算 4 步/12 秒（原 3 步/8 秒）；硬顶 20 秒防止拖成半分钟
+	// 原生 tool calling 默认关闭：先保留已验收的文本 ReAct，显式开启再切换。
+	defaultNativeTools = "off"
 )
 
 // 评论/私信允许更长思考；默认取区间中位，仍受父级 worker 超时约束。
@@ -61,6 +66,7 @@ func DefaultReasoning() Reasoning {
 		MaxSteps:     defaultReasoningMaxSteps,
 		TimeoutMS:    defaultReasoningTimeoutMS,
 		DefaultReact: true,
+		NativeTools:  defaultNativeTools,
 		Comment:      ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
 		DM:           ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
 	}
@@ -76,6 +82,9 @@ func (r *Reasoning) ApplyDefaults() {
 	}
 	if r.TimeoutMS == 0 {
 		r.TimeoutMS = defaultReasoningTimeoutMS
+	}
+	if r.NativeTools == "" {
+		r.NativeTools = defaultNativeTools
 	}
 	r.Comment.applyDefaults()
 	r.DM.applyDefaults()
@@ -97,6 +106,11 @@ func (r Reasoning) Validate() error {
 	}
 	if r.TimeoutMS < minReasoningTimeoutMS || r.TimeoutMS > maxReasoningTimeoutMS {
 		return fmt.Errorf("ReAct 超时需为%d至%d毫秒", minReasoningTimeoutMS, maxReasoningTimeoutMS)
+	}
+	switch r.NativeTools {
+	case "", "off", "on", "auto":
+	default:
+		return fmt.Errorf("reasoning.native_tools 只能是 off/on/auto")
 	}
 	if err := r.Comment.validate("评论"); err != nil {
 		return err

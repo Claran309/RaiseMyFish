@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -407,6 +408,11 @@ func buildReasonerFactory(cfg config.Config, mem memory.Reader, know knowledge.R
 		}
 		// 每次事件派生一个适配器：账本行里的通道就是这条弹幕的通道
 		llm := &providerLLM{blueprint: blueprint, channel: scope.Channel, log: log}
+		// native_tools=on/auto 走原生路径；auto 在 Provider 明确不支持 tools 时
+		// 由 providerLLM 自动回落文本，不会让事件直接失败。
+		if cfg.Reasoning.NativeTools == "on" || cfg.Reasoning.NativeTools == "auto" {
+			return reasoning.NewNative(llm, box, opts, log)
+		}
 		return reasoning.New(llm, box, opts, log)
 	}, nil
 }
@@ -482,8 +488,9 @@ type providerLLM struct {
 	channel   event.Channel
 	log       *zap.Logger
 
-	mu    sync.Mutex
-	usage reasoning.Usage
+	mu                sync.Mutex
+	usage             reasoning.Usage
+	nativeUnsupported bool
 }
 
 // Usage 返回本轮累计的真实用量（服务端未给统计的字段由 Known 标记）。
@@ -502,24 +509,93 @@ func (p *providerLLM) Complete(ctx context.Context, system, user string) (string
 		Temperature: p.blueprint.temperature,
 	})
 	// 失败调用也要记（OK=false），否则「模型一直挂」在账本里完全看不见
-	p.record(ctx, at, resp, err)
+	p.recordUsage(ctx, at, resp.Usage, err)
 	if err != nil {
 		return "", err
 	}
 	return resp.Text, nil
 }
 
+// CompleteWithTools 是 reasoning.ToolLLM 的原生工具调用适配。
+//
+// 底层客户端不支持 ToolProvider 时返回 unsupported，让上层按配置降级；
+// 既有 Complete/文本 ReAct 完全不受影响。
+func (p *providerLLM) CompleteWithTools(ctx context.Context, messages []provider.Message, tools []provider.ToolDefinition) (provider.ToolResponse, error) {
+	p.mu.Lock()
+	unsupported := p.nativeUnsupported
+	p.mu.Unlock()
+	if unsupported {
+		return p.textFallback(ctx, messages)
+	}
+	toolClient, ok := p.blueprint.client.(provider.ToolProvider)
+	if !ok {
+		return p.textFallback(ctx, messages)
+	}
+	at := time.Now()
+	resp, err := toolClient.ChatWithTools(ctx, provider.ToolRequest{
+		Model:       p.blueprint.model,
+		Messages:    messages,
+		MaxTokens:   p.blueprint.maxTokens,
+		Temperature: p.blueprint.temperature,
+		Tools:       tools,
+	})
+	p.recordUsage(ctx, at, resp.Usage, err)
+	var typed *provider.Error
+	if errors.As(err, &typed) && typed.Kind == provider.KindUnsupported {
+		// Provider 明确不支持 tools：本事件内记住，后续直接走文本，避免每步都撞一次。
+		p.mu.Lock()
+		p.nativeUnsupported = true
+		p.mu.Unlock()
+		return p.textFallback(ctx, messages)
+	}
+	return resp, err
+}
+
+// textFallback 把完整消息（含 tool 观察）压成一次纯文本请求。
+// 这是原生路径不可用时的兜底，不承诺工具能力，只保证事件不会因协议不支持而失败。
+func (p *providerLLM) textFallback(ctx context.Context, messages []provider.Message) (provider.ToolResponse, error) {
+	var system, user strings.Builder
+	for i, msg := range messages {
+		switch msg.Role {
+		case "system":
+			if system.Len() > 0 {
+				system.WriteString("\n")
+			}
+			system.WriteString(msg.Content)
+		case "tool":
+			fmt.Fprintf(&user, "\n工具结果：%s", msg.Content)
+		case "assistant":
+			if msg.Content != "" {
+				fmt.Fprintf(&user, "\n%s", msg.Content)
+			}
+		default:
+			if i == 0 {
+				continue
+			}
+			fmt.Fprintf(&user, "\n%s：%s", msg.Role, msg.Content)
+		}
+	}
+	if user.Len() == 0 {
+		user.WriteString("请根据上下文回答。")
+	}
+	text, err := p.Complete(ctx, system.String(), user.String())
+	if err != nil {
+		return provider.ToolResponse{}, err
+	}
+	return provider.ToolResponse{Text: text}, nil
+}
+
 // record 写一行 llm_usage。
 //
 // 记账失败只记日志、绝不上抛：ReAct 是增强能力，不能因为账本写不进去就让弹幕收不到回复。
-func (p *providerLLM) record(ctx context.Context, at time.Time, resp provider.Response, callErr error) {
+func (p *providerLLM) recordUsage(ctx context.Context, at time.Time, usage provider.Usage, callErr error) {
 	p.mu.Lock()
 	p.usage.Calls++
-	if n := validTokens(resp.Usage.InputTokens); n != nil {
+	if n := validTokens(usage.InputTokens); n != nil {
 		p.usage.InputTokens += *n
 		p.usage.InputKnown = true
 	}
-	if n := validTokens(resp.Usage.OutputTokens); n != nil {
+	if n := validTokens(usage.OutputTokens); n != nil {
 		p.usage.OutputTokens += *n
 		p.usage.OutputKnown = true
 	}
@@ -533,10 +609,10 @@ func (p *providerLLM) record(ctx context.Context, at time.Time, resp provider.Re
 		Purpose:           string(llmmeta.PurposeReact),
 		Model:             p.blueprint.model,
 		CorrelationID:     llmmeta.SafeCorrelationID(llmmeta.From(ctx).CorrelationID),
-		InputTokens:       validTokens(resp.Usage.InputTokens),
-		OutputTokens:      validTokens(resp.Usage.OutputTokens),
-		CachedInputTokens: validTokens(resp.Usage.CachedInputTokens),
-		CostUSD:           p.cost(resp.Usage),
+		InputTokens:       validTokens(usage.InputTokens),
+		OutputTokens:      validTokens(usage.OutputTokens),
+		CachedInputTokens: validTokens(usage.CachedInputTokens),
+		CostUSD:           p.cost(usage),
 		Milliseconds:      int(time.Since(at).Milliseconds()),
 		OK:                callErr == nil,
 	}
