@@ -105,6 +105,10 @@ textarea{width:100%;resize:vertical}
 
       <h2>向量入库</h2>
       <div class="grid" id="embed-cards"></div>
+
+      <h2>会话状态</h2>
+      <div class="grid" id="conv-cards"></div>
+      <div class="tag" style="margin-top:6px">私信/评论会话的命中率、摘要覆盖率与「有会话 vs 无会话」的 token/延迟对照；无对照样本显示「—」。</div>
     </section>
 
     <section>
@@ -169,6 +173,44 @@ async function loadEmbeddingStatus() {
   box.innerHTML = one('📚', '知识', d.knowledge || {}) +
     one('🧠', '记忆', d.memory || {}) +
     one('👤', '档案', d.viewer || {});
+}
+
+// 会话状态：命中率、平均轮数、摘要覆盖率与 token/延迟对照。
+// 无对照样本时显示 —（接口给 null），不能显示成 0 让人误以为「没有变化」。
+async function loadConversations() {
+  var box = document.getElementById('conv-cards');
+  var r = await fetch('/api/conversations?hours=24');
+  if (!r.ok) { box.innerHTML = '<div class="card bad">会话状态加载失败</div>'; return; }
+  var d = await r.json();
+  var names = { dm: '私信', comment: '评论' };
+  var html = (d.channels || []).map(function (c) {
+    var label = names[c.channel] || c.channel;
+    var hit = Math.round((Number(c.hit_rate) || 0) * 100);
+    var cov = Math.round((Number(c.summary_coverage) || 0) * 100);
+    var turns = Number(c.turns_avg) || 0;
+    var sub = '会话 ' + (c.active || 0) + ' · 摘要覆盖 ' + cov + '% · 均 ' + turns.toFixed(1) + ' 轮';
+    if (c.expired) sub += ' · 过期 ' + c.expired;
+    if (c.summary_age_seconds) sub += ' · 摘要 ' + Math.round(c.summary_age_seconds / 60) + ' 分钟前';
+    return card(hit > 0 ? 'ok' : 'info', '💬', label + '会话命中', hit + '%', sub, true);
+  }).join('');
+  html += (d.channels || []).map(function (c) {
+    var label = names[c.channel] || c.channel;
+    var tok = c.prompt_token_delta_pct;
+    var lat = c.p95_latency_delta_ms;
+    var tokText = (tok === null || tok === undefined) ? '—' : (tok > 0 ? '+' : '') + Number(tok).toFixed(1) + '%';
+    var latText = (lat === null || lat === undefined) ? '—' : (lat > 0 ? '+' : '') + Math.round(lat) + 'ms';
+    var bad = (tok !== null && tok !== undefined && tok > 20) || (lat !== null && lat !== undefined && lat > 1000);
+    return card(bad ? 'warn' : 'info', '📈', label + '会话开销',
+      'token ' + tokText + ' · P95 ' + latText,
+      '对照基线：无会话回复；无样本显示 —', true);
+  }).join('');
+  html += (d.channels || []).map(function (c) {
+    var label = names[c.channel] || c.channel;
+    var rate = (Number(c.repetition_rate) || 0) * 100;
+    return card(rate > 5 ? 'warn' : 'ok', '🔁', label + '重复回复',
+      rate.toFixed(1) + '%', '同会话相邻两条正文相同 · 样本 ' + (c.out_events || 0), true);
+  }).join('');
+  box.innerHTML = html || '<div class="card info">暂无可统计的会话</div>';
 }
 // 费用卡片区分四态：空账本、真实零、全未知、混合；
 // 混合账本里 known_cost 只是已知部分，不能标成「累计费用」。
@@ -456,7 +498,7 @@ async function injectDelete(id) {
   if (editingInjection === id) injectReset();
   loadInjections();
 }
-function load() { loadStatus(); loadEmbeddingStatus(); loadEvents(); loadErrors(); loadInjections(); loadTraces(); }
+function load() { loadStatus(); loadEmbeddingStatus(); loadConversations(); loadEvents(); loadErrors(); loadInjections(); loadTraces(); }
 load();
 setInterval(load, 15000);
 </script>

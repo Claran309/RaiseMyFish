@@ -8,6 +8,7 @@
 > **2026-11-23 延迟诊断补充清单（L 系列）见 [latency-optimization-2026-11-23.md](latency-optimization-2026-11-23.md)**：先修延迟口径与评论 dead，再谈轮询/排队优化；与 B2 trace 合并实现。
 > **2026-11-23 长期记忆评审（M 系列）见 [memory-review-2026-11-23.md](memory-review-2026-11-23.md)**：版本链、实体关系、写入质量、混合召回、memory usage 与评测；与 B5 合并，不重复实现。
 > **2026-11-23 Reflection 补充（R 系列）见 [reflection-optimization-2026-11-23.md](reflection-optimization-2026-11-23.md)**：只覆盖本仓库 R1/R2/R3/R7；ClaranAIM 的 R4–R6 不在本仓库。
+> **2026-11-23 会话状态升级（C 系列）见 [conversation-state-2026-11-23.md](conversation-state-2026-11-23.md)**：私信按 peer、评论按 thread root、直播短窗口；默认关闭、按会话键灰度。
 
 ## 阶段状态
 

@@ -15,7 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"RaiseMyFish/internal/brain"
+	"RaiseMyFish/internal/conversationeval"
 	"RaiseMyFish/internal/knowledgeeval"
+	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/personaeval"
 )
 
@@ -30,6 +33,7 @@ type Summary struct {
 	Knowledge      *KnowledgeSummary             `json:"knowledge,omitempty"`
 	Trajectory     *personaeval.TrajectoryReport `json:"trajectory,omitempty"`
 	Reflection     *personaeval.ReflectionReport `json:"reflection,omitempty"`
+	Conversation   *conversationeval.Report      `json:"conversation,omitempty"`
 	Passed         bool                          `json:"passed"`
 	FailureReasons []string                      `json:"failure_reasons,omitempty"`
 	Notes          []string                      `json:"notes,omitempty"`
@@ -82,6 +86,9 @@ func run(ctx context.Context, args []string, stdout *os.File) error {
 	trajectoryRuns := fs.String("trajectory-runs", "", "可选：录制好的轨迹 JSONL（真实 ReAct 运行）")
 	reflectionCases := fs.String("reflection-cases", "", "反思对照用例；默认 <pack>/eval/reflection-cases.jsonl")
 	reflectionRuns := fs.String("reflection-runs", "", "可选：录制好的反思结果 JSONL（含 verdict）")
+	conversationCases := fs.String("conversation-cases", "", "会话多轮用例；默认 <pack>/eval/conversation-cases.jsonl")
+	recentTurns := fs.Int("conversation-recent-turns", 8, "会话评测注入的最近轮数（与线上配置一致）")
+	promptTokens := fs.Int("conversation-max-prompt-tokens", 65536, "会话评测的 prompt 预算（与线上 max_prompt_tokens 一致）")
 	output := fs.String("output", "", "新建输出目录（必须不存在）")
 	strictKnowledge := fs.Bool("strict-knowledge", false, "知识检索未达标时让整轮评测失败")
 	if err := fs.Parse(args); err != nil {
@@ -105,6 +112,9 @@ func run(ctx context.Context, args []string, stdout *os.File) error {
 	if *reflectionCases == "" {
 		*reflectionCases = filepath.Join(*pack, "eval", "reflection-cases.jsonl")
 	}
+	if *conversationCases == "" {
+		*conversationCases = filepath.Join(*pack, "eval", "conversation-cases.jsonl")
+	}
 
 	summary := Summary{RunID: time.Now().UTC().Format("20060102T150405Z"), Mode: *mode, StartedAt: time.Now().UTC()}
 	if err := os.Mkdir(*output, 0o700); err != nil {
@@ -122,6 +132,9 @@ func run(ctx context.Context, args []string, stdout *os.File) error {
 			return err
 		}
 		if err := runReflection(*output, *reflectionCases, *reflectionRuns, &summary); err != nil {
+			return err
+		}
+		if err := runConversation(ctx, *output, *pack, *conversationCases, *recentTurns, *promptTokens, &summary); err != nil {
 			return err
 		}
 	}
@@ -274,6 +287,51 @@ func runReflection(output, path, runsPath string, summary *Summary) error {
 	}
 	if report.HarmAlarm {
 		summary.Notes = append(summary.Notes, "反思伤害率超过 5%，建议关闭评论/私信反思或调整 critic")
+	}
+	return nil
+}
+
+// runConversation 跑会话多轮离线评测：用真实人格包装配 prompt，量追问可达性。
+//
+// 它不调模型，所以「追问解决率」只表示先行词进入了 prompt；
+// 延迟与成本保持 null，由真实模型评测单独补。
+func runConversation(ctx context.Context, output, packDir, path string, recent, promptTokens int, summary *Summary) error {
+	cases, err := conversationeval.LoadCases(path)
+	if err != nil {
+		return err
+	}
+	pack, err := persona.Load(ctx, packDir)
+	if err != nil {
+		return err
+	}
+	budget := brain.DefaultBudget()
+	if promptTokens > 0 {
+		budget.MaxPromptTokens = promptTokens
+	}
+	report, err := conversationeval.Run(ctx, cases, conversationeval.Options{
+		Pack: pack, RecentTurns: recent, Budget: budget,
+	})
+	if err != nil {
+		return err
+	}
+	summary.Conversation = &report
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(output, "conversation.json"), append(data, '\n'), 0o600); err != nil {
+		return err
+	}
+	summary.Notes = append(summary.Notes, fmt.Sprintf(
+		"会话用例 %d 条：追问解决率 %.1f%%（基线 %.1f%%），串人率 %.1f%%，token 变化 %.1f%%",
+		report.Cases, report.FollowupResolutionRate*100, report.BaselineResolutionRate*100,
+		report.CrossUserLeakRate*100, report.PromptTokenDeltaPct))
+	// 验收线：串人率必须为 0；提升不足 5 个百分点说明会话段没有价值。
+	if report.CrossUserLeakRate > 0 {
+		summary.FailureReasons = append(summary.FailureReasons, "会话评测出现串人/键冲突")
+	}
+	if report.DeltaPoints < 5 {
+		summary.FailureReasons = append(summary.FailureReasons, "会话追问提升不足 5 个百分点")
 	}
 	return nil
 }

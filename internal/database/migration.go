@@ -192,6 +192,11 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取会话状态迁移：%w", err)
 	}
 	conversationStateHash := sha256.Sum256(conversationState)
+	conversationSummaryJobs, err := migrations.Files.ReadFile("0032_conversation_summary_jobs.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取会话摘要任务迁移：%w", err)
+	}
+	conversationSummaryJobsHash := sha256.Sum256(conversationSummaryJobs)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -224,6 +229,7 @@ func migrationSteps() ([]migrationStep, error) {
 		{29, string(memoryEntities), hex.EncodeToString(memoryEntitiesHash[:])},
 		{30, string(l5Indexes), hex.EncodeToString(l5IndexesHash[:])},
 		{31, string(conversationState), hex.EncodeToString(conversationStateHash[:])},
+		{32, string(conversationSummaryJobs), hex.EncodeToString(conversationSummaryJobsHash[:])},
 	}, nil
 }
 

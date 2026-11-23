@@ -27,6 +27,8 @@ const (
 	PurposeViewerSummary Purpose = "viewer_summary"
 	// PurposeDailySummary 是每日总结（日报生成）。
 	PurposeDailySummary Purpose = "daily_summary"
+	// PurposeConversationSummary 是会话滚动摘要。
+	PurposeConversationSummary Purpose = "conversation_summary"
 	// PurposeEmbedIndex 是写索引的批量向量化。
 	PurposeEmbedIndex Purpose = "embed_index"
 	// PurposeEmbedQuery 是查询时的单条向量化。
@@ -38,16 +40,17 @@ const (
 
 // knownPurposes 是账本接受的用途集合。
 var knownPurposes = map[Purpose]bool{
-	PurposeReply:         true,
-	PurposeReact:         true,
-	PurposeVision:        true,
-	PurposeMemoryExtract: true,
-	PurposeMemeLearn:     true,
-	PurposeViewerSummary: true,
-	PurposeDailySummary:  true,
-	PurposeEmbedIndex:    true,
-	PurposeEmbedQuery:    true,
-	PurposeUnknown:       true,
+	PurposeReply:               true,
+	PurposeReact:               true,
+	PurposeVision:              true,
+	PurposeMemoryExtract:       true,
+	PurposeMemeLearn:           true,
+	PurposeViewerSummary:       true,
+	PurposeDailySummary:        true,
+	PurposeConversationSummary: true,
+	PurposeEmbedIndex:          true,
+	PurposeEmbedQuery:          true,
+	PurposeUnknown:             true,
 }
 
 // ChannelBound 判断该用途是否必须归属某个对话通道。

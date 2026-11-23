@@ -179,6 +179,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, shutdown 
 	// 记忆提炼是增强能力：初始化失败只记日志并降级，不阻塞采集/消费主链路。
 	stopMemory := startMemoryExtractor(ctx, cfg, resources.DB, knowledgeRuntime, logger)
 	defer stopMemory()
+	// 会话滚动摘要（C5）：默认关闭；关闭时不装配、不建 goroutine。
+	stopConversationSummary := startConversationSummary(ctx, cfg, resources.DB, logger)
+	defer stopConversationSummary()
 	stopEmbeddingRefresh := startKnowledgeEmbeddingRefresh(ctx, cfg, knowledgeRuntime, logger)
 	defer stopEmbeddingRefresh()
 	// 记忆/档案向量：同一套增量语义，节奏独立（默认 5 分钟）。

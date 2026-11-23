@@ -11,6 +11,7 @@ import (
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/infra"
+	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/trace"
 	"RaiseMyFish/internal/web"
 	"go.uber.org/zap"
@@ -27,6 +28,18 @@ func memoryRepoFrom(resources *infra.Resources) web.MemoryWriter {
 		return nil
 	}
 	return repo
+}
+
+// conversationStatsRepo 装配会话观测（C8）；装配失败只返回 nil，面板接口降级为 503。
+func conversationStatsRepo(resources *infra.Resources) store.ConversationStatsRepo {
+	if resources == nil || resources.DB == nil {
+		return nil
+	}
+	stats, err := database.NewStats(resources.DB)
+	if err != nil {
+		return nil
+	}
+	return stats
 }
 
 func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Resources, runtime knowledgeAssembly, accounts *account.Service, control web.RuntimeController, viewerSummary web.ViewerSummaryControl, diaryGen web.DiaryGenerator, logs web.LogSource, tracer *trace.Local, shutdown func(), log *zap.Logger) func() {
@@ -50,7 +63,7 @@ func startWebPanel(ctx context.Context, cfg config.Config, resources *infra.Reso
 		}
 	}
 	srv, err := web.New(web.Options{Addr: cfg.Web.Addr, Repo: repo, Injections: repo, Diary: repo, DiaryGenerator: diaryGen, Log: log, KnowledgeInfo: knowledgeInfo, Accounts: accounts, Control: control, ViewerSummary: viewerSummary, Logs: logs, Shutdown: shutdown,
-		MemoryWriter: memoryRepoFrom(resources), Trace: tracer})
+		MemoryWriter: memoryRepoFrom(resources), Trace: tracer, Conversations: conversationStatsRepo(resources)})
 	if err != nil {
 		log.Warn("面板未启动：参数不合法", zap.String("action", "web_setup"), zap.Error(err))
 		return func() {}

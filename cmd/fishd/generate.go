@@ -16,6 +16,7 @@ import (
 
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/config"
+	"RaiseMyFish/internal/conversation"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
 	"RaiseMyFish/internal/presence"
@@ -155,8 +156,10 @@ type generateDeps struct {
 	usageRepo       store.MemoryUsageRepo
 	conversation    store.ConversationRepo
 	conversationCfg config.Conversation
-	tracer          *trace.Local
-	log             *zap.Logger
+	// liveWindow 是直播 30 秒短窗口（C3）；nil 表示关闭。
+	liveWindow *conversation.Window
+	tracer     *trace.Local
+	log        *zap.Logger
 }
 
 // markGenerated 记录模型/ReAct 产出最终正文的时间；计时失败不能阻塞回复。
@@ -214,7 +217,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		buildCtx, buildSpan := trace.Start(prepCtx, "context.build", trace.A("channel", string(ev.Channel)))
 		input, decision := buildPassiveInput(prepCtx, deps.context, ev)
 		// C4：会话摘要 + 最近轮次；默认关闭，关闭时 input.Conversation 为 nil。
-		input.Conversation = conversationInput(prepCtx, deps.conversation, deps.conversationCfg, ev, deps.log)
+		input.Conversation = conversationInput(prepCtx, deps.conversation, deps.conversationCfg, deps.liveWindow, ev, deps.log)
 		trace.Add(buildCtx, trace.A("need_memory", decision.NeedMemory), trace.A("need_knowledge", decision.NeedKnowledge), trace.A("reason", decision.Reason))
 		trace.End(buildSpan, nil)
 		// 评论附图：下载 + 视觉转述后注入 Visual；失败只降级为无图，不阻塞回复。
@@ -324,6 +327,8 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		}
 		// 发送走通道：注册表优先，取不到回落直连 sender（行为与改造前一致）
 		touchConversation(ctx, deps.conversation, deps.conversationCfg, ev, deps.log)
+		// C3：直播短窗口只在内存留 30 秒，不落库。
+		rememberLiveWindow(deps.liveWindow, ev)
 		disp, ok := deps.channels.resolve(ev.Channel, deps.sender)
 		if !ok {
 			deps.log.Error("找不到可用的发送通道", zap.String("action", "channel_missing"), zap.String("channel", string(ev.Channel)))

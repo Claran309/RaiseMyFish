@@ -673,7 +673,7 @@ func TestOverviewPageBlocks(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, readReq("/"))
 	body := rec.Body.String()
-	for _, want := range []string{"运行状态", "数据统计", "向量入库", "最近动态", "最近错误", "/api/errors", "最近事件"} {
+	for _, want := range []string{"运行状态", "数据统计", "向量入库", "会话状态", "最近动态", "最近错误", "/api/errors", "最近事件"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("概览页缺少 %q", want)
 		}
@@ -682,6 +682,16 @@ func TestOverviewPageBlocks(t *testing.T) {
 	for _, want := range []string{"function latencyCards", "'p50 '", "近24h无样本", "延迟(fresh)", "样本不足", "function deadTopCard", "死信 Top5", "function replyCostCard", "单条回复成本", "function loadTraces", "慢回复 Trace", "function poolCard", "等待 "} {
 		if !strings.Contains(body, want) {
 			t.Errorf("概览页缺少延迟/连接池渲染 %q", want)
+		}
+	}
+	// C8：会话观测必须有渲染函数、空态与六个指标名，纯前端无编译期保护。
+	for _, want := range []string{
+		"function loadConversations", "/api/conversations?hours=24", "id=\"conv-cards\"",
+		"会话命中", "会话开销", "重复回复", "无样本显示 —",
+		"prompt_token_delta_pct", "p95_latency_delta_ms", "repetition_rate",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("概览页缺少会话观测渲染 %q", want)
 		}
 	}
 

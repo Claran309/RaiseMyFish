@@ -20,6 +20,7 @@ import (
 	"RaiseMyFish/internal/account"
 	"RaiseMyFish/internal/brain"
 	"RaiseMyFish/internal/config"
+	"RaiseMyFish/internal/conversation"
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/gift"
@@ -128,6 +129,7 @@ type consumeOptions struct {
 	usageRepo       store.MemoryUsageRepo
 	conversation    store.ConversationRepo
 	conversationCfg config.Conversation
+	liveWindow      *conversation.Window
 	tracer          *trace.Local
 }
 
@@ -174,6 +176,11 @@ func withMemoryUsage(repo store.MemoryUsageRepo) consumeOption {
 // withConversation 注入会话状态仓储与开关；nil 表示不启用。
 func withConversation(repo store.ConversationRepo, cfg config.Conversation) consumeOption {
 	return func(o *consumeOptions) { o.conversation, o.conversationCfg = repo, cfg }
+}
+
+// withLiveWindow 注入直播 30 秒短窗口（C3）；nil 表示关闭。
+func withLiveWindow(window *conversation.Window) consumeOption {
+	return func(o *consumeOptions) { o.liveWindow = window }
 }
 
 // withTracer 注入本地 trace；nil 表示不记录。
@@ -226,6 +233,7 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 		usageRepo:       extra.usageRepo,
 		conversation:    extra.conversation,
 		conversationCfg: extra.conversationCfg,
+		liveWindow:      extra.liveWindow,
 		tracer:          extra.tracer,
 		log:             log,
 	})
@@ -637,7 +645,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo), withErrorRepo(errorRepo), withTracer(tracer), withMemoryUsage(memoryUsageRepo), withConversation(conversationRepo, cfg.Conversation))
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo), withErrorRepo(errorRepo), withTracer(tracer), withMemoryUsage(memoryUsageRepo), withConversation(conversationRepo, cfg.Conversation), withLiveWindow(liveWindowFrom(cfg.Conversation)))
 	if err != nil {
 		return nil, nil, nil, err
 	}

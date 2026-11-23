@@ -30,7 +30,45 @@ live_window_seconds = 0
 recent_turns = 8
 summary_max_runes = 300
 ttl_hours = 168
+summary_enabled = false      # C5 滚动摘要；关闭时不建 goroutine
+summary_every_turns = 12     # 每累计多少轮触发
+summary_idle_seconds = 300   # 或空闲多久触发（0=关闭空闲触发）
+summary_interval_seconds = 60
+summary_timeout_seconds = 20
+summary_max_attempts = 3
+summary_context_turns = 12
 ```
+
+`live_window_seconds > 0` 时才创建直播短窗口；它只在内存保留最近 3 条、
+30 秒过期，不写 `conversation_state`、不生成摘要（C3）。
+
+## 3.1 滚动摘要 worker（C5）
+
+- 任务表 `conversation_summary_jobs`：每会话一行，`pending/running/done/failed`，
+  租约 `lease_owner/lease_until`，失败回队重试（上限 `summary_max_attempts`）。
+- 触发条件：自上次摘要以来新增轮数 ≥ `summary_every_turns`，或会话空闲 ≥ `summary_idle_seconds`。
+- 幂等：入队按 `(conversation_id, summarized_event_id)` 去重；写回时
+  `summary_turn_count = GREATEST(...)`，同一批轮次重复投递不会生成两份摘要。
+- 失败保留旧摘要：只有模型成功且正文非空才覆盖 `summary`；失败只记 `last_error`。
+- 摘要只写 `conversation_state.summary`，不投影到公开知识库。
+- 只处理「注入也开启」的通道（`dm_enabled` / `comment_enabled`），
+  避免为用不上的通道付模型费用。
+
+## 3.2 会话观测（C8）
+
+`GET /api/conversations?hours=24` 与面板「会话状态」区块给出：
+
+| 指标 | 口径 |
+|---|---|
+| `hit_rate` | 窗口内入向事件里带 `conversation_id` 的比例 |
+| `turns_avg` | 未过期会话的平均轮数 |
+| `summary_age_seconds` | 未过期且有摘要的会话，摘要平均年龄 |
+| `prompt_token_delta_pct` | 有会话 vs 无会话回复的平均输入 token 差；无基线为 `null` |
+| `p95_latency_delta_ms` | 有会话 vs 无会话的用户侧 P95 延迟差；无基线为 `null` |
+| `repetition_rate` | 同会话相邻两条出向正文完全一致的比例 |
+
+「无样本」一律给 `null` 而不是 `0`：`0` 表示「对照后没有变化」，
+两者在灰度判断里含义完全不同。
 
 ## 4. 装配与预算
 

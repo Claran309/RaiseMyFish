@@ -87,6 +87,8 @@ type Options struct {
 	Token string
 	// Trace 可选：本地 per-event trace 查询；nil 时 trace 接口返回 503。
 	Trace *trace.Local
+	// Conversations 可选：会话观测聚合；nil 时 /api/conversations 返回 503。
+	Conversations store.ConversationStatsRepo
 }
 
 // Server 是面板本体。
@@ -112,6 +114,8 @@ type Server struct {
 	// memoryWriter 是面板手动新增记忆的写入口（区别于只读 WebRepo）。
 	memoryWriter MemoryWriter
 	trace        *trace.Local
+	// conversations 是会话观测聚合（C8）；nil 表示未装配。
+	conversations store.ConversationStatsRepo
 }
 
 // New 校验地址与依赖；非回环地址直接拒绝。
@@ -148,8 +152,9 @@ func New(o Options) (*Server, error) {
 		addr: addr, repo: o.Repo, log: o.Log, now: now,
 		knowledgeInfo: o.KnowledgeInfo, accounts: o.Accounts, control: o.Control, viewerSummary: o.ViewerSummary, logs: o.Logs,
 		shutdown: o.Shutdown, memoryWriter: o.MemoryWriter,
-		trace:      o.Trace,
-		injections: o.Injections, diary: o.Diary, diaryGen: o.DiaryGenerator,
+		trace:         o.Trace,
+		conversations: o.Conversations,
+		injections:    o.Injections, diary: o.Diary, diaryGen: o.DiaryGenerator,
 		token: token, port: port,
 	}, nil
 }
@@ -192,6 +197,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/token", s.guard(s.handleToken))
 	mux.HandleFunc("/api/status", s.guard(s.handleStatus))
 	mux.HandleFunc("/api/embedding/status", s.guard(s.handleEmbeddingStatus))
+	mux.HandleFunc("/api/conversations", s.guard(s.handleConversations))
 	mux.HandleFunc("/api/inject", s.guard(s.handleInject))
 	mux.HandleFunc("/api/shutdown", s.guard(s.handleShutdown))
 	mux.HandleFunc("/api/inject/", s.guard(s.handleInjectItem))
@@ -438,6 +444,94 @@ func embeddingSectionJSON(s store.WebEmbeddingSection) map[string]any {
 		"last_updated": last,
 		"revision":     s.Revision,
 	}
+}
+
+// handleConversations 返回会话状态观测（C8）。
+//
+// 口径与 database.Stats 一致：窗口默认最近 24 小时，可用 ?hours= 覆盖（1..168）。
+func (s *Server) handleConversations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "只支持 GET")
+		return
+	}
+	if s.conversations == nil {
+		writeError(w, http.StatusServiceUnavailable, "会话观测未启用")
+		return
+	}
+	hours := 24
+	if raw := strings.TrimSpace(r.URL.Query().Get("hours")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 168 {
+			writeError(w, http.StatusBadRequest, "hours 需在1至168")
+			return
+		}
+		hours = value
+	}
+	now := s.now()
+	to := now
+	from := to.Add(-time.Duration(hours) * time.Hour)
+	stats, err := s.conversations.ConversationStats(r.Context(), from, to, now)
+	if err != nil {
+		s.fail(w, "读取会话观测失败", err)
+		return
+	}
+	channels := make([]map[string]any, 0, len(stats.Channels))
+	for _, item := range stats.Channels {
+		row := map[string]any{
+			"channel":             item.Channel,
+			"active":              item.Active,
+			"expired":             item.Expired,
+			"with_summary":        item.WithSummary,
+			"summary_coverage":    round3(item.SummaryCoverage),
+			"turns_avg":           round3(item.TurnsAvg),
+			"summary_age_seconds": round1(item.SummaryAgeSeconds),
+			"events":              item.Events,
+			"with_conversation":   item.WithConversation,
+			"hit_rate":            round3(item.HitRate),
+			"conv_input_tokens":   round1(item.ConvInputTokens),
+			"plain_input_tokens":  round1(item.PlainInputTokens),
+			"token_samples":       item.TokenSamples,
+			"conv_p95_ms":         round1(item.ConvP95MS),
+			"plain_p95_ms":        round1(item.PlainP95MS),
+			"out_events":          item.OutEvents,
+			"repeated_out":        item.RepeatedOut,
+			"repetition_rate":     round3(item.RepetitionRate),
+		}
+		// 无基线时保持 null：页面显示「无对照样本」，而不是 0。
+		if item.PromptTokenDeltaPct != nil {
+			row["prompt_token_delta_pct"] = round1(*item.PromptTokenDeltaPct)
+		} else {
+			row["prompt_token_delta_pct"] = nil
+		}
+		if item.P95LatencyDeltaMS != nil {
+			row["p95_latency_delta_ms"] = round1(*item.P95LatencyDeltaMS)
+		} else {
+			row["p95_latency_delta_ms"] = nil
+		}
+		channels = append(channels, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"from":         stats.From.UTC().Format(time.RFC3339),
+		"to":           stats.To.UTC().Format(time.RFC3339),
+		"hours":        hours,
+		"channels":     channels,
+		"generated_at": stats.GeneratedAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// round1 / round3 只做展示精度收敛，不改变存储口径。
+func round1(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return math.Round(v*10) / 10
+}
+
+func round3(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return math.Round(v*1000) / 1000
 }
 
 // handleMemory 列出记忆。
