@@ -15,6 +15,7 @@
 - L1 死信止血：`event_errors` 分类落库、dead Top 分布、`fishctl dlq list/replay`、comment/dm 独立回复窗口
 - B1-D 原生工具接线：真实 HTTP mock 端到端与 `auto` 不支持降级测试通过（默认仍 `off`）
 - B2 per-event trace：本地零依赖 trace（collect/schedule/generate/tool.call/deliver），面板慢回复入口与 `/api/traces`
+- B3 评测入口：`make eval` 统一人格 fixture/坏回复/检索报告，CI eval job 与 nightly（无密钥明确 skip）
 
 ### Changed
 - 仓库卫生：根目录临时文件归档到本地 `tmp/`；`AGENTS.md`、`CLAUDE.md`、协作表、内部报告与 prompts 改为本地保留，不再上传

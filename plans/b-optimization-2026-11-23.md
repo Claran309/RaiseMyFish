@@ -332,10 +332,18 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 `cmd/eval/main.go`、`internal/personaeval/fixture_generator.go`（test only）、`Makefile`、`.github/workflows/ci.yml`、`.github/workflows/eval-nightly.yml`、`docs/eval/*`。
 
 #### 验收
-- [ ] `make eval` 一条命令出报告
-- [ ] 报告能对比「改 prompt 前/后」
-- [ ] CI 有 eval 记录/artifact（mock 绿、真实模型 nightly 可选）
-- [ ] 坏回复清单每条都有对应用例 ID
+- [x] `make eval` 一条命令出报告（`cmd/eval` → `summary.json`/`summary.md` + 子报告）
+- [x] 报告能对比「改 prompt 前/后」（每次独立目录，指标字段稳定可 diff）
+- [x] CI 有 eval 记录/artifact（push CI 跑 fixture；nightly 缺 secrets 明确 skip）
+- [x] 坏回复清单每条都有对应用例 ID（`docs/eval/bad-replies.jsonl`，8/8 检出）
+
+#### B3 执行记录（2026-11-23）
+
+- 新增 `cmd/eval`：人格 fixture 回放（`personaeval.FixtureGenerator`）+ 坏回复检测 + 知识检索离线评测，输出 `summary.json`/`summary.md` 与子目录报告。
+- `make eval` 输出到 `dist/eval/<UTC时间>`；`ci.yml` 增加 eval job 并上传 artifact。
+- `eval-nightly.yml` 只在配置 `FISH_LLM_KEY` 时跑真实模型；缺 secrets 明确 skip，不伪装通过。
+- 知识检索仍是已知 K0-7 未达标项：默认只写 `notes` 基线说明，`--strict-knowledge` 才让整轮失败。
+- 验证：`go test ./cmd/eval/... ./internal/personaeval/...`；`go run ./cmd/eval` 实际跑通 35/35 人格 fixture、8/8 坏回复。
 
 #### 风险
 - 人格评测现有实现强依赖真实 Provider；加 mock 生成器时不能改变真实评分口径。

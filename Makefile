@@ -10,7 +10,7 @@ VERSION ?= dev
 LDFLAGS := -X main.version=$(VERSION)
 COMPOSE := docker compose -f deployment/docker-compose.yml
 
-.PHONY: help build release run test test-race lint fmt vet migrate-up migrate-down dev-status clean docker-up docker-down docker-logs docker-migrate
+.PHONY: help build release run test test-race eval lint fmt vet migrate-up migrate-down dev-status clean docker-up docker-down docker-logs docker-migrate
 
 help: ## 显示所有命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -30,6 +30,9 @@ test: ## 跑全部测试
 
 test-race: ## 带竞态检测的测试（CI 用）
 	go test -timeout 20m -race ./...
+
+eval: ## 离线评测：人格 fixture + 坏回复检测 + 知识检索（不调真实模型）
+	go run ./cmd/eval --output dist/eval/$(shell date -u +%Y%m%dT%H%M%SZ)
 
 lint: ## golangci-lint
 	golangci-lint run ./...

@@ -1,0 +1,55 @@
+name: Eval Nightly
+
+# 真实模型评测只在手动触发且配置了 secrets 时运行；缺 secrets 明确 skip，不伪装成绿。
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "最多跑多少条人格用例（控制费用）"
+        required: false
+        default: "10"
+
+env:
+  GO_VERSION: "1.27"
+
+jobs:
+  persona-real-model:
+    name: 真实模型人格评测（可选）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: 检查 secrets
+        id: gate
+        env:
+          LLM_KEY: ${{ secrets.FISH_LLM_KEY }}
+        run: |
+          if [ -z "$LLM_KEY" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "未配置 FISH_LLM_KEY：跳过真实模型评测（不是通过）"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: 运行真实模型评测
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          FISH_LLM_KEY: ${{ secrets.FISH_LLM_KEY }}
+          FISH_LLM_BASE_URL: ${{ secrets.FISH_LLM_BASE_URL }}
+          FISH_LLM_MODEL: ${{ secrets.FISH_LLM_MODEL }}
+        run: |
+          mkdir -p config.local.ci
+          sed -e 's/^\[llm\]/[llm]/' config/fishd.toml > config.local.ci/fishd.toml
+          go run ./cmd/fishctl --config config.local.ci/fishd.toml persona eval \
+            --pack personas/dafeiyu \
+            --output "dist/eval-real/$(date -u +%Y%m%dT%H%M%SZ)"
+      - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: eval-real-model
+          path: dist/eval-real
+          retention-days: 30
