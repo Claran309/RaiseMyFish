@@ -9,9 +9,11 @@
 - 接口契约：event / collector / sender / brain
 - 开发计划：Phase 0–8
 - 工程配套：editorconfig、golangci-lint、CI、Makefile、环境变量模板（个人项目，不设协作流程）
+- 原生 tool calling 第一批：Provider 可选 `ToolProvider`、工具 JSON Schema、`RunNative` 循环与文本回退（默认 `native_tools=off`）
+- B1–B11 改进计划与延迟诊断 L 系列计划；延迟口径与评论/私信排查文档
 
 ### Changed
--
+- 仓库卫生：根目录临时文件归档到本地 `tmp/`；`AGENTS.md`、`CLAUDE.md`、协作表、内部报告与 prompts 改为本地保留，不再上传
 
 ### Fixed
 -
