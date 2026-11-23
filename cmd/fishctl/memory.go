@@ -34,7 +34,7 @@ const (
 	maxMemoryLimit     = 200
 )
 
-var errMemoryUsage = errors.New("用法：fishctl memory list [--limit N] | memory search --q <关键词> [--limit N] | memory stats | memory embed | memory freeze | memory unfreeze")
+var errMemoryUsage = errors.New("用法：fishctl memory list [--limit N] | memory search --q <关键词> [--limit N] | memory stats | memory embed | memory consolidate [--apply] | memory freeze | memory unfreeze")
 
 // memoryFreezeFile 是冻结状态文件位置；测试可替换，生产固定与 fishd 共用默认路径。
 var memoryFreezeFile = memory.DefaultFreezePath
@@ -53,6 +53,7 @@ type memoryCommand struct {
 	Action string
 	Limit  int
 	Query  string
+	Apply  bool
 }
 
 // memoryItem 是 JSON 输出的单条记录，只暴露 ops 需要的字段。
@@ -102,6 +103,13 @@ func runMemory(ctx context.Context, configPath, envPath string, args []string, o
 	repo, err := database.NewMemoryRepo(resources.DB)
 	if err != nil {
 		return err
+	}
+	if spec.Action == "consolidate" {
+		consolidation, err := database.NewConsolidationRepo(resources.DB)
+		if err != nil {
+			return err
+		}
+		return executeMemoryConsolidate(probe, consolidation, spec.Apply, out)
 	}
 	return executeMemory(probe, repo, spec, out)
 }
@@ -183,6 +191,22 @@ func parseMemoryArgs(args []string, stderr io.Writer) (memoryCommand, error) {
 			return memoryCommand{}, errMemoryUsage
 		}
 		return memoryCommand{Action: "embed"}, nil
+
+	case "consolidate":
+		fs := flag.NewFlagSet("memory consolidate", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		fs.Usage = func() { fmt.Fprintln(stderr, "用法：fishctl memory consolidate [--apply]（默认 dry-run）") }
+		apply := fs.Bool("apply", false, "执行计划（默认只出报告）")
+		if err := fs.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return memoryCommand{Action: "help"}, nil
+			}
+			return memoryCommand{}, errMemoryUsage
+		}
+		if fs.NArg() != 0 {
+			return memoryCommand{}, errMemoryUsage
+		}
+		return memoryCommand{Action: "consolidate", Apply: *apply}, nil
 
 	case "freeze", "unfreeze":
 		fs := flag.NewFlagSet("memory "+args[0], flag.ContinueOnError)

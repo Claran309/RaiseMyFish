@@ -291,6 +291,13 @@
 - `brain/correction.go` 的纠正写 `memory_corrections` 表，并更新对应 `memory_record` 的 `status/valid_to`；
 - 默认 `dry_run=true`，先出报告再写库。
 
+#### M6 执行记录（2026-11-23）
+
+- `internal/memory/consolidate.go`：`BuildConsolidationPlan` 纯函数（高重要度不归档、从未引用且低价值才归档、重复 fact_key 提示 supersede）；`DecayScore` 提供时间衰减排序。
+- `database.ConsolidationRepo`：`Candidates` 聚合 `memory_usage` 的引用次数/最近引用；`Apply` 只执行 archive/supersede。
+- `fishctl memory consolidate` 默认 dry-run 输出 JSON；`--apply` 才写库并回显影响行数。
+- 验证：`go test ./internal/memory/... ./cmd/fishctl/...`。
+
 ### M7 短期会话滚动摘要（P2，1–2 天）
 
 - 每 20 条事件或 N 轮生成 `session_summary`（主题/未回答问题/刚发生的纠正/关键实体）；

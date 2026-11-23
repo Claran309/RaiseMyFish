@@ -22,6 +22,7 @@
 - R2/R3 评论/私信反思开关与归因：可解释触发、50 条对照集、`reflection.json`（未录制明确 skip）
 - M3 记忆写入质量闸门：偏好需稳定信号，低价值主人相关/玩笑/复读不写正式表
 - M5 记忆使用归因：`memory_usage` + `reply_meta.memory_ids`（只 ID，不复制正文）
+- M6 记忆巩固/遗忘 dry-run：归档建议、重复 fact_key 提示、时间衰减分
 
 ### Changed
 - 仓库卫生：根目录临时文件归档到本地 `tmp/`；`AGENTS.md`、`CLAUDE.md`、协作表、内部报告与 prompts 改为本地保留，不再上传
