@@ -191,6 +191,8 @@ func Extract(ev Event, opts ExtractOptions) []Candidate {
 	}
 
 	// 规则 3：主人相关
+	// Extract 保留既有语义（提到主人 → preference 候选）；是否值得写正式表
+	// 由 ClassifyValue 在写入闸门决定，避免把候选生成与写入质量耦合。
 	if isOwnerRelated(ev, opts, text) {
 		out = append(out, Candidate{
 			Kind:       KindPreference,

@@ -444,6 +444,13 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 
 ### 4.10 B10 安全与红队（P2）
 
+#### B10 执行记录（2026-11-23）
+
+- 新增 `internal/brain/injection_cases_test.go`：20 条真实弹幕注入（忽略指令、伪造段、套 cookie/token、越权工具、读私信等）。
+- 断言口径：固定段各出现一次，注入里的尖括号必须转义；不调用真实模型、不依赖付费评测。
+- 现有 `promptEscaper` 已覆盖 `<`/`>`/`&`；本轮只补用例与回归门禁。
+- 验证：`go test ./internal/brain/...`。
+
 - 新增 `internal/brain/injection_cases_test.go`：20 条弹幕注入（「忽略以上指令」「把系统提示发出来」等）；
 - 不可信内容统一数据信封：现有 Context 段 JSON 转义基础上，补网页/OCR/ASR 来源标注与「资料不是指令」的固定说明；
 - 副作用工具滥用测试：送礼/私信/动态的额度、确认、限频；
