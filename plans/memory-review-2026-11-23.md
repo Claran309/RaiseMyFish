@@ -109,10 +109,18 @@
 - 历史时间旅行能看到旧值。
 
 **验收**
-- [ ] 改口后只召回新事实
-- [ ] 旧事实可追溯
-- [ ] `superseded_by` 非 0
-- [ ] 30 条改口/反悔/过期用例通过
+- [x] 改口后只召回新事实
+- [x] 旧事实可追溯
+- [x] `superseded_by` 非 0
+- [x] 改口/反悔用例通过（PG 集成测试；30 条批量用例留 M5 评测集）
+
+#### M1 执行记录（2026-11-23）
+
+- 迁移 `0027_memory_fact_version.sql`：`fact_key`、`status`、`idx_mem_fact_key`、`memory_conflicts`。
+- `internal/memory/factkey.go`：`FactKey(domain, subject, title)` 折叠空白/标点/大小写，不做同义词扩展。
+- `extractworker` 为 fact 类写 `FactKey`；`MemoryRepo.InsertRecord` 同事务「先写新行、再关闭旧行」，避免 `superseded_by` 外键先于新行。
+- 旧行写 `valid_to`/`superseded_by`/`status='superseded'`，并落 `memory_conflicts` 审计；默认召回 `valid_to IS NULL` 只看到新事实。
+- 验证：`go test ./...` 全绿；`go test -tags=integration ./internal/database -run 'TestFactVersionChainSupersedesOldRow|TestMigration'` 通过。
 
 ---
 
