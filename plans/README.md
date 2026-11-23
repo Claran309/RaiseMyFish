@@ -1,8 +1,8 @@
 # 开发计划总览
 
 > 当前唯一可开工：**Phase 0**。其余阶段未到，不得提前实现。
-> 开工/恢复同时读 [协作裁决与看板](coordination.md)；Codex 首席开发、DSH 独立验收与会话辅助、WorkBuddy 轻量开发，各自回执见 `reports/`。
-> **分工与文件所有权见 `assignment.md`**（Codex / WorkBuddy / DSH flash / 本鱼），开工前先读它。
+> 开工/恢复时读本机协作文件 `plans/coordination.md` 与 `plans/assignment.md`（仅本地保留，不入库）；Codex 首席开发、DSH 独立验收与会话辅助、WorkBuddy 轻量开发。
+> **分工与文件所有权见本机 `plans/assignment.md`**（Codex / WorkBuddy / DSH flash / 本鱼），开工前先读它。
 > **Super-agent 对齐见 [superagent-alignment.md](superagent-alignment.md)**：养鱼是 super-agent 的单主体实例，当前是事件驱动单会话形态；按对齐表逐阶段演进，不在 P0 堆双层架构。
 > **2026-11-23 改进清单（B1–B11）见 [b-optimization-2026-11-23.md](b-optimization-2026-11-23.md)**：独立改进工作包，不改变既有 Phase 状态与技术栈；按 P0→P1→P2 分批派发。
 > **2026-11-23 延迟诊断补充清单（L 系列）见 [latency-optimization-2026-11-23.md](latency-optimization-2026-11-23.md)**：先修延迟口径与评论 dead，再谈轮询/排队优化；与 B2 trace 合并实现。

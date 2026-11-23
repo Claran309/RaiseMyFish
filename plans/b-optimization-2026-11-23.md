@@ -83,7 +83,7 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 | **B8** 检索评测与 rerank | 先用 100 条 knowledgeeval 做 baseline；BM25/tsvector + RRF、rerank 实验；提升 < 3 点就明确不采用 | `internal/knowledgeeval` + `cmd/knowledgeeval` 已有 100 条离线评测；检索实现为关键词档位 + 余弦混合，**没有 BM25/tsvector/RRF/rerank** | **评测已有，实验未做** |
 | **B9** Prompt 缓存与成本 | 稳定前缀放最前；记录 cached tokens；面板 `cost_per_reply`；前后对比 | Provider 已解析 `prompt_tokens_details.cached_tokens` 并写入 `llm_usage.cached_in_tokens`；`internal/web/static/index.html` 有「已知费用(¥)」卡片；**没有单条回复成本/缓存命中率面板**，也没有 A/B 对比 | **部分具备** |
 | **B10** 安全与红队 | 20 条弹幕注入用例；不可信内容统一数据信封；副作用工具滥用测试；输出过滤与审计 | 已有 Context 段转义、私有 Scope 校验、副作用工具限频；**没有系统化 20 条注入用例**，也没有红队报告 | **部分具备，缺用例与报告** |
-| **B11** 仓库清理 | 删除根目录 `in1.txt/out1.txt/la_result.txt` 等；归档 `config.local.eval-*`；`.gitignore` 覆盖 logs/data/dist；根目录只留源码/文档/构建文件 | `.gitignore` 已覆盖 logs/data/dist/`tmp_*`；但根目录仍有约 **421 个 `tmp*` 文件**、多个 `in*.txt/out*.txt/la*.txt/result.txt`、6 个 `config.local.eval-*`、`tmp-web.exe` 等 | **未清理** |
+| **B11** 仓库清理 | 删除根目录 `in1.txt/out1.txt/la_result.txt` 等；归档 `config.local.eval-*`；`.gitignore` 覆盖 logs/data/dist；根目录只留源码/文档/构建文件 | `.gitignore` 已覆盖 logs/data/dist/`tmp_*`；根目录已有约 **421 个 `tmp*` 文件**、多个 `in*.txt/out*.txt/la*.txt/result.txt`、6 个 `config.local.eval-*`、`tmp-web.exe` 等 | **已清理根目录与内部报告（2026-11-23）**；`config.local.eval-*` 仍在本地、不入库 |
 
 ### 2.1 现状盘点附注
 
