@@ -486,6 +486,13 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 
 ### 4.11 B11 仓库清理（P2，0.5 天）
 
+#### B11 执行记录（2026-11-23）
+
+- 根目录 `fishd.exe`、`fishmcp.exe`、6 个 `config.local.*`、4 个 `migrate_*.sql` 已移动到 `tmp/archive-2026-11-23-root-cleanup/`（本地忽略目录），并生成 `MANIFEST.md` 记录原路径/大小。
+- 只归档不删除；`git status` 确认无误删被跟踪文件。
+- 校验：`git ls-files` 中无 `AGENTS.md`/`CLAUDE.md`/协作表/`plans/reports/`/`prompts/`/exe/zip/临时 txt。
+- 根目录现只留源码目录、文档、工程文件与 `start-fishd.bat`。
+
 - 先跑 dry-run 生成清单：根目录 `tmp*`、`in*.txt`、`out*.txt`、`la*.txt`、`result.txt`、`missing.txt`、`replymeta.txt`、`tmp-web.exe`、`config.local.eval-*`、`tmp-fishd-test*.log`；
 - **只归档不删除**：移动到 `archive/2026-11-23-root-cleanup/`，生成 `MANIFEST.md`（原路径/大小/修改时间）；
 - 保留 `fishd.exe`/`fishmcp.exe` 等构建产物？——不，构建产物应在 `bin/` 或 `dist/`，根目录 exe 归档；
