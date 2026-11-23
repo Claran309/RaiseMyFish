@@ -46,6 +46,10 @@
 - M8 记忆运维：`fishctl memory audit`、面板来源/版本/引用次数、日报记忆健康度
 - B1 工具参数错误可观测：除日志外新增 trace `tool.args_error`，便于按 span 计数
 - B2 可选 OTLP 导出：标准库 OTLP/HTTP JSON（`/v1/traces`），不新增依赖，默认关闭
+- 真实评测工具：`fishctl persona reflect`（Reflection off/on 录制 + LLM judge）、
+  `fishctl cost cache-ab`（Prompt 缓存 A/B）
+- 真实模型结果：人格 35/35 自动安全 100%（$0.102）；Reflection 50 条 improved 42%/harmed 2%；
+  缓存两侧命中率约 98%，稳定前缀无额外收益（报告见 `docs/reports/2026-11-24-real-model-evals.md`）
 
 ### Changed
 - 仓库卫生：根目录临时文件归档到本地 `tmp/`；`AGENTS.md`、`CLAUDE.md`、协作表、内部报告与 prompts 改为本地保留，不再上传

@@ -217,6 +217,8 @@ func TestOpenAICachedTokensOnlyWhenDeclared(t *testing.T) {
 		{"零命中", `{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":0}}`, intPtr(0)},
 		{"无明细", `{"prompt_tokens":100,"completion_tokens":5}`, nil},
 		{"明细为空", `{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{}}`, nil},
+		{"DeepSeek命中", `{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":64}`, intPtr(64)},
+		{"明细优先于兜底", `{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":40},"prompt_cache_hit_tokens":64}`, intPtr(40)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

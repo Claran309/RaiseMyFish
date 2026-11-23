@@ -356,6 +356,8 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 - `eval-nightly.yml` 只在配置 `FISH_LLM_KEY` 时跑真实模型；缺 secrets 明确 skip，不伪装通过。
 - 知识检索仍是已知 K0-7 未达标项：默认只写 `notes` 基线说明，`--strict-knowledge` 才让整轮失败。
 - 验证：`go test ./cmd/eval/... ./internal/personaeval/...`；`go run ./cmd/eval` 实际跑通 35/35 人格 fixture、8/8 坏回复。
+- 真实模型补跑（2026-11-24）：35/35 完成，自动安全 35/35（100%），
+  输入 338,440 / 输出 544 tokens，费用 $0.102186；人工硬核查仍 pending。
 
 #### 风险
 - 人格评测现有实现强依赖真实 Provider；加 mock 生成器时不能改变真实评分口径。
@@ -477,7 +479,10 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 
 - 面板新增「单条回复成本」卡：近 24h 已成功回复数、每回复成本（USD/CNY）、缓存命中率。
 - `WebStatus.ReplyCost` 聚合 `send_log` 成功回复数与 `llm_usage` 的 `cost_usd`/`cached_in_tokens`/`in_tokens`；无报价时显示「未知报价」而非 0。
-- 未做 A/B 对比（需真实模型付费调用，按计划单独请示）。
+- A/B 对比（2026-11-24 真实模型）：`fishctl cost cache-ab --limit 20`，
+  stable vs 随机前缀 unstable：缓存命中 193,021 vs 199,040（两侧都约 98%），
+  费用 $0.0593 vs $0.0612。结论：DeepSeek 缓存不依赖当前前缀顺序，现有布局已充分命中，
+  不做额外重排；负结果写入 `docs/reports/2026-11-24-real-model-evals.md`。
 - 验证：`go test ./internal/web/... ./internal/database/...`。
 
 - 审核 `brain.Prepare` 的 system/user 顺序，确保稳定前缀在前（现有实现大体符合，需逐段断言）；

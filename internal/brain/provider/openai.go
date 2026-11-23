@@ -74,14 +74,16 @@ type chatUsage struct {
 	Output *int `json:"completion_tokens"`
 	// 缓存命中只有服务端明确返回时才记录，不从其它字段反推。
 	PromptDetails *chatUsageDetails `json:"prompt_tokens_details"`
+	// DeepSeek 用 prompt_cache_hit_tokens 表示命中；没有 prompt_tokens_details 时作兜底。
+	CacheHit *int `json:"prompt_cache_hit_tokens"`
 }
 
 // cached 返回服务端声明的缓存命中 token；没有该字段时保持 nil（unknown）。
 func (u chatUsage) cached() *int {
-	if u.PromptDetails == nil {
-		return nil
+	if u.PromptDetails != nil && u.PromptDetails.Cached != nil {
+		return u.PromptDetails.Cached
 	}
-	return u.PromptDetails.Cached
+	return u.CacheHit
 }
 
 type chatResponse struct {

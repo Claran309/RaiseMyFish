@@ -162,6 +162,14 @@
 > 真实模型录制（Reflect=off/on 对照 50 条）需要 `FISH_LLM_KEY` 与费用授权；
 > 未录制时报告明确 `judge_pending=true`，不把「未评估」当 0 分。
 
+#### 真实录制结果（2026-11-24）
+
+- 工具：`fishctl persona reflect`（ReAct off/on 各一次，LLM judge 判定）。
+- 50 条：changed **94%**、improved **21/50（42%）**、harmed **1/50（2%）**、neutral 28。
+- 延迟 +613 ms/条；输入 token +9,512/条；未触发 5% 伤害告警。
+- 结论：反思能改写，但“变好”不到一半、且有 2% 变坏；维持「按通道/长度/工具显式开启」，
+  不默认全量。详细数据见 `docs/reports/2026-11-24-real-model-evals.md`。
+
 ---
 
 ### R7 统一 Reflection 评测协议（可选，1–2 天）

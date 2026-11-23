@@ -47,6 +47,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if len(action) >= 2 && action[0] == "persona" && action[1] == "eval" {
 		return runPersonaEval(ctx, *path, *envPath, action[2:], stdout, stderr)
 	}
+	if len(action) >= 2 && action[0] == "persona" && action[1] == "reflect" {
+		return runPersonaReflect(ctx, *path, *envPath, action[2:], stdout, stderr)
+	}
+	if len(action) >= 2 && action[0] == "cost" && action[1] == "cache-ab" {
+		return runCost(ctx, *path, *envPath, action[1:], stdout, stderr)
+	}
 	if len(action) >= 1 && action[0] == "memory" {
 		return runMemory(ctx, *path, *envPath, action[1:], stdout, stderr)
 	}
