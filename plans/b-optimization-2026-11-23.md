@@ -5,6 +5,8 @@
 > 编制：DSH（本鱼）。状态：**待主人确认后按批次派发/执行**。
 > 原则：先修可信度（B1/B2/B3），再做评测与记忆闭环（B4/B5），最后做叙事与清理（B6/B7/B8–B11）；每批必须有测试、可回滚、可验收。
 > 补充：延迟/死信口径见 [latency-optimization-2026-11-23.md](latency-optimization-2026-11-23.md)（L 系列）；B2 trace 与 L4.5 是同一能力，只做一套。
+> 补充：长期记忆评审见 [memory-review-2026-11-23.md](memory-review-2026-11-23.md)（M 系列）；B5 与 M6 合并，M1–M5 是 B5 的细化。
+> 补充：Reflection 改进见 [reflection-optimization-2026-11-23.md](reflection-optimization-2026-11-23.md)（R 系列）；R1/R2/R3/R7 只做本仓库，ClaranAIM R4–R6 不在范围内。
 
 ---
 

@@ -6,6 +6,8 @@
 > **Super-agent 对齐见 [superagent-alignment.md](superagent-alignment.md)**：养鱼是 super-agent 的单主体实例，当前是事件驱动单会话形态；按对齐表逐阶段演进，不在 P0 堆双层架构。
 > **2026-11-23 改进清单（B1–B11）见 [b-optimization-2026-11-23.md](b-optimization-2026-11-23.md)**：独立改进工作包，不改变既有 Phase 状态与技术栈；按 P0→P1→P2 分批派发。
 > **2026-11-23 延迟诊断补充清单（L 系列）见 [latency-optimization-2026-11-23.md](latency-optimization-2026-11-23.md)**：先修延迟口径与评论 dead，再谈轮询/排队优化；与 B2 trace 合并实现。
+> **2026-11-23 长期记忆评审（M 系列）见 [memory-review-2026-11-23.md](memory-review-2026-11-23.md)**：版本链、实体关系、写入质量、混合召回、memory usage 与评测；与 B5 合并，不重复实现。
+> **2026-11-23 Reflection 补充（R 系列）见 [reflection-optimization-2026-11-23.md](reflection-optimization-2026-11-23.md)**：只覆盖本仓库 R1/R2/R3/R7；ClaranAIM 的 R4–R6 不在本仓库。
 
 ## 阶段状态
 
