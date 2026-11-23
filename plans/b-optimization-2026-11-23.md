@@ -368,10 +368,18 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 - 报告新增 `trajectory` 段，与 B3 的 `make eval` 合并。
 
 #### 验收
-- [ ] 能对比「改工具描述/改 prompt」前后的轨迹指标
-- [ ] 有失败案例库
-- [ ] 指标进 CI 报告
-- [ ] 50 条用例可跑，缺 ReAct 的用例明确标记 skip 原因
+- [x] 能对比「改工具描述/改 prompt」前后的轨迹指标（录制轨迹 JSONL → `--trajectory-runs`，指标字段稳定）
+- [x] 有失败案例库（`personas/dafeiyu/eval/trajectory-cases.jsonl` 50 条，含 forbidden_tools 与 rationale）
+- [x] 指标进 CI 报告（`cmd/eval` 输出 `trajectory.json` 与 summary）
+- [x] 50 条用例可跑，缺 ReAct 的用例明确标记 skip 原因
+
+#### B4 执行记录（2026-11-23）
+
+- `internal/personaeval/trajectory.go`：工具序列/步数/证据覆盖 + 五项指标（选择准确率、不必要工具率、平均步数、证据覆盖、幻觉率）。
+- `Generation.Trajectory` 可选字段进入 `CaseResult`；单步 Brain 保持 nil，由评测层标 skip，不按 0 分混入分母。
+- `cmd/eval --trajectory-runs <录制轨迹>` 可离线复算指标；实测 3 条示例轨迹算出准确率 1.0、不必要工具率 0.25、平均步数 2.0。
+- 指标语义：`cases` 为总用例数（已评估+skip）；幻觉率按「用例是否踩禁用工具」计，无禁用清单不计分母。
+- 验证：`go test ./internal/personaeval/... ./cmd/eval/...`。
 
 ---
 

@@ -47,6 +47,8 @@ type Generation struct {
 	ReplyMeta       json.RawMessage
 	Attempts        []Attempt
 	Fatal           bool
+	// Trajectory 可选：ReAct 路径才有；单步 Brain 保持 nil。
+	Trajectory *Trajectory
 }
 
 // Generator 只能看到合成输入，真实CLI只构造Provider/Brain适配器。
@@ -104,6 +106,8 @@ type CaseResult struct {
 	Error                      string             `json:"error,omitempty"`
 	ReplyMeta                  json.RawMessage    `json:"reply_meta,omitempty"`
 	Attempts                   []Attempt          `json:"attempts"`
+	// Trajectory 记录工具序列/步数/证据覆盖；nil 表示本用例未走 ReAct。
+	Trajectory *Trajectory `json:"trajectory,omitempty"`
 }
 
 // Report 不把失败或未完成用例从分母删除。
@@ -149,6 +153,8 @@ type Report struct {
 	OutputTokens           *int           `json:"out_tokens"`
 	CostUSD                *float64       `json:"cost_usd"`
 	Results                []CaseResult   `json:"results"`
+	// TrajectorySummary 是轨迹指标汇总；没有轨迹用例时省略。
+	TrajectorySummary *TrajectoryReport `json:"trajectory_summary,omitempty"`
 }
 
 // Redactor 只保存非空实际敏感值，永不输出它们。
@@ -311,6 +317,7 @@ func Run(ctx context.Context, fixture Fixture, scorer *Scorer, generator Generat
 		row.DeliveredOutput = redactor.Text(generation.DeliveredOutput)
 		row.ReplyMeta = generation.ReplyMeta
 		row.Attempts = generation.Attempts
+		row.Trajectory = generation.Trajectory
 		for i := range row.Attempts {
 			a := &row.Attempts[i]
 			a.RawOutput = redactor.Text(a.RawOutput)

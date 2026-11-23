@@ -111,6 +111,7 @@ func (g *evalGenerator) Generate(ctx context.Context, in personaeval.Input) (per
 			attempts[i].CostUSD = rows[i].CostUSD
 		}
 	}
+	// 单步 Brain 不产生工具轨迹；Trajectory 保持 nil，由轨迹评测明确标 skip。
 	result := personaeval.Generation{DeliveredOutput: reply.Text, ReplyMeta: reply.Meta, Attempts: attempts}
 	if len(attempts) > 0 {
 		result.RawOutput = attempts[len(attempts)-1].RawOutput

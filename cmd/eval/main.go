@@ -20,16 +20,17 @@ import (
 
 // Summary 是一次评测的总览；字段全部可由本文件重新计算。
 type Summary struct {
-	RunID          string                      `json:"run_id"`
-	Mode           string                      `json:"mode"`
-	StartedAt      time.Time                   `json:"started_at"`
-	FinishedAt     time.Time                   `json:"finished_at"`
-	Persona        *PersonaSummary             `json:"persona,omitempty"`
-	BadReplies     *personaeval.BadReplyReport `json:"bad_replies,omitempty"`
-	Knowledge      *KnowledgeSummary           `json:"knowledge,omitempty"`
-	Passed         bool                        `json:"passed"`
-	FailureReasons []string                    `json:"failure_reasons,omitempty"`
-	Notes          []string                    `json:"notes,omitempty"`
+	RunID          string                        `json:"run_id"`
+	Mode           string                        `json:"mode"`
+	StartedAt      time.Time                     `json:"started_at"`
+	FinishedAt     time.Time                     `json:"finished_at"`
+	Persona        *PersonaSummary               `json:"persona,omitempty"`
+	BadReplies     *personaeval.BadReplyReport   `json:"bad_replies,omitempty"`
+	Knowledge      *KnowledgeSummary             `json:"knowledge,omitempty"`
+	Trajectory     *personaeval.TrajectoryReport `json:"trajectory,omitempty"`
+	Passed         bool                          `json:"passed"`
+	FailureReasons []string                      `json:"failure_reasons,omitempty"`
+	Notes          []string                      `json:"notes,omitempty"`
 }
 
 // PersonaSummary 只保留可对比指标，详细结果在子目录 report.json。
@@ -75,6 +76,8 @@ func run(ctx context.Context, args []string, stdout *os.File) error {
 	badReplies := fs.String("bad-replies", "docs/eval/bad-replies.jsonl", "坏回复用例")
 	corpus := fs.String("corpus", "personas/dafeiyu/knowledge", "知识目录")
 	knowledgeCases := fs.String("knowledge-cases", "internal/knowledgeeval/testdata/cases.jsonl", "检索用例")
+	trajectoryCases := fs.String("trajectory-cases", "", "轨迹用例；默认 <pack>/eval/trajectory-cases.jsonl")
+	trajectoryRuns := fs.String("trajectory-runs", "", "可选：录制好的轨迹 JSONL（真实 ReAct 运行）")
 	output := fs.String("output", "", "新建输出目录（必须不存在）")
 	strictKnowledge := fs.Bool("strict-knowledge", false, "知识检索未达标时让整轮评测失败")
 	if err := fs.Parse(args); err != nil {
@@ -92,6 +95,9 @@ func run(ctx context.Context, args []string, stdout *os.File) error {
 	if *baseline == "" {
 		*baseline = filepath.Join(*pack, "eval", "baseline.md")
 	}
+	if *trajectoryCases == "" {
+		*trajectoryCases = filepath.Join(*pack, "eval", "trajectory-cases.jsonl")
+	}
 
 	summary := Summary{RunID: time.Now().UTC().Format("20060102T150405Z"), Mode: *mode, StartedAt: time.Now().UTC()}
 	if err := os.Mkdir(*output, 0o700); err != nil {
@@ -103,6 +109,9 @@ func run(ctx context.Context, args []string, stdout *os.File) error {
 			return err
 		}
 		if err := runBadReplies(*output, *badReplies, &summary); err != nil {
+			return err
+		}
+		if err := runTrajectory(*output, *trajectoryCases, *trajectoryRuns, &summary); err != nil {
 			return err
 		}
 	}
@@ -182,6 +191,48 @@ func runBadReplies(output, path string, summary *Summary) error {
 	return nil
 }
 
+// runTrajectory 校验轨迹用例并记录样本情况。
+//
+// fixture 回放没有 ReAct 轨迹，因此默认全部 skip；指标只有在真实 ReAct 评测
+// 提供轨迹时才计算，绝不把「没有轨迹」当成 0 分通过率。
+func runTrajectory(output, path, runsPath string, summary *Summary) error {
+	cases, err := personaeval.LoadTrajectoryCases(path)
+	if err != nil {
+		return err
+	}
+	if err := personaeval.ValidateTrajectoryCases(cases, personaeval.TrajectoryToolNames); err != nil {
+		return err
+	}
+	var report personaeval.TrajectoryReport
+	if runsPath != "" {
+		runs, err := personaeval.LoadTrajectoryRuns(runsPath)
+		if err != nil {
+			return err
+		}
+		report = personaeval.ScoreTrajectory(cases, runs)
+	} else {
+		report = personaeval.TrajectoryReport{Cases: len(cases)}
+		for _, c := range cases {
+			report.Skipped = append(report.Skipped, c.ID+": 缺少轨迹（未走 ReAct）")
+		}
+		personaeval.SortSkipped(report.Skipped)
+	}
+	summary.Trajectory = &report
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(output, "trajectory.json"), append(data, '\n'), 0o600); err != nil {
+		return err
+	}
+	if report.Evaluated == 0 {
+		summary.Notes = append(summary.Notes, fmt.Sprintf("轨迹用例 %d 条已校验；fixture 回放无 ReAct 轨迹，全部标 skip", len(cases)))
+	} else {
+		summary.Notes = append(summary.Notes, fmt.Sprintf("轨迹用例 %d 条，已评估 %d 条，skip %d 条", len(cases), report.Evaluated, len(report.Skipped)))
+	}
+	return nil
+}
+
 func runKnowledge(ctx context.Context, output, corpus, cases string, strict bool, summary *Summary) error {
 	dir := filepath.Join(output, "knowledge")
 	report, err := knowledgeeval.RunOffline(ctx, corpus, cases, dir)
@@ -225,6 +276,11 @@ func writeSummary(output string, summary Summary) error {
 	if k := summary.Knowledge; k != nil {
 		lines = append(lines, fmt.Sprintf("- 知识检索：通过=%t，正例命中 %d，相关 %d/%d，负例误返 %d，镜像控制 %d",
 			k.Passed, k.PositiveHits, k.Relevant, k.Returned, k.NegativeFalse, k.Controls))
+	}
+	if t := summary.Trajectory; t != nil {
+		lines = append(lines, fmt.Sprintf("- 轨迹用例：%d 条，已评估 %d，skip %d；工具选择准确率 %.2f，不必要工具率 %.2f，平均步数 %.2f，证据覆盖 %.2f，幻觉率 %.2f",
+			t.Cases, t.Evaluated, len(t.Skipped), t.ToolSelectionAccuracy.Value, t.UnnecessaryToolRate.Value,
+			t.AvgSteps.Value, t.Groundedness.Value, t.HallucinationRate.Value))
 	}
 	if len(summary.FailureReasons) > 0 {
 		lines = append(lines, "", "## 未通过原因", "")

@@ -1,0 +1,50 @@
+{"id":"tr-001","channel":"live","input":"记得我上次说想吃什么吗","expected_tools":["memory_search"],"should_use_tools":true,"rationale":"跨会话偏好需要查记忆"}
+{"id":"tr-002","channel":"live","input":"刚才大家在聊啥","expected_tools":["history"],"should_use_tools":true,"rationale":"最近弹幕要查历史"}
+{"id":"tr-003","channel":"live","input":"术式公开是什么意思","expected_tools":["knowledge_search"],"should_use_tools":true,"rationale":"梗库词条查询"}
+{"id":"tr-004","channel":"live","input":"你现在什么状态","expected_tools":["presence"],"should_use_tools":true,"rationale":"主体状态查询"}
+{"id":"tr-005","channel":"live","input":"今天还剩多少送礼额度","expected_tools":["quota"],"should_use_tools":true,"rationale":"额度查询"}
+{"id":"tr-006","channel":"live","input":"现在几点了","expected_tools":["now"],"should_use_tools":true,"rationale":"时间查询"}
+{"id":"tr-007","channel":"live","input":"主播现在在玩什么游戏","expected_tools":["live_status"],"should_use_tools":true,"rationale":"直播状态"}
+{"id":"tr-008","channel":"live","input":"帮我搜一下这个梗的出处","expected_tools":["web_search"],"should_use_tools":true,"rationale":"外部检索"}
+{"id":"tr-009","channel":"live","input":"看下画面，主播在干嘛","expected_tools":["watch_live"],"should_use_tools":true,"rationale":"画面观察"}
+{"id":"tr-010","channel":"live","input":"刚才谁在刷礼物","expected_tools":["history"],"should_use_tools":true,"rationale":"最近事件历史"}
+{"id":"tr-011","channel":"comment","input":"@大肥鱼 你记得我之前说过什么吗","expected_tools":["memory_search"],"should_use_tools":true,"rationale":"评论也要查长期记忆"}
+{"id":"tr-012","channel":"comment","input":"@大肥鱼 这期视频讲了啥","expected_tools":["vision"],"should_use_tools":true,"rationale":"评论附图/视频内容识别"}
+{"id":"tr-013","channel":"dm","input":"你还记得我的偏好吗","expected_tools":["memory_search"],"should_use_tools":true,"rationale":"私信长期记忆"}
+{"id":"tr-014","channel":"dm","input":"你昨天回过我什么","expected_tools":["reply_history"],"should_use_tools":true,"rationale":"回复历史"}
+{"id":"tr-015","channel":"live","input":"认识一下这个观众","expected_tools":["viewer_search"],"should_use_tools":true,"rationale":"观众档案检索"}
+{"id":"tr-016","channel":"live","input":"刚才那个叫小明的人说过什么","expected_tools":["viewer_memory"],"should_use_tools":true,"rationale":"指定观众记忆"}
+{"id":"tr-017","channel":"live","input":"早","expected_tools":[],"forbidden_tools":["memory_search","web_search","vision"],"should_use_tools":false,"rationale":"寒暄不该调工具"}
+{"id":"tr-018","channel":"live","input":"哈哈哈哈","expected_tools":[],"forbidden_tools":["memory_search","web_search"],"should_use_tools":false,"rationale":"纯反应不查证"}
+{"id":"tr-019","channel":"live","input":"666","expected_tools":[],"should_use_tools":false,"rationale":"短梗回应"}
+{"id":"tr-020","channel":"live","input":"晚安","expected_tools":[],"should_use_tools":false,"rationale":"道别不查证"}
+{"id":"tr-021","channel":"live","input":"你还记得我吗","expected_tools":["memory_search"],"should_use_tools":true,"rationale":"认人+记忆"}
+{"id":"tr-022","channel":"live","input":"主播刚才那波操作你看到了吗","expected_tools":["watch_live"],"should_use_tools":true,"rationale":"画面+上下文"}
+{"id":"tr-023","channel":"comment","input":"@大肥鱼 这个梗你知道不","expected_tools":["knowledge_search"],"should_use_tools":true,"rationale":"评论查梗"}
+{"id":"tr-024","channel":"dm","input":"帮我查下今天还有多少额度","expected_tools":["quota"],"should_use_tools":true,"rationale":"私信额度查询"}
+{"id":"tr-025","channel":"live","input":"现在是白天还是晚上","expected_tools":["now"],"should_use_tools":true,"rationale":"时间判断"}
+{"id":"tr-026","channel":"live","input":"你上次说喜欢吃什么","expected_tools":["memory_search"],"should_use_tools":true,"rationale":"自身记忆"}
+{"id":"tr-027","channel":"live","input":"刚才有人问你生日你咋说的","expected_tools":["reply_history"],"should_use_tools":true,"rationale":"回复历史"}
+{"id":"tr-028","channel":"live","input":"这个观众是不是老熟人","expected_tools":["viewer_search"],"should_use_tools":true,"rationale":"观众档案"}
+{"id":"tr-029","channel":"live","input":"今天直播间人多吗","expected_tools":["live_status"],"should_use_tools":true,"rationale":"直播状态"}
+{"id":"tr-030","channel":"live","input":"帮我搜搜这个词什么意思","expected_tools":["web_search"],"should_use_tools":true,"rationale":"外部检索"}
+{"id":"tr-031","channel":"live","input":"刚才那条弹幕谁发的","expected_tools":["history"],"should_use_tools":true,"rationale":"最近事件"}
+{"id":"tr-032","channel":"live","input":"你还记得我们第一次聊天吗","expected_tools":["memory_search"],"should_use_tools":true,"rationale":"长期记忆"}
+{"id":"tr-033","channel":"comment","input":"@大肥鱼 你记得我吗","expected_tools":["memory_search"],"should_use_tools":true,"rationale":"评论记忆"}
+{"id":"tr-034","channel":"dm","input":"今天星期几","expected_tools":["now"],"should_use_tools":true,"rationale":"时间查询"}
+{"id":"tr-035","channel":"dm","input":"你现在在忙吗","expected_tools":["presence"],"should_use_tools":true,"rationale":"状态查询"}
+{"id":"tr-036","channel":"live","input":"主播现在在笑吗","expected_tools":["watch_live"],"should_use_tools":true,"rationale":"画面观察"}
+{"id":"tr-037","channel":"live","input":"这个表情包啥意思","expected_tools":["knowledge_search"],"should_use_tools":true,"rationale":"梗库查询"}
+{"id":"tr-038","channel":"live","input":"刚才谁送了小花花","expected_tools":["history"],"should_use_tools":true,"rationale":"礼物事件历史"}
+{"id":"tr-039","channel":"live","input":"查一下这个观众喜欢啥","expected_tools":["viewer_memory"],"should_use_tools":true,"rationale":"观众记忆"}
+{"id":"tr-040","channel":"live","input":"嗯嗯","expected_tools":[],"should_use_tools":false,"rationale":"纯应答"}
+{"id":"tr-041","channel":"live","input":"你在吗","expected_tools":[],"forbidden_tools":["web_search"],"should_use_tools":false,"rationale":"确认在线"}
+{"id":"tr-042","channel":"live","input":"好耶","expected_tools":[],"should_use_tools":false,"rationale":"情绪反应"}
+{"id":"tr-043","channel":"live","input":"笑死我了","expected_tools":[],"should_use_tools":false,"rationale":"情绪反应"}
+{"id":"tr-044","channel":"live","input":"你记得娇娇吗","expected_tools":["memory_search"],"should_use_tools":true,"rationale":"关系记忆"}
+{"id":"tr-045","channel":"live","input":"之前答应我的事还记得吗","expected_tools":["memory_search"],"should_use_tools":true,"rationale":"承诺记忆"}
+{"id":"tr-046","channel":"live","input":"看看现在直播画面","expected_tools":["watch_live"],"should_use_tools":true,"rationale":"画面观察"}
+{"id":"tr-047","channel":"live","input":"今天直播到几点","expected_tools":["live_status"],"should_use_tools":true,"rationale":"直播状态"}
+{"id":"tr-048","channel":"comment","input":"@大肥鱼 刚才你在视频里说啥了","expected_tools":["vision"],"should_use_tools":true,"rationale":"视频内容识别"}
+{"id":"tr-049","channel":"live","input":"能查下我上次送的礼物吗","expected_tools":["memory_search"],"should_use_tools":true,"rationale":"礼物记忆"}
+{"id":"tr-050","channel":"live","input":"你上次回我是什么时候","expected_tools":["reply_history"],"should_use_tools":true,"rationale":"回复历史"}
