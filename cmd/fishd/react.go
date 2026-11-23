@@ -56,6 +56,24 @@ type reactRuntime struct {
 	// embedding/Prepare）与 ReAct 工具都在父 deadline 减预留的 prepCtx 内跑，
 	// 即使 ReAct 把准备段耗光，回落单步生成仍有时间。
 	finalReserve time.Duration
+	// reflect 是 Reflection 触发策略；零值时 live 默认开启、评论/私信关闭。
+	reflect reasoning.ReflectPolicy
+}
+
+// reflectAllows 是通道级门禁：评论/私信未显式开启时不做自检。
+// 长度/工具/问答的细粒度判定在 reasoning.ReflectPolicy.ShouldReflect 中，
+// 由 Agent 收尾时按最终草稿执行；这里只挡掉「整条通道关闭」。
+func (r *reactRuntime) reflectAllows(channel event.Channel) bool {
+	switch channel {
+	case event.ChLive:
+		return true
+	case event.ChComment:
+		return r != nil && r.reflect.Comment
+	case event.ChDM:
+		return r != nil && r.reflect.DM
+	default:
+		return false
+	}
 }
 
 // shouldUseReAct 判断这条弹幕要不要走多步思考。
@@ -220,9 +238,9 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 			Question:     prepared.Question,
 			Label:        reasoningLabel(ev.Channel),
 			PromptBudget: promptLimit,
-			// 弹幕通道：先想三层再回，收尾后自检一次；评论/私信保持原协议。
+			// 弹幕通道先想三层再回；是否反思由策略按通道/长度/工具决定。
 			ThinkDeep: ev.Channel == event.ChLive,
-			Reflect:   ev.Channel == event.ChLive,
+			Reflect:   runtime.reflectAllows(ev.Channel),
 		}
 		// Prepare 只算了人格与资料段；这里补上工具协议、消息框架与最坏观察预留。
 		base := agent.Estimate(reactIn)

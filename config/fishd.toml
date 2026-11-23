@@ -232,6 +232,12 @@ native_tools = "off"
 # Reflection 预算独立于工具步数：1=允许一次自检（默认），-1=关闭。
 reflect_budget = 1
 
+# 评论/私信默认不反思；显式 true 后按长度/工具/问答规则触发。
+reflect_comment = false
+reflect_dm = false
+reflect_min_runes = 60
+reflect_on_tools = true
+
 # 评论/私信没有直播节奏约束，允许更长思考（5-10 步 / 30-60 秒）；恒走 ReAct，
 # 不受 default_react 影响。弹幕仍用上面的 3 步 / 8 秒。
 # R4 实测（近 24h llm_usage）：comment p50 1.32s / p90 1.69s，dm p50 1.36s / p90 1.70s；

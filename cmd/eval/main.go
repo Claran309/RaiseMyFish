@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"RaiseMyFish/internal/knowledgeeval"
@@ -28,6 +29,7 @@ type Summary struct {
 	BadReplies     *personaeval.BadReplyReport   `json:"bad_replies,omitempty"`
 	Knowledge      *KnowledgeSummary             `json:"knowledge,omitempty"`
 	Trajectory     *personaeval.TrajectoryReport `json:"trajectory,omitempty"`
+	Reflection     *personaeval.ReflectionReport `json:"reflection,omitempty"`
 	Passed         bool                          `json:"passed"`
 	FailureReasons []string                      `json:"failure_reasons,omitempty"`
 	Notes          []string                      `json:"notes,omitempty"`
@@ -78,6 +80,8 @@ func run(ctx context.Context, args []string, stdout *os.File) error {
 	knowledgeCases := fs.String("knowledge-cases", "internal/knowledgeeval/testdata/cases.jsonl", "检索用例")
 	trajectoryCases := fs.String("trajectory-cases", "", "轨迹用例；默认 <pack>/eval/trajectory-cases.jsonl")
 	trajectoryRuns := fs.String("trajectory-runs", "", "可选：录制好的轨迹 JSONL（真实 ReAct 运行）")
+	reflectionCases := fs.String("reflection-cases", "", "反思对照用例；默认 <pack>/eval/reflection-cases.jsonl")
+	reflectionRuns := fs.String("reflection-runs", "", "可选：录制好的反思结果 JSONL（含 verdict）")
 	output := fs.String("output", "", "新建输出目录（必须不存在）")
 	strictKnowledge := fs.Bool("strict-knowledge", false, "知识检索未达标时让整轮评测失败")
 	if err := fs.Parse(args); err != nil {
@@ -98,6 +102,9 @@ func run(ctx context.Context, args []string, stdout *os.File) error {
 	if *trajectoryCases == "" {
 		*trajectoryCases = filepath.Join(*pack, "eval", "trajectory-cases.jsonl")
 	}
+	if *reflectionCases == "" {
+		*reflectionCases = filepath.Join(*pack, "eval", "reflection-cases.jsonl")
+	}
 
 	summary := Summary{RunID: time.Now().UTC().Format("20060102T150405Z"), Mode: *mode, StartedAt: time.Now().UTC()}
 	if err := os.Mkdir(*output, 0o700); err != nil {
@@ -112,6 +119,9 @@ func run(ctx context.Context, args []string, stdout *os.File) error {
 			return err
 		}
 		if err := runTrajectory(*output, *trajectoryCases, *trajectoryRuns, &summary); err != nil {
+			return err
+		}
+		if err := runReflection(*output, *reflectionCases, *reflectionRuns, &summary); err != nil {
 			return err
 		}
 	}
@@ -233,6 +243,77 @@ func runTrajectory(output, path, runsPath string, summary *Summary) error {
 	return nil
 }
 
+// runReflection 校验 50 条对照用例；没有录制结果时全部标 skip，不假装有指标。
+func runReflection(output, path, runsPath string, summary *Summary) error {
+	cases, err := personaeval.LoadReflectionCases(path)
+	if err != nil {
+		return err
+	}
+	runs := map[string]personaeval.ReflectionRun{}
+	if runsPath != "" {
+		loaded, err := loadReflectionRuns(runsPath)
+		if err != nil {
+			return err
+		}
+		runs = loaded
+	}
+	report := personaeval.ScoreReflection(cases, runs)
+	summary.Reflection = &report
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(output, "reflection.json"), append(data, '\n'), 0o600); err != nil {
+		return err
+	}
+	if report.Evaluated == 0 {
+		summary.Notes = append(summary.Notes, fmt.Sprintf("反思用例 %d 条已校验；未提供录制结果，全部标 skip", len(cases)))
+	} else {
+		summary.Notes = append(summary.Notes, fmt.Sprintf("反思对照 %d 条，已评估 %d 条，skip %d 条，judge_pending=%t",
+			report.Cases, report.Evaluated, len(report.Skipped), report.JudgePending))
+	}
+	if report.HarmAlarm {
+		summary.Notes = append(summary.Notes, "反思伤害率超过 5%，建议关闭评论/私信反思或调整 critic")
+	}
+	return nil
+}
+
+func loadReflectionRuns(path string) (map[string]personaeval.ReflectionRun, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("读取反思录制失败：%w", err)
+	}
+	runs := map[string]personaeval.ReflectionRun{}
+	for i, line := range splitLines(string(data)) {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var run personaeval.ReflectionRun
+		if err := json.Unmarshal([]byte(line), &run); err != nil {
+			return nil, fmt.Errorf("反思录制第%d行无效：%w", i+1, err)
+		}
+		if run.CaseID == "" {
+			return nil, fmt.Errorf("反思录制第%d行缺 case_id", i+1)
+		}
+		runs[run.CaseID] = run
+	}
+	return runs, nil
+}
+
+func splitLines(text string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(text); i++ {
+		if text[i] == '\n' {
+			out = append(out, text[start:i])
+			start = i + 1
+		}
+	}
+	out = append(out, text[start:])
+	return out
+}
+
 func runKnowledge(ctx context.Context, output, corpus, cases string, strict bool, summary *Summary) error {
 	dir := filepath.Join(output, "knowledge")
 	report, err := knowledgeeval.RunOffline(ctx, corpus, cases, dir)
@@ -281,6 +362,10 @@ func writeSummary(output string, summary Summary) error {
 		lines = append(lines, fmt.Sprintf("- 轨迹用例：%d 条，已评估 %d，skip %d；工具选择准确率 %.2f，不必要工具率 %.2f，平均步数 %.2f，证据覆盖 %.2f，幻觉率 %.2f",
 			t.Cases, t.Evaluated, len(t.Skipped), t.ToolSelectionAccuracy.Value, t.UnnecessaryToolRate.Value,
 			t.AvgSteps.Value, t.Groundedness.Value, t.HallucinationRate.Value))
+	}
+	if r := summary.Reflection; r != nil {
+		lines = append(lines, fmt.Sprintf("- 反思对照：%d 条，已评估 %d，skip %d；changed %.2f，improve %.2f，harm %.2f，judge_pending=%t",
+			r.Cases, r.Evaluated, len(r.Skipped), r.ChangedRate, r.ImproveRate, r.HarmRate, r.JudgePending))
 	}
 	if len(summary.FailureReasons) > 0 {
 		lines = append(lines, "", "## 未通过原因", "")

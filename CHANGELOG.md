@@ -19,6 +19,7 @@
 - B4 轨迹级评测：50 条工具选择用例、轨迹指标与录制轨迹复算（缺轨迹明确 skip）
 - M1 记忆事实版本链：`fact_key`/`status`/`memory_conflicts`，改口时旧行失效可追溯
 - R1 Reflection 预算独立：`reflect_budget`、工具步与反思分离、跳过原因与改写归因
+- R2/R3 评论/私信反思开关与归因：可解释触发、50 条对照集、`reflection.json`（未录制明确 skip）
 
 ### Changed
 - 仓库卫生：根目录临时文件归档到本地 `tmp/`；`AGENTS.md`、`CLAUDE.md`、协作表、内部报告与 prompts 改为本地保留，不再上传

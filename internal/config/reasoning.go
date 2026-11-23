@@ -28,6 +28,13 @@ type Reasoning struct {
 	NativeTools string `toml:"native_tools"`
 	// ReflectBudget 是每条事件允许的自检次数；默认 1，-1 表示关闭。
 	ReflectBudget int `toml:"reflect_budget"`
+	// 评论/私信默认不反思；显式开启后按长度/工具/问答规则触发。
+	ReflectComment bool `toml:"reflect_comment"`
+	ReflectDM      bool `toml:"reflect_dm"`
+	// ReflectMinRunes 是触发反思的最小草稿长度（字符）。
+	ReflectMinRunes int `toml:"reflect_min_runes"`
+	// ReflectOnTools 表示本轮用过工具就触发反思。
+	ReflectOnTools bool `toml:"reflect_on_tools"`
 	// Comment/DM 是评论与私信的独立预算：两者没有直播弹幕的实时节奏约束，
 	// 允许更长思考（派发单：5-10 步 / 30-60 秒），但弹幕仍用上面的 3 步 / 8 秒。
 	Comment ReasoningChannel `toml:"comment"`
@@ -50,7 +57,8 @@ const (
 	// 原生 tool calling 默认关闭：先保留已验收的文本 ReAct，显式开启再切换。
 	defaultNativeTools = "off"
 	// Reflection 默认允许一次；显式 -1 关闭。
-	defaultReflectBudget = 1
+	defaultReflectBudget   = 1
+	defaultReflectMinRunes = 60
 )
 
 // 评论/私信允许更长思考；默认取区间中位，仍受父级 worker 超时约束。
@@ -66,14 +74,16 @@ const (
 // DefaultReasoning 返回默认 ReAct 配置。
 func DefaultReasoning() Reasoning {
 	return Reasoning{
-		Enabled:       true,
-		MaxSteps:      defaultReasoningMaxSteps,
-		TimeoutMS:     defaultReasoningTimeoutMS,
-		DefaultReact:  true,
-		NativeTools:   defaultNativeTools,
-		ReflectBudget: defaultReflectBudget,
-		Comment:       ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
-		DM:            ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
+		Enabled:         true,
+		MaxSteps:        defaultReasoningMaxSteps,
+		TimeoutMS:       defaultReasoningTimeoutMS,
+		DefaultReact:    true,
+		NativeTools:     defaultNativeTools,
+		ReflectBudget:   defaultReflectBudget,
+		ReflectMinRunes: defaultReflectMinRunes,
+		ReflectOnTools:  true,
+		Comment:         ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
+		DM:              ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
 	}
 }
 
@@ -119,6 +129,9 @@ func (r Reasoning) Validate() error {
 	}
 	if r.ReflectBudget < -1 || r.ReflectBudget > 1 {
 		return fmt.Errorf("reasoning.reflect_budget 只能是 -1/0/1")
+	}
+	if r.ReflectMinRunes < 0 || r.ReflectMinRunes > 2000 {
+		return fmt.Errorf("reasoning.reflect_min_runes 需在0至2000")
 	}
 	if err := r.Comment.validate("评论"); err != nil {
 		return err

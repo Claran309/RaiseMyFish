@@ -117,10 +117,19 @@
 - P95 延迟增加 <1.5 秒（用 mock，不测真实模型）。
 
 #### 验收
-- [ ] 评论/私信开关可控
-- [ ] 触发条件可解释
-- [ ] 50 条对照有量化结果
-- [ ] 提升 <3 个点则默认关闭，只保留开关
+- [x] 评论/私信开关可控（`reflect_comment`/`reflect_dm`，默认 false）
+- [x] 触发条件可解释（`channel_off/empty/tools/long_draft/question/short`）
+- [x] 50 条对照有量化结果（`reflection-cases.jsonl` + `reflection.json`；无录制时明确 skip）
+- [x] 提升 <3 个点则默认关闭，只保留开关（默认关闭，需显式开启并附录制结果才评价）
+
+#### R2/R3 执行记录（2026-11-23）
+
+- `internal/reasoning/reflect_policy.go`：按通道/草稿长度/工具/问句判定是否反思，返回可解释原因；评论/私信默认关闭。
+- `[reasoning] reflect_comment/reflect_dm/reflect_min_runes/reflect_on_tools` 接入生产装配；通道级门禁在 `reactRuntime.reflectAllows`。
+- `reflect_stats.go`：`ReflectStat`（called/changed/skipped/skip_reasons/prompt_bytes）与 `ReflectComparison`（improve/harm/告警）。
+- `personas/dafeiyu/eval/reflection-cases.jsonl` 50 条，覆盖该改/不该改/预算边界/安全边界；`cmd/eval` 输出 `reflection.json`。
+- 指标口径：未提供录制或 verdict 时 `judge_pending=true`，不把未评估当 0 分；`harm_rate>5%` 才告警。
+- 验证：`go test ./internal/reasoning/... ./internal/personaeval/... ./cmd/eval/... ./cmd/fishd/... ./internal/config/...`。
 
 ---
 

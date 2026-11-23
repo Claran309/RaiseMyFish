@@ -598,6 +598,10 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 			outputReserve: cfg.LLM.MaxReplyTokens,
 			// 最终正文预留与单次模型尝试同一口径：准备/工具跑完后仍有至少一次尝试的时间。
 			finalReserve: time.Duration(cfg.LLM.AttemptTimeoutMS) * time.Millisecond,
+			reflect: reasoning.ReflectPolicy{
+				Live: true, Comment: cfg.Reasoning.ReflectComment, DM: cfg.Reasoning.ReflectDM,
+				MinRunes: cfg.Reasoning.ReflectMinRunes, OnTools: cfg.Reasoning.ReflectOnTools,
+			},
 		}
 	}
 	// 评论附图识别：未开启/未配置视觉路由时不装配，评论照常回复。
