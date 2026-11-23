@@ -24,6 +24,7 @@
 - M5 记忆使用归因：`memory_usage` + `reply_meta.memory_ids`（只 ID，不复制正文）
 - M6 记忆巩固/遗忘 dry-run：归档建议、重复 fact_key 提示、时间衰减分
 - M2 记忆实体与关系：明确句式抽取、实体/关系幂等写入、1 跳邻域查询
+- M4 默认召回混合检索：普通回复先走关键词+向量，失败逐级回退
 
 ### Changed
 - 仓库卫生：根目录临时文件归档到本地 `tmp/`；`AGENTS.md`、`CLAUDE.md`、协作表、内部报告与 prompts 改为本地保留，不再上传

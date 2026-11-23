@@ -168,12 +168,31 @@ func (h *HybridSearcher) Recall(ctx context.Context, scope Scope) (Context, erro
 	return h.base.Recall(ctx, scope)
 }
 
-// RecallWithQuery 把问题文本转发给底层召回；底层不支持时退回 Recall。
+// RecallWithQuery 是默认开场召回的入口：先走混合检索（关键词+向量），
+// 语义失败/embedding 不可用时降级为关键词，绝不返回空。
+//
+// 之前这里直接转发 base，导致普通回复根本用不上语义召回（M4 缺口）。
 func (h *HybridSearcher) RecallWithQuery(ctx context.Context, scope Scope, query string) (Context, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return h.base.Recall(ctx, scope)
+	}
+	recalled, err := h.Search(ctx, SearchQuery{Scope: scope, Text: query})
+	if err == nil && !isEmptyContext(recalled) {
+		return recalled, nil
+	}
+	// 混合检索失败或零命中 → 关键词/近期上下文回退；仍失败才交给底层 Reader。
 	if reader, ok := h.base.(QueryReader); ok {
-		return reader.RecallWithQuery(ctx, scope, query)
+		if fallback, fallbackErr := reader.RecallWithQuery(ctx, scope, query); fallbackErr == nil {
+			return fallback, nil
+		}
 	}
 	return h.base.Recall(ctx, scope)
+}
+
+// isEmptyContext 判断召回是否完全没有可用内容。
+func isEmptyContext(c Context) bool {
+	return len(c.Recent) == 0 && len(c.Focus) == 0 && len(c.CrossChannel) == 0 && len(c.Records) == 0
 }
 
 // Focus 原样转发焦点轮次查询；底层不支持时返回空，不影响混合检索。

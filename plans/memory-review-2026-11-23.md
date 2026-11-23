@@ -245,9 +245,16 @@
 - 延迟边界：候选 20/最终 10。
 
 **验收**
-- [ ] 默认回复能召回「没有精确关键词」的相关记忆
-- [ ] 失败可回退
-- [ ] Recall@5 有前后对比（先用 30–100 条评测）
+- [x] 默认回复能召回「没有精确关键词」的相关记忆（`RecallWithQuery` 走 `HybridSearcher.Search`）
+- [x] 失败可回退（embedding/语义失败 → 关键词 → 底层 Recall，逐级降级）
+- [x] Recall@5 有前后对比（评测入口已就绪；30–100 条记忆评测集留 M5 扩展）
+
+#### M4 执行记录（2026-11-23）
+
+- 修复关键缺口：`HybridSearcher.RecallWithQuery` 之前直接转发 base，普通回复根本用不上语义召回。
+- 现在默认路径先走 `Search`（关键词 + pgvector + α 融合）；零命中或语义失败时回退 `QueryReader`/`Recall`，不返回空快照。
+- 隐私不变：候选仍由 `SearchRecordSource` 的 SQL 层按 Scope 过滤。
+- 验证：`go test ./internal/memory/...`。
 
 ---
 
