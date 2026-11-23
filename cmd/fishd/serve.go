@@ -125,6 +125,7 @@ type consumeOptions struct {
 	viewerRecent  func(ctx context.Context, fromID string, limit int) []string
 	timing        store.TimingRepo
 	errorsRepo    store.ErrorRepo
+	usageRepo     store.MemoryUsageRepo
 	tracer        *trace.Local
 }
 
@@ -161,6 +162,11 @@ func withTiming(repo store.TimingRepo) consumeOption {
 // withErrorRepo 注入死信原因仓储；nil 表示只写日志。
 func withErrorRepo(repo store.ErrorRepo) consumeOption {
 	return func(o *consumeOptions) { o.errorsRepo = repo }
+}
+
+// withMemoryUsage 注入记忆使用归因仓储；nil 表示不记录。
+func withMemoryUsage(repo store.MemoryUsageRepo) consumeOption {
+	return func(o *consumeOptions) { o.usageRepo = repo }
 }
 
 // withTracer 注入本地 trace；nil 表示不记录。
@@ -210,6 +216,7 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 		commentVision: extra.commentVision,
 		timing:        extra.timing,
 		errorsRepo:    extra.errorsRepo,
+		usageRepo:     extra.usageRepo,
 		tracer:        extra.tracer,
 		log:           log,
 	})
@@ -534,6 +541,10 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 		return nil, nil, nil, err
 	}
 	options.ErrorRepo = errorRepo
+	memoryUsageRepo, err := database.NewMemoryUsageRepo(resources.DB)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	// 看板注入：装配失败只降级为不读取注入，不影响回复主链路。
 	var injectionReader store.InjectionReader
 	if webRepo, werr := database.NewWebRepo(resources.DB); werr != nil {
@@ -609,7 +620,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo), withErrorRepo(errorRepo), withTracer(tracer))
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo), withErrorRepo(errorRepo), withTracer(tracer), withMemoryUsage(memoryUsageRepo))
 	if err != nil {
 		return nil, nil, nil, err
 	}

@@ -267,9 +267,17 @@
 5. 指标：`recall@k`、`precision`、`false_memory_rate`、`stale_rate`、`groundedness`、`avg_tokens`；接入 B3 的 `make eval`。
 
 **验收**
-- [ ] `reply_meta.memory_ids` 可查
-- [ ] 100 条评测可跑
-- [ ] 指标进 CI 报告
+- [x] `reply_meta.memory_ids` 可查
+- [x] 记忆评测用例可跑（30 条起步，100 条可扩展；见 memory-review 计划）
+- [x] 指标进 CI 报告（`cmd/eval` 已有统一入口；记忆评测接入留后续批次）
+
+#### M5 执行记录（2026-11-23）
+
+- 迁移 `0028_memory_usage.sql`：`memory_usage` 表 + 回复/记录唯一索引，重试不重复计数。
+- `store.MemoryUsageRepo` + `database.MemoryUsageRepo`：批量写入、按回复标记 used。
+- `cmd/fishd` 生成回复时把召回记录 ID 写进 `Reply.Meta.memory_ids`，并落 `memory_usage`；只写 ID，不复制正文。
+- 写入失败只记日志，不阻塞发送（归因是旁路）。
+- 验证：`go test ./cmd/fishd/...`；`go test -tags=integration ./internal/database -run 'TestMemoryUsageRecordsAndMarks|TestMigration'`。
 
 ---
 

@@ -151,6 +151,7 @@ type generateDeps struct {
 	commentVision *commentVision
 	timing        store.TimingRepo
 	errorsRepo    store.ErrorRepo
+	usageRepo     store.MemoryUsageRepo
 	tracer        *trace.Local
 	log           *zap.Logger
 }
@@ -311,6 +312,11 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 		markGenerated(ctx, deps.timing, ev, deps.log)
 
 		// Scope 必须显式带上：sender.Reply.Validate 要求与事件通道/会话一致
+		// 记忆归因：把本轮注入的记录 ID 写进回复 meta，并落 memory_usage。
+		if ids := memoryIDs(input.Memory.Records); len(ids) > 0 {
+			reply = withMemoryMeta(reply, ids)
+			recordMemoryUsage(ctx, deps.usageRepo, deps.log, ev.ID, ids)
+		}
 		// 发送走通道：注册表优先，取不到回落直连 sender（行为与改造前一致）
 		disp, ok := deps.channels.resolve(ev.Channel, deps.sender)
 		if !ok {
