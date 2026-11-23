@@ -132,6 +132,14 @@ func (r *WebRepo) Status(ctx context.Context) (store.WebStatus, error) {
 		}
 		st.LatencyDetail[channel] = w
 	}
+	dead, err := deadStats(ctx, r.db, now.Add(-24*time.Hour), now, 5)
+	if err != nil {
+		return store.WebStatus{}, err
+	}
+	st.DeadTop = make([]store.WebDeadStat, 0, len(dead))
+	for _, item := range dead {
+		st.DeadTop = append(st.DeadTop, store.WebDeadStat{Channel: item.Channel, Stage: item.Stage, ErrorKind: item.ErrorKind, Count: item.Count})
+	}
 	// 连接池状态直接从 database/sql 读取，不额外查库。
 	// 拿不到 DB 句柄只影响展示，不影响其它统计。
 	if sqlDB, poolErr := r.db.DB(); poolErr == nil {

@@ -221,6 +221,14 @@ function poolCard(p) {
     (p.in_use || 0) + '/' + (p.max_open || 0),
     '已建 ' + (p.open || 0) + ' · 空闲 ' + (p.idle || 0) + ' · 等待 ' + wait + ' 次', true);
 }
+function deadTopCard(items) {
+  items = items || [];
+  if (!items.length) return card('ok', '🪦', '死信 Top5', '无', '近24h没有 dead 事件', true);
+  var text = items.slice(0, 5).map(function (x) {
+    return x.channel + '/' + x.stage + '/' + x.error_kind + ' ' + x.count;
+  }).join(' · ');
+  return card('warn', '🪦', '死信 Top5', text, '按通道×环节×错误类别聚合', true);
+}
 async function shutdownFishd() {
   if (!confirm('确认关闭 fishd？关闭后需要重新启动。')) return;
   try {
@@ -254,7 +262,7 @@ async function loadStatus() {
     card('info', '🧠', '记忆条数', d.memory_total || 0),
     card('info', '🏷️', '记忆分类', kinds, '', true),
     costCard(d)
-  ].join('') + latencyCards(d) + poolCard(d.db_pool);
+  ].join('') + latencyCards(d) + deadTopCard(d.dead_top) + poolCard(d.db_pool);
 
   var health = document.getElementById('health');
   if (failed > 0 || pending > 10) {

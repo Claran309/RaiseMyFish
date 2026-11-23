@@ -409,6 +409,7 @@ daily_quota = 10000
 cooldown_ms = 0
 min_runes = 2
 max_reply_runes = 40
+max_event_age_seconds = 21600 # 6h：更旧的评论不再回复，标 stale 不进 LLM
 
 # 私信回复的调度策略：与评论相同的高配额、0 冷却；私密语义由调度器按通道类型加 ACL。
 [scheduler.channels.dm]
@@ -419,6 +420,7 @@ daily_quota = 10000
 cooldown_ms = 0
 min_runes = 1
 max_reply_runes = 40
+max_event_age_seconds = 86400 # 24h：更旧的私信不再回复
 
 # 观众档案（认人）：从 events 聚合「谁说过什么/鱼怎么回」，按 from_id 注入 prompt。
 # 只给 hits ≥ min_hits 的人建档；每小时节流重建，且只在直播活跃时跑。

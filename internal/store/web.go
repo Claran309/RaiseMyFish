@@ -28,9 +28,11 @@ type WebStatus struct {
 	Coverage      float64
 	// Latency 是近 24 小时各通道回复延迟分位（live/comment/dm）。
 	// 空 map 表示窗口内没有成功的入向回复，不是「延迟为 0」。
-	Latency     map[string]WebLatency
+	Latency map[string]WebLatency
 	// LatencyDetail 是 all/fresh 与五段拆分；空 map 表示历史数据不足。
 	LatencyDetail map[string]WebLatencyDetail
+	// DeadTop 是近 24 小时「通道×环节×error_kind」的死信 Top5。
+	DeadTop     []WebDeadStat
 	Pool        *WebPool
 	GeneratedAt time.Time
 }
@@ -70,6 +72,13 @@ type WebLatencyDetail struct {
 	All      WebLatencyWindow
 	Fresh    WebLatencyWindow
 	Segments WebLatencySegments
+}
+
+type WebDeadStat struct {
+	Channel   string
+	Stage     string
+	ErrorKind string
+	Count     int64
 }
 
 // WebPool 是连接池运行态（database/sql DBStats 的只读投影）。

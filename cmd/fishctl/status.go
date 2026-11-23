@@ -16,6 +16,7 @@ import (
 	"RaiseMyFish/internal/database"
 	"RaiseMyFish/internal/infra"
 	"RaiseMyFish/internal/observe"
+	"RaiseMyFish/internal/store"
 )
 
 // DefaultStatsWindow 是 `fishctl status` 的默认统计窗口。
@@ -36,6 +37,11 @@ type latencyDetailSource interface {
 	LatencyDetailStats(ctx context.Context, from, to time.Time, freshFor time.Duration) (map[string]database.LatencyDetail, error)
 }
 
+// deadStatSource 是 L1 新增的死信分布能力；旧 mock 不实现时保持原输出。
+type deadStatSource interface {
+	DeadStats(ctx context.Context, from, to time.Time, limit int) ([]store.DeadStat, error)
+}
+
 // 编译期断言：真实聚合实现必须满足本文件依赖的接口。
 var _ StatsSource = (*database.Stats)(nil)
 
@@ -49,11 +55,13 @@ type StatusStats struct {
 	Latency map[string]database.LatencyStat `json:"latency,omitempty"`
 	// LatencyDetail 是 all/fresh 与采集/排队/生成/发送拆分；旧数据源不提供时省略。
 	LatencyDetail map[string]database.LatencyDetail `json:"latency_detail,omitempty"`
+	// DeadTop 是窗口内死信 Top 原因；没有死信时省略。
+	DeadTop []store.DeadStat `json:"dead_top,omitempty"`
 }
 
 // empty 判断是否没有任何可输出的统计内容。
 func (s StatusStats) empty() bool {
-	return s.Report == "" && len(s.HeartbeatWarnings) == 0
+	return s.Report == "" && len(s.HeartbeatWarnings) == 0 && len(s.DeadTop) == 0
 }
 
 // newStatsSource 从已建立的基础设施装配真实统计来源。
@@ -110,6 +118,13 @@ func collectStats(ctx context.Context, src StatsSource, now time.Time, window ti
 			return StatusStats{}, fmt.Errorf("读取分段延迟失败：%w", err)
 		}
 	}
+	var deadTop []store.DeadStat
+	if reporter, ok := src.(deadStatSource); ok {
+		deadTop, err = reporter.DeadStats(ctx, from, to, 5)
+		if err != nil {
+			return StatusStats{}, fmt.Errorf("读取死信分布失败：%w", err)
+		}
+	}
 
 	snapshot := observe.Snapshot{
 		WindowStart:  from,
@@ -129,6 +144,7 @@ func collectStats(ctx context.Context, src StatsSource, now time.Time, window ti
 		HeartbeatWarnings: formatHeartbeat(observe.Check(now, lastSeen)),
 		Latency:           latency,
 		LatencyDetail:     detail,
+		DeadTop:           deadTop,
 	}, nil
 }
 

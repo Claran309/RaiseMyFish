@@ -386,6 +386,14 @@ func (s *Stats) LatencyDetailStats(ctx context.Context, from, to time.Time, fres
 	return out, nil
 }
 
+// DeadStats 返回窗口内 dead 事件的通道×环节×error_kind 聚合。
+func (s *Stats) DeadStats(ctx context.Context, from, to time.Time, limit int) ([]store.DeadStat, error) {
+	if ctx == nil || to.Before(from) || limit < 1 || limit > 100 {
+		return nil, store.ErrInvalid
+	}
+	return deadStats(ctx, s.db, from, to, limit)
+}
+
 func queryLatencyDetail(ctx context.Context, db *gorm.DB, from, to time.Time, mode string, freshFrom time.Time) (map[string]LatencyDetail, error) {
 	if mode != "all" && mode != "fresh" {
 		return nil, store.ErrInvalid

@@ -336,6 +336,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 	}
+	deadTop := make([]map[string]any, 0, len(st.DeadTop))
+	for _, item := range st.DeadTop {
+		deadTop = append(deadTop, map[string]any{
+			"channel": item.Channel, "stage": item.Stage, "error_kind": item.ErrorKind, "count": item.Count,
+		})
+	}
 	var pool any
 	if st.Pool != nil {
 		pool = map[string]any{
@@ -357,6 +363,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"coverage":       st.Coverage,
 		"latency":        latency,
 		"latency_detail": latencyDetail,
+		"dead_top":       deadTop,
 		"db_pool":        pool,
 		"generated_at":   st.GeneratedAt.UTC().Format(time.RFC3339),
 	})

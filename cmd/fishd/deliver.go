@@ -10,6 +10,7 @@ import (
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/scheduler"
 	"RaiseMyFish/internal/sender"
+	"RaiseMyFish/internal/store"
 	"go.uber.org/zap"
 )
 
@@ -19,6 +20,7 @@ type resumeDeps struct {
 	channels   *channelSet
 	bus        event.Bus
 	retryDelay time.Duration
+	errorsRepo store.ErrorRepo
 	log        *zap.Logger
 }
 
@@ -45,7 +47,7 @@ func deliverHandler(deps resumeDeps) scheduler.Handler {
 			}
 			// 业务失败已结清（retry/dead）：可预期错误，返回 nil 让消费循环继续。
 			// 只有结清失败（上面的 join）才是需要终止调度的基础设施错误。
-			logWorkFailure(deps.log, "resume_settled", w, err)
+			logWorkFailure(deps.log, deps.errorsRepo, "resume_settled", w, err)
 			return scheduler.Result{Replied: res.OK}, nil
 		}
 		if err := settleDelivered(ctx, deps.bus, w.Claim, res.Verified, deps.retryDelay); err != nil {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"RaiseMyFish/internal/event"
 	"github.com/joho/godotenv"
 	"github.com/pelletier/go-toml/v2"
 	"go.uber.org/zap/zapcore"
@@ -363,6 +364,23 @@ func (c Config) validateStructure(strictLive bool) error {
 	}
 	if err := c.Scheduler.Validate(); err != nil {
 		return err
+	}
+	if c.Scheduler != nil {
+		for ch, p := range c.Scheduler.Channels {
+			interval := 0
+			switch ch {
+			case event.ChComment:
+				interval = c.Collector.Comment.IntervalSeconds
+				if c.Collector.Comment.FeedIntervalSeconds > interval {
+					interval = c.Collector.Comment.FeedIntervalSeconds
+				}
+			case event.ChDM:
+				interval = c.Collector.DM.IntervalSeconds
+			}
+			if interval > 0 && p.MaxEventAgeSeconds > 0 && p.MaxEventAgeSeconds <= interval {
+				return fmt.Errorf("通道 %s 的 max_event_age_seconds 必须大于采集间隔 %d", ch, interval)
+			}
+		}
 	}
 	if err := c.SLO.Validate(); err != nil {
 		return fmt.Errorf("校验SLO配置：%w", err)

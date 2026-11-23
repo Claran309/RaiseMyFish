@@ -59,8 +59,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (result e
 	if len(action) >= 1 && action[0] == "viewer" {
 		return runViewer(ctx, *path, *envPath, action[1:], stdout, stderr)
 	}
+	if len(action) >= 1 && action[0] == "dlq" {
+		return runDLQ(ctx, *path, *envPath, action[1:], stdout, stderr)
+	}
 	if len(action) != 1 || (action[0] != "status" && action[0] != "tail") {
-		return errors.New("用法：fishctl [--config 路径] [--env-file 路径] status|tail|persona eval|memory list|search|stats|embed|freeze|unfreeze|gift send|knowledge embed|viewer embed|viewer search")
+		return errors.New("用法：fishctl [--config 路径] [--env-file 路径] status|tail|persona eval|memory list|search|stats|embed|freeze|unfreeze|gift send|knowledge embed|viewer embed|viewer search|dlq list|replay")
 	}
 	// status/tail 只读本机运行信息，各自按实际能力加载配置：
 	// tail 只认日志目录，status 只认数据库与状态文件；不校验采集/发送凭据。

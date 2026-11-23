@@ -69,7 +69,15 @@ go run ./cmd/fishd --config config.local.knowledge-diagnostic.toml check
 | 评论区关闭（12002） | 跳过 |
 | 鉴权失效 | 刷新 cookie |
 
-死信重放：`fishctl dlq retry <id>`
+死信查看与重放：
+
+```bash
+fishctl dlq list --limit 20          # 只看未重放
+fishctl dlq list --limit 50 --all    # 含已重放
+fishctl dlq replay --id 123          # 幂等保护：有 send_log/armed 尝试会拒绝
+```
+
+重放只允许 `dead` 且从未碰过平台的事件；有投递证据时必须人工核验，不能重复回复。
 
 ## 5. QQ 协议端掉线
 
@@ -124,5 +132,6 @@ systemctl stop fishd  # Linux
 3. 拆阶段：`collected_at → enqueued_at → claimed_at → generated_at → sent_at → verified_at`，哪一段最长就查哪一段，不要一上来怪模型。
 4. 评论 P90 异常大：先确认是否有首轮 24h 补采/旧评论回复；`collect_mode=backfill` 的事件不进入 fresh SLO。
 5. 评论 dead 多：先看 `event_errors` 的 `stage × error_kind` 分布；`generate` 阶段的 `provider/timeout/budget/prompt_too_long` 优先处理，再看 `send` 阶段。
-6. 私信 skipped 多：看跳过原因（ACL/噪音/幂等/节流/会话锁/过期），不要把所有 skipped 都当漏回。
-7. 调整轮询前先记录基线：`comment feed 60s / dm 120s` 下的 fresh P50/P90、412/429 率、LLM 成本；一次只改一个通道。
+6. 死信处置：先 `fishctl dlq list` 看 Top 原因，再决定重放/人工核验；`event_errors` 只存分类与安全摘要，不含正文。
+7. 私信 skipped 多：看跳过原因（ACL/噪音/幂等/节流/会话锁/过期），不要把所有 skipped 都当漏回。
+8. 调整轮询前先记录基线：`comment feed 60s / dm 120s` 下的 fresh P50/P90、412/429 率、LLM 成本；一次只改一个通道。

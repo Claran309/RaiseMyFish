@@ -162,6 +162,11 @@ func migrationSteps() ([]migrationStep, error) {
 		return nil, fmt.Errorf("读取延迟计时迁移：%w", err)
 	}
 	eventTimingHash := sha256.Sum256(eventTiming)
+	eventErrors, err := migrations.Files.ReadFile("0026_event_errors.sql")
+	if err != nil {
+		return nil, fmt.Errorf("读取事件错误迁移：%w", err)
+	}
+	eventErrorsHash := sha256.Sum256(eventErrors)
 	return []migrationStep{
 		{1, source, checksum},
 		{2, string(leases), hex.EncodeToString(hash[:])},
@@ -188,6 +193,7 @@ func migrationSteps() ([]migrationStep, error) {
 		{23, string(eventClearance), hex.EncodeToString(eventClearanceHash[:])},
 		{24, string(manualMemorySource), hex.EncodeToString(manualMemorySourceHash[:])},
 		{25, string(eventTiming), hex.EncodeToString(eventTimingHash[:])},
+		{26, string(eventErrors), hex.EncodeToString(eventErrorsHash[:])},
 	}, nil
 }
 

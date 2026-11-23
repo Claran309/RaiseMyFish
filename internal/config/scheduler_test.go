@@ -77,6 +77,25 @@ func TestSchedulerDefaultsFilled(t *testing.T) {
 	}
 }
 
+// TestSchedulerChannelMaxEventAgeDefaults comment/dm 默认回复窗口分别为 6h/24h。
+func TestSchedulerChannelMaxEventAgeDefaults(t *testing.T) {
+	s := Scheduler{Channels: map[event.Channel]ChannelPolicy{
+		event.ChComment: {Brain: "default", RatePerMinute: 1, Burst: 1, DailyQuota: 1},
+		event.ChDM:      {Brain: "default", RatePerMinute: 1, Burst: 1, DailyQuota: 1},
+	}}
+	s.ApplyDefaults()
+	if got := s.Channels[event.ChComment].MaxEventAgeSeconds; got != 21600 {
+		t.Errorf("comment 默认窗口=%d，期望21600", got)
+	}
+	if got := s.Channels[event.ChDM].MaxEventAgeSeconds; got != 86400 {
+		t.Errorf("dm 默认窗口=%d，期望86400", got)
+	}
+	s.Channels[event.ChComment] = ChannelPolicy{Brain: "default", RatePerMinute: 1, Burst: 1, DailyQuota: 1, MaxEventAgeSeconds: -1}
+	if err := s.Validate(); err == nil {
+		t.Fatal("负数 max_event_age_seconds 未拒绝")
+	}
+}
+
 // TestSchedulerMentionBackExplicitValues 显式关闭/自定义上限不被默认值覆盖。
 func TestSchedulerMentionBackExplicitValues(t *testing.T) {
 	body := "[scheduler.channels.live]\nbrain='default'\nrate_per_minute=6\nburst=1\ndaily_quota=10\nself_names=[\"大肥鱼\"]\nreply_mention_back=false\nmax_reply_runes=30\n"

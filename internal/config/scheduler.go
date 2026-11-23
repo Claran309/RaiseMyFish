@@ -17,11 +17,11 @@ import (
 
 // Scheduler 是调度与消费循环参数，字段名对应 TOML 的 snake_case 键。
 type Scheduler struct {
-	MaxConcurrent      int                             `toml:"max_concurrent"`
-	MaxPending         int                             `toml:"max_pending"`
-	ClaimBatch         int                             `toml:"claim_batch"`
-	PollIntervalMS     int                             `toml:"poll_interval_ms"`
-	RetryDelayMS       int                             `toml:"retry_delay_ms"`
+	MaxConcurrent  int `toml:"max_concurrent"`
+	MaxPending     int `toml:"max_pending"`
+	ClaimBatch     int `toml:"claim_batch"`
+	PollIntervalMS int `toml:"poll_interval_ms"`
+	RetryDelayMS   int `toml:"retry_delay_ms"`
 	// MaxEventAgeSeconds 是积压上限（秒）；超过则丢弃，0 表示不限制。
 	MaxEventAgeSeconds int                             `toml:"max_event_age_seconds"`
 	OperationTimeoutMS int                             `toml:"operation_timeout_ms"`
@@ -41,20 +41,22 @@ const (
 // RoutingMode 是新键；未写时按旧 reply_only_mention 推导（默认 true → mention_only）。
 // ReplyOnlyMention / ReplyMentionBack 用指针区分「未写」与「显式 false」。
 type ChannelPolicy struct {
-	Brain            string   `toml:"brain"`
-	RatePerMinute    float64  `toml:"rate_per_minute"`
-	Burst            int      `toml:"burst"`
-	DailyQuota       int      `toml:"daily_quota"`
-	CooldownMS       int      `toml:"cooldown_ms"`
-	MinRunes         int      `toml:"min_runes"`
-	RepeatWindowMS   int      `toml:"repeat_window_ms"`
-	RoutingMode      string   `toml:"routing_mode"`
-	ReplyOnlyMention *bool    `toml:"reply_only_mention"`
-	ReplyMentionBack *bool    `toml:"reply_mention_back"`
-	MaxReplyRunes    int      `toml:"max_reply_runes"`
-	SelfNames        []string `toml:"self_names"`
-	OwnerIDs         []string `toml:"owner_ids"`
-	SelfIDs          []string `toml:"self_ids"`
+	Brain            string  `toml:"brain"`
+	RatePerMinute    float64 `toml:"rate_per_minute"`
+	Burst            int     `toml:"burst"`
+	DailyQuota       int     `toml:"daily_quota"`
+	CooldownMS       int     `toml:"cooldown_ms"`
+	MinRunes         int     `toml:"min_runes"`
+	RepeatWindowMS   int     `toml:"repeat_window_ms"`
+	RoutingMode      string  `toml:"routing_mode"`
+	ReplyOnlyMention *bool   `toml:"reply_only_mention"`
+	ReplyMentionBack *bool   `toml:"reply_mention_back"`
+	MaxReplyRunes    int     `toml:"max_reply_runes"`
+	// MaxEventAgeSeconds 是该通道的积压上限（秒）；0 对 comment/dm 表示用默认值。
+	MaxEventAgeSeconds int      `toml:"max_event_age_seconds"`
+	SelfNames          []string `toml:"self_names"`
+	OwnerIDs           []string `toml:"owner_ids"`
+	SelfIDs            []string `toml:"self_ids"`
 }
 
 // 消费循环默认值（派发单 §1）。
@@ -137,6 +139,14 @@ func (s *Scheduler) ApplyDefaults() {
 				p.MaxReplyRunes = defaultMaxReplyRunes
 			}
 		}
+		if p.MaxEventAgeSeconds == 0 {
+			switch ch {
+			case event.ChComment:
+				p.MaxEventAgeSeconds = 6 * 60 * 60
+			case event.ChDM:
+				p.MaxEventAgeSeconds = 24 * 60 * 60
+			}
+		}
 		for i, name := range p.SelfNames {
 			p.SelfNames[i] = strings.TrimSpace(name)
 		}
@@ -198,6 +208,9 @@ func (s *Scheduler) Validate() error {
 		}
 		if p.MaxReplyRunes < 0 || p.MaxReplyRunes > defaultMaxReplyRunes {
 			return fmt.Errorf("通道 %s 的 max_reply_runes 需在1至%d之间", ch, defaultMaxReplyRunes)
+		}
+		if p.MaxEventAgeSeconds < 0 || p.MaxEventAgeSeconds > 7*24*60*60 {
+			return fmt.Errorf("通道 %s 的 max_event_age_seconds 需在0至604800之间", ch)
 		}
 		if p.ReplyMentionBack != nil && *p.ReplyMentionBack && ch != event.ChLive {
 			return fmt.Errorf("通道 %s 不支持 reply_mention_back（只对 live 生效）", ch)

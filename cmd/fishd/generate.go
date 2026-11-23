@@ -149,6 +149,7 @@ type generateDeps struct {
 	// commentVision 是评论附图识别；nil 表示未开启或未装配，按无图处理。
 	commentVision *commentVision
 	timing        store.TimingRepo
+	errorsRepo    store.ErrorRepo
 	log           *zap.Logger
 }
 
@@ -290,7 +291,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 				return scheduler.Result{}, errors.Join(err, markErr)
 			}
 			// 事件已结清：可预期失败只留日志，返回 nil 让消费循环继续。
-			logWorkFailure(deps.log, "generate_failed", w, err)
+			logWorkFailure(deps.log, deps.errorsRepo, "generate_failed", w, err)
 			return scheduler.Result{}, nil
 		}
 		markGenerated(ctx, deps.timing, ev, deps.log)
@@ -316,7 +317,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 			// 可预期错误，不能因为一条私信/评论发失败就终止整个消费者。
 			// 结清后 handler 返回 nil，withErrorLog 不会触发，这里必须自己留痕，
 			// 否则 dead 只剩通道内部日志，定位时看不到调度层的错误链。
-			logWorkFailure(deps.log, "send_settled", w, err)
+			logWorkFailure(deps.log, deps.errorsRepo, "send_settled", w, err)
 			return scheduler.Result{Replied: res.OK}, nil
 		}
 
@@ -346,13 +347,13 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 //
 // scheduler.complete 只把错误包成固定文案的 safeError，日志里看不到具体类别与原因；
 // 这里补上 Kind 和逐层展示信息。字段只含事件标识，不打印正文、prompt、凭据或 cookie。
-func withErrorLog(log *zap.Logger, action string, handler scheduler.Handler) scheduler.Handler {
+func withErrorLog(log *zap.Logger, repo store.ErrorRepo, action string, handler scheduler.Handler) scheduler.Handler {
 	return func(ctx context.Context, w scheduler.Work) (res scheduler.Result, err error) {
 		defer func() {
 			if err == nil {
 				return
 			}
-			logWorkFailure(log, action, w, err)
+			logWorkFailure(log, repo, action, w, err)
 		}()
 		return handler(ctx, w)
 	}
@@ -361,8 +362,18 @@ func withErrorLog(log *zap.Logger, action string, handler scheduler.Handler) sch
 // logWorkFailure 记录一次调度工作失败的完整错误链。
 // 已结清的可预期错误（handler 返回 nil）也走这里留痕，避免“不崩循环”变成“没有日志”。
 // 字段只含事件标识，不打印正文、prompt、凭据或 cookie。
-func logWorkFailure(log *zap.Logger, action string, w scheduler.Work, err error) {
+func logWorkFailure(log *zap.Logger, repo store.ErrorRepo, action string, w scheduler.Work, err error) {
 	ev := w.Claim.Event
+	if repo != nil {
+		recordCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if recordErr := repo.Record(recordCtx, store.EventError{
+			EventID: ev.ID, Stage: string(w.Claim.Stage), ErrorKind: normalizeErrorKind(safeErrorKind(err)),
+			Message: safeErrorChain(err),
+		}); recordErr != nil {
+			log.Warn("写入事件错误分类失败", zap.String("action", "error_record"), zap.String("event_id", ev.ID), zap.Error(recordErr))
+		}
+		cancel()
+	}
 	log.Error("调度工作失败",
 		zap.String("action", action),
 		zap.String("event_id", ev.ID),
@@ -373,6 +384,20 @@ func logWorkFailure(log *zap.Logger, action string, w scheduler.Work, err error)
 		zap.String("error_chain", safeErrorChain(err)),
 		zap.Error(err),
 	)
+}
+
+// normalizeErrorKind 把项目内多套错误类别收敛为 L1 统一枚举。
+func normalizeErrorKind(kind string) string {
+	switch kind {
+	case "budget", "prompt_too_long", "timeout", "rate_limit", "auth", "content", "provider":
+		return kind
+	case "rate", "retry", "skipped":
+		return "rate_limit"
+	case "input", "dead":
+		return "content"
+	default:
+		return "internal"
+	}
 }
 
 // budgetFailure 判断是否为提示预算超限；只有这类错误值得去掉知识重试。

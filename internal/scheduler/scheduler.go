@@ -321,8 +321,13 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 	now := s.clock.Now()
 	if c.Stage == event.StageSchedule {
 		// 积压超时：事件从发生到准入超过 MaxEventAge（默认 60 秒）直接丢弃，
-		// 仅对直播弹幕生效（私信/评论是异步的，用户等回复正常，不能按直播节奏丢）。
-		if c.Event.Channel == event.ChLive && s.options.MaxEventAge > 0 && !c.Event.At.IsZero() && now.Sub(c.Event.At) > s.options.MaxEventAge {
+		// 按通道配置；未配置时沿用全局值（live 默认 60 秒）。
+		maxAge := policy.MaxEventAge
+		if maxAge <= 0 {
+			maxAge = s.options.MaxEventAge
+		}
+		if maxAge > 0 && !c.Event.At.IsZero() && now.Sub(c.Event.At) > maxAge {
+			s.recordSkipped(c, "stale")
 			return s.skip(ctx, c)
 		}
 		// 弹幕路由在准入前决定：mention_only 只回 @，filter 走规则筛选；
@@ -399,4 +404,18 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 	c = confirmed
 	s.launch(parent, Work{Claim: c, Task: task})
 	return nil
+}
+
+// recordSkipped 记录 stale 等跳过原因；事件仍按 skipped 结清，不计入 dead 分布。
+func (s *Scheduler) recordSkipped(c event.Claim, reason string) {
+	if s.options.ErrorRepo == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := s.options.ErrorRepo.Record(ctx, store.EventError{
+		EventID: c.Event.ID, Stage: "schedule", ErrorKind: reason, Message: "超过通道最大事件年龄",
+	}); err != nil {
+		s.log.Warn("写入跳过原因失败", zap.String("action", "skip_reason"), zap.String("event_id", c.Event.ID), zap.Error(err))
+	}
 }

@@ -219,11 +219,19 @@
 - 告警只走既有日志/终端/面板，不引入新中间件。
 
 #### L1 验收
-- [ ] `event_errors` 可按通道×环节×error_kind 聚合
-- [ ] 405 条 dead 的 Top 原因能回答
-- [ ] 重放有幂等保护
-- [ ] comment/dm 超窗事件标 stale，不进 LLM
-- [ ] 告警规则落配置/文档
+- [x] `event_errors` 可按通道×环节×error_kind 聚合
+- [x] 405 条 dead 的 Top 原因能回答（`fishctl status`/面板 `dead_top`）
+- [x] 重放有幂等保护（`fishctl dlq replay --id`；有 send_log/armed 尝试拒绝）
+- [x] comment/dm 超窗事件标 stale，不进 LLM
+- [x] 告警规则落 `[slo]` 配置与 runbook
+
+#### L1 执行记录（2026-11-23）
+
+- 迁移 `0026_event_errors.sql`；`ErrorRepo` 记录 stage/error_kind/安全摘要，`DeadStats` 聚合 Top N。
+- `cmd/fishd` 的 generate/deliver/withErrorLog 失败路径统一落库；错误类别收敛为 `provider/timeout/budget/prompt_too_long/rate_limit/auth/content/internal`。
+- `fishctl dlq list/replay`；重放前检查 `send_log` 与 armed/unknown/accepted/manual 尝试，拒绝重复回复。
+- 调度器按通道 `max_event_age_seconds` 跳过超窗事件（comment 6h / dm 24h），`event_errors` 记 `stale`。
+- 验证：`go test ./internal/scheduler/... ./internal/config/... ./cmd/fishd/... ./cmd/fishctl/... ./internal/web/...` 与 `go test -tags=integration ./internal/database -run 'TestMigration|TestErrorRepoDeadStatsAndDLQReplay|TestEventTiming'` 通过。
 
 ---
 

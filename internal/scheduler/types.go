@@ -29,28 +29,30 @@ const (
 
 // ChannelPolicy 由可信装配提供，ID不从消息正文推断。
 type ChannelPolicy struct {
-	Public           bool
-	Private          bool
-	Brain            string
-	RatePerMinute    float64
-	Burst            int
-	DailyQuota       int
-	Cooldown         time.Duration
-	MinRunes         int
-	RepeatWindow     time.Duration
+	Public        bool
+	Private       bool
+	Brain         string
+	RatePerMinute float64
+	Burst         int
+	DailyQuota    int
+	Cooldown      time.Duration
+	MinRunes      int
+	RepeatWindow  time.Duration
 	// RoutingMode 是 live 弹幕路由：mention_only/filter/all；
 	// 为空时兼容旧配置，按 ReplyOnlyMention 推导。
 	RoutingMode      string
 	ReplyOnlyMention bool
 	ReplyMentionBack bool
 	MaxReplyRunes    int
-	SelfNames        []string
-	OwnerIDs         []string
-	SelfIDs          []string
-	BotIDs           []string
-	Names            []string
-	Ads              []string
-	Whitelist        []string
+	// MaxEventAge 是该通道的积压上限；0 表示沿用全局 MaxEventAge。
+	MaxEventAge time.Duration
+	SelfNames   []string
+	OwnerIDs    []string
+	SelfIDs     []string
+	BotIDs      []string
+	Names       []string
+	Ads         []string
+	Whitelist   []string
 }
 
 // Options 只控制当前调度实例；不改变fishd默认业务开关。
@@ -63,10 +65,12 @@ type Options struct {
 	OperationTimeout time.Duration
 	WorkerTimeout    time.Duration
 	// MaxEventAge 是事件从发生到准入的最大允许积压；超过则丢弃（skip），0 表示不限制。
-	MaxEventAge     time.Duration
-	Location         *time.Location
-	Clock            Clock
-	Channels         map[event.Channel]ChannelPolicy
+	MaxEventAge time.Duration
+	// ErrorRepo 记录 stale/dead 原因；nil 表示只写日志。
+	ErrorRepo store.ErrorRepo
+	Location  *time.Location
+	Clock     Clock
+	Channels  map[event.Channel]ChannelPolicy
 }
 
 // DefaultOptions 使用单进程P0保守参数，调用New本身不会启用生产通道。

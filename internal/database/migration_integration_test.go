@@ -92,7 +92,7 @@ func TestMigrationRealPostgres(t *testing.T) {
 	if err := Ready(ctx, db); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"events", "tasks", "memory_sources", "memory_records", "llm_usage", "send_log", "dlq", "schema_migrations", "knowledge_embeddings", "viewer_profiles", "accounts", "event_timings"} {
+	for _, table := range []string{"events", "tasks", "memory_sources", "memory_records", "llm_usage", "send_log", "dlq", "schema_migrations", "knowledge_embeddings", "viewer_profiles", "accounts", "event_timings", "event_errors"} {
 		if !db.Migrator().HasTable(table) {
 			t.Fatalf("缺表 %s", table)
 		}
@@ -104,7 +104,7 @@ func TestMigrationRealPostgres(t *testing.T) {
 	if err := db.WithContext(ctx).Exec("INSERT INTO tasks(id,event_id,channel,session,brain) VALUES ('missing','missing','live','room','openai')").Error; err == nil {
 		t.Fatal("外键未生效")
 	}
-	for _, index := range []string{"idx_events_status", "idx_events_session", "idx_events_private", "idx_events_collected_at", "idx_event_timings_sent_at", "idx_tasks_status", "uq_tasks_event", "idx_mem_valid", "idx_mem_channel", "idx_mem_asserted_by", "knowledge_embeddings_vec_idx", "memory_records_embedding_idx", "viewer_profiles_identity_embedding_idx", "viewer_profiles_facts_embedding_idx", "viewer_profiles_interaction_embedding_idx", "accounts_one_active_idx"} {
+	for _, index := range []string{"idx_events_status", "idx_events_session", "idx_events_private", "idx_events_collected_at", "idx_event_timings_sent_at", "idx_event_errors_lookup", "idx_event_errors_event", "idx_tasks_status", "uq_tasks_event", "idx_mem_valid", "idx_mem_channel", "idx_mem_asserted_by", "knowledge_embeddings_vec_idx", "memory_records_embedding_idx", "viewer_profiles_identity_embedding_idx", "viewer_profiles_facts_embedding_idx", "viewer_profiles_interaction_embedding_idx", "accounts_one_active_idx"} {
 		var exists bool
 		if err := db.WithContext(ctx).Raw("SELECT EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname=current_schema() AND indexname=?)", index).Scan(&exists).Error; err != nil || !exists {
 			t.Fatalf("缺索引 %s", index)
