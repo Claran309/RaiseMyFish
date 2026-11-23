@@ -140,10 +140,10 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 - **方案 C**：把 `comfort/boundary` 仅作为记录标签、不参与自动判分（明确写入报告，不冒充通过）。
 
 #### 验收
-- [ ] `go test ./internal/personaeval/...` 全绿
-- [ ] 35 条用例数与 pack 版本断言一致（按方案调整）
-- [ ] 评分规则快照/版本号/报告说明同步
-- [ ] 不删除历史 run
+- [x] `go test ./internal/personaeval/...` 全绿（采纳方案 B 后）
+- [x] 35 条用例数与 pack 版本断言一致（`fixture_test.go` 断言 pack v1.3）
+- [x] 评分规则快照/版本号/报告说明同步（评分器仍为 persona-lexical-v5，未伪升 v6）
+- [x] 不删除历史 run（只改用例集与断言，未重写历史评测产物）
 
 #### 执行结果（2026-11-23）
 
@@ -306,6 +306,14 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 - 阶段链按事件 ID 稳定派生 trace，跨 collect/schedule/generate/deliver/verify 自动挂父子；`tool.call` 由文本与原生 ReAct 共用。
 - 面板新增「慢回复 Trace」卡与 `/api/traces` 接口；`[observability.trace]` 控制开关，默认关闭时全部 no-op。
 - 验证：`go test ./internal/trace/... ./cmd/fishd/... ./internal/web/...`；新增 `TestGeneratePipelineWritesTraceTree` 断言五个阶段同 trace。
+
+#### B2 补充（2026-11-24）：可选 OTLP 导出
+
+- 新增 `internal/trace/otlp.go`：用标准库实现 OTLP/HTTP JSON（`POST /v1/traces`），
+  不新增 OpenTelemetry 依赖；`SetExporter` 后台批量（32 条或 2 秒）导出，队列满直接丢弃。
+- 配置 `[observability.trace] otlp_endpoint/service_name/otlp_timeout_ms`，留空只保留本地 trace。
+- 隐私：只导出 traceID/spanID/名称/时间/白名单属性与错误状态，不导出正文/凭据。
+- 验证：`go test ./internal/trace`（载荷 ID 长度/服务名/属性/错误状态/非法 endpoint/End 入队）。
 
 #### 风险
 - 新增 OTel 依赖与「不换技术栈」不冲突（只是可观测库），但若主人要求零新增依赖，则启用本地 trace，Jaeger 导出延后。

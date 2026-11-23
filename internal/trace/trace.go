@@ -110,6 +110,10 @@ type Local struct {
 	spans []*Span
 	file  *jsonlWriter
 	now   func() time.Time
+	// exporter 是可选 OTLP 导出；nil 时只保留本地 trace。
+	exporter Exporter
+	exportCh chan Span
+	flushCh  chan chan struct{}
 }
 
 // NewLocal 创建本地 trace；max=0 用 5000，path 为空不落文件。
@@ -190,11 +194,107 @@ func (l *Local) End(span *Span, err error) {
 		l.spans = l.spans[len(l.spans)-l.max:]
 	}
 	writer := l.file
+	exportCh := l.exportCh
 	data := spanJSON(span)
+	// 只导出值拷贝：后台 goroutine 不持有业务 span 指针。
+	snapshot := Span{
+		TraceID: span.TraceID, SpanID: span.SpanID, ParentID: span.ParentID,
+		Name: span.Name, Start: span.Start, End: span.End,
+		Attributes: cloneAttrs(span.Attributes), Error: span.Error,
+	}
 	l.mu.Unlock()
 	if writer != nil {
 		writer.write(data)
 	}
+	if exportCh != nil {
+		select {
+		case exportCh <- snapshot:
+		default:
+			// 导出队列满时直接丢弃：可观测性不能反向阻塞业务。
+		}
+	}
+}
+
+// SetExporter 启用可选导出；重复调用只保留第一次。
+//
+// 导出是尽力而为：队列满丢新 span，接收端失败只重试下一批，不影响业务。
+func (l *Local) SetExporter(exporter Exporter) {
+	if l == nil || exporter == nil {
+		return
+	}
+	l.mu.Lock()
+	if l.exporter != nil {
+		l.mu.Unlock()
+		return
+	}
+	l.exporter = exporter
+	l.exportCh = make(chan Span, 256)
+	l.flushCh = make(chan chan struct{}, 4)
+	ch := l.exportCh
+	flushCh := l.flushCh
+	l.mu.Unlock()
+	go l.exportLoop(exporter, ch, flushCh)
+}
+
+func (l *Local) exportLoop(exporter Exporter, ch <-chan Span, flushCh <-chan chan struct{}) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	batch := make([]Span, 0, 32)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = exporter.Export(ctx, batch)
+		cancel()
+		batch = batch[:0]
+	}
+	for {
+		select {
+		case span, ok := <-ch:
+			if !ok {
+				flush()
+				return
+			}
+			batch = append(batch, span)
+			if len(batch) >= 32 {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		case ack := <-flushCh:
+			flush()
+			close(ack)
+		}
+	}
+}
+
+// FlushExporter 等待队列里的 span 写出一批，供测试/优雅退出使用。
+func (l *Local) FlushExporter(ctx context.Context) {
+	if l == nil || l.exportCh == nil {
+		return
+	}
+	ack := make(chan struct{})
+	select {
+	case l.flushCh <- ack:
+	case <-ctx.Done():
+		return
+	}
+	select {
+	case <-ack:
+	case <-ctx.Done():
+	}
+}
+
+func cloneAttrs(attrs map[string]any) map[string]any {
+	if len(attrs) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(attrs))
+	for key, value := range attrs {
+		out[key] = value
+	}
+	return out
 }
 
 // Close 关闭 JSONL 文件；重复调用安全。

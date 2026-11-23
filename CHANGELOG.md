@@ -36,6 +36,16 @@
 - B11 根目录清理：exe/config.local/migrate 导出归档到本地 `tmp/`（只归档不删除）
 - L5 索引收尾：事件/发送/记忆使用组合索引
 - 会话状态 C0/C1/C4/C6：按通道会话键、`conversation_state`、会话段注入与会话锁（默认关闭）
+- 会话状态 C5：滚动摘要任务表 + 租约/重试/幂等，失败保留旧摘要；`summary_enabled` 默认关闭
+- 会话状态 C8：`/api/conversations` 六项观测指标 + 面板区块；30 条离线会话评测
+  （追问解决率 100% vs 基线 10%，串人/键冲突 0，prompt token +0.4%）
+- 会话状态 C2/C3：评论 thread 按会话键确定性灰度；直播 30 秒内存短窗口（默认关闭）
+- L2 第二批：评论 `(ctime,rpid)` 水位持久化、目标级有界并发；私信轮询 120→60 秒
+- L3 第二批：通道软并发配额、backfill 低优先级、通道 prompt 预算、同用户 30 秒合并
+- M5 100 条记忆评测：该记住/不该记住/隐私/写入闸门/版本键（召回 100%、误报 0、泄漏 0）
+- M8 记忆运维：`fishctl memory audit`、面板来源/版本/引用次数、日报记忆健康度
+- B1 工具参数错误可观测：除日志外新增 trace `tool.args_error`，便于按 span 计数
+- B2 可选 OTLP 导出：标准库 OTLP/HTTP JSON（`/v1/traces`），不新增依赖，默认关闭
 
 ### Changed
 - 仓库卫生：根目录临时文件归档到本地 `tmp/`；`AGENTS.md`、`CLAUDE.md`、协作表、内部报告与 prompts 改为本地保留，不再上传

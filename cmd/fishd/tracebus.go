@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/event"
@@ -42,6 +43,18 @@ func newTracer(cfg config.Config, log *zap.Logger) (*trace.Local, error) {
 	tracer, err := trace.NewLocal(cfg.Observability.Trace.MaxSpans, cfg.Observability.Trace.Path)
 	if err != nil {
 		return nil, fmt.Errorf("装配本地trace失败：%w", err)
+	}
+	if endpoint := cfg.Observability.Trace.OTLPEndpoint; endpoint != "" {
+		exporter, err := trace.NewOTLPExporter(
+			endpoint,
+			cfg.Observability.Trace.ServiceName,
+			time.Duration(cfg.Observability.Trace.OTLPTimeoutMS)*time.Millisecond,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("装配OTLP导出失败：%w", err)
+		}
+		tracer.SetExporter(exporter)
+		log.Info("OTLP trace 导出已启用", zap.String("action", "trace_export"), zap.String("endpoint", endpoint))
 	}
 	log.Info("本地trace已启用", zap.String("action", "trace_setup"), zap.String("path", cfg.Observability.Trace.Path), zap.Int("max_spans", cfg.Observability.Trace.MaxSpans))
 	return tracer, nil

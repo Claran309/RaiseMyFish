@@ -135,3 +135,11 @@ P1 起：落库 `daily_stats`，同时保留文件。
 - 本地实现零依赖：内存环形缓冲 + `logs/traces.jsonl`；`[observability.trace]` 关闭时全部 no-op。
 - span 只记元数据：事件 ID、通道、阶段、工具名、参数/结果长度、模型、token、耗时、错误类别；**不记 prompt、消息正文、cookie/token**。
 - 面板入口：`/api/traces/recent?sort=slow` 与 `/api/traces/{trace_id}`；「为什么降级」看 `llm.step.degrade_reason`，「花了多少」看 token 属性与 `llm_usage` 账本。
+## Trace 导出（可选）
+
+`[observability.trace]` 默认只写本地 `logs/traces.jsonl`。配置 `otlp_endpoint`
+（如 `http://127.0.0.1:4318`）后，会按 OTLP/HTTP JSON 向 `<endpoint>/v1/traces`
+批量导出 span；只发 ID/名称/耗时/白名单属性，不发 prompt、正文或凭据。
+
+该实现只用标准库，不引入 OpenTelemetry SDK；接收端失败只丢弃本批，不影响业务。
+

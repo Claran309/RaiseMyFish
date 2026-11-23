@@ -504,6 +504,11 @@ dm_dead_rate = 0.02
 enabled = true
 path = "logs/traces.jsonl"
 max_spans = 5000
+# 可选 OTLP/HTTP JSON 导出（Jaeger/Collector 的 /v1/traces）；留空=只保留本地 trace。
+# 只用标准库，不引入 OpenTelemetry SDK。
+otlp_endpoint = ""
+service_name = "fishd"
+otlp_timeout_ms = 3000
 
 # 会话状态（私信/评论多轮）：默认关闭；先只开 DM，再灰度评论。
 [conversation]
