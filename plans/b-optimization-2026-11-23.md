@@ -414,6 +414,13 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 
 ### 4.6 B6 README 与叙事重写（P1，0.5–1 天）
 
+#### B6 执行记录（2026-11-23）
+
+- 定位改为「实时 Agent Runtime + 事件驱动一致性」，保留真实产品语气。
+- 加 Mermaid 数据流图与「为什么不引入 Redis/MQ/Milvus/多 Agent」摘要（指向 `docs/14-decisions.md`）。
+- 真实数据全部重新取数并标注来源与时间：事件 35,942、有效记忆 1,123、观众档案 1,164、发送 4,803、LLM 调用 22,529、测试 2,377 个。
+- 延迟口径改为 `fresh/all` + 五段拆分，不再只写单一 P50。
+
 - 数字重新取：`fishctl status`、`llm_usage`、`events` 表、CI 最近一次时长、`go test` 用例数；写进 README 的每个数字都要有来源与时间。
 - 加 Mermaid 数据流图（不引入前端构建）。
 - 加「为什么不用 Redis/MQ/Eino/多 Agent」ADR 摘要，链接 `docs/14-decisions.md`。

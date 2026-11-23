@@ -28,6 +28,7 @@
 - L2 评论自适应轮询：活跃/空闲间隔、抖动与 412/429 指数退避
 - B10 红队用例：20 条弹幕注入回归，验证固定 prompt 段不可伪造
 - B7 设计讲解：`docs/design-decisions/` 三页链路白板稿
+- B6 README 重写：真实取数（事件/记忆/档案/发送/LLM/测试）+ Mermaid 数据流 + ADR 摘要
 
 ### Changed
 - 仓库卫生：根目录临时文件归档到本地 `tmp/`；`AGENTS.md`、`CLAUDE.md`、协作表、内部报告与 prompts 改为本地保留，不再上传
