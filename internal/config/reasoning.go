@@ -26,6 +26,8 @@ type Reasoning struct {
 	// NativeTools 是原生 tool calling 模式："off"（默认，走文本 ReAct）、
 	// "on"（走 native tools）、"auto"（预留：按 Provider 能力探测）。
 	NativeTools string `toml:"native_tools"`
+	// ReflectBudget 是每条事件允许的自检次数；默认 1，-1 表示关闭。
+	ReflectBudget int `toml:"reflect_budget"`
 	// Comment/DM 是评论与私信的独立预算：两者没有直播弹幕的实时节奏约束，
 	// 允许更长思考（派发单：5-10 步 / 30-60 秒），但弹幕仍用上面的 3 步 / 8 秒。
 	Comment ReasoningChannel `toml:"comment"`
@@ -47,6 +49,8 @@ const (
 	maxReasoningTimeoutMS     = 20000 // 弹幕预算 4 步/12 秒（原 3 步/8 秒）；硬顶 20 秒防止拖成半分钟
 	// 原生 tool calling 默认关闭：先保留已验收的文本 ReAct，显式开启再切换。
 	defaultNativeTools = "off"
+	// Reflection 默认允许一次；显式 -1 关闭。
+	defaultReflectBudget = 1
 )
 
 // 评论/私信允许更长思考；默认取区间中位，仍受父级 worker 超时约束。
@@ -62,13 +66,14 @@ const (
 // DefaultReasoning 返回默认 ReAct 配置。
 func DefaultReasoning() Reasoning {
 	return Reasoning{
-		Enabled:      true,
-		MaxSteps:     defaultReasoningMaxSteps,
-		TimeoutMS:    defaultReasoningTimeoutMS,
-		DefaultReact: true,
-		NativeTools:  defaultNativeTools,
-		Comment:      ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
-		DM:           ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
+		Enabled:       true,
+		MaxSteps:      defaultReasoningMaxSteps,
+		TimeoutMS:     defaultReasoningTimeoutMS,
+		DefaultReact:  true,
+		NativeTools:   defaultNativeTools,
+		ReflectBudget: defaultReflectBudget,
+		Comment:       ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
+		DM:            ReasoningChannel{MaxSteps: defaultLongReasoningMaxSteps, TimeoutMS: defaultLongReasoningTimeoutMS},
 	}
 }
 
@@ -111,6 +116,9 @@ func (r Reasoning) Validate() error {
 	case "", "off", "on", "auto":
 	default:
 		return fmt.Errorf("reasoning.native_tools 只能是 off/on/auto")
+	}
+	if r.ReflectBudget < -1 || r.ReflectBudget > 1 {
+		return fmt.Errorf("reasoning.reflect_budget 只能是 -1/0/1")
 	}
 	if err := r.Comment.validate("评论"); err != nil {
 		return err

@@ -98,7 +98,12 @@ func reasoningOptionsForChannel(r config.Reasoning, channel event.Channel) reaso
 	if timeoutMS <= 0 {
 		timeoutMS = r.TimeoutMS
 	}
-	return reasoning.Options{MaxSteps: steps, Timeout: time.Duration(timeoutMS) * time.Millisecond}
+	return reasoning.Options{
+		MaxSteps: steps, Timeout: time.Duration(timeoutMS) * time.Millisecond,
+		// 工具步与反思预算分离：工具可用满 steps，反思仍有一次独立机会。
+		MaxToolSteps:  steps,
+		ReflectBudget: r.ReflectBudget,
+	}
 }
 
 // reasoningLabel 是提示词里的回复对象称呼（评论/私信不是弹幕）。
@@ -268,7 +273,20 @@ func runReact(ctx context.Context, runtime *reactRuntime, scope memory.Scope, ev
 		zap.Int("prompt_limit", promptLimit),
 		zap.Int("output_reserve", outputReserve),
 		zap.Int("prompt_bytes", res.PromptBytes),
+		zap.Bool("reflect_called", res.ReflectCalled),
+		zap.Bool("reflect_changed", res.ReflectChanged),
+		zap.String("reflect_skip_reason", res.ReflectSkippedReason),
+		zap.Int("reflect_prompt_bytes", res.ReflectPromptBytes),
 	)
+	// 归因只记「改没改/为什么没改」，不记草稿与改写全文。
+	if res.ReflectCalled {
+		log.Info("ReAct 反思归因",
+			zap.String("action", "react_reflect"),
+			zap.String("event_id", ev.ID),
+			zap.Bool("changed", res.ReflectChanged),
+			zap.Int("prompt_bytes", res.ReflectPromptBytes),
+		)
+	}
 	logReActUsage(log, ev, agent)
 	return res, err
 }

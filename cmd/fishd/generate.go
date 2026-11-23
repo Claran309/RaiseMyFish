@@ -244,6 +244,7 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 				reactResult = reasoning.Result{}
 			}
 			trace.Add(genCtx, trace.A("protocol", "react"), trace.A("steps", reactResult.Steps), trace.A("tools", len(reactResult.Tools)), trace.A("degraded", reactResult.Degraded), trace.A("degrade_reason", reactResult.Reason))
+			trace.Add(genCtx, trace.A("reflect_called", reactResult.ReflectCalled), trace.A("reflect_changed", reactResult.ReflectChanged), trace.A("reflect_skip_reason", reactResult.ReflectSkippedReason))
 		}
 		if len(reactResult.Danmaku) > 0 {
 			trace.Add(genCtx, trace.A("delivery", "send_danmaku"))

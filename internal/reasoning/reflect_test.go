@@ -160,7 +160,7 @@ func TestReflectSkipsWhenPromptOverBudget(t *testing.T) {
 	defer cancel()
 
 	in := Input{Question: "在吗", Reflect: true, PromptBudget: 10}
-	text, called, size := agent.reflect(ctx, in, "原稿", 1, nil)
+	text, called, size, _ := agent.reflect(ctx, in, "原稿", 1, nil)
 	if called || text != "" || size != 0 {
 		t.Fatalf("超预算应跳过反思：text=%q called=%v size=%d", text, called, size)
 	}

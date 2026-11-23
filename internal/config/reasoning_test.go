@@ -32,6 +32,27 @@ func TestReasoningDefaults(t *testing.T) {
 	}
 }
 
+// TestReasoningReflectBudget 默认 1；-1 关闭；越界拒绝。
+func TestReasoningReflectBudget(t *testing.T) {
+	r := DefaultReasoning()
+	if r.ReflectBudget != 1 {
+		t.Fatalf("默认 reflect_budget=%d，期望1", r.ReflectBudget)
+	}
+	if err := r.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []int{-2, 2} {
+		r.ReflectBudget = bad
+		if err := r.Validate(); err == nil {
+			t.Fatalf("reflect_budget=%d 未拒绝", bad)
+		}
+	}
+	r.ReflectBudget = -1
+	if err := r.Validate(); err != nil {
+		t.Fatalf("关闭反思应合法：%v", err)
+	}
+}
+
 // TestReasoningChannelBudgets 评论/私信可配 5-10 步 / 30-60 秒，弹幕预算不受影响。
 func TestReasoningChannelBudgets(t *testing.T) {
 	cfg, err := loadWithScheduler(t, "[reasoning]\nmax_steps = 3\ntimeout_ms = 8000\n[reasoning.comment]\nmax_steps = 8\ntimeout_ms = 60000\n[reasoning.dm]\nmax_steps = 10\ntimeout_ms = 30000\n")

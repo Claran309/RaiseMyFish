@@ -56,7 +56,7 @@ func (a *Agent) RunNative(ctx context.Context, in Input) (Result, error) {
 		steps    int
 	)
 
-	for step := 1; step <= a.opts.MaxSteps; step++ {
+	for step := 1; step <= a.opts.toolSteps(); step++ {
 		if runCtx.Err() != nil {
 			return a.degradeNative(runCtx, in, evidence, danmaku, used, steps, DegradeTimeout)
 		}
@@ -80,7 +80,7 @@ func (a *Agent) RunNative(ctx context.Context, in Input) (Result, error) {
 			if text == "" {
 				return a.degradeNative(runCtx, in, evidence, danmaku, used, steps, DegradeEmpty)
 			}
-			return Result{Text: text, Steps: steps, Tools: used, Evidence: evidence, Danmaku: danmaku, PromptBytes: promptSize}, nil
+			return a.finishNative(runCtx, in, Result{Text: text, Steps: steps, Tools: used, Evidence: evidence, Danmaku: danmaku, PromptBytes: promptSize})
 		}
 
 		// 先原样回填 assistant 的 tool_calls，再逐条执行并追加 tool 消息。
@@ -122,6 +122,41 @@ func (a *Agent) RunNative(ctx context.Context, in Input) (Result, error) {
 	}
 
 	return a.degradeNative(runCtx, in, evidence, danmaku, used, steps, DegradeSteps)
+}
+
+// finishNative 在原生路径收尾时执行与文本路径相同的 Reflection 预算。
+//
+// 原生 ToolLLM 不支持纯文本二次调用时直接标 disabled，不阻塞主回复。
+func (a *Agent) finishNative(ctx context.Context, in Input, result Result) (Result, error) {
+	if !in.Reflect {
+		result.ReflectSkippedReason = "disabled"
+		return result, nil
+	}
+	if strings.TrimSpace(result.Text) == "" {
+		result.ReflectSkippedReason = "prompt"
+		return result, nil
+	}
+	if a.opts.reflectBudget() == 0 {
+		result.ReflectSkippedReason = "disabled"
+		return result, nil
+	}
+	if a.llm == nil {
+		result.ReflectSkippedReason = "disabled"
+		return result, nil
+	}
+	text, called, promptSize, reason := a.reflect(ctx, in, result.Text, result.Steps, nil)
+	if !called {
+		result.ReflectSkippedReason = reason
+		return result, nil
+	}
+	result.ReflectCalled = true
+	result.ReflectPromptBytes = promptSize
+	result.Steps++
+	if text != "" {
+		result.ReflectChanged = text != result.Text
+		result.Text = text
+	}
+	return result, nil
 }
 
 // nativeSystemPrompt 是原生路径的系统提示：不重复文本 ReAct 的 JSON 协议，

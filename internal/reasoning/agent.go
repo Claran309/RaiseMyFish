@@ -71,11 +71,36 @@ type LLM interface {
 type Options struct {
 	MaxSteps int
 	Timeout  time.Duration
+	// MaxToolSteps 是工具循环上限；0 表示沿用 MaxSteps。
+	// Reflection 不计入这个预算，避免「查证用满步数后永远不反思」。
+	MaxToolSteps int
+	// ReflectBudget 是额外允许的自检次数（最多 1 轮）。
+	// 0 表示默认 1；负数表示显式关闭，不发起反思调用。
+	ReflectBudget int
 }
 
 // DefaultOptions 与派发单一致：3 步 / 8 秒。
 func DefaultOptions() Options {
-	return Options{MaxSteps: 3, Timeout: 8 * time.Second}
+	return Options{MaxSteps: 3, Timeout: 8 * time.Second, ReflectBudget: 1}
+}
+
+// toolSteps 返回工具循环上限。
+func (o Options) toolSteps() int {
+	if o.MaxToolSteps > 0 {
+		return o.MaxToolSteps
+	}
+	return o.MaxSteps
+}
+
+// reflectBudget 返回允许的自检次数；0 视为默认 1，负数视为关闭。
+func (o Options) reflectBudget() int {
+	if o.ReflectBudget < 0 {
+		return 0
+	}
+	if o.ReflectBudget == 0 {
+		return 1
+	}
+	return o.ReflectBudget
 }
 
 // Input 是一次 ReAct 的输入。
@@ -153,6 +178,14 @@ type Result struct {
 	// PromptBytes 是最后一次实际模型调用的保守字节估计（预算口径见 provider.EstimatorVersion）。
 	// 预算不足未发起调用时为 0。
 	PromptBytes int
+	// ReflectCalled 表示本轮是否真的发起了自检调用。
+	ReflectCalled bool
+	// ReflectChanged 表示自检改写了草稿（正文与草稿不同）。
+	ReflectChanged bool
+	// ReflectSkippedReason 是未反思的原因：disabled/budget/timeout/prompt/error。
+	ReflectSkippedReason string
+	// ReflectPromptBytes 是自检调用的保守字节估计；未调用时为 0。
+	ReflectPromptBytes int
 }
 
 // Agent 是 ReAct 执行器。
@@ -237,7 +270,7 @@ func (a *Agent) Run(ctx context.Context, in Input) (Result, error) {
 		steps        int
 	)
 
-	for step := 1; step <= a.opts.MaxSteps; step++ {
+	for step := 1; step <= a.opts.toolSteps(); step++ {
 		if runCtx.Err() != nil {
 			return a.degrade(runCtx, in, observations, evidence, danmaku, used, steps, DegradeTimeout)
 		}
@@ -303,16 +336,29 @@ func (a *Agent) Run(ctx context.Context, in Input) (Result, error) {
 // finish 收尾：Reflect 开启且预算允许时追加一次自检，任何失败都保留原稿。
 func (a *Agent) finish(ctx context.Context, in Input, draft string, steps int, observations []string, evidence []Evidence, danmaku []string, used []string, bytes int) (Result, error) {
 	result := Result{Text: draft, Steps: steps, Tools: used, Evidence: evidence, Danmaku: danmaku, PromptBytes: bytes}
-	if !in.Reflect || draft == "" {
+	if !in.Reflect {
+		result.ReflectSkippedReason = "disabled"
 		return result, nil
 	}
-	text, called, promptSize := a.reflect(ctx, in, draft, steps, observations)
+	if draft == "" {
+		result.ReflectSkippedReason = "prompt"
+		return result, nil
+	}
+	if a.opts.reflectBudget() == 0 {
+		result.ReflectSkippedReason = "disabled"
+		return result, nil
+	}
+	text, called, promptSize, reason := a.reflect(ctx, in, draft, steps, observations)
 	if !called {
+		result.ReflectSkippedReason = reason
 		return result, nil
 	}
 	result.Steps = steps + 1
 	result.PromptBytes = promptSize
+	result.ReflectCalled = true
+	result.ReflectPromptBytes = promptSize
 	if text != "" {
+		result.ReflectChanged = text != draft
 		result.Text = text
 	}
 	return result, nil
@@ -322,31 +368,27 @@ func (a *Agent) finish(ctx context.Context, in Input, draft string, steps int, o
 //
 // 反思是锦上添花：装不进预算、模型报错、回空都保留原稿，绝不因此降级或外发内部字段。
 // called 表示是否真的发了请求（发了就算一步），promptSize 是该次调用的字节估计。
-func (a *Agent) reflect(ctx context.Context, in Input, draft string, steps int, observations []string) (text string, called bool, promptSize int) {
+func (a *Agent) reflect(ctx context.Context, in Input, draft string, steps int, observations []string) (text string, called bool, promptSize int, reason string) {
 	if ctx.Err() != nil {
-		return "", false, 0
-	}
-	if steps >= a.opts.MaxSteps {
-		a.log.Info("ReAct 反思跳过：步数预算已用尽", zap.String("action", "react_reflect_skip"))
-		return "", false, 0
+		return "", false, 0, "timeout"
 	}
 	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < reflectMinRemaining {
 		a.log.Info("ReAct 反思跳过：剩余时间不足", zap.String("action", "react_reflect_skip"))
-		return "", false, 0
+		return "", false, 0, "timeout"
 	}
 	system := a.reflectPrompt(in)
 	user := a.reflectUserPrompt(in, observations, draft)
 	promptSize = promptBytes(system, user)
 	if in.PromptBudget > 0 && promptSize > in.PromptBudget {
 		a.log.Info("ReAct 反思跳过：prompt 超预算", zap.String("action", "react_reflect_skip"))
-		return "", false, 0
+		return "", false, 0, "prompt"
 	}
 	out, err := a.llm.Complete(ctx, system, user)
 	if err != nil {
 		a.log.Info("ReAct 反思失败，保留原稿", zap.String("action", "react_reflect_error"))
-		return "", true, promptSize
+		return "", true, promptSize, "error"
 	}
-	return replyBody(out), true, promptSize
+	return replyBody(out), true, promptSize, ""
 }
 
 // reflectPrompt 是自检调用的系统提示：保留人设，只要求检查并改写草稿。
@@ -481,11 +523,40 @@ func (a *Agent) degrade(ctx context.Context, in Input, observations []string, ev
 		if decision.Action == "final" {
 			result.Text = replyBody(finalBody(decision))
 		}
-		return result, nil
+		return a.finishDegraded(ctx, in, result, observations)
 	}
 	// 不是合法 JSON：残缺的协议 JSON 同样视为内部内容丢弃；
 	// 纯文本才可能是「直接给出最终回复」的正文。
 	result.Text = replyBody(out)
+	return a.finishDegraded(ctx, in, result, observations)
+}
+
+// finishDegraded 在降级正文之后补一次 Reflection；失败/超时保留降级稿。
+func (a *Agent) finishDegraded(ctx context.Context, in Input, result Result, observations []string) (Result, error) {
+	if !in.Reflect {
+		result.ReflectSkippedReason = "disabled"
+		return result, nil
+	}
+	if strings.TrimSpace(result.Text) == "" {
+		result.ReflectSkippedReason = "prompt"
+		return result, nil
+	}
+	if a.opts.reflectBudget() == 0 {
+		result.ReflectSkippedReason = "disabled"
+		return result, nil
+	}
+	text, called, promptSize, reason := a.reflect(ctx, in, result.Text, result.Steps, observations)
+	if !called {
+		result.ReflectSkippedReason = reason
+		return result, nil
+	}
+	result.ReflectCalled = true
+	result.ReflectPromptBytes = promptSize
+	result.Steps++
+	if text != "" {
+		result.ReflectChanged = text != result.Text
+		result.Text = text
+	}
 	return result, nil
 }
 

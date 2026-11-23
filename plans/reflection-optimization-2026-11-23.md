@@ -74,10 +74,18 @@
 - 原生路径 `RunNative` 同样覆盖上述两条。
 
 #### 验收
-- [ ] 3 步工具查证后 Reflection 仍能执行（时间允许时）
-- [ ] `ReflectSkippedReason` 可查
-- [ ] 总超时不超过配置
-- [ ] 旧文本 ReAct 用例不回归
+- [x] 3 步工具查证后 Reflection 仍能执行（时间允许时）
+- [x] `ReflectSkippedReason` 可查（disabled/timeout/prompt/error）
+- [x] 总超时不超过配置
+- [x] 旧文本 ReAct 用例不回归
+
+#### R1 执行记录（2026-11-23）
+
+- `Options` 增加 `MaxToolSteps` 与 `ReflectBudget`；工具循环只看 `MaxToolSteps`，反思不再被工具步数饿死。
+- `Result` 增加 `ReflectCalled/ReflectChanged/ReflectSkippedReason/ReflectPromptBytes`；正常收尾、降级收尾与原生收尾共用同一套归因。
+- 配置 `[reasoning] reflect_budget`：默认 1，`-1` 关闭，越界拒绝；生产装配把工具步与反思预算分开传。
+- 日志与 trace 只记「是否调用/是否改写/跳过原因/prompt 字节」，不记草稿或改写全文。
+- 验证：`go test ./internal/reasoning/... ./internal/config/... ./cmd/fishd/...`；新增 `TestReflectRunsAfterToolStepsExhausted` 证明工具步用满后仍反思。
 
 ---
 
