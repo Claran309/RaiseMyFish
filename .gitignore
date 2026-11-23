@@ -54,6 +54,25 @@ tmp/
 /tmp_*
 /migrate_*.sql
 
+# ── 工作区垃圾（根目录临时文件，2026-11-23 约定）────────────────
+/*.log
+/in*.txt
+/out*.txt
+/la*.txt
+/result*.txt
+/missing.txt
+/replymeta.txt
+/.chk*.txt
+/*.zip
+
+# ── Agent 本地规则与协作过程（只留本机，不上传）────────────────
+/AGENTS.md
+/CLAUDE.md
+/plans/coordination.md
+/plans/assignment.md
+/plans/reports/
+/prompts/
+
 # ── persona 运行时学习数据（含真实观众档案与鱼的私人记忆，只留本地）──
 # 已在库中的模板文件用 skip-worktree 脱离跟踪，新 persona 包自动忽略。
 /personas/*/knowledge/viewers.md
