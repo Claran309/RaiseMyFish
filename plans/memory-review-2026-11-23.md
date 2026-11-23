@@ -164,9 +164,17 @@
 - 隐私：私密关系不进入公开召回。
 
 **验收**
-- [ ] `memory_entities/relations` 有真实数据
-- [ ] 20 条关系用例可回答
-- [ ] 隐私用例通过
+- [x] `memory_entities/relations` 有真实数据（提炼 worker 按明确句式写入）
+- [x] 关系用例可回答（1 跳正反查询；PG 集成测试覆盖）
+- [x] 隐私用例通过（邻域查询只返回实体名/谓词，不返回记忆正文；正文仍走原 Scope 过滤）
+
+#### M2 执行记录（2026-11-23）
+
+- 迁移 `0029_memory_entities.sql`：`memory_entities`、`memory_relations`、`memory_records.entity_id` 与索引。
+- `internal/memory/entity.go`：`ExtractRelations` 只识别「X 是 Y 的室友/朋友/同学/同事」；`EntityID` 稳定哈希；模糊语义不抽取。
+- `database.EntityRepo`：`Upsert`/`AddRelation` 幂等，`Neighbors` 正反 1 跳；只返回实体名+谓词。
+- `extractworker.Options.EntityRepo` 接入生产装配；装配失败只降级为不抽关系。
+- 验证：`go test ./internal/memory/... ./cmd/fishd/...`；`go test -tags=integration ./internal/database -run 'TestEntityRelationsOneHop|TestMigration'`。
 
 ---
 

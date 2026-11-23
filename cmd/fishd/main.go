@@ -428,6 +428,8 @@ type memoryWorkerDeps struct {
 	Repeats       *extractworker.RepeatPromotion
 	WatermarkPath string
 	FreezePath    string
+	// Entities 非 nil 时启用 M2 关系抽取；只写明确句式。
+	Entities extractworker.EntityWriter
 }
 
 // newMemoryWorker 只用接口依赖装配 worker，测试可注入 mock 来源与仓库。
@@ -450,6 +452,7 @@ func newMemoryWorker(deps memoryWorkerDeps) (*extractworker.Worker, error) {
 		OwnerUID:       deps.Config.OwnerUID,
 		OwnerName:      deps.Config.OwnerName,
 		PreferenceGate: deps.Config.PreferenceGate,
+		EntityRepo:     deps.Entities,
 		// 重复度触发（#93）：与主提炼共用事件/事实仓储，阈值关闭时为 nil。
 		Repeats: deps.Repeats,
 	}
@@ -713,6 +716,13 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, r
 		repeatNames = profiles
 	}
 	repeats := buildRepeatPromotion(cfg, repeatEvents, repeatNames, repo, buildViewerAliasSource(cfg.Viewer, logger), logger)
+	// M2 关系抽取：仓储装配失败只降级为不抽关系，不影响记忆主链路。
+	var entityRepo extractworker.EntityWriter
+	if entities, eerr := database.NewEntityRepo(db); eerr == nil {
+		entityRepo = entities
+	} else {
+		logger.Warn("关系实体仓储装配失败，跳过关系抽取", zap.String("action", "memory_entities"), zap.Error(eerr))
+	}
 	worker, err := newMemoryWorker(memoryWorkerDeps{
 		Config:        cfg.Memory,
 		Source:        source,
@@ -726,6 +736,7 @@ func startMemoryExtractor(ctx context.Context, cfg config.Config, db *gorm.DB, r
 		Repeats:       repeats,
 		WatermarkPath: memoryWatermarkPath,
 		FreezePath:    memoryFreezePath,
+		Entities:      entityRepo,
 	})
 	if err != nil {
 		logger.Error("记忆提炼初始化失败，降级运行", zap.String("action", "memory_extract"), zap.Error(err))

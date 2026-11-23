@@ -117,6 +117,8 @@ type Options struct {
 	// PreferenceGate 为 true 时启用 M3 写入质量闸门：偏好必须带稳定信号。
 	// 默认 false，保持已验收的「主人相关候选照写」契约；需要止血时显式开启。
 	PreferenceGate bool
+	// EntityRepo 非 nil 时启用 M2 关系抽取；只写明确句式，低置信不写。
+	EntityRepo EntityWriter
 	// Now 注入时钟，仅测试需要；为空时用 time.Now。
 	Now func() time.Time
 	// Profiles 是观众档案重建依赖；nil 表示不跑这个子任务。
@@ -240,6 +242,12 @@ type Worker struct {
 	lastProfile time.Time
 	// 灵魂记忆重建节流状态
 	lastSoul time.Time
+}
+
+// EntityWriter 是实体/关系的写入窄接口，由 database.EntityRepo 实现。
+type EntityWriter interface {
+	Upsert(context.Context, memory.Entity) error
+	AddRelation(context.Context, memory.Relation) error
 }
 
 // New 构造 worker，并规范化参数。
@@ -723,6 +731,22 @@ func (w *Worker) processEvent(ctx context.Context, ev event.Event, stats *Stats)
 			stats.Inserted++
 		} else {
 			stats.Duplicated++
+		}
+	}
+	// M2：关系抽取只从明确句式生成；失败不影响记忆写入主链路。
+	if w.opts.EntityRepo != nil {
+		for _, rel := range memory.ExtractRelations(ev.Text, ev.ID) {
+			from := memory.Entity{ID: rel.FromID, Type: "person", CanonicalName: rel.FromName}
+			to := memory.Entity{ID: rel.ToID, Type: "person", CanonicalName: rel.ToName}
+			if err := w.opts.EntityRepo.Upsert(ctx, from); err != nil {
+				return fmt.Errorf("写入关系实体：%w", err)
+			}
+			if err := w.opts.EntityRepo.Upsert(ctx, to); err != nil {
+				return fmt.Errorf("写入关系实体：%w", err)
+			}
+			if err := w.opts.EntityRepo.AddRelation(ctx, rel); err != nil {
+				return fmt.Errorf("写入记忆关系：%w", err)
+			}
 		}
 	}
 	return nil
