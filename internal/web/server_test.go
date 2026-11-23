@@ -47,6 +47,9 @@ func readReq(target string) *http.Request {
 	return req
 }
 
+// float64Ptr 便于构造可选金额字段。
+func float64Ptr(v float64) *float64 { return &v }
+
 type fakeRepo struct {
 	status         store.WebStatus
 	embedding      store.WebEmbeddingStatus
@@ -246,6 +249,7 @@ func TestStatusJSON(t *testing.T) {
 			},
 		},
 		DeadTop:     []store.WebDeadStat{{Channel: "comment", Stage: "generate", ErrorKind: "budget", Count: 5}},
+		ReplyCost:   store.WebReplyCost{Replies: 10, CostPerReplyCNY: float64Ptr(0.0123), CacheHitRate: 0.42},
 		Pool:        &store.WebPool{Open: 3, InUse: 1, Idle: 2, MaxOpen: 30, WaitCount: 4, WaitDurationMS: 12},
 		GeneratedAt: time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC),
 	}}
@@ -260,7 +264,7 @@ func TestStatusJSON(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("响应不是 JSON：%v", err)
 	}
-	for _, k := range []string{"events_total", "events_pending", "memory_total", "memory_by_kind", "send_total", "send_failed", "known_cost", "unknown_calls", "total_calls", "coverage", "latency", "latency_detail", "dead_top", "db_pool", "generated_at"} {
+	for _, k := range []string{"events_total", "events_pending", "memory_total", "memory_by_kind", "send_total", "send_failed", "known_cost", "unknown_calls", "total_calls", "coverage", "latency", "latency_detail", "dead_top", "reply_cost", "db_pool", "generated_at"} {
 		if _, ok := body[k]; !ok {
 			t.Errorf("缺少字段 %s", k)
 		}
@@ -292,6 +296,10 @@ func TestStatusJSON(t *testing.T) {
 	deadTop, ok := body["dead_top"].([]any)
 	if !ok || len(deadTop) != 1 || deadTop[0].(map[string]any)["error_kind"] != "budget" {
 		t.Errorf("死信 Top 未透传：%+v", body["dead_top"])
+	}
+	replyCost, ok := body["reply_cost"].(map[string]any)
+	if !ok || replyCost["replies"].(float64) != 10 || replyCost["cache_hit_rate"].(float64) != 0.42 {
+		t.Errorf("单条回复成本未透传：%+v", body["reply_cost"])
 	}
 	pool, ok := body["db_pool"].(map[string]any)
 	if !ok || pool["in_use"].(float64) != 1 || pool["max_open"].(float64) != 30 || pool["wait_count"].(float64) != 4 {
@@ -671,7 +679,7 @@ func TestOverviewPageBlocks(t *testing.T) {
 		}
 	}
 	// R1/R2：延迟与连接池卡片必须有渲染函数与空态，纯前端无编译期保护。
-	for _, want := range []string{"function latencyCards", "'p50 '", "近24h无样本", "延迟(fresh)", "样本不足", "function deadTopCard", "死信 Top5", "function loadTraces", "慢回复 Trace", "function poolCard", "等待 "} {
+	for _, want := range []string{"function latencyCards", "'p50 '", "近24h无样本", "延迟(fresh)", "样本不足", "function deadTopCard", "死信 Top5", "function replyCostCard", "单条回复成本", "function loadTraces", "慢回复 Trace", "function poolCard", "等待 "} {
 		if !strings.Contains(body, want) {
 			t.Errorf("概览页缺少延迟/连接池渲染 %q", want)
 		}

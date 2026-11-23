@@ -233,6 +233,14 @@ function deadTopCard(items) {
   }).join(' · ');
   return card('warn', '🪦', '死信 Top5', text, '按通道×环节×错误类别聚合', true);
 }
+function replyCostCard(c) {
+  c = c || {};
+  if (!c.replies) return card('info', '🧾', '单条回复成本', '—', '近24h无成功回复', true);
+  var cny = c.cost_per_reply_cny;
+  var cost = (cny === null || cny === undefined) ? '未知报价' : ('¥' + Number(cny).toFixed(4));
+  var hit = (Number(c.cache_hit_rate) * 100).toFixed(1) + '%';
+  return card('info', '🧾', '单条回复成本', cost, '回复 ' + c.replies + ' · 缓存命中 ' + hit, true);
+}
 async function shutdownFishd() {
   if (!confirm('确认关闭 fishd？关闭后需要重新启动。')) return;
   try {
@@ -266,7 +274,7 @@ async function loadStatus() {
     card('info', '🧠', '记忆条数', d.memory_total || 0),
     card('info', '🏷️', '记忆分类', kinds, '', true),
     costCard(d)
-  ].join('') + latencyCards(d) + deadTopCard(d.dead_top) + poolCard(d.db_pool);
+  ].join('') + latencyCards(d) + deadTopCard(d.dead_top) + replyCostCard(d.reply_cost) + poolCard(d.db_pool);
 
   var health = document.getElementById('health');
   if (failed > 0 || pending > 10) {

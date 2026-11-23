@@ -350,6 +350,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"channel": item.Channel, "stage": item.Stage, "error_kind": item.ErrorKind, "count": item.Count,
 		})
 	}
+	replyCost := map[string]any{
+		"replies": st.ReplyCost.Replies, "cost_per_reply_usd": st.ReplyCost.CostPerReplyUSD,
+		"cost_per_reply_cny": st.ReplyCost.CostPerReplyCNY, "cache_hit_rate": st.ReplyCost.CacheHitRate,
+		"cached_input_tokens": st.ReplyCost.CachedInputTokens, "input_tokens": st.ReplyCost.InputTokens,
+	}
 	var pool any
 	if st.Pool != nil {
 		pool = map[string]any{
@@ -372,6 +377,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"latency":        latency,
 		"latency_detail": latencyDetail,
 		"dead_top":       deadTop,
+		"reply_cost":     replyCost,
 		"db_pool":        pool,
 		"generated_at":   st.GeneratedAt.UTC().Format(time.RFC3339),
 	})

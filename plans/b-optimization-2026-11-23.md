@@ -459,6 +459,13 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 
 ### 4.9 B9 Prompt 缓存与成本（P2）
 
+#### B9 执行记录（2026-11-23）
+
+- 面板新增「单条回复成本」卡：近 24h 已成功回复数、每回复成本（USD/CNY）、缓存命中率。
+- `WebStatus.ReplyCost` 聚合 `send_log` 成功回复数与 `llm_usage` 的 `cost_usd`/`cached_in_tokens`/`in_tokens`；无报价时显示「未知报价」而非 0。
+- 未做 A/B 对比（需真实模型付费调用，按计划单独请示）。
+- 验证：`go test ./internal/web/... ./internal/database/...`。
+
 - 审核 `brain.Prepare` 的 system/user 顺序，确保稳定前缀在前（现有实现大体符合，需逐段断言）；
 - `llm_usage` 已有 `cached_in_tokens`，补 `cost_per_reply` 聚合查询与面板卡片；
 - 做一次前后对比（同 20 条用例，记录 cached tokens/费用），报告写入 `docs/reports/`。

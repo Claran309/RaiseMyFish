@@ -140,6 +140,41 @@ func (r *WebRepo) Status(ctx context.Context) (store.WebStatus, error) {
 	for _, item := range dead {
 		st.DeadTop = append(st.DeadTop, store.WebDeadStat{Channel: item.Channel, Stage: item.Stage, ErrorKind: item.ErrorKind, Count: item.Count})
 	}
+	// B9：近 24h 单条回复成本与缓存命中率；只统计已成功回复的事件。
+	var costRow struct {
+		Replies           int64
+		KnownCost         *float64
+		CachedInputTokens int64
+		InputTokens       int64
+	}
+	if err := r.db.WithContext(ctx).Raw(`
+WITH replies AS (
+  SELECT DISTINCT l.event_id
+    FROM send_log l JOIN events e ON e.id = l.event_id
+   WHERE l.ok IS TRUE AND e.dir='in' AND e.at >= ? AND e.at < ?
+)
+SELECT (SELECT count(*) FROM replies) AS replies,
+       (SELECT sum(cost_usd) FROM llm_usage WHERE at >= ? AND at < ?) AS known_cost,
+       (SELECT coalesce(sum(cached_in_tokens),0) FROM llm_usage WHERE at >= ? AND at < ?) AS cached_input_tokens,
+       (SELECT coalesce(sum(in_tokens),0) FROM llm_usage WHERE at >= ? AND at < ?) AS input_tokens`,
+		now.Add(-24*time.Hour), now,
+		now.Add(-24*time.Hour), now,
+		now.Add(-24*time.Hour), now,
+		now.Add(-24*time.Hour), now).Scan(&costRow).Error; err != nil {
+		return store.WebStatus{}, &safeError{"统计单条回复成本失败", err}
+	}
+	st.ReplyCost.Replies = costRow.Replies
+	st.ReplyCost.CachedInputTokens = costRow.CachedInputTokens
+	st.ReplyCost.InputTokens = costRow.InputTokens
+	if costRow.InputTokens > 0 {
+		st.ReplyCost.CacheHitRate = float64(costRow.CachedInputTokens) / float64(costRow.InputTokens)
+	}
+	if costRow.KnownCost != nil && costRow.Replies > 0 {
+		per := *costRow.KnownCost / float64(costRow.Replies)
+		cny := per * 7.2
+		st.ReplyCost.CostPerReplyUSD = &per
+		st.ReplyCost.CostPerReplyCNY = &cny
+	}
 	// 连接池状态直接从 database/sql 读取，不额外查库。
 	// 拿不到 DB 句柄只影响展示，不影响其它统计。
 	if sqlDB, poolErr := r.db.DB(); poolErr == nil {

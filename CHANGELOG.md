@@ -30,6 +30,7 @@
 - B7 设计讲解：`docs/design-decisions/` 三页链路白板稿
 - B6 README 重写：真实取数（事件/记忆/档案/发送/LLM/测试）+ Mermaid 数据流 + ADR 摘要
 - B8 检索实验：BM25+RRF 对照 +0.0 点，按门槛不采用；结论与复现写入报告
+- B9 成本面板：单条回复成本与缓存命中率（近 24h，无报价显示未知）
 
 ### Changed
 - 仓库卫生：根目录临时文件归档到本地 `tmp/`；`AGENTS.md`、`CLAUDE.md`、协作表、内部报告与 prompts 改为本地保留，不再上传

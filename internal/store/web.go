@@ -32,7 +32,9 @@ type WebStatus struct {
 	// LatencyDetail 是 all/fresh 与五段拆分；空 map 表示历史数据不足。
 	LatencyDetail map[string]WebLatencyDetail
 	// DeadTop 是近 24 小时「通道×环节×error_kind」的死信 Top5。
-	DeadTop     []WebDeadStat
+	DeadTop []WebDeadStat
+	// ReplyCost 是近 24 小时单条回复成本与缓存命中率。
+	ReplyCost   WebReplyCost
 	Pool        *WebPool
 	GeneratedAt time.Time
 }
@@ -79,6 +81,16 @@ type WebDeadStat struct {
 	Stage     string
 	ErrorKind string
 	Count     int64
+}
+
+// WebReplyCost 是成本面板投影；CostPerReply 为 nil 表示窗口内没有已计价调用。
+type WebReplyCost struct {
+	Replies           int64
+	CostPerReplyUSD   *float64
+	CostPerReplyCNY   *float64
+	CachedInputTokens int64
+	InputTokens       int64
+	CacheHitRate      float64
 }
 
 // WebPool 是连接池运行态（database/sql DBStats 的只读投影）。
