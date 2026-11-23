@@ -13,6 +13,7 @@
 - B1–B11 改进计划与延迟诊断 L 系列计划；延迟口径与评论/私信排查文档
 - L0 延迟口径：`collected_at`/`collect_mode`、`event_timings` 七阶段计时、五段延迟与 fresh/all 输出
 - L1 死信止血：`event_errors` 分类落库、dead Top 分布、`fishctl dlq list/replay`、comment/dm 独立回复窗口
+- B1-D 原生工具接线：真实 HTTP mock 端到端与 `auto` 不支持降级测试通过（默认仍 `off`）
 
 ### Changed
 - 仓库卫生：根目录临时文件归档到本地 `tmp/`；`AGENTS.md`、`CLAUDE.md`、协作表、内部报告与 prompts 改为本地保留，不再上传

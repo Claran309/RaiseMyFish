@@ -41,10 +41,16 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 | B1-A Provider | ✅ 已实现 | 新增 `internal/brain/provider/tool.go`；`OpenAI.ChatWithTools` 支持 `tools`/`tool_calls`/`tool` role；旧 `Chat` 仍严格两消息、遇 `tool_calls` 判协议错误 |
 | B1-B Schema/校验 | ✅ 已实现 | `internal/reasoning/tools_schema.go` 覆盖 19 个工具名；`Toolbox.Definitions()` 输出 JSON Schema；`ValidateToolArgs`/`ToolArgsText` 做最小校验与文本还原 |
 | B1-C 原生循环 | ✅ 已实现 | `internal/reasoning/native.go`：`RunNative` 支持 `tool_calls`、assistant/tool 回填、步数/超时/预算降级、证据复用 |
-| B1-D 接线 | 🟡 骨架完成 | `[reasoning] native_tools = "off"` 默认关闭；`on/auto` 走原生，`auto` 遇到 `KindUnsupported` 由 `providerLLM` 回落文本；尚未在真实 Provider 上验证 |
+| B1-D 接线 | ✅ 代码与 mock 端到端完成 | `[reasoning] native_tools = "off"` 默认关闭；`on/auto` 走原生，`auto` 遇到 `KindUnsupported` 回落文本；真实 Provider 小流量灰度仍需主人授权 |
 | 测试 | ✅ 已补 | `openai_tool_test.go`、`tools_schema_test.go`、`native_test.go`、`react_native_test.go`；`go test ./internal/brain/provider/... ./internal/reasoning/... ./internal/config/... ./cmd/fishd/...` 通过 |
 
 > 仍然保持：`native_tools` 默认 `off`，上线前必须先跑 mock + 真实 Provider 灰度；不改 `contracts/`、不改 `go.mod`。
+
+#### B1-D 执行记录（2026-11-23）
+
+- `cmd/fishd/native_e2e_test.go` 用真实 HTTP Provider 覆盖：`tools` 请求 → `tool_calls` → 工具执行 → `tool` 回填 → 最终正文。
+- 同一测试覆盖 `auto`：Provider 返回 400/`KindUnsupported` 时自动回落纯文本，事件不失败。
+- 真实 Provider 灰度需要 API Key 与小流量窗口，按计划单独请示；未打开默认开关。
 
 ---
 
