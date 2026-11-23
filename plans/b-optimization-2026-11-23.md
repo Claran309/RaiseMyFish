@@ -444,6 +444,14 @@ go test ./internal/brain/... ./internal/reasoning/... ./internal/personaeval/...
 
 ### 4.8 B8 检索评测与 rerank（P2，先评测再决定）
 
+#### B8 执行记录（2026-11-23）
+
+- 先跑 baseline：`cmd/knowledgeeval` → 正例 43/60、相关 44/107、负例误返 3/20、权限控制 20/20。
+- 实现离线实验 `internal/knowledgeeval/bm25.go`（BM25 + RRF，仅实验，不接生产）。
+- 同批 100 条对比：71.7 → 71.7，**+0.0 点**，未达 +3 门槛 → 按计划不采用。
+- 结论与复现命令写入 `docs/reports/2026-11-23-bm25-rrf-experiment.md`；下一步应做候选召回（查询扩展/别名），而非 Top3 内 rerank。
+- 验证：`go test ./internal/knowledgeeval/... -run TestBM25RRFCompareBaseline -v`。
+
 - 用现有 `cmd/knowledgeeval` 100 条做 baseline，输出 `recall@5/MRR/nDCG@5/negative_false_rate`；
 - 在 `internal/knowledge` 增加可选 `tsvector`/BM25 候选（PostgreSQL 内置，不新增依赖），用 RRF 融合；
 - rerank 若接 LLM/外部 API，必须先做成本评估与主人授权；
