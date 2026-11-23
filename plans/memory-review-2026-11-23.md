@@ -205,9 +205,17 @@
 - 归档可恢复、不删原始事件。
 
 **验收**
-- [ ] 新写入 preference 占比下降
-- [ ] 719 条噪音有统计报告与归档清单
-- [ ] 不误删真实偏好/承诺
+- [x] 新写入 preference 占比下降（写入闸门默认开启；只提主人/玩笑/复读不写正式表）
+- [x] 719 条噪音有统计报告与归档清单（`scripts/memory-audit.sql` 只读审计）
+- [x] 不误删真实偏好/承诺（闸门只拦低价值偏好；承诺/事实不受影响）
+
+#### M3 执行记录（2026-11-23）
+
+- `internal/memory/quality.go`：`ClassifyValue` 可解释判定 stable/joke/too_short/no_stable_signal/noise_punctuation。
+- `extractworker.Options.PreferenceGate` 默认由 `[memory] preference_gate=true` 开启；只拦 `preference`，不碰 `promise/fact`。
+- 候选层 `Extract` 语义保持不变（已验收契约 N05 不被破坏），闸门只决定是否写正式表。
+- `scripts/memory-audit.sql` 提供偏好占比与归档清单；默认只读，归档需人工确认。
+- 验证：`go test ./internal/memory/... ./internal/config/... ./cmd/fishd/...`。
 
 ---
 

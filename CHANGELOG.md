@@ -20,6 +20,7 @@
 - M1 记忆事实版本链：`fact_key`/`status`/`memory_conflicts`，改口时旧行失效可追溯
 - R1 Reflection 预算独立：`reflect_budget`、工具步与反思分离、跳过原因与改写归因
 - R2/R3 评论/私信反思开关与归因：可解释触发、50 条对照集、`reflection.json`（未录制明确 skip）
+- M3 记忆写入质量闸门：偏好需稳定信号，低价值主人相关/玩笑/复读不写正式表
 
 ### Changed
 - 仓库卫生：根目录临时文件归档到本地 `tmp/`；`AGENTS.md`、`CLAUDE.md`、协作表、内部报告与 prompts 改为本地保留，不再上传

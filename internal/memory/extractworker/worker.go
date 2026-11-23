@@ -114,6 +114,9 @@ type Options struct {
 	MaxAttempts int
 	// Source 覆盖 memory_sources 的来源 id；为空时按候选类型推导。
 	Source string
+	// PreferenceGate 为 true 时启用 M3 写入质量闸门：偏好必须带稳定信号。
+	// 默认 false，保持已验收的「主人相关候选照写」契约；需要止血时显式开启。
+	PreferenceGate bool
 	// Now 注入时钟，仅测试需要；为空时用 time.Now。
 	Now func() time.Time
 	// Profiles 是观众档案重建依赖；nil 表示不跑这个子任务。
@@ -783,6 +786,11 @@ func (w *Worker) extractEvent(ctx context.Context, ev event.Event) ([]store.Memo
 		record := w.buildRecord(ev, candidate)
 		// 护栏（#93）：事实必须带 evidence，无证据不写。
 		if record.Kind == "fact" && len(record.Evidence) == 0 {
+			continue
+		}
+		// 写入质量闸门（M3）：偏好必须带稳定信号；只提「主人」/玩笑/复读不写正式表。
+		// 候选仍可由 Extract 产出，这里只决定是否进入长期记忆，避免误伤旧契约。
+		if w.opts.PreferenceGate && record.Kind == "preference" && !memory.ClassifyValue(ev.Text).Keep {
 			continue
 		}
 		records = append(records, record)

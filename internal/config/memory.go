@@ -49,6 +49,9 @@ type Memory struct {
 	OwnerUID string `toml:"owner_uid"`
 	// OwnerName 是主人的昵称，仅用于 LLM 提炼时的语义提示，不用于身份认证。
 	OwnerName string `toml:"owner_name"`
+	// PreferenceGate 控制「偏好写入质量闸门」：开启后只提主人/玩笑/复读的偏好
+	// 不再写正式表（仍可作候选）。默认 true（M3 止血）。
+	PreferenceGate bool `toml:"preference_gate"`
 }
 
 func defaultMemory() Memory {
@@ -62,6 +65,7 @@ func defaultMemory() Memory {
 		ViewerSummaryRecentTTLSeconds: 7 * 24 * 3600,
 		ViewerSummaryDailyViewers:     50,
 		RepeatPromoteThreshold:        5,
+		PreferenceGate:                true,
 	}
 }
 
