@@ -282,6 +282,14 @@
 
 ### 4.6 L5 P2 数据质量（0.5–1 天）
 
+#### L5 执行记录（2026-11-23）
+
+- 迁移 `0030_l5_indexes.sql`：`events(channel,dir,status,at DESC)`、`send_log(event_id,ok,at DESC)`、`memory_usage(record_id,created_at DESC)`。
+- 数据量：当前 3.6 万事件，不分区；>100 万再按月。
+- 配置校验：`max_event_age_seconds > 采集间隔` 已在 L1 落地。
+- 文档：`docs/runbook.md` 评论/私信延迟排查、`docs/10-observability-cost.md` 口径已在 L0 落地。
+- 验证：`go test -tags=integration ./internal/database -run TestMigration`。
+
 - 索引：`idx_send_log_event_ok_at`、`idx_events_channel_dir_status_at`、`idx_events_collected_at`。
 - 数据量：2 万级不分区；>100 万再按月。
 - 测试：`stats_test.go` 固定数据 P50/P90；comment fake clock 轮询/水位；dm 增量游标。
