@@ -35,6 +35,7 @@ type Config struct {
 	Gift          Gift          `toml:"gift"`
 	Memory        Memory        `toml:"memory"`
 	Web           Web           `toml:"web"`
+	Metrics       Metrics       `toml:"metrics"`
 	MCP           MCP           `toml:"mcp"`
 	Watchdog      Watchdog      `toml:"watchdog"`
 	// Summary 是每日总结（默认关闭）；手动生成入口仍要看面板与 LLM 是否可用。
@@ -219,6 +220,7 @@ func load(path, envPath string) (Config, error) {
 		Gift:          defaultGift(),
 		Memory:        defaultMemory(),
 		Web:           defaultWeb(),
+		Metrics:       defaultMetrics(),
 		MCP:           defaultMCP(),
 		Watchdog:      defaultWatchdog(),
 		Summary:       defaultSummary(),
@@ -419,6 +421,9 @@ func (c Config) validateStructure(strictLive bool) error {
 	if err := c.Web.Validate(); err != nil {
 		return err
 	}
+	if err := c.Metrics.Validate(); err != nil {
+		return err
+	}
 	if err := c.MCP.Validate(); err != nil {
 		return err
 	}
@@ -533,8 +538,10 @@ func (c Config) validateTail() error {
 // validateCredentials 只校验B站凭据与账号身份，且只针对实际启用能力。
 // 结构问题已在 validateStructure 拒绝；这里允许 DB 活跃账号在加载后才回填。
 func (c Config) validateCredentials(strictLive bool) error {
+	// dry_run 发送器只记账、不触达平台，staging 压测不应被迫加载真实B站凭据。
+	dryRun := c.Sender != nil && c.Sender.DryRun
 	// CLI 只读命令不采集直播，跳过 live 凭据；其余已启用能力仍要能实际工作。
-	if strictLive {
+	if strictLive && !dryRun {
 		if err := c.Collector.Live.ValidateCredential(c.Channels.Live.Enabled); err != nil {
 			return err
 		}
@@ -556,10 +563,10 @@ func (c Config) validateCredentials(strictLive bool) error {
 			return errors.New("私信采集启用需要本账号 self_id（避免回复自己的私信）")
 		}
 	}
-	if c.Sender != nil && c.Sender.DM.Enabled && c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
+	if !dryRun && c.Sender != nil && c.Sender.DM.Enabled && c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
 		return errors.New("私信发送启用需要B站凭据")
 	}
-	if c.Sender != nil && c.Sender.Comment != nil && c.Sender.Comment.Enabled && c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
+	if !dryRun && c.Sender != nil && c.Sender.Comment != nil && c.Sender.Comment.Enabled && c.Collector.Live.Cookie == "" && c.Collector.Live.CookieFile == "" {
 		return errors.New("评论发送启用需要B站凭据")
 	}
 	// 看直播与主动弹幕共用截帧凭据；主动弹幕开启时即使 [watch] 关闭也要校验。

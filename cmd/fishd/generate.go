@@ -19,6 +19,7 @@ import (
 	"RaiseMyFish/internal/conversation"
 	"RaiseMyFish/internal/event"
 	"RaiseMyFish/internal/memory"
+	"RaiseMyFish/internal/metrics"
 	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/reasoning"
 	"RaiseMyFish/internal/scheduler"
@@ -160,8 +161,10 @@ type generateDeps struct {
 	liveWindow *conversation.Window
 	// promptBudgets 是通道级 prompt 预算；缺省通道用 Brain 默认。
 	promptBudgets map[event.Channel]int
-	tracer        *trace.Local
-	log           *zap.Logger
+	// metrics 是可选指标注册表；nil 时不计。
+	metrics *metrics.Registry
+	tracer  *trace.Local
+	log     *zap.Logger
 }
 
 // markGenerated 记录模型/ReAct 产出最终正文的时间；计时失败不能阻塞回复。
@@ -259,6 +262,9 @@ func generateHandler(deps generateDeps) scheduler.Handler {
 			}
 			trace.Add(genCtx, trace.A("protocol", "react"), trace.A("steps", reactResult.Steps), trace.A("tools", len(reactResult.Tools)), trace.A("degraded", reactResult.Degraded), trace.A("degrade_reason", reactResult.Reason))
 			trace.Add(genCtx, trace.A("reflect_called", reactResult.ReflectCalled), trace.A("reflect_changed", reactResult.ReflectChanged), trace.A("reflect_skip_reason", reactResult.ReflectSkippedReason))
+			if reactResult.Degraded && deps.metrics != nil {
+				deps.metrics.Inc("fishd_degrade_total", map[string]string{"reason": reactResult.Reason})
+			}
 		}
 		if len(reactResult.Danmaku) > 0 {
 			trace.Add(genCtx, trace.A("delivery", "send_danmaku"))

@@ -41,6 +41,9 @@ func buildDMCollector(cfg config.Config, accounts *account.Service, log *zap.Log
 	if !cfg.Collector.DM.Enabled {
 		return nil, nil
 	}
+	if dryRunNoPlatform(cfg) {
+		return nil, nil
+	}
 	client := buildBiliClientForDM(cfg, log)
 	if client == nil {
 		return nil, nil

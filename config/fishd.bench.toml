@@ -1,0 +1,248 @@
+# RaiseMyFish staging 压测配置（只允许写 raisemyfish_bench）。
+# 与生产完全隔离：独立 DSN、日志、状态、端口；dry_run 发送；mock LLM。
+
+[db]
+dsn_env = "FISH_BENCH_DSN"
+timeout_seconds = 5
+max_open = 30
+max_idle = 10
+conn_max_lifetime_seconds = 1800
+slow_query_ms = 200
+
+[log]
+level = "warn"
+dir = "bench/out/logs"
+
+[runtime]
+state_file = "bench/out/state/fishd-bench.json"
+heartbeat_seconds = 5
+stale_seconds = 20
+
+[presence]
+heartbeat_like_seconds = 0
+
+# 通道开关只决定 sender 路由；采集器全部关闭，不会碰任何真实平台。
+[channels.live]
+enabled = true
+[channels.comment]
+enabled = true
+[channels.dm]
+enabled = true
+[channels.qq]
+enabled = false
+
+[collector.live]
+room_id = "10000001"
+self_id = "1000"
+node_path = "node"
+script_path = "tools/bili-whale/danmaku-await.mjs"
+http_timeout_ms = 10000
+connect_timeout_ms = 10000
+heartbeat_ms = 30000
+idle_ms = 90000
+startup_ms = 45000
+backoff_min_ms = 1000
+backoff_max_ms = 60000
+stable_after_ms = 30000
+offline_poll_ms = 60000
+max_failures = 8
+
+[collector.comment]
+enabled = false
+feed_enabled = false
+feed_interval_seconds = 60
+dynamic_poll_enabled = false
+auto_discover = false
+videos = ["880000000000000001"]
+interval_seconds = 60
+discover_interval_seconds = 600
+concurrency = 1
+cursor_path = "bench/out/state/comment-cursors.json"
+feed_state_path = "bench/out/state/msgfeed-cursors.json"
+
+[collector.dm]
+enabled = false
+interval_seconds = 60
+state_path = "bench/out/state/dm-cursors.json"
+
+[sender]
+dry_run = true
+node_path = "node"
+script_path = "tools/bili-whale/danmaku.mjs"
+self_id = "1000"
+http_timeout_ms = 1000
+
+[sender.comment]
+enabled = true
+
+[sender.dm]
+enabled = true
+all_followers = true
+allowed_mids = ["1000"]
+state_path = "bench/out/state/dm-recipient.json"
+
+# mock LLM：OpenAI 兼容，只允许回环。密钥是占位值，模型没有真实费用。
+[llm]
+enabled = true
+persona_dir = "personas/dafeiyu"
+max_prompt_tokens = 65536
+max_reply_tokens = 128
+attempt_timeout_ms = 5000
+total_timeout_ms = 10000
+backoff_ms = 50
+max_concurrent = 64
+temperature = 0.7
+
+[llm.providers.mock]
+type = "openai"
+base_url = "http://127.0.0.1:18081/v1"
+api_key_env = "FISH_MOCK_LLM_KEY"
+models = ["mock"]
+
+[llm.routing]
+default = "mock:mock"
+live = "mock:mock"
+comment = "mock:mock"
+dm = "mock:mock"
+
+[reasoning]
+enabled = true
+default_react = true
+max_steps = 2
+timeout_ms = 5000
+allow_side_effect_tools = false
+allow_danmaku_tool = false
+native_tools = "off"
+reflect_budget = -1
+reflect_comment = false
+reflect_dm = false
+short_path_max_runes = 200
+
+[reasoning.comment]
+max_steps = 5
+timeout_ms = 30000
+
+[reasoning.dm]
+max_steps = 5
+timeout_ms = 30000
+
+[comment_vision]
+enabled = false
+
+[knowledge]
+enabled = false
+
+[embedding]
+enabled = false
+
+[viewer]
+enabled = false
+
+[watch]
+enabled = false
+
+[proactive]
+enabled = false
+
+[gift]
+enabled = false
+real = false
+
+[skills]
+enabled = false
+
+[memory]
+enabled = true
+interval_seconds = 10
+allow_private = false
+frozen = false
+llm_extract = false
+llm_extract_max_per_hour = 0
+soul_enabled = false
+viewer_summary_interval_seconds = 0
+repeat_promote_threshold = 0
+
+[summary]
+enabled = false
+
+[web]
+enabled = false
+
+[metrics]
+enabled = true
+addr = "127.0.0.1:19091"
+
+[mcp]
+enabled = false
+
+[watchdog]
+enabled = true
+interval_seconds = 5
+stale_seconds = 40
+unhealthy_threshold = 1
+cooldown_seconds = 0
+heartbeat_path = "bench/out/state/fishd.heartbeat"
+history_path = "bench/out/state/watchdog-history.jsonl"
+restart_command = "bench/out/bin/fishd.exe --config config/fishd.bench.toml --env-file bench/out/bench.env"
+restart_mode = "managed-child"
+
+[slo]
+live_p99_ms = 0
+comment_fresh_p90_ms = 0
+dm_fresh_p90_ms = 0
+queue_oldest_ms = 0
+comment_dead_rate = 0
+dm_dead_rate = 0
+
+[observability.trace]
+enabled = false
+path = "bench/out/logs/traces.jsonl"
+
+[conversation]
+enabled = false
+
+[scheduler]
+max_concurrent = 32
+max_pending = 512
+claim_batch = 32
+poll_interval_ms = 50
+retry_delay_ms = 500
+max_event_age_seconds = 0
+operation_timeout_ms = 10000
+worker_timeout_ms = 60000
+
+[scheduler.channels.live]
+brain = "default"
+rate_per_minute = 100000
+burst = 1000
+daily_quota = 1000000
+cooldown_ms = 0
+min_runes = 1
+routing_mode = "all"
+max_reply_runes = 40
+max_event_age_seconds = 0
+max_concurrent = 32
+merge_window_ms = 0
+self_ids = ["1000"]
+
+[scheduler.channels.comment]
+brain = "default"
+rate_per_minute = 100000
+burst = 1000
+daily_quota = 1000000
+cooldown_ms = 0
+min_runes = 1
+max_reply_runes = 40
+max_event_age_seconds = 0
+max_concurrent = 16
+
+[scheduler.channels.dm]
+brain = "default"
+rate_per_minute = 100000
+burst = 1000
+daily_quota = 1000000
+cooldown_ms = 0
+min_runes = 1
+max_reply_runes = 40
+max_event_age_seconds = 0
+max_concurrent = 16

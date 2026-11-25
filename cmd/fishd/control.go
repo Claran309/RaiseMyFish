@@ -200,8 +200,12 @@ func newRuntimeControl(ctx context.Context, cfg config.Config, deps runtimeDeps,
 // StartInitial 按静态配置启动初始能力；核心采集失败上抛，其余只降级。
 func (c *runtimeControl) StartInitial() error {
 	if c.base.Channels.Live.Enabled {
-		if err := c.SetLiveCollect(true); err != nil {
-			return fmt.Errorf("启动直播采集失败：%w", err)
+		if dryRunNoPlatform(c.base) {
+			c.log.Info("dry_run 模式跳过直播采集", zap.String("action", "live_collect_skip"))
+		} else {
+			if err := c.SetLiveCollect(true); err != nil {
+				return fmt.Errorf("启动直播采集失败：%w", err)
+			}
 		}
 	}
 	if c.base.Channels.Comment.Enabled && c.base.Collector.Comment.Enabled {

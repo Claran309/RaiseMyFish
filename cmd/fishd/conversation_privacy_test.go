@@ -107,5 +107,3 @@ func TestDMConversationIsIsolatedPerPeer(t *testing.T) {
 		}
 	}
 }
-
-

@@ -336,7 +336,7 @@ docker run -d --name fishd --restart unless-stopped --env-file deployment/.env \
 | 数据 | 位置（本机） | 位置（Compose） | 保留 |
 |---|---|---|---|
 | 应用日志 | `logs/fishd-YYYY-MM-DD.log` | `fishd-logs` 卷 | 7 天 |
-| 日报 | `logs/daily-YYYY-MM-DD.md` | `fishd-logs` 卷 | 90 天 |
+| 日报/日志 | `logs/` | `fishd-logs` 卷 | 日志文件 7 天（代码实际保留）；日报长期归档需另行配置 |
 | PG 数据 | 系统 PG 目录 | `pgdata` 卷 | 按表策略 |
 | 备份 | `data/backup/` | 宿主机目录 | 7 天 |
 

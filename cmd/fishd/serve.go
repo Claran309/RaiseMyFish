@@ -27,6 +27,7 @@ import (
 	"RaiseMyFish/internal/infra"
 	"RaiseMyFish/internal/knowledge"
 	"RaiseMyFish/internal/memory"
+	"RaiseMyFish/internal/metrics"
 	"RaiseMyFish/internal/persona"
 	"RaiseMyFish/internal/presence"
 	"RaiseMyFish/internal/reasoning"
@@ -34,6 +35,7 @@ import (
 	"RaiseMyFish/internal/sender"
 	sendercomment "RaiseMyFish/internal/sender/comment"
 	senderdm "RaiseMyFish/internal/sender/dm"
+	"RaiseMyFish/internal/sender/dryrun"
 	"RaiseMyFish/internal/sender/durable"
 	senderlive "RaiseMyFish/internal/sender/live"
 	"RaiseMyFish/internal/store"
@@ -134,6 +136,7 @@ type consumeOptions struct {
 	conversationCfg config.Conversation
 	liveWindow      *conversation.Window
 	promptBudgets   map[event.Channel]int
+	metrics         *metrics.Registry
 	tracer          *trace.Local
 }
 
@@ -192,6 +195,11 @@ func withPromptBudgets(budgets map[event.Channel]int) consumeOption {
 	return func(o *consumeOptions) { o.promptBudgets = budgets }
 }
 
+// withMetrics 注入指标注册表；nil 表示不计。
+func withMetrics(reg *metrics.Registry) consumeOption {
+	return func(o *consumeOptions) { o.metrics = reg }
+}
+
 // withTracer 注入本地 trace；nil 表示不记录。
 func withTracer(tracer *trace.Local) consumeOption {
 	return func(o *consumeOptions) { o.tracer = tracer }
@@ -244,6 +252,7 @@ func buildConsumeWorkers(live scheduler.ChannelPolicy, pack persona.Pack, byChan
 		conversationCfg: extra.conversationCfg,
 		liveWindow:      extra.liveWindow,
 		promptBudgets:   extra.promptBudgets,
+		metrics:         extra.metrics,
 		tracer:          extra.tracer,
 		log:             log,
 	})
@@ -336,6 +345,73 @@ type dmWhitelistSetter interface {
 func buildSender(cfg config.Config, resources *infra.Resources, accounts *account.Service, log *zap.Logger) (sender.Sender, dmWhitelistSetter, error) {
 	if cfg.Sender == nil {
 		return nil, nil, errors.New("未配置 [sender] 发送通道，无法装配发送器")
+	}
+	// dry_run：所有已启用通道统一换成只记账、不触达平台的发送器。
+	// 放在最前面，保证 staging 压测不会因为任何通道遗漏而误发。
+	if cfg.Sender.DryRun {
+		routes := make(map[event.Channel]sender.Sender, 3)
+		for _, ch := range []event.Channel{event.ChLive, event.ChComment, event.ChDM} {
+			if !senderChannelEnabled(cfg, ch) {
+				continue
+			}
+			routes[ch] = dryrun.New("dryrun-" + string(ch))
+		}
+		if len(routes) == 0 {
+			return nil, nil, errors.New("dry_run 已启用但没有可用的通道")
+		}
+		// 有 DB 时把 dry-run 套进真实投递计划，仍然落 send_log/out，
+		// 这样压测数字与生产口径一致；没有 DB 的单元测试保留纯本地回执。
+		if resources != nil && resources.DB != nil {
+			selfID := selfMID(cfg)
+			if !sender.ValidActor(selfID) {
+				selfID = "1000"
+			}
+			policy := sender.DefaultPolicy()
+			policy.MinInterval = time.Nanosecond
+			policy.DuplicateWindow = time.Nanosecond
+			policy.PermitTTL = time.Nanosecond
+			liveRepo, err := database.NewSendRepo(resources.DB, policy)
+			if err != nil {
+				return nil, nil, fmt.Errorf("装配 dry-run live 投递仓储失败：%w", err)
+			}
+			liveSender, err := senderlive.New(liveRepo, dryrun.NewLiveTransport(), senderlive.Options{
+				Enabled: true, SelfID: selfID, MinInterval: time.Nanosecond,
+				CleanupTimeout: time.Second, VerifyAttempts: 1, VerifyInterval: 0,
+			}, log)
+			if err != nil {
+				return nil, nil, fmt.Errorf("装配 dry-run live 发送器失败：%w", err)
+			}
+			if _, ok := routes[event.ChLive]; ok {
+				routes[event.ChLive] = liveSender
+			}
+			plannedRepo, err := database.NewPlannedRepo(resources.DB)
+			if err != nil {
+				return nil, nil, fmt.Errorf("装配 dry-run 投递计划仓储失败：%w", err)
+			}
+			if _, ok := routes[event.ChComment]; ok {
+				routes[event.ChComment], err = durable.New(plannedRepo, dryrun.New("dryrun-comment"), durable.Options{
+					Channel: event.ChComment, AccountID: selfID, Validate: sendercomment.Normalize, MaxAttempts: 3,
+				}, log)
+				if err != nil {
+					return nil, nil, fmt.Errorf("装配 dry-run 评论投递计划失败：%w", err)
+				}
+			}
+			if _, ok := routes[event.ChDM]; ok {
+				routes[event.ChDM], err = durable.New(plannedRepo, dryrun.New("dryrun-dm"), durable.Options{
+					Channel: event.ChDM, AccountID: selfID, Validate: senderdm.Normalize, MaxAttempts: 3,
+				}, log)
+				if err != nil {
+					return nil, nil, fmt.Errorf("装配 dry-run 私信投递计划失败：%w", err)
+				}
+			}
+		}
+		router, err := newSendRouter(routes)
+		if err != nil {
+			return nil, nil, err
+		}
+		log.Warn("发送已切换为 dry-run：只记账、不触达平台",
+			zap.String("action", "sender_dry_run"), zap.Int("channels", len(routes)))
+		return router, nil, nil
 	}
 	routes := make(map[event.Channel]sender.Sender, 2)
 	var planned store.PlannedRepo
@@ -431,6 +507,20 @@ func buildSender(cfg config.Config, resources *infra.Resources, accounts *accoun
 	return router, dmWhitelist, nil
 }
 
+// senderChannelEnabled 判断该通道是否已启用（dry_run 只替换已启用通道的实现）。
+func senderChannelEnabled(cfg config.Config, ch event.Channel) bool {
+	switch ch {
+	case event.ChLive:
+		return cfg.Channels.Live.Enabled
+	case event.ChComment:
+		return cfg.Channels.Comment.Enabled
+	case event.ChDM:
+		return cfg.Channels.DM.Enabled
+	default:
+		return false
+	}
+}
+
 // defaultOwnerMID 是主人的 B站 UID（派发单给定）：永不取关、私信默认允许。
 const defaultOwnerMID = "313591854"
 
@@ -498,7 +588,7 @@ func sideEffectDeps(cfg config.Config, quota reasoning.QuotaSource, exec toolExe
 // buildConsume 装配消费循环；未启用（无 [scheduler] / 无 Brain 路由 / 通道关闭）时返回 nil。
 // 返回的发送器与消费循环共用同一实例，供通道注册表复用（同一限流与暂停状态）。
 // dmWhitelist 在未装配私信发送时为 nil；giftGate 为动态送礼开关（面板热更新）。
-func buildConsume(cfg config.Config, resources *infra.Resources, accounts *account.Service, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, tracer *trace.Local, know knowledge.Reader, pres *presence.Table, rooms *liveRoomState, channels *channelSet, giftGate func() bool, sideLimiter *reasoning.SideEffectLimiter, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, dmWhitelistSetter, error) {
+func buildConsume(cfg config.Config, resources *infra.Resources, accounts *account.Service, routes map[string]brain.Brain, pack persona.Pack, bus event.Bus, tracer *trace.Local, know knowledge.Reader, pres *presence.Table, rooms *liveRoomState, channels *channelSet, giftGate func() bool, sideLimiter *reasoning.SideEffectLimiter, metricsReg *metrics.Registry, log *zap.Logger) (*scheduler.Scheduler, sender.Sender, dmWhitelistSetter, error) {
 	if !consumeEnabled(cfg, routes) {
 		return nil, nil, nil, nil
 	}
@@ -546,6 +636,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 
 	options := buildSchedulerOptions(cfg.Scheduler)
 	options.Tracer = tracer
+	options.Metrics = metricsReg
 	byChannel, err := resolveRoutes(options.Channels, routes)
 	if err != nil {
 		return nil, nil, nil, err
@@ -655,7 +746,7 @@ func buildConsume(cfg config.Config, resources *infra.Resources, accounts *accou
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo), withErrorRepo(errorRepo), withTracer(tracer), withMemoryUsage(memoryUsageRepo), withConversation(conversationRepo, cfg.Conversation), withLiveWindow(liveWindowFrom(cfg.Conversation)), withPromptBudgets(promptBudgetsFrom(cfg)))
+	workers, err := buildConsumeWorkers(options.Channels[event.ChLive], pack, byChannel, snd, bus, options.RetryDelay, memReader, know, viewerRepo, cfg.Memory.SoulPath, pres, brainStateSource(rooms.Current, cfg.Watch), reactCfg, channels, log, withViewerFinder(viewerSearch), withCommentVision(commentVisual), withInjections(injectionReader), withRecentSelf(recentSelfSource(eventRepo)), withViewerRecent(viewerRecentSource(eventRepo)), withTiming(timingRepo), withErrorRepo(errorRepo), withTracer(tracer), withMemoryUsage(memoryUsageRepo), withConversation(conversationRepo, cfg.Conversation), withLiveWindow(liveWindowFrom(cfg.Conversation)), withPromptBudgets(promptBudgetsFrom(cfg)), withMetrics(metricsReg))
 	if err != nil {
 		return nil, nil, nil, err
 	}

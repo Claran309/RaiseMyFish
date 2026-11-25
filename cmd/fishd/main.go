@@ -19,6 +19,7 @@ import (
 	"RaiseMyFish/internal/brain/provider"
 	"RaiseMyFish/internal/config"
 	"RaiseMyFish/internal/database"
+	"RaiseMyFish/internal/event"
 	eventbus "RaiseMyFish/internal/event/bus"
 	"RaiseMyFish/internal/infra"
 	"RaiseMyFish/internal/llmmeta"
@@ -222,10 +223,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, shutdown 
 	if err != nil {
 		return err
 	}
-	bus, err := eventbus.New(events, 0)
+	rawBus, err := eventbus.New(events, 0)
 	if err != nil {
 		return err
 	}
+	// metrics 关闭时 bus 保持原样（零改动）；开启时只在 Publish 外包一层计数。
+	metricsReg := newMetricsRegistry()
+	var bus event.Bus = rawBus
+	if cfg.Metrics.Enabled {
+		bus = metricsBus{Bus: bus, reg: metricsReg}
+	}
+	stopMetrics := startMetricsServer(ctx, cfg, resources, metricsReg, logger)
+	defer stopMetrics()
 
 	// 送礼开关由控制面热更新，ReAct 副作用每次调用都读最新值。
 	// 副作用限频是进程级的：消费循环与主动弹幕的每个工具箱共用这一份，
@@ -236,7 +245,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, shutdown 
 	chans := &channelSet{}
 	// live 采集房间的权威状态：状态注入与 watching 重置都读它。
 	liveRooms := &liveRoomState{}
-	consume, snd, dmWhitelist, err := buildConsume(cfg, resources, accountService, routes, pack, bus, tracer, knowledgeRuntime.Reader, presenceTable, liveRooms, chans, giftGate.Load, sideLimiter, logger)
+	consume, snd, dmWhitelist, err := buildConsume(cfg, resources, accountService, routes, pack, bus, tracer, knowledgeRuntime.Reader, presenceTable, liveRooms, chans, giftGate.Load, sideLimiter, metricsReg, logger)
 	if err != nil {
 		return err
 	}

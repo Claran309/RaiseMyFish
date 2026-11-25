@@ -79,7 +79,7 @@ type contextBuilder struct {
 	recentSelf func(ctx context.Context, ch event.Channel, session string, limit int) []string
 	// viewerRecent 取该观众最近几条弹幕（实时上下文）；nil 时不注入。
 	viewerRecent func(ctx context.Context, fromID string, limit int) []string
-	log        *zap.Logger
+	log          *zap.Logger
 }
 
 // newContextBuilder 构造快照装配器；可选依赖为 nil 时对应区块留空。

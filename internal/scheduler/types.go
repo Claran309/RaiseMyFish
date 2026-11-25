@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"RaiseMyFish/internal/event"
+	"RaiseMyFish/internal/metrics"
 	"RaiseMyFish/internal/store"
 	"RaiseMyFish/internal/trace"
 	"context"
@@ -76,7 +77,9 @@ type Options struct {
 	// ErrorRepo 记录 stale/dead 原因；nil 表示只写日志。
 	ErrorRepo store.ErrorRepo
 	// Tracer 记录 schedule/generate/deliver/verify 阶段；nil 表示不记录。
-	Tracer   *trace.Local
+	Tracer *trace.Local
+	// Metrics 是可选指标注册表；nil 时所有计数都是空操作。
+	Metrics  *metrics.Registry
 	Location *time.Location
 	Clock    Clock
 	Channels map[event.Channel]ChannelPolicy

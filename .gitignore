@@ -1,6 +1,9 @@
 # ── Go ──────────────────────────────────────────────
 /bin/
 /dist/
+# 压测原始数据与中间产物只留本地：仓库只提交脚本、SQL、脱敏报告。
+/bench/raw/
+/bench/out/
 *.exe
 *.exe~
 *.dll
@@ -72,6 +75,27 @@ tmp/
 /plans/assignment.md
 /plans/reports/
 /prompts/
+
+# ── 个人部署、真实观众资料与过程材料（2026-11-25 文档审计）────────
+# 只留本地；已跟踪的文件还需由主人确认后 git rm --cached。
+/config/fishd.toml
+/docs/handoff-*.md
+/docs/reviews/
+/docs/update/
+/docs/releases/
+/docs/reports/*
+!/docs/reports/2026-11-24-30day-ops-report.md
+!/docs/reports/2026-11-25-doc-privacy-audit.md
+!/docs/reports/2026-11-25-staging-capacity-report.md
+!/docs/reports/2026-11-25-fault-recovery-report.md
+!/docs/reports/2026-11-25-bottleneck-ranking.md
+!/docs/reports/2026-11-25-completion-audit.md
+!/docs/reports/assets/
+!/docs/reports/assets/*
+/shots/
+/cards/
+/agents/
+/personas/*/eval/
 
 # ── persona 运行时学习数据（含真实观众档案与鱼的私人记忆，只留本地）──
 # 已在库中的模板文件用 skip-worktree 脱离跟踪，新 persona 包自动忽略。

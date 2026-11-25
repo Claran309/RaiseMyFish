@@ -27,6 +27,9 @@ func buildComment(cfg config.Config, accounts *account.Service, log *zap.Logger)
 	if !cfg.Channels.Comment.Enabled || !cfg.Collector.Comment.Enabled {
 		return nil, nil
 	}
+	if dryRunNoPlatform(cfg) {
+		return nil, nil
+	}
 	return newCommentSource(cfg, cfg.Collector.Comment.Videos, accounts, log)
 }
 

@@ -27,7 +27,15 @@ func buildLive(cfg config.Config, log *zap.Logger) (*livecollector.Collector, er
 	if !cfg.Channels.Live.Enabled {
 		return nil, nil
 	}
+	if dryRunNoPlatform(cfg) {
+		return nil, nil
+	}
 	return newLiveCollector(cfg, log)
+}
+
+// dryRunNoPlatform 表示 staging 只允许本地事件注入，任何采集器都不能连平台。
+func dryRunNoPlatform(cfg config.Config) bool {
+	return cfg.Sender != nil && cfg.Sender.DryRun
 }
 
 // newLiveCollector 忽略静态启用开关，供面板运行时启停复用。

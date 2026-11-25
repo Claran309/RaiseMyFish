@@ -18,6 +18,18 @@ func TestBuildLiveDisabledDoesNotStartNode(t *testing.T) {
 	}
 }
 
+// dry_run 只用于 staging：即使 live 通道开着，也不能装配真实采集器。
+func TestBuildLiveDryRunSkipsCollector(t *testing.T) {
+	cfg := config.Config{
+		Channels: config.Channels{Live: config.Channel{Enabled: true}},
+		Sender:   &config.Sender{DryRun: true},
+	}
+	c, err := buildLive(cfg, zap.NewNop())
+	if err != nil || c != nil {
+		t.Fatalf("dry_run 仍装配采集：%v %v", c, err)
+	}
+}
+
 func TestBuildChannelRegistryWithoutLive(t *testing.T) {
 	registry, err := buildChannelRegistry(nil, nil, nil, nil, time.Second, zap.NewNop())
 	if err != nil {

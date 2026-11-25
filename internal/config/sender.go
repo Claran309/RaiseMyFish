@@ -34,6 +34,9 @@ type Sender struct {
 	HTTPTimeoutMS int            `toml:"http_timeout_ms"`
 	Comment       *CommentSender `toml:"comment"`
 	DM            DMSender       `toml:"dm"`
+	// DryRun 为 true 时所有通道改用「只记账、不触达平台」的发送器。
+	// 只用于 staging 压测：仍会走调度、生成、投递计划与 send_log 记账。
+	DryRun bool `toml:"dry_run"`
 }
 
 // DefaultSender 返回一份可直接使用的默认发送配置。

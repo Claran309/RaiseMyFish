@@ -148,6 +148,27 @@ func (s *Scheduler) skip(ctx context.Context, c event.Claim) error {
 	return err
 }
 
+// skipWithReason 在跳过事件时记录原因计数；nil 指标时等同 skip。
+func (s *Scheduler) skipWithReason(ctx context.Context, c event.Claim, reason string) error {
+	if s.options.Metrics != nil {
+		s.options.Metrics.Inc("fishd_skip_total", map[string]string{"reason": reason})
+	}
+	return s.skip(ctx, c)
+}
+
+// count / gauge 是指标的 nil 安全包装。
+func (s *Scheduler) count(name string, labels map[string]string) {
+	if s.options.Metrics != nil {
+		s.options.Metrics.Inc(name, labels)
+	}
+}
+
+func (s *Scheduler) gauge(name string, value float64) {
+	if s.options.Metrics != nil {
+		s.options.Metrics.Set(name, nil, value)
+	}
+}
+
 func (s *Scheduler) task(ctx context.Context, c event.Claim) (*store.Task, error) {
 	t, err := s.repo.Task(ctx, c.Event.ID)
 	if err != nil {
@@ -305,6 +326,10 @@ drained:
 			return err
 		}
 	}
+	s.gauge("fishd_scheduler_pending", float64(len(s.pending)))
+	s.gauge("fishd_scheduler_active", float64(len(s.active)))
+	s.gauge("fishd_scheduler_waiting", float64(len(s.waiting)))
+	s.gauge("fishd_scheduler_cooldowns", float64(len(s.cooldowns)))
 	return nil
 }
 
@@ -341,11 +366,13 @@ func (s *Scheduler) popDispatchable() *queued {
 func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 	c, err := s.bus.Renew(ctx, item.claim)
 	if errors.Is(err, event.ErrLeaseLost) {
+		s.count("fishd_lease_lost_total", nil)
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	s.count("fishd_lease_renew_total", nil)
 	if c.Event.Status != event.StatusQueued {
 		return store.ErrConflict
 	}
@@ -357,7 +384,7 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 	policy := s.policies[c.Event.Channel]
 	if policy == nil || !aclAllowed(c.Event, policy.ChannelPolicy) {
 		if c.Stage == event.StageSchedule {
-			return s.skip(ctx, c)
+			return s.skipWithReason(ctx, c, "acl")
 		}
 		return s.deferClaim(ctx, c, s.clock.Now().Add(s.options.RetryDelay))
 	}
@@ -371,12 +398,18 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 		}
 		if maxAge > 0 && !c.Event.At.IsZero() && now.Sub(c.Event.At) > maxAge {
 			s.recordSkipped(c, "stale")
-			return s.skip(ctx, c)
+			return s.skipWithReason(ctx, c, "stale")
 		}
 		// 弹幕路由在准入前决定：mention_only 只回 @，filter 走规则筛选；
 		// 这是唯一合法的 queued→skipped 阶段，放在这里也保证不进 Admit、不生成 Task、不调用模型。
-		if noiseReason(c.Event, policy.ChannelPolicy) != "" || routingSkip(c.Event, policy.ChannelPolicy) || s.repeats[repetition(c.Event)].After(now) {
-			return s.skip(ctx, c)
+		if reason := noiseReason(c.Event, policy.ChannelPolicy); reason != "" {
+			return s.skipWithReason(ctx, c, "noise:"+reason)
+		}
+		if routingSkip(c.Event, policy.ChannelPolicy) {
+			return s.skipWithReason(ctx, c, "routing")
+		}
+		if s.repeats[repetition(c.Event)].After(now) {
+			return s.skipWithReason(ctx, c, "repeat")
 		}
 	}
 	if _, busy := s.sessions[session(c.Event)]; busy {
@@ -403,7 +436,7 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 					zap.String("ch", string(c.Event.Channel)),
 					zap.String("event_id", c.Event.ID),
 				)
-				return s.skip(ctx, c)
+				return s.skipWithReason(ctx, c, "merge")
 			}
 		}
 	}
@@ -456,11 +489,13 @@ func (s *Scheduler) dispatch(ctx, parent context.Context, item *queued) error {
 	// 顺序/任务/准入查询也会消耗租期；所有分支在启动下游前再次以PG作围栏。
 	confirmed, err := s.bus.Renew(ctx, c)
 	if errors.Is(err, event.ErrLeaseLost) {
+		s.count("fishd_lease_lost_total", nil)
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	s.count("fishd_lease_renew_total", nil)
 	if confirmed.Stage != expectedStage || confirmed.Event.Status != event.StatusQueued || confirmed.Event.ID != c.Event.ID || confirmed.Event.Channel != c.Event.Channel || confirmed.Event.Session != c.Event.Session || confirmed.Event.Private != c.Event.Private {
 		return store.ErrConflict
 	}

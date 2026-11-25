@@ -1,10 +1,13 @@
-# RaiseMyFish · 养鱼框架（多通道 AI 陪伴体 · 稳定版开发中）
+# RaiseMyFish · 养鱼框架（多通道 AI 陪伴体 · 个人自用稳定运行）
 
 > 一条 AI 肥鱼的多通道陪伴系统：**看直播、回弹幕、回评论、回私信**，
 > **有长期记忆、有知识库（RAG）、能自主查证（ReAct）、有可视化面板、能自愈**。
 >
 > 工程视角：**实时 Agent Runtime + 事件驱动一致性**——单主体、多通道、会话无状态，
 > 用 PG 租约/状态机保证「不漏、不重、可恢复」。
+>
+> 公开仓库不包含真实 `config/fishd.toml`、`personas/` 运行时记忆、观众档案、
+> handoff/评审/截图/过程计划；这些只保留在维护者本地私有环境。
 
 ---
 
@@ -14,7 +17,9 @@
 
 一个「肥鱼」主体——Persona（怎么说）+ Presence（在做什么）+ Memory（记得什么）+ Knowledge（知道什么）——通过直播/评论/私信多通道持续在线、并行回复；会话无状态，每次回复完即散。
 
-**与旧方案（agent 会话式蹲播）的区别**：延迟从 30-40 秒降到 1 秒级；记忆从「会话上下文」变成「结构化库 + 向量召回」；从脚本堆变成可观测、可自愈的工程。
+**与旧方案（agent 会话式蹲播）的区别**：低负载实测延迟从 30-40 秒降到 1 秒级；
+高负载会受单会话串行与发送链路限制（240 条/分钟压测出现积压），不要把低负载数字当成生产 SLA。
+记忆从「会话上下文」变成「结构化库 + 向量召回」。
 
 **为什么不引入 Redis/MQ/Milvus/多 Agent**：单机规模下 PG 的事务、租约与 `FOR UPDATE SKIP LOCKED` 已能承担队列一致性；再加中间件只会多一套真源。见 `docs/14-decisions.md`（ADR）。
 
@@ -26,7 +31,7 @@
 
 | 通道 | 采集 | 回复 | 状态 |
 |---|---|---|---|
-| **直播弹幕** | WS 实时（danmaku-await） | 1 秒级 + ReAct | ✅ 生产可用 |
+| **直播弹幕** | WS 实时（danmaku-await） | 低负载 1 秒级 + ReAct | ✅ 个人单机可用（非生产 SLA） |
 | **评论** | 自动发现自己账号的视频/动态 → 轮询评论区 | 回复每个评论 | ✅（默认关） |
 | **私信** | 全收（所有发信人） | 回复每个发信人 | ✅（默认关） |
 
@@ -95,7 +100,7 @@ flowchart LR
 
 ```bash
 # 1. 依赖：PostgreSQL 17（pgvector）、Node 24、Go 1.25+（仅构建）
-# 2. 配置：config/fishd.toml + .env（cookie/LLM key/embedding key）
+# 2. 配置：从本地私有部署复制 config/fishd.toml + .env（公开仓库不含真实配置）
 # 3. 迁移：bash scripts/migrate.sh 或 go run ./cmd/fishd migrate up
 # 4. 启动（Windows 一键）：双击 start-fishd.bat
 #    它会构造 cookie、拉起本机 ASR（若存在）、go run 启动 fishd 并打开面板
@@ -109,7 +114,7 @@ make release VERSION=0.1.0
 
 # Docker（Linux/服务器）：
 cp .env.example deployment/.env   # 填凭据；DSN 主机用 postgres
-# 首次启动前核对 config/fishd.toml 的房间/账号/礼物开关
+# 首次启动前核对本地 config/fishd.toml 的房间/账号/礼物开关
 make docker-up                     # fishd + pgvector/pgvector:pg17，自动迁移
 ```
 
@@ -119,9 +124,11 @@ make docker-up                     # fishd + pgvector/pgvector:pg17，自动迁�
 
 ---
 
-## 真实数据
+## 本机观测数据（示例，不是发布承诺）
 
-> 取数时间 2026-11-23，来源为本地 `raisemyfish` 库只读查询与 `go test`，不是估算。
+> 取数时间 2026-11-23，来源为本地 `raisemyfish` 库只读查询与 `go test`。
+> 这些数字只描述维护者本机的一次部署，不是可复现的基准或 SLA。
+> 开源仓库不包含真实观众档案、聊天原文或真实直播间配置；这些只留在本机私有环境。
 
 | 指标 | 值 | 来源 |
 |---|---|---|
@@ -136,6 +143,11 @@ make docker-up                     # fishd + pgvector/pgvector:pg17，自动迁�
 
 回复延迟：短句 1 秒级；ReAct 多步 3–8 秒。所有延迟数字必须区分 `fresh` 与 `all`，见 `docs/10-observability-cost.md`。
 
+## License
+
+本项目采用 **MIT License**，完整文本见根目录 [`LICENSE`](LICENSE)。
+Copyright (c) 2026 Claran309。
+
 ---
 
 ## 文档导航
@@ -145,8 +157,8 @@ make docker-up                     # fishd + pgvector/pgvector:pg17，自动迁�
 | `AGENTS.md` | 开发 agent 硬规则 |
 | `docs/00-index.md` | 设计文档索引 |
 | `contracts/` | 模块契约（事件/记忆/知识/发送/人格） |
-| `plans/` | 阶段计划 + 派发单 + 遗留清单 |
-| `personas/dafeiyu/` | 人格包（soul/rules/samples/context + 知识库） |
+| `plans/` | 本地阶段计划（默认不随公开仓库发布） |
+| `personas/dafeiyu/` | 本地人格包（公开仓库只保留脱敏示例/说明） |
 
 ---
 
